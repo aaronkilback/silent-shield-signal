@@ -9,8 +9,19 @@ const corsHeaders = {
 // Security keywords to monitor
 const SECURITY_KEYWORDS = [
   'data breach', 'hack', 'ransomware', 'malware', 'vulnerability',
-  'exploit', 'zero-day', 'phishing', 'ddos', 'cyber attack'
+  'exploit', 'zero-day', 'phishing', 'ddos', 'cyber attack', 'cyberattack',
+  'backdoor', 'trojan', 'botnet', 'apt', 'threat actor', 'incident',
+  'compromise', 'exfiltration', 'lateral movement', 'privilege escalation'
 ];
+
+// Industry-specific threat keywords
+const INDUSTRY_THREATS: Record<string, string[]> = {
+  'energy': ['scada', 'ics', 'pipeline', 'grid', 'utility', 'oil', 'gas', 'refinery'],
+  'finance': ['banking', 'financial', 'payment', 'fraud', 'atm', 'swift'],
+  'healthcare': ['hospital', 'medical', 'patient', 'hipaa', 'healthcare'],
+  'retail': ['pos', 'e-commerce', 'payment card', 'retail'],
+  'manufacturing': ['factory', 'production', 'supply chain', 'industrial']
+};
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -36,8 +47,11 @@ serve(async (req) => {
 
     let signalsCreated = 0;
 
-    // Monitor Reddit via RSS (public, no API key needed)
-    const subreddits = ['cybersecurity', 'netsec', 'InfoSecNews'];
+    // === REDDIT MONITORING ===
+    const subreddits = [
+      'cybersecurity', 'netsec', 'InfoSecNews', 'blueteamsec',
+      'threatintel', 'ReverseEngineering', 'pwned', 'privacy'
+    ];
     
     for (const subreddit of subreddits) {
       try {
@@ -82,10 +96,18 @@ serve(async (req) => {
               const clientOrg = client.organization?.toLowerCase() || '';
               const clientIndustry = client.industry?.toLowerCase() || '';
               
-              const isRelevant = 
+              // Check for direct mention OR industry-specific threats
+              const hasDirectMention = 
                 (clientName && combinedText.includes(clientName)) ||
-                (clientOrg && combinedText.includes(clientOrg)) ||
-                (clientIndustry && combinedText.includes(clientIndustry));
+                (clientOrg && combinedText.includes(clientOrg));
+              
+              // Check for industry-relevant threats
+              const industryKeywords = INDUSTRY_THREATS[clientIndustry] || [];
+              const hasIndustryThreat = industryKeywords.some(keyword => 
+                combinedText.includes(keyword)
+              );
+
+              const isRelevant = hasDirectMention || (hasIndustryThreat && clientIndustry);
 
               if (isRelevant) {
                 const { error: signalError } = await supabase
@@ -127,6 +149,89 @@ serve(async (req) => {
       } catch (error) {
         console.error(`Error fetching r/${subreddit}:`, error);
       }
+    }
+
+    // === HACKER NEWS MONITORING ===
+    try {
+      const hnResponse = await fetch('https://hacker-news.firebaseio.com/v0/topstories.json');
+      if (hnResponse.ok) {
+        const storyIds = await hnResponse.json();
+        
+        // Check top 30 stories
+        for (const storyId of storyIds.slice(0, 30)) {
+          try {
+            const storyResponse = await fetch(`https://hacker-news.firebaseio.com/v0/item/${storyId}.json`);
+            if (!storyResponse.ok) continue;
+            
+            const story = await storyResponse.json();
+            if (!story.title) continue;
+            
+            const title = story.title.toLowerCase();
+            
+            // Check if security-related
+            const isSecurityRelated = SECURITY_KEYWORDS.some(keyword => 
+              title.includes(keyword)
+            );
+            
+            if (!isSecurityRelated) continue;
+            
+            const severity = title.includes('breach') || title.includes('ransomware') 
+              ? 'high' 
+              : title.includes('vulnerability') 
+              ? 'medium' 
+              : 'low';
+            
+            // Check relevance to clients
+            for (const client of clients || []) {
+              const clientName = client.name?.toLowerCase() || '';
+              const clientOrg = client.organization?.toLowerCase() || '';
+              const clientIndustry = client.industry?.toLowerCase() || '';
+              
+              const hasDirectMention = 
+                (clientName && title.includes(clientName)) ||
+                (clientOrg && title.includes(clientOrg));
+              
+              const industryKeywords = INDUSTRY_THREATS[clientIndustry] || [];
+              const hasIndustryThreat = industryKeywords.some(keyword => 
+                title.includes(keyword)
+              );
+              
+              if (hasDirectMention || (hasIndustryThreat && clientIndustry)) {
+                const { error: signalError } = await supabase
+                  .from('signals')
+                  .insert({
+                    normalized_text: story.title,
+                    location: 'Hacker News',
+                    severity: severity,
+                    category: 'threat-intelligence',
+                    entity_tags: ['hacker-news', 'social-media', 'threat-intel'],
+                    confidence: 0.80,
+                    raw_json: {
+                      source: 'hackernews',
+                      url: story.url || `https://news.ycombinator.com/item?id=${story.id}`,
+                      hn_id: story.id,
+                      author: story.by,
+                      score: story.score,
+                      comments: story.descendants
+                    },
+                    client_id: client.id,
+                    status: 'new'
+                  });
+                
+                if (!signalError) {
+                  signalsCreated++;
+                  console.log(`Created Hacker News signal for ${client.name}`);
+                }
+                break;
+              }
+            }
+          } catch (error) {
+            console.error(`Error fetching HN story ${storyId}:`, error);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error monitoring Hacker News:', error);
     }
 
     console.log(`Social media monitoring complete. Created ${signalsCreated} signals.`);

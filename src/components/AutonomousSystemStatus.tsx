@@ -27,10 +27,10 @@ export default function AutonomousSystemStatus() {
         .select('*')
         .order('metric_date', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
-      setMetrics(data);
+      setMetrics(data || undefined);
     } catch (error) {
       console.error('Error loading metrics:', error);
     } finally {
@@ -201,7 +201,7 @@ export default function AutonomousSystemStatus() {
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Weather, wildfire, earthquake, news, social media & threat intel
+              Weather, wildfire, earthquake, news, threat intel, Reddit & Hacker News
             </p>
           </CardContent>
         </Card>
