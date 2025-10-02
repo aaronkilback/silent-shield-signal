@@ -14,6 +14,14 @@ const SECURITY_KEYWORDS = [
   'compromise', 'exfiltration', 'lateral movement', 'privilege escalation'
 ];
 
+// Activist/Environmental keywords for reputational monitoring
+const ACTIVIST_KEYWORDS = [
+  'protest', 'campaign', 'boycott', 'divestment', 'divest', 'activism',
+  'climate', 'fossil fuel', 'oil spill', 'environmental', 'indigenous',
+  'stand.earth', 'stand', 'greenpeace', 'extinction rebellion', '350.org',
+  'pipeline protest', 'blockade', 'occupation', 'lawsuit', 'litigation'
+];
+
 // Industry-specific threat keywords
 const INDUSTRY_THREATS: Record<string, string[]> = {
   'energy': ['scada', 'ics', 'pipeline', 'grid', 'utility', 'oil', 'gas', 'refinery'],
@@ -49,8 +57,12 @@ serve(async (req) => {
 
     // === REDDIT MONITORING ===
     const subreddits = [
+      // Cybersecurity
       'cybersecurity', 'netsec', 'InfoSecNews', 'blueteamsec',
-      'threatintel', 'ReverseEngineering', 'pwned', 'privacy'
+      'threatintel', 'ReverseEngineering', 'pwned', 'privacy',
+      // Environmental/Activism
+      'climate', 'environment', 'ClimateActionPlan', 'energy',
+      'climate_science', 'fossilfuels', 'ClimateOffensive'
     ];
     
     for (const subreddit of subreddits) {
@@ -74,19 +86,36 @@ serve(async (req) => {
           const selftext = post.data.selftext?.toLowerCase() || '';
           const combinedText = `${title} ${selftext}`;
 
-          // Check if security-related
+          // Check if security-related OR activist-related
           const isSecurityRelated = SECURITY_KEYWORDS.some(keyword => 
             combinedText.includes(keyword)
           );
+          
+          const isActivistRelated = ACTIVIST_KEYWORDS.some(keyword => 
+            combinedText.includes(keyword)
+          );
 
-          if (!isSecurityRelated) continue;
+          if (!isSecurityRelated && !isActivistRelated) continue;
 
-          // Determine severity based on keywords
-          const severity = combinedText.includes('breach') || combinedText.includes('ransomware') 
-            ? 'high' 
-            : combinedText.includes('vulnerability') 
-            ? 'medium' 
-            : 'low';
+          // Determine category and severity
+          let category = 'threat-intelligence';
+          let severity = 'low';
+          
+          if (isActivistRelated) {
+            category = 'reputational-risk';
+            severity = combinedText.includes('lawsuit') || combinedText.includes('blockade') 
+              ? 'high' 
+              : combinedText.includes('protest') || combinedText.includes('campaign')
+              ? 'medium' 
+              : 'low';
+          } else if (isSecurityRelated) {
+            category = 'threat-intelligence';
+            severity = combinedText.includes('breach') || combinedText.includes('ransomware') 
+              ? 'high' 
+              : combinedText.includes('vulnerability') 
+              ? 'medium' 
+              : 'low';
+          }
 
           // Create signals for relevant clients
           for (const client of clients || []) {
@@ -110,17 +139,21 @@ serve(async (req) => {
               const isRelevant = hasDirectMention || (hasIndustryThreat && clientIndustry);
 
               if (isRelevant) {
+                const entityTags = ['reddit', 'social-media'];
+                if (category === 'reputational-risk') {
+                  entityTags.push('activism', 'environmental', 'reputational');
+                } else {
+                  entityTags.push('threat-intel');
+                }
+                
                 const { error: signalError } = await supabase
                   .from('signals')
                   .insert({
-                    source_key: 'social-monitor',
-                    event: 'Social Media Threat Intel',
-                    text: `Reddit r/${subreddit}: ${post.data.title}`,
+                    normalized_text: post.data.title,
                     location: 'Social Media',
                     severity: severity,
-                    category: 'threat-intelligence',
-                    normalized_text: post.data.title,
-                    entity_tags: ['reddit', 'social-media', 'threat-intel'],
+                    category: category,
+                    entity_tags: entityTags,
                     confidence: 0.75,
                     raw_json: {
                       source: 'reddit',
@@ -128,9 +161,11 @@ serve(async (req) => {
                       url: `https://reddit.com${post.data.permalink}`,
                       author: post.data.author,
                       created: post.data.created_utc,
-                      score: post.data.score
+                      score: post.data.score,
+                      type: category
                     },
-                    client_id: client.id
+                    client_id: client.id,
+                    status: 'new'
                   });
 
                 if (!signalError) {
@@ -168,18 +203,35 @@ serve(async (req) => {
             
             const title = story.title.toLowerCase();
             
-            // Check if security-related
+            // Check if security-related OR activist-related
             const isSecurityRelated = SECURITY_KEYWORDS.some(keyword => 
               title.includes(keyword)
             );
             
-            if (!isSecurityRelated) continue;
+            const isActivistRelated = ACTIVIST_KEYWORDS.some(keyword => 
+              title.includes(keyword)
+            );
             
-            const severity = title.includes('breach') || title.includes('ransomware') 
-              ? 'high' 
-              : title.includes('vulnerability') 
-              ? 'medium' 
-              : 'low';
+            if (!isSecurityRelated && !isActivistRelated) continue;
+            
+            // Determine category and severity
+            let category = 'threat-intelligence';
+            let severity = 'low';
+            
+            if (isActivistRelated) {
+              category = 'reputational-risk';
+              severity = title.includes('lawsuit') || title.includes('blockade') 
+                ? 'high' 
+                : title.includes('protest') || title.includes('campaign')
+                ? 'medium' 
+                : 'low';
+            } else if (isSecurityRelated) {
+              severity = title.includes('breach') || title.includes('ransomware') 
+                ? 'high' 
+                : title.includes('vulnerability') 
+                ? 'medium' 
+                : 'low';
+            }
             
             // Check relevance to clients
             for (const client of clients || []) {
@@ -197,14 +249,21 @@ serve(async (req) => {
               );
               
               if (hasDirectMention || (hasIndustryThreat && clientIndustry)) {
+                const entityTags = ['hacker-news', 'social-media'];
+                if (category === 'reputational-risk') {
+                  entityTags.push('activism', 'environmental', 'reputational');
+                } else {
+                  entityTags.push('threat-intel');
+                }
+                
                 const { error: signalError } = await supabase
                   .from('signals')
                   .insert({
                     normalized_text: story.title,
                     location: 'Hacker News',
                     severity: severity,
-                    category: 'threat-intelligence',
-                    entity_tags: ['hacker-news', 'social-media', 'threat-intel'],
+                    category: category,
+                    entity_tags: entityTags,
                     confidence: 0.80,
                     raw_json: {
                       source: 'hackernews',
@@ -212,7 +271,8 @@ serve(async (req) => {
                       hn_id: story.id,
                       author: story.by,
                       score: story.score,
-                      comments: story.descendants
+                      comments: story.descendants,
+                      type: category
                     },
                     client_id: client.id,
                     status: 'new'
