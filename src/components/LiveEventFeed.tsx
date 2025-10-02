@@ -12,6 +12,10 @@ interface Signal {
   severity: string | null;
   normalized_text: string | null;
   status: string;
+  location: string | null;
+  confidence: number | null;
+  entity_tags: string[] | null;
+  raw_json: any;
 }
 
 const getSeverityColor = (severity: string | null) => {
@@ -129,28 +133,68 @@ export const LiveEventFeed = () => {
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 space-y-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Badge className={`${getSeverityColor(signal.severity)} font-mono text-xs`}>
                       <span className="flex items-center gap-1">
                         {getSeverityIcon(signal.severity)}
                         {signal.severity?.toUpperCase() || 'UNKNOWN'}
                       </span>
                     </Badge>
-                    <span className="text-xs text-muted-foreground font-mono">
-                      {new Date(signal.received_at).toLocaleTimeString()}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
                     <Badge variant="outline" className="text-xs font-mono">
                       {signal.category || 'uncategorized'}
                     </Badge>
                     <Badge variant="outline" className="text-xs font-mono">
                       {signal.status}
                     </Badge>
+                    {signal.location && (
+                      <Badge variant="secondary" className="text-xs">
+                        📍 {signal.location}
+                      </Badge>
+                    )}
+                    {signal.confidence !== null && (
+                      <Badge variant="secondary" className="text-xs">
+                        {Math.round(signal.confidence * 100)}% confidence
+                      </Badge>
+                    )}
+                    <span className="text-xs text-muted-foreground font-mono ml-auto">
+                      {new Date(signal.received_at).toLocaleTimeString()}
+                    </span>
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    {signal.normalized_text || 'Signal processing...'}
-                  </p>
+                  
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-foreground">
+                      {signal.normalized_text || 'Signal processing...'}
+                    </p>
+                    
+                    {signal.entity_tags && signal.entity_tags.length > 0 && (
+                      <div className="flex gap-1 flex-wrap">
+                        {signal.entity_tags.slice(0, 5).map((tag, idx) => (
+                          <span 
+                            key={idx}
+                            className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    
+                    {signal.raw_json?.source && (
+                      <p className="text-xs text-muted-foreground">
+                        Source: {signal.raw_json.source}
+                        {signal.raw_json.url && (
+                          <a 
+                            href={signal.raw_json.url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="ml-2 text-primary hover:underline"
+                          >
+                            View →
+                          </a>
+                        )}
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
