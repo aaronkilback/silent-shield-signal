@@ -53,18 +53,18 @@ serve(async (req) => {
 
     // Extract and normalize data from various Google Form field names
     const normalizedData = {
-      name: clientData.name || clientData['Client Name'] || clientData['Name'] || '',
-      organization: clientData.organization || clientData['Organization'] || clientData['Company'] || '',
-      contact_email: clientData.contact_email || clientData['Email'] || clientData['Contact Email'] || '',
-      contact_phone: clientData.contact_phone || clientData['Phone'] || clientData['Contact Phone'] || '',
-      industry: clientData.industry || clientData['Industry'] || clientData['Business Type'] || '',
-      employee_count: parseInt(clientData.employee_count || clientData['Number of Employees'] || '0'),
+      name: clientData.name || (clientData as any)['Client Name'] || (clientData as any)['Name'] || '',
+      organization: clientData.organization || (clientData as any)['Organization'] || (clientData as any)['Company'] || '',
+      contact_email: clientData.contact_email || (clientData as any)['Email'] || (clientData as any)['Contact Email'] || '',
+      contact_phone: clientData.contact_phone || (clientData as any)['Phone'] || (clientData as any)['Contact Phone'] || '',
+      industry: clientData.industry || (clientData as any)['Industry'] || (clientData as any)['Business Type'] || '',
+      employee_count: parseInt(String(clientData.employee_count || (clientData as any)['Number of Employees'] || '0')),
       locations: Array.isArray(clientData.locations) 
         ? clientData.locations 
-        : (clientData.locations || clientData['Locations'] || '').split(',').map((l: string) => l.trim()).filter(Boolean),
+        : String(clientData.locations || (clientData as any)['Locations'] || '').split(',').map((l: string) => l.trim()).filter(Boolean),
       high_value_assets: Array.isArray(clientData.high_value_assets)
         ? clientData.high_value_assets
-        : (clientData.high_value_assets || clientData['High-Value Assets'] || '').split(',').map((a: string) => a.trim()).filter(Boolean),
+        : String(clientData.high_value_assets || (clientData as any)['High-Value Assets'] || '').split(',').map((a: string) => a.trim()).filter(Boolean),
       onboarding_data: clientData,
     };
 

@@ -174,7 +174,29 @@ Keep it executive-friendly and action-oriented.`;
 
     if (reportError) throw reportError;
 
-    // Generate HTML report
+    // Calculate additional analytics
+    const signalsByCategory = signals?.reduce((acc: any, s) => {
+      acc[s.category || 'uncategorized'] = (acc[s.category || 'uncategorized'] || 0) + 1;
+      return acc;
+    }, {}) || {};
+
+    const signalsBySeverity = {
+      critical: criticalSignals,
+      high: highSignals,
+      medium: signals?.filter(s => s.severity === 'medium').length || 0,
+      low: signals?.filter(s => s.severity === 'low').length || 0,
+    };
+
+    const avgResponseTime = incidents?.length > 0
+      ? incidents.reduce((sum, i) => {
+          if (i.resolved_at && i.opened_at) {
+            return sum + (new Date(i.resolved_at).getTime() - new Date(i.opened_at).getTime());
+          }
+          return sum;
+        }, 0) / incidents.filter(i => i.resolved_at).length / 1000 / 60 / 60
+      : 0;
+
+    // Generate HTML report with enhanced visualizations
     const html = `
 <!DOCTYPE html>
 <html lang="en">
@@ -182,6 +204,7 @@ Keep it executive-friendly and action-oriented.`;
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>72-Hour Risk Snapshot - ArachnNet™</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     
@@ -318,6 +341,122 @@ Keep it executive-friendly and action-oriented.`;
       line-height: 1.8;
       font-size: 1.05rem;
     }
+
+    .chart-container {
+      position: relative;
+      height: 300px;
+      margin: 32px 0;
+      background: #0f172a;
+      border-radius: 12px;
+      padding: 24px;
+    }
+
+    .two-column {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin: 32px 0;
+    }
+
+    .recommendations-grid {
+      display: grid;
+      gap: 16px;
+      margin-top: 24px;
+    }
+
+    .recommendation-card {
+      background: linear-gradient(135deg, #334155 0%, #1e293b 100%);
+      border-left: 4px solid #7c3aed;
+      border-radius: 8px;
+      padding: 20px;
+    }
+
+    .recommendation-card h4 {
+      color: #a855f7;
+      margin-bottom: 8px;
+      font-size: 1rem;
+    }
+
+    .recommendation-card p {
+      color: #cbd5e1;
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+
+    .timeline {
+      position: relative;
+      padding: 20px 0 20px 40px;
+    }
+
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 10px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, #7c3aed 0%, #a855f7 100%);
+    }
+
+    .timeline-item {
+      position: relative;
+      margin-bottom: 24px;
+      padding-left: 30px;
+    }
+
+    .timeline-item::before {
+      content: '';
+      position: absolute;
+      left: -31px;
+      top: 4px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #7c3aed;
+      border: 3px solid #1e293b;
+    }
+
+    .timeline-time {
+      font-size: 0.75rem;
+      color: #94a3b8;
+      font-weight: 600;
+    }
+
+    .timeline-content {
+      margin-top: 4px;
+      color: #e2e8f0;
+    }
+
+    .priority-matrix {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+      margin: 24px 0;
+    }
+
+    .priority-cell {
+      background: #0f172a;
+      border-radius: 8px;
+      padding: 20px;
+      text-align: center;
+      border: 2px solid #334155;
+    }
+
+    .priority-cell.p1 { border-color: #ef4444; }
+    .priority-cell.p2 { border-color: #f97316; }
+    .priority-cell.p3 { border-color: #eab308; }
+    .priority-cell.p4 { border-color: #22c55e; }
+
+    .priority-cell-value {
+      font-size: 2.5rem;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .priority-cell.p1 .priority-cell-value { color: #ef4444; }
+    .priority-cell.p2 .priority-cell-value { color: #f97316; }
+    .priority-cell.p3 .priority-cell-value { color: #eab308; }
+    .priority-cell.p4 .priority-cell-value { color: #22c55e; }
     
     table {
       width: 100%;
@@ -488,6 +627,56 @@ Keep it executive-friendly and action-oriented.`;
       </div>
       
       <div class="section">
+        <h2 class="section-title">📊 Threat Intelligence Analytics</h2>
+        
+        <div class="two-column">
+          <div class="chart-container">
+            <canvas id="severityChart"></canvas>
+          </div>
+          <div class="chart-container">
+            <canvas id="categoryChart"></canvas>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3 style="font-size: 1.25rem; margin-bottom: 16px; color: #e2e8f0;">📈 Response Performance</h3>
+          <div class="priority-matrix">
+            <div class="priority-cell p1">
+              <div class="priority-cell-value">${incidents?.filter(i => i.priority === 'p1').length || 0}</div>
+              <div style="color: #cbd5e1; font-size: 0.875rem;">P1 Incidents</div>
+            </div>
+            <div class="priority-cell p2">
+              <div class="priority-cell-value">${incidents?.filter(i => i.priority === 'p2').length || 0}</div>
+              <div style="color: #cbd5e1; font-size: 0.875rem;">P2 Incidents</div>
+            </div>
+            <div class="priority-cell p3">
+              <div class="priority-cell-value">${incidents?.filter(i => i.priority === 'p3').length || 0}</div>
+              <div style="color: #cbd5e1; font-size: 0.875rem;">P3 Incidents</div>
+            </div>
+            <div class="priority-cell p4">
+              <div class="priority-cell-value">${avgResponseTime > 0 ? avgResponseTime.toFixed(1) + 'h' : 'N/A'}</div>
+              <div style="color: #cbd5e1; font-size: 0.875rem;">Avg Response Time</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2 class="section-title">⏱️ Incident Timeline</h2>
+        <div class="timeline">
+          ${incidents?.slice(0, 10).map(inc => `
+            <div class="timeline-item">
+              <div class="timeline-time">${new Date(inc.opened_at).toLocaleString()}</div>
+              <div class="timeline-content">
+                <strong style="color: ${inc.priority === 'p1' ? '#ef4444' : inc.priority === 'p2' ? '#f97316' : '#eab308'};">${inc.priority?.toUpperCase()}</strong> incident ${inc.status === 'resolved' ? 'resolved' : 'opened'}
+                ${inc.resolved_at ? `<span style="color: #94a3b8;"> (${Math.round((new Date(inc.resolved_at).getTime() - new Date(inc.opened_at).getTime()) / 60000)} min)</span>` : ''}
+              </div>
+            </div>
+          `).join('') || '<p style="color: #64748b;">No recent incidents</p>'}
+        </div>
+      </div>
+      
+      <div class="section">
         <h2 class="section-title">🚨 Recent Incidents</h2>
         <table>
           <thead>
@@ -594,6 +783,87 @@ Keep it executive-friendly and action-oriented.`;
       <p style="margin-top: 8px; font-size: 0.75rem;">This report contains confidential security information. Distribution is restricted.</p>
     </div>
   </div>
+  
+  <script>
+    // Initialize severity distribution chart
+    const severityCtx = document.getElementById('severityChart');
+    if (severityCtx) {
+      new Chart(severityCtx, {
+        type: 'doughnut',
+        data: {
+          labels: ['Critical', 'High', 'Medium', 'Low'],
+          datasets: [{
+            data: [${signalsBySeverity.critical}, ${signalsBySeverity.high}, ${signalsBySeverity.medium}, ${signalsBySeverity.low}],
+            backgroundColor: ['#ef4444', '#f97316', '#eab308', '#22c55e'],
+            borderColor: '#1e293b',
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: { color: '#e2e8f0', padding: 15, font: { size: 12 } }
+            },
+            title: {
+              display: true,
+              text: 'Signals by Severity',
+              color: '#e2e8f0',
+              font: { size: 16, weight: 'bold' }
+            }
+          }
+        }
+      });
+    }
+
+    // Initialize category distribution chart
+    const categoryCtx = document.getElementById('categoryChart');
+    if (categoryCtx) {
+      const categoryData = ${JSON.stringify(signalsByCategory)};
+      const categories = Object.keys(categoryData).slice(0, 8);
+      const values = categories.map(c => categoryData[c]);
+      
+      new Chart(categoryCtx, {
+        type: 'bar',
+        data: {
+          labels: categories.map(c => c.charAt(0).toUpperCase() + c.slice(1)),
+          datasets: [{
+            label: 'Signals',
+            data: values,
+            backgroundColor: '#7c3aed',
+            borderColor: '#a855f7',
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            title: {
+              display: true,
+              text: 'Signals by Category',
+              color: '#e2e8f0',
+              font: { size: 16, weight: 'bold' }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { color: '#94a3b8' },
+              grid: { color: '#334155' }
+            },
+            x: {
+              ticks: { color: '#94a3b8', maxRotation: 45, minRotation: 45 },
+              grid: { display: false }
+            }
+          }
+        }
+      });
+    }
+  </script>
 </body>
 </html>
     `.trim();
