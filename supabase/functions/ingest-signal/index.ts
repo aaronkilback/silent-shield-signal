@@ -1,10 +1,22 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+// Input validation schema
+const SignalInputSchema = z.object({
+  source_key: z.string().optional(),
+  event: z.any().optional(),
+  text: z.string().min(1).max(10000).optional(),
+  location: z.string().max(500).optional(),
+  raw_json: z.any().optional()
+}).refine(data => data.text || data.event, {
+  message: "Either 'text' or 'event' must be provided"
+});
 
 // Rules-based classification (rules.yaml equivalent)
 const RULES = {
@@ -71,7 +83,22 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { source_key, event, text, location, raw_json } = await req.json();
+    // Validate input
+    const rawBody = await req.json();
+    const validationResult = SignalInputSchema.safeParse(rawBody);
+    
+    if (!validationResult.success) {
+      console.error('Validation error:', validationResult.error);
+      return new Response(
+        JSON.stringify({ 
+          error: 'Invalid input', 
+          details: validationResult.error.errors 
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const { source_key, event, text, location, raw_json } = validationResult.data;
     
     // Support both webhook format (source_key + event) and direct format (text + location)
     const signalText = text || JSON.stringify(event);

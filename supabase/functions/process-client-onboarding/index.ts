@@ -1,10 +1,25 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+// Input validation schema
+const ClientDataSchema = z.object({
+  clientData: z.object({
+    name: z.string().min(1).max(200).optional(),
+    organization: z.string().max(200).optional(),
+    contact_email: z.string().email().max(255).optional(),
+    contact_phone: z.string().max(50).optional(),
+    industry: z.string().max(100).optional(),
+    employee_count: z.union([z.number(), z.string()]).optional(),
+    locations: z.union([z.array(z.string()), z.string()]).optional(),
+    high_value_assets: z.union([z.array(z.string()), z.string()]).optional(),
+  }).passthrough() // Allow additional fields from various forms
+});
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -17,7 +32,22 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { clientData } = await req.json();
+    // Validate input
+    const rawBody = await req.json();
+    const validationResult = ClientDataSchema.safeParse(rawBody);
+    
+    if (!validationResult.success) {
+      console.error('Validation error:', validationResult.error);
+      return new Response(
+        JSON.stringify({ 
+          error: 'Invalid client data', 
+          details: validationResult.error.errors 
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const { clientData } = validationResult.data;
     
     console.log('Processing client onboarding data:', clientData);
 

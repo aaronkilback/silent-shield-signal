@@ -1,7 +1,7 @@
 project_id = "udbjjeppbgwjlqmaeftn"
 
 [functions.ingest-signal]
-verify_jwt = false
+verify_jwt = true
 
 [functions.incident-action]
 verify_jwt = true
@@ -10,7 +10,7 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.process-client-onboarding]
-verify_jwt = false
+verify_jwt = true
 
 [functions.monitor-weather]
 verify_jwt = false
