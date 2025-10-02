@@ -1,5 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import React from 'npm:react@18.3.1';
+import { Resend } from 'npm:resend@4.0.0';
+import { renderAsync } from 'npm:@react-email/components@0.0.22';
+import { SecurityAlertEmail } from './_templates/security-alert.tsx';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,6 +20,8 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
+
+    const resend = new Resend(Deno.env.get('RESEND_API_KEY') as string);
 
     console.log('Alert delivery: Processing pending alerts...');
 
@@ -35,13 +41,39 @@ serve(async (req) => {
 
     for (const alert of alerts || []) {
       try {
-        // In production, integrate with actual email/SMS services
-        // For now, simulate delivery
-        console.log(`Delivering alert to ${alert.recipient} via ${alert.channel}`);
-        
-        // Simulate email delivery
         if (alert.channel === 'email') {
-          console.log('Email content:', alert.response_json);
+          // Extract email data from response_json
+          const emailData = alert.response_json;
+          
+          // Render React email template
+          const html = await renderAsync(
+            React.createElement(SecurityAlertEmail, {
+              threatLevel: emailData.threat_level || 'medium',
+              signalText: emailData.body || 'Security alert',
+              location: emailData.location || 'Unknown',
+              reasoning: emailData.reasoning || '',
+              containmentActions: emailData.containment_actions || [],
+              incidentId: alert.incident_id,
+              dashboardUrl: `${Deno.env.get('SUPABASE_URL')?.replace('supabase.co', 'lovable.app') || ''}`
+            })
+          );
+
+          // Send email via Resend
+          const { error: sendError } = await resend.emails.send({
+            from: 'Security Alert <alerts@resend.dev>',
+            to: [alert.recipient],
+            subject: emailData.subject || 'Security Alert',
+            html,
+          });
+
+          if (sendError) {
+            throw sendError;
+          }
+
+          console.log(`Email sent to ${alert.recipient}`);
+        } else {
+          // For non-email channels, just log
+          console.log(`Alert channel ${alert.channel} not yet implemented`);
         }
 
         // Mark as sent
