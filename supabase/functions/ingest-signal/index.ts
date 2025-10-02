@@ -219,8 +219,28 @@ Respond ONLY with valid JSON.`
       }
     }
 
+    // Automatically trigger AI decision engine for autonomous processing
+    try {
+      fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/ai-decision-engine`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+        },
+        body: JSON.stringify({ signal_id: signal.id })
+      }).catch(err => {
+        console.error('Error triggering AI decision engine:', err);
+      });
+    } catch (error) {
+      console.error('Failed to trigger AI decision engine:', error);
+      // Don't fail the main request if AI processing fails
+    }
+
     return new Response(
-      JSON.stringify({ signal_id: signal.id }),
+      JSON.stringify({ 
+        signal_id: signal.id,
+        ai_processing: 'triggered'
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {

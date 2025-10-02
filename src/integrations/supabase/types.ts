@@ -88,6 +88,48 @@ export type Database = {
         }
         Relationships: []
       }
+      automation_metrics: {
+        Row: {
+          accuracy_rate: number | null
+          alerts_sent: number | null
+          average_response_time_seconds: number | null
+          created_at: string
+          false_positive_rate: number | null
+          id: string
+          incidents_auto_escalated: number | null
+          incidents_created: number | null
+          metric_date: string
+          osint_scans_completed: number | null
+          signals_processed: number | null
+        }
+        Insert: {
+          accuracy_rate?: number | null
+          alerts_sent?: number | null
+          average_response_time_seconds?: number | null
+          created_at?: string
+          false_positive_rate?: number | null
+          id?: string
+          incidents_auto_escalated?: number | null
+          incidents_created?: number | null
+          metric_date?: string
+          osint_scans_completed?: number | null
+          signals_processed?: number | null
+        }
+        Update: {
+          accuracy_rate?: number | null
+          alerts_sent?: number | null
+          average_response_time_seconds?: number | null
+          created_at?: string
+          false_positive_rate?: number | null
+          id?: string
+          incidents_auto_escalated?: number | null
+          incidents_created?: number | null
+          metric_date?: string
+          osint_scans_completed?: number | null
+          signals_processed?: number | null
+        }
+        Relationships: []
+      }
       clients: {
         Row: {
           contact_email: string | null
@@ -186,6 +228,53 @@ export type Database = {
             columns: ["owner_user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      incident_outcomes: {
+        Row: {
+          created_at: string
+          false_positive: boolean | null
+          id: string
+          improvement_suggestions: string[] | null
+          incident_id: string | null
+          lessons_learned: string | null
+          outcome_type: string
+          response_time_seconds: number | null
+          updated_at: string
+          was_accurate: boolean | null
+        }
+        Insert: {
+          created_at?: string
+          false_positive?: boolean | null
+          id?: string
+          improvement_suggestions?: string[] | null
+          incident_id?: string | null
+          lessons_learned?: string | null
+          outcome_type: string
+          response_time_seconds?: number | null
+          updated_at?: string
+          was_accurate?: boolean | null
+        }
+        Update: {
+          created_at?: string
+          false_positive?: boolean | null
+          id?: string
+          improvement_suggestions?: string[] | null
+          incident_id?: string | null
+          lessons_learned?: string | null
+          outcome_type?: string
+          response_time_seconds?: number | null
+          updated_at?: string
+          was_accurate?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "incident_outcomes_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
             referencedColumns: ["id"]
           },
         ]

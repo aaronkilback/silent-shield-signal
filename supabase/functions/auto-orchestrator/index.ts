@@ -123,19 +123,31 @@ serve(async (req) => {
 
     // 4. Auto-close resolved incidents older than 7 days
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const { error: closeError } = await supabase
+    const { data: resolvedIncidents, error: resolvedError } = await supabase
       .from('incidents')
-      .update({
-        status: 'closed',
-        timeline_json: supabase.raw(`
-          timeline_json || '[{"timestamp": "${new Date().toISOString()}", 
-          "event": "Auto-closed", 
-          "details": "Automatically closed after 7 days of resolution", 
-          "actor": "Auto-Orchestrator"}]'::jsonb
-        `)
-      })
+      .select('*')
       .eq('status', 'resolved')
       .lt('resolved_at', sevenDaysAgo);
+
+    if (!resolvedError && resolvedIncidents) {
+      for (const incident of resolvedIncidents) {
+        await supabase
+          .from('incidents')
+          .update({
+            status: 'closed',
+            timeline_json: [
+              ...(incident.timeline_json || []),
+              {
+                timestamp: new Date().toISOString(),
+                event: 'Auto-closed',
+                details: 'Automatically closed after 7 days of resolution',
+                actor: 'Auto-Orchestrator'
+              }
+            ]
+          })
+          .eq('id', incident.id);
+      }
+    }
 
     return new Response(
       JSON.stringify({

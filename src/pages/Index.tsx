@@ -6,6 +6,7 @@ import { RiskSnapshot } from "@/components/RiskSnapshot";
 import { SignalIngestForm } from "@/components/SignalIngestForm";
 import { SLAMetrics } from "@/components/SLAMetrics";
 import { RiskSnapshotExport } from "@/components/RiskSnapshotExport";
+import AutonomousSystemStatus from "@/components/AutonomousSystemStatus";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
@@ -37,6 +38,7 @@ const Index = () => {
     <div className="min-h-screen bg-background">
       <Header />
       <main className="container mx-auto px-6 py-8 space-y-6">
+        <AutonomousSystemStatus />
         <MetricsPanel />
         
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -180,7 +180,7 @@ AI Analysis:
 ${decision.reasoning}
 
 Recommended Actions:
-${decision.containment_actions?.map((a, i) => `${i + 1}. ${a}`).join('\n')}
+${decision.containment_actions?.map((a: string, i: number) => `${i + 1}. ${a}`).join('\n')}
 
 This alert was generated and sent automatically by the AI Decision Engine.
             `
