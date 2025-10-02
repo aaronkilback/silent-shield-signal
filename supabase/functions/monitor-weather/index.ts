@@ -22,8 +22,8 @@ serve(async (req) => {
     // Get all clients with locations
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, location')
-      .not('location', 'is', null);
+      .select('id, name, locations')
+      .not('locations', 'is', null);
 
     if (clientsError) throw clientsError;
 
@@ -55,8 +55,9 @@ serve(async (req) => {
           for (const alert of weatherData.features.slice(0, 3)) {
             const properties = alert.properties;
             
-            // Check if alert affects client location (simplified check)
-            if (client.location && properties.areaDesc?.toLowerCase().includes(client.location.toLowerCase())) {
+            // Check if alert affects client locations (simplified check)
+            const clientLocations = (client.locations || []) as string[];
+            if (clientLocations.some(loc => properties.areaDesc?.toLowerCase().includes(loc.toLowerCase()))) {
               const signalText = `Weather Alert: ${properties.event} - ${properties.headline}`;
               
               const { error: signalError } = await supabase

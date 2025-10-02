@@ -22,8 +22,8 @@ serve(async (req) => {
     // Get all clients with locations
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, location')
-      .not('location', 'is', null);
+      .select('id, name, locations')
+      .not('locations', 'is', null);
 
     if (clientsError) throw clientsError;
 
