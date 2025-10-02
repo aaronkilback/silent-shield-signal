@@ -16,9 +16,8 @@ export const RiskSnapshotExport = () => {
 
       const { data, error } = await supabase.functions.invoke("generate-report", {
         body: {
-          type: "72h-snapshot",
-          period_start: periodStart.toISOString(),
-          period_end: periodEnd.toISOString(),
+          report_type: "72h-snapshot",
+          period_hours: 72,
         },
       });
 

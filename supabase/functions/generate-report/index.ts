@@ -13,19 +13,25 @@ serve(async (req) => {
 
   try {
     const authHeader = req.headers.get('Authorization')!;
-    const supabase = createClient(
+    const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
     if (authError || !user) {
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    // Use service role for inserting reports (bypasses RLS)
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    );
 
     const { report_type, period_hours } = await req.json();
     
@@ -35,8 +41,8 @@ serve(async (req) => {
     periodStart.setHours(periodStart.getHours() - (period_hours || 72));
     const periodEnd = new Date();
 
-    // Fetch signals in time window
-    const { data: signals, error: signalsError } = await supabase
+    // Fetch signals in time window (using user auth)
+    const { data: signals, error: signalsError } = await supabaseClient
       .from('signals')
       .select('*')
       .gte('received_at', periodStart.toISOString())
@@ -45,8 +51,8 @@ serve(async (req) => {
 
     if (signalsError) throw signalsError;
 
-    // Fetch incidents in time window
-    const { data: incidents, error: incidentsError } = await supabase
+    // Fetch incidents in time window (using user auth)
+    const { data: incidents, error: incidentsError } = await supabaseClient
       .from('incidents')
       .select('*')
       .gte('opened_at', periodStart.toISOString())
