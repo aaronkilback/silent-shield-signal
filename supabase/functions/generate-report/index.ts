@@ -37,6 +37,8 @@ serve(async (req) => {
     
     console.log(`Generating ${report_type} report for last ${period_hours} hours`);
 
+    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+
     const periodStart = new Date();
     periodStart.setHours(periodStart.getHours() - (period_hours || 72));
     const periodEnd = new Date();
@@ -66,8 +68,44 @@ serve(async (req) => {
     const openIncidents = incidents?.filter(i => i.status === 'open').length || 0;
     const resolvedIncidents = incidents?.filter(i => i.status === 'resolved').length || 0;
 
+    // Generate AI recommendations for top signals
+    const signalsWithRecommendations = await Promise.all(
+      (signals || []).slice(0, 20).map(async (signal) => {
+        if (!LOVABLE_API_KEY) return { ...signal, recommendations: 'AI recommendations unavailable' };
+        
+        try {
+          const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'google/gemini-2.5-flash',
+              messages: [
+                {
+                  role: 'system',
+                  content: 'You are a cybersecurity analyst. Provide 3-4 brief, actionable recommendations for responding to this security signal. Be concise and specific.'
+                },
+                {
+                  role: 'user',
+                  content: `Signal: ${signal.normalized_text}\nSeverity: ${signal.severity}\nCategory: ${signal.category}\nLocation: ${signal.location || 'Unknown'}`
+                }
+              ],
+            }),
+          });
+
+          const aiData = await aiResponse.json();
+          const recommendations = aiData.choices?.[0]?.message?.content || 'No recommendations available';
+          return { ...signal, recommendations };
+        } catch (error) {
+          console.error('Error generating recommendations:', error);
+          return { ...signal, recommendations: 'Unable to generate recommendations' };
+        }
+      })
+    );
+
     // Use AI to generate executive summary
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     
     const summaryPrompt = `Generate a concise executive risk snapshot for the last ${period_hours} hours.
     
@@ -479,7 +517,41 @@ Keep it executive-friendly and action-oriented.`;
       </div>
       
       <div class="section">
-        <h2 class="section-title">📡 Signal Intelligence</h2>
+        <h2 class="section-title">📡 Signal Intelligence (Click for AI Recommendations)</h2>
+        <style>
+          .signal-row {
+            cursor: pointer;
+            transition: background-color 0.2s;
+          }
+          .signal-row:hover {
+            background: #334155 !important;
+          }
+          .signal-details {
+            display: none;
+            background: #0f172a;
+            border-top: 2px solid #7c3aed;
+          }
+          .signal-row.expanded + .signal-details {
+            display: table-row;
+          }
+          .recommendations-box {
+            padding: 24px;
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            border-radius: 8px;
+            margin: 16px;
+            border-left: 4px solid #7c3aed;
+          }
+          .recommendations-box h4 {
+            color: #a855f7;
+            margin-bottom: 12px;
+            font-size: 1rem;
+          }
+          .recommendations-box p {
+            color: #e2e8f0;
+            line-height: 1.8;
+            white-space: pre-wrap;
+          }
+        </style>
         <table>
           <thead>
             <tr>
@@ -490,12 +562,26 @@ Keep it executive-friendly and action-oriented.`;
             </tr>
           </thead>
           <tbody>
-            ${signals?.length ? signals.slice(0, 50).map(sig => `
-              <tr>
+            ${signalsWithRecommendations?.length ? signalsWithRecommendations.map((sig, idx) => `
+              <tr class="signal-row" onclick="this.classList.toggle('expanded')">
                 <td><span class="badge ${sig.severity === 'critical' ? 'critical' : sig.severity === 'high' ? 'high' : sig.severity === 'medium' ? 'medium' : 'low'}">${sig.severity || 'LOW'}</span></td>
                 <td>${sig.category || 'Unknown'}</td>
                 <td>${new Date(sig.received_at).toLocaleString()}</td>
                 <td>${sig.normalized_text?.substring(0, 120) || 'No details'}${sig.normalized_text?.length > 120 ? '...' : ''}</td>
+              </tr>
+              <tr class="signal-details">
+                <td colspan="4">
+                  <div class="recommendations-box">
+                    <h4>🎯 AI-Generated Recommendations</h4>
+                    <p>${sig.recommendations}</p>
+                    ${sig.raw_json ? `
+                      <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #475569;">
+                        <strong style="color: #94a3b8;">Additional Details:</strong>
+                        <pre style="margin-top: 8px; color: #cbd5e1; font-size: 0.85rem; white-space: pre-wrap;">${JSON.stringify(sig.raw_json, null, 2)}</pre>
+                      </div>
+                    ` : ''}
+                  </div>
+                </td>
               </tr>
             `).join('') : '<tr><td colspan="4" style="text-align: center; color: #64748b;">No signals in this period</td></tr>'}
           </tbody>
