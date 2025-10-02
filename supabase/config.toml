@@ -1,1 +1,10 @@
 project_id = "udbjjeppbgwjlqmaeftn"
+
+[functions.ingest-signal]
+verify_jwt = false
+
+[functions.incident-action]
+verify_jwt = true
+
+[functions.generate-report]
+verify_jwt = true

@@ -1,7 +1,11 @@
-import { Shield, Activity } from "lucide-react";
+import { Shield, Activity, LogOut } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/useAuth";
 
 export const Header = () => {
+  const { signOut } = useAuth();
+
   return (
     <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
       <div className="container mx-auto px-6 py-4">
@@ -25,6 +29,15 @@ export const Header = () => {
             <Badge variant="outline" className="text-primary border-primary/50 font-mono">
               {new Date().toLocaleTimeString()}
             </Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={signOut}
+              className="gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              Sign Out
+            </Button>
           </div>
         </div>
       </div>
