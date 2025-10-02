@@ -11,3 +11,15 @@ verify_jwt = true
 
 [functions.process-client-onboarding]
 verify_jwt = false
+
+[functions.monitor-weather]
+verify_jwt = false
+
+[functions.monitor-wildfires]
+verify_jwt = false
+
+[functions.monitor-earthquakes]
+verify_jwt = false
+
+[functions.monitor-news]
+verify_jwt = false
