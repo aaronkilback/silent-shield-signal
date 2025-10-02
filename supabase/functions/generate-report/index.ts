@@ -130,8 +130,84 @@ Keep it executive-friendly and action-oriented.`;
 
     if (reportError) throw reportError;
 
+    // Generate HTML report
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>72-Hour Risk Snapshot - ArachnNet™</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+    h1, h2 { color: #333; }
+    .metric { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
+    .critical { color: #dc2626; font-weight: bold; }
+    .high { color: #ea580c; font-weight: bold; }
+    .medium { color: #eab308; }
+    table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background-color: #333; color: white; }
+  </style>
+</head>
+<body>
+  <h1>ArachnNet™ 72-Hour Risk Snapshot</h1>
+  <p>Period: ${periodStart} to ${periodEnd}</p>
+  <p>Generated: ${new Date().toISOString()}</p>
+  
+  <div class="metric">
+    <h2>Executive Summary</h2>
+    ${executiveSummary}
+  </div>
+  
+  <div class="metric">
+    <h2>Key Metrics</h2>
+    <p>Total Signals: ${signals.length}</p>
+    <p>Total Incidents: ${incidents.length}</p>
+    <p>Critical Incidents: ${incidents.filter(i => i.priority === 'p1').length}</p>
+    <p>High Priority: ${incidents.filter(i => i.priority === 'p2').length}</p>
+  </div>
+  
+  <h2>Recent Incidents</h2>
+  <table>
+    <tr>
+      <th>Priority</th>
+      <th>Status</th>
+      <th>Opened</th>
+      <th>Severity</th>
+    </tr>
+    ${incidents.map(inc => `
+      <tr>
+        <td class="${inc.priority === 'p1' ? 'critical' : inc.priority === 'p2' ? 'high' : 'medium'}">${inc.priority?.toUpperCase()}</td>
+        <td>${inc.status}</td>
+        <td>${new Date(inc.opened_at).toLocaleString()}</td>
+        <td>${inc.signals?.severity || 'N/A'}</td>
+      </tr>
+    `).join('')}
+  </table>
+  
+  <h2>Signals Summary</h2>
+  <table>
+    <tr>
+      <th>Severity</th>
+      <th>Category</th>
+      <th>Received</th>
+      <th>Text</th>
+    </tr>
+    ${signals.slice(0, 50).map(sig => `
+      <tr>
+        <td class="${sig.severity === 'critical' ? 'critical' : sig.severity === 'high' ? 'high' : 'medium'}">${sig.severity}</td>
+        <td>${sig.category || 'Unknown'}</td>
+        <td>${new Date(sig.received_at).toLocaleString()}</td>
+        <td>${sig.normalized_text?.substring(0, 100)}...</td>
+      </tr>
+    `).join('')}
+  </table>
+</body>
+</html>
+    `.trim();
+
     return new Response(
-      JSON.stringify({ report }),
+      JSON.stringify({ report, html }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {

@@ -6,6 +6,60 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Rules-based classification (rules.yaml equivalent)
+const RULES = {
+  p1: {
+    keywords: ['credible threat', 'weapon', 'kidnap', 'active shooter', 'bomb'],
+    severity: 'critical',
+    priority: 'p1',
+    shouldOpenIncident: true
+  },
+  p2: {
+    keywords: ['suspicious', 'prowler', 'tamper', 'breach attempt', 'intrusion'],
+    severity: 'high',
+    priority: 'p2',
+    shouldOpenIncident: true
+  }
+};
+
+function applyRules(text: string) {
+  const lowerText = text.toLowerCase();
+  
+  // Check P1 rules first
+  for (const keyword of RULES.p1.keywords) {
+    if (lowerText.includes(keyword.toLowerCase())) {
+      return {
+        severity: RULES.p1.severity,
+        priority: RULES.p1.priority,
+        shouldOpenIncident: RULES.p1.shouldOpenIncident,
+        matchedRule: 'p1',
+        matchedKeyword: keyword
+      };
+    }
+  }
+  
+  // Check P2 rules
+  for (const keyword of RULES.p2.keywords) {
+    if (lowerText.includes(keyword.toLowerCase())) {
+      return {
+        severity: RULES.p2.severity,
+        priority: RULES.p2.priority,
+        shouldOpenIncident: RULES.p2.shouldOpenIncident,
+        matchedRule: 'p2',
+        matchedKeyword: keyword
+      };
+    }
+  }
+  
+  return {
+    severity: null,
+    priority: null,
+    shouldOpenIncident: false,
+    matchedRule: null,
+    matchedKeyword: null
+  };
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -17,33 +71,48 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { source_key, event } = await req.json();
+    const { source_key, event, text, location, raw_json } = await req.json();
     
-    console.log('Ingesting signal from source:', source_key);
+    // Support both webhook format (source_key + event) and direct format (text + location)
+    const signalText = text || JSON.stringify(event);
+    const signalLocation = location || null;
+    const signalRaw = raw_json || event || { text: signalText };
+    
+    console.log('Ingesting signal:', signalText.substring(0, 100));
 
-    // Find source by key (simplified - assume source name = source_key for now)
-    const { data: source, error: sourceError } = await supabase
-      .from('sources')
-      .select('id, is_active')
-      .eq('name', source_key)
-      .single();
+    let sourceId = null;
+    
+    // If source_key provided, validate source
+    if (source_key) {
+      const { data: source, error: sourceError } = await supabase
+        .from('sources')
+        .select('id, is_active')
+        .eq('name', source_key)
+        .single();
 
-    if (sourceError || !source) {
-      console.error('Source not found:', source_key);
-      return new Response(
-        JSON.stringify({ error: 'Source not found or inactive' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      if (sourceError || !source) {
+        console.error('Source not found:', source_key);
+        return new Response(
+          JSON.stringify({ error: 'Source not found or inactive' }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (!source.is_active) {
+        return new Response(
+          JSON.stringify({ error: 'Source is not active' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      sourceId = source.id;
     }
 
-    if (!source.is_active) {
-      return new Response(
-        JSON.stringify({ error: 'Source is not active' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Use AI to classify and normalize the signal
+    // Step 1: Apply rules-based classification
+    const rulesResult = applyRules(signalText);
+    console.log('Rules matched:', rulesResult);
+    
+    // Step 2: Enhance with AI classification
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -68,18 +137,18 @@ Respond ONLY with valid JSON.`
           },
           {
             role: 'user',
-            content: JSON.stringify(event)
+            content: signalText
           }
         ],
       }),
     });
 
     let classification = {
-      normalized_text: JSON.stringify(event),
+      normalized_text: signalText,
       entity_tags: [],
-      location: null,
+      location: signalLocation,
       category: 'unknown',
-      severity: 'medium',
+      severity: rulesResult.severity || 'medium',
       confidence: 50
     };
 
@@ -90,6 +159,10 @@ Respond ONLY with valid JSON.`
         try {
           const parsed = JSON.parse(aiContent);
           classification = { ...classification, ...parsed };
+          // Keep rules-based severity if matched
+          if (rulesResult.severity) {
+            classification.severity = rulesResult.severity;
+          }
         } catch (e) {
           console.error('Failed to parse AI response:', e);
         }
@@ -100,8 +173,8 @@ Respond ONLY with valid JSON.`
     const { data: signal, error: insertError } = await supabase
       .from('signals')
       .insert({
-        source_id: source.id,
-        raw_json: event,
+        source_id: sourceId,
+        raw_json: signalRaw,
         normalized_text: classification.normalized_text,
         entity_tags: classification.entity_tags,
         location: classification.location,
@@ -119,6 +192,32 @@ Respond ONLY with valid JSON.`
     }
 
     console.log('Signal ingested:', signal.id);
+    
+    // Auto-open incident based on rules
+    if (rulesResult.shouldOpenIncident) {
+      const { error: incidentError } = await supabase
+        .from('incidents')
+        .insert({
+          signal_id: signal.id,
+          priority: rulesResult.priority,
+          status: 'open',
+          sla_targets_json: { 
+            mttd: 10, 
+            mttr: rulesResult.priority === 'p1' ? 60 : 120 
+          },
+          timeline_json: [{
+            timestamp: new Date().toISOString(),
+            action: 'incident_opened',
+            details: `Auto-opened by rule: ${rulesResult.matchedRule} (${rulesResult.matchedKeyword})`
+          }]
+        });
+      
+      if (incidentError) {
+        console.error('Error creating incident:', incidentError);
+      } else {
+        console.log('Incident auto-opened for signal:', signal.id);
+      }
+    }
 
     return new Response(
       JSON.stringify({ signal_id: signal.id }),
