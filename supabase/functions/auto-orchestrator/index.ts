@@ -94,7 +94,9 @@ serve(async (req) => {
       'monitor-weather',
       'monitor-wildfires', 
       'monitor-earthquakes',
-      'monitor-news'
+      'monitor-news',
+      'monitor-social',
+      'monitor-threat-intel'
     ];
 
     let monitorsRun = 0;

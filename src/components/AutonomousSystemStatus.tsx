@@ -197,11 +197,11 @@ export default function AutonomousSystemStatus() {
             <div className="flex items-center justify-between">
               <span className="text-2xl font-bold">{metrics?.osint_scans_completed || 0}</span>
               <Badge variant="default" className="bg-purple-500">
-                4 sources
+                6 sources
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Weather, wildfire, earthquake, and news monitoring
+              Weather, wildfire, earthquake, news, social media & threat intel
             </p>
           </CardContent>
         </Card>

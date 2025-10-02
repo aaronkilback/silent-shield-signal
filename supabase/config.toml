@@ -24,6 +24,12 @@ verify_jwt = false
 [functions.monitor-news]
 verify_jwt = false
 
+[functions.monitor-social]
+verify_jwt = false
+
+[functions.monitor-threat-intel]
+verify_jwt = false
+
 [functions.ai-decision-engine]
 verify_jwt = false
 

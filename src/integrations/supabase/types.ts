@@ -184,6 +184,48 @@ export type Database = {
         }
         Relationships: []
       }
+      escalation_rules: {
+        Row: {
+          actions: Json
+          conditions: Json
+          created_at: string
+          description: string | null
+          escalate_after_minutes: number
+          id: string
+          is_active: boolean
+          name: string
+          notify_recipients: string[]
+          priority: string
+          updated_at: string
+        }
+        Insert: {
+          actions: Json
+          conditions: Json
+          created_at?: string
+          description?: string | null
+          escalate_after_minutes?: number
+          id?: string
+          is_active?: boolean
+          name: string
+          notify_recipients?: string[]
+          priority: string
+          updated_at?: string
+        }
+        Update: {
+          actions?: Json
+          conditions?: Json
+          created_at?: string
+          description?: string | null
+          escalate_after_minutes?: number
+          id?: string
+          is_active?: boolean
+          name?: string
+          notify_recipients?: string[]
+          priority?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       improvements: {
         Row: {
           created_at: string
