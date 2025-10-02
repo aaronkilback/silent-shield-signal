@@ -14,7 +14,397 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      alerts: {
+        Row: {
+          channel: string
+          created_at: string
+          id: string
+          incident_id: string | null
+          recipient: string
+          response_json: Json | null
+          sent_at: string | null
+          status: Database["public"]["Enums"]["alert_status"]
+          updated_at: string
+        }
+        Insert: {
+          channel: string
+          created_at?: string
+          id?: string
+          incident_id?: string | null
+          recipient: string
+          response_json?: Json | null
+          sent_at?: string | null
+          status?: Database["public"]["Enums"]["alert_status"]
+          updated_at?: string
+        }
+        Update: {
+          channel?: string
+          created_at?: string
+          id?: string
+          incident_id?: string | null
+          recipient?: string
+          response_json?: Json | null
+          sent_at?: string | null
+          status?: Database["public"]["Enums"]["alert_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "alerts_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      attachments: {
+        Row: {
+          created_at: string
+          filename: string
+          id: string
+          mime: string
+          parent_id: string
+          parent_type: string
+          storage_url: string
+        }
+        Insert: {
+          created_at?: string
+          filename: string
+          id?: string
+          mime: string
+          parent_id: string
+          parent_type: string
+          storage_url: string
+        }
+        Update: {
+          created_at?: string
+          filename?: string
+          id?: string
+          mime?: string
+          parent_id?: string
+          parent_type?: string
+          storage_url?: string
+        }
+        Relationships: []
+      }
+      improvements: {
+        Row: {
+          created_at: string
+          description: string
+          id: string
+          incident_id: string | null
+          owner_user_id: string | null
+          shot_or_brick: Database["public"]["Enums"]["improvement_type"]
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description: string
+          id?: string
+          incident_id?: string | null
+          owner_user_id?: string | null
+          shot_or_brick: Database["public"]["Enums"]["improvement_type"]
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string
+          id?: string
+          incident_id?: string | null
+          owner_user_id?: string | null
+          shot_or_brick?: Database["public"]["Enums"]["improvement_type"]
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "improvements_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "improvements_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      incidents: {
+        Row: {
+          acknowledged_at: string | null
+          contained_at: string | null
+          created_at: string
+          id: string
+          opened_at: string
+          owner_user_id: string | null
+          priority: Database["public"]["Enums"]["incident_priority"]
+          resolved_at: string | null
+          signal_id: string | null
+          sla_targets_json: Json | null
+          status: Database["public"]["Enums"]["incident_status"]
+          timeline_json: Json | null
+          updated_at: string
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          contained_at?: string | null
+          created_at?: string
+          id?: string
+          opened_at?: string
+          owner_user_id?: string | null
+          priority?: Database["public"]["Enums"]["incident_priority"]
+          resolved_at?: string | null
+          signal_id?: string | null
+          sla_targets_json?: Json | null
+          status?: Database["public"]["Enums"]["incident_status"]
+          timeline_json?: Json | null
+          updated_at?: string
+        }
+        Update: {
+          acknowledged_at?: string | null
+          contained_at?: string | null
+          created_at?: string
+          id?: string
+          opened_at?: string
+          owner_user_id?: string | null
+          priority?: Database["public"]["Enums"]["incident_priority"]
+          resolved_at?: string | null
+          signal_id?: string | null
+          sla_targets_json?: Json | null
+          status?: Database["public"]["Enums"]["incident_status"]
+          timeline_json?: Json | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "incidents_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "incidents_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      playbooks: {
+        Row: {
+          created_at: string
+          id: string
+          key: string
+          markdown: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          key: string
+          markdown: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          key?: string
+          markdown?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          role: Database["public"]["Enums"]["app_role"]
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id: string
+          name: string
+          role?: Database["public"]["Enums"]["app_role"]
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      reports: {
+        Row: {
+          created_at: string
+          generated_at: string
+          id: string
+          meta_json: Json | null
+          period_end: string
+          period_start: string
+          storage_url: string | null
+          type: string
+        }
+        Insert: {
+          created_at?: string
+          generated_at?: string
+          id?: string
+          meta_json?: Json | null
+          period_end: string
+          period_start: string
+          storage_url?: string | null
+          type: string
+        }
+        Update: {
+          created_at?: string
+          generated_at?: string
+          id?: string
+          meta_json?: Json | null
+          period_end?: string
+          period_start?: string
+          storage_url?: string | null
+          type?: string
+        }
+        Relationships: []
+      }
+      rules: {
+        Row: {
+          actions_json: Json
+          condition_json: Json
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          actions_json: Json
+          condition_json: Json
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          actions_json?: Json
+          condition_json?: Json
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      signals: {
+        Row: {
+          category: string | null
+          confidence: number | null
+          created_at: string
+          entity_tags: string[] | null
+          id: string
+          location: string | null
+          momentum: number | null
+          normalized_text: string | null
+          proximity: number | null
+          raw_json: Json | null
+          received_at: string
+          severity: string | null
+          source_id: string | null
+          status: Database["public"]["Enums"]["signal_status"]
+          updated_at: string
+        }
+        Insert: {
+          category?: string | null
+          confidence?: number | null
+          created_at?: string
+          entity_tags?: string[] | null
+          id?: string
+          location?: string | null
+          momentum?: number | null
+          normalized_text?: string | null
+          proximity?: number | null
+          raw_json?: Json | null
+          received_at?: string
+          severity?: string | null
+          source_id?: string | null
+          status?: Database["public"]["Enums"]["signal_status"]
+          updated_at?: string
+        }
+        Update: {
+          category?: string | null
+          confidence?: number | null
+          created_at?: string
+          entity_tags?: string[] | null
+          id?: string
+          location?: string | null
+          momentum?: number | null
+          normalized_text?: string | null
+          proximity?: number | null
+          raw_json?: Json | null
+          received_at?: string
+          severity?: string | null
+          source_id?: string | null
+          status?: Database["public"]["Enums"]["signal_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signals_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sources: {
+        Row: {
+          config_json: Json | null
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+          type: string
+          updated_at: string
+        }
+        Insert: {
+          config_json?: Json | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          type: string
+          updated_at?: string
+        }
+        Update: {
+          config_json?: Json | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          type?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -23,7 +413,22 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      alert_status: "pending" | "sent" | "delivered" | "failed" | "acknowledged"
+      app_role: "admin" | "analyst" | "viewer"
+      improvement_type: "shot" | "brick"
+      incident_priority: "p1" | "p2" | "p3" | "p4"
+      incident_status:
+        | "open"
+        | "acknowledged"
+        | "contained"
+        | "resolved"
+        | "closed"
+      signal_status:
+        | "new"
+        | "triaged"
+        | "investigating"
+        | "resolved"
+        | "false_positive"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +555,25 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      alert_status: ["pending", "sent", "delivered", "failed", "acknowledged"],
+      app_role: ["admin", "analyst", "viewer"],
+      improvement_type: ["shot", "brick"],
+      incident_priority: ["p1", "p2", "p3", "p4"],
+      incident_status: [
+        "open",
+        "acknowledged",
+        "contained",
+        "resolved",
+        "closed",
+      ],
+      signal_status: [
+        "new",
+        "triaged",
+        "investigating",
+        "resolved",
+        "false_positive",
+      ],
+    },
   },
 } as const
