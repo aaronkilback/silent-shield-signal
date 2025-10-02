@@ -28,7 +28,7 @@ serve(async (req) => {
     // Get all clients
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, industry');
+      .select('id, name, organization, industry');
 
     if (clientsError) throw clientsError;
 
@@ -77,8 +77,17 @@ serve(async (req) => {
           // Create signals for relevant clients
           for (const client of clients || []) {
             try {
-              // Check if relevant to client's industry
-              if (client.industry && combinedText.includes(client.industry.toLowerCase())) {
+              // Check if relevant to client's name, organization, or industry
+              const clientName = client.name?.toLowerCase() || '';
+              const clientOrg = client.organization?.toLowerCase() || '';
+              const clientIndustry = client.industry?.toLowerCase() || '';
+              
+              const isRelevant = 
+                (clientName && combinedText.includes(clientName)) ||
+                (clientOrg && combinedText.includes(clientOrg)) ||
+                (clientIndustry && combinedText.includes(clientIndustry));
+
+              if (isRelevant) {
                 const { error: signalError } = await supabase
                   .from('signals')
                   .insert({
