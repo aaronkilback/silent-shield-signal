@@ -88,6 +88,60 @@ export type Database = {
         }
         Relationships: []
       }
+      clients: {
+        Row: {
+          contact_email: string | null
+          contact_phone: string | null
+          created_at: string
+          employee_count: number | null
+          high_value_assets: string[] | null
+          id: string
+          industry: string | null
+          locations: string[] | null
+          name: string
+          onboarding_data: Json | null
+          organization: string | null
+          risk_assessment: Json | null
+          status: string
+          threat_profile: Json | null
+          updated_at: string
+        }
+        Insert: {
+          contact_email?: string | null
+          contact_phone?: string | null
+          created_at?: string
+          employee_count?: number | null
+          high_value_assets?: string[] | null
+          id?: string
+          industry?: string | null
+          locations?: string[] | null
+          name: string
+          onboarding_data?: Json | null
+          organization?: string | null
+          risk_assessment?: Json | null
+          status?: string
+          threat_profile?: Json | null
+          updated_at?: string
+        }
+        Update: {
+          contact_email?: string | null
+          contact_phone?: string | null
+          created_at?: string
+          employee_count?: number | null
+          high_value_assets?: string[] | null
+          id?: string
+          industry?: string | null
+          locations?: string[] | null
+          name?: string
+          onboarding_data?: Json | null
+          organization?: string | null
+          risk_assessment?: Json | null
+          status?: string
+          threat_profile?: Json | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       improvements: {
         Row: {
           created_at: string
@@ -139,6 +193,7 @@ export type Database = {
       incidents: {
         Row: {
           acknowledged_at: string | null
+          client_id: string | null
           contained_at: string | null
           created_at: string
           id: string
@@ -154,6 +209,7 @@ export type Database = {
         }
         Insert: {
           acknowledged_at?: string | null
+          client_id?: string | null
           contained_at?: string | null
           created_at?: string
           id?: string
@@ -169,6 +225,7 @@ export type Database = {
         }
         Update: {
           acknowledged_at?: string | null
+          client_id?: string | null
           contained_at?: string | null
           created_at?: string
           id?: string
@@ -183,6 +240,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "incidents_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "incidents_owner_user_id_fkey"
             columns: ["owner_user_id"]
@@ -316,6 +380,7 @@ export type Database = {
       signals: {
         Row: {
           category: string | null
+          client_id: string | null
           confidence: number | null
           created_at: string
           entity_tags: string[] | null
@@ -333,6 +398,7 @@ export type Database = {
         }
         Insert: {
           category?: string | null
+          client_id?: string | null
           confidence?: number | null
           created_at?: string
           entity_tags?: string[] | null
@@ -350,6 +416,7 @@ export type Database = {
         }
         Update: {
           category?: string | null
+          client_id?: string | null
           confidence?: number | null
           created_at?: string
           entity_tags?: string[] | null
@@ -366,6 +433,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "signals_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "signals_source_id_fkey"
             columns: ["source_id"]

@@ -8,3 +8,6 @@ verify_jwt = true
 
 [functions.generate-report]
 verify_jwt = true
+
+[functions.process-client-onboarding]
+verify_jwt = false

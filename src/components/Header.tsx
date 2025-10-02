@@ -1,10 +1,13 @@
-import { Shield, Activity, LogOut } from "lucide-react";
+import { Shield, Activity, LogOut, Building2, Home } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
+import { useNavigate, useLocation } from "react-router-dom";
 
 export const Header = () => {
   const { signOut } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   return (
     <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
@@ -22,6 +25,24 @@ export const Header = () => {
             </div>
           </div>
           <div className="flex items-center gap-4">
+            <nav className="flex items-center gap-2">
+              <Button
+                onClick={() => navigate("/")}
+                variant={location.pathname === "/" ? "default" : "ghost"}
+                size="sm"
+              >
+                <Home className="w-4 h-4 mr-2" />
+                Dashboard
+              </Button>
+              <Button
+                onClick={() => navigate("/clients")}
+                variant={location.pathname === "/clients" ? "default" : "ghost"}
+                size="sm"
+              >
+                <Building2 className="w-4 h-4 mr-2" />
+                Clients
+              </Button>
+            </nav>
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/50">
               <Activity className="w-4 h-4 text-status-active animate-pulse" />
               <span className="text-sm text-foreground font-medium">Systems Operational</span>
