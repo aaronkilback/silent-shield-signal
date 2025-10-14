@@ -19,8 +19,8 @@ export const Header = () => {
                 <Shield className="w-8 h-8 text-primary" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-foreground tracking-tight">ArachnNet™</h1>
-                <p className="text-sm text-muted-foreground">Silent Shield™ Security Intelligence</p>
+                <h1 className="text-2xl font-bold text-foreground tracking-tight">Fortress AI</h1>
+                <p className="text-sm text-muted-foreground">Security Intelligence Platform</p>
               </div>
             </div>
           </div>

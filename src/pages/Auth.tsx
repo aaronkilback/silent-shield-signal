@@ -37,7 +37,7 @@ const Auth = () => {
         });
 
         if (error) throw error;
-        toast.success("Welcome back to ArachnNet™");
+        toast.success("Welcome back to Fortress AI");
         navigate("/");
       } else {
         const { error } = await supabase.auth.signUp({
@@ -72,9 +72,9 @@ const Auth = () => {
           </div>
         </div>
         
-        <h1 className="text-3xl font-bold text-center mb-2 text-foreground">ArachnNet™</h1>
+        <h1 className="text-3xl font-bold text-center mb-2 text-foreground">Fortress AI</h1>
         <p className="text-center text-muted-foreground mb-8">
-          Silent Shield™ Security Intelligence
+          Security Intelligence Platform
         </p>
 
         <div className="flex gap-2 mb-6">
@@ -153,7 +153,7 @@ const Auth = () => {
         </form>
 
         <p className="text-xs text-muted-foreground text-center mt-6">
-          Secure access to Silent Shield™ intelligence network
+          Secure access to Fortress AI intelligence network
         </p>
       </Card>
     </div>
