@@ -38,3 +38,6 @@ verify_jwt = false
 
 [functions.alert-delivery]
 verify_jwt = false
+
+[functions.generate-executive-report]
+verify_jwt = true

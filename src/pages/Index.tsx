@@ -9,6 +9,7 @@ import { RiskSnapshotExport } from "@/components/RiskSnapshotExport";
 import AutonomousSystemStatus from "@/components/AutonomousSystemStatus";
 import LearningDashboard from "@/components/LearningDashboard";
 import EscalationRulesManager from "@/components/EscalationRulesManager";
+import { ExecutiveReportGenerator } from "@/components/ExecutiveReportGenerator";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
@@ -46,6 +47,10 @@ const Index = () => {
         <div className="grid grid-cols-1 gap-6">
           <LearningDashboard />
           <EscalationRulesManager />
+        </div>
+        
+        <div className="grid grid-cols-1 gap-6">
+          <ExecutiveReportGenerator />
         </div>
         
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
