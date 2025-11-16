@@ -56,7 +56,7 @@ export const CreateEntityDialog = ({
     description: '',
     risk_level: 'medium',
     aliases: '',
-    threat_score: 50,
+    threat_score: 5,
     threat_indicators: '',
     associations: ''
   });
@@ -178,7 +178,7 @@ export const CreateEntityDialog = ({
         description: '', 
         risk_level: 'medium', 
         aliases: '',
-        threat_score: 50,
+        threat_score: 5,
         threat_indicators: '',
         associations: ''
       });
@@ -274,17 +274,18 @@ export const CreateEntityDialog = ({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="threat_score">Threat Score (0-100)</Label>
+            <Label htmlFor="threat_score">Threat Score (0-10)</Label>
             <Input
               id="threat_score"
               type="number"
               min="0"
-              max="100"
+              max="10"
+              step="0.5"
               value={formData.threat_score}
-              onChange={(e) => setFormData({ ...formData, threat_score: parseInt(e.target.value) || 0 })}
+              onChange={(e) => setFormData({ ...formData, threat_score: parseFloat(e.target.value) || 0 })}
             />
             <p className="text-xs text-muted-foreground">
-              Perceived threat level to client (0=minimal, 100=critical)
+              Based on: Recency (0-3) + Confidence (0-4) + Relevancy (0-3)
             </p>
           </div>
 

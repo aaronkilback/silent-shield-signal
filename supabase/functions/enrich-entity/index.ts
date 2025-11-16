@@ -37,7 +37,7 @@ serve(async (req) => {
           },
           { 
             role: 'user', 
-            content: `Research and provide structured information about: ${entityName}\n\nContext: ${context || 'No additional context'}\n\nProvide:\n1. Entity type (person/organization/location/infrastructure/domain/ip_address/email/phone/vehicle/other)\n2. Brief description (2-3 sentences)\n3. Risk level (critical/high/medium/low) with justification\n4. Known aliases or alternate names\n5. Threat indicators (if any)\n6. Associated organizations or locations\n7. Threat score (0-100) based on: public profile, threat indicators, associations, historical incidents\n\nFormat as JSON with keys: type, description, risk_level, risk_justification, aliases, threat_indicators, associations, threat_score` 
+            content: `Research and provide structured information about: ${entityName}\n\nContext: ${context || 'No additional context'}\n\nProvide:\n1. Entity type (person/organization/location/infrastructure/domain/ip_address/email/phone/vehicle/other)\n2. Brief description (2-3 sentences)\n3. Risk level (critical/high/medium/low) with justification\n4. Known aliases or alternate names\n5. Threat indicators (if any)\n6. Associated organizations or locations\n7. Threat score (0-10) calculated by:\n   - Recency: Recent activity/mentions = higher score (0-3 points)\n   - Confidence: Source reliability and verification level (0-4 points)\n   - Relevancy: Direct threat to client interests/assets (0-3 points)\n\nFormat as JSON with keys: type, description, risk_level, risk_justification, aliases, threat_indicators, associations, threat_score, recency_factor, confidence_factor, relevancy_factor` 
           }
         ],
         tools: [
@@ -74,7 +74,26 @@ serve(async (req) => {
                   threat_score: { 
                     type: "number",
                     minimum: 0,
-                    maximum: 100
+                    maximum: 10,
+                    description: "Total threat score from 0-10"
+                  },
+                  recency_factor: {
+                    type: "number",
+                    minimum: 0,
+                    maximum: 3,
+                    description: "Recency score: recent activity = higher"
+                  },
+                  confidence_factor: {
+                    type: "number",
+                    minimum: 0,
+                    maximum: 4,
+                    description: "Confidence in source accuracy"
+                  },
+                  relevancy_factor: {
+                    type: "number",
+                    minimum: 0,
+                    maximum: 3,
+                    description: "Relevance to client threats"
                   }
                 },
                 required: ["type", "description", "risk_level", "threat_score"],
