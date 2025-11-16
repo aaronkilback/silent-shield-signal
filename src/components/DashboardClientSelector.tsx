@@ -93,15 +93,22 @@ export const DashboardClientSelector = () => {
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
-          {/* Debug display */}
-          <div className="p-2 bg-muted rounded text-xs">
-            <div>Selected ID: {selectedClientId || 'None'}</div>
-            <div>Selected Name: {clients.find(c => c.id === selectedClientId)?.name || 'None'}</div>
+          {/* PROMINENT Debug display */}
+          <div className="p-4 bg-yellow-400 text-black rounded border-2 border-black font-mono text-sm">
+            <div className="font-bold text-lg mb-2">🔍 DEBUG - CURRENT SELECTION:</div>
+            <div className="space-y-1">
+              <div>Selected Client ID: <span className="font-bold">{selectedClientId || 'NONE SELECTED'}</span></div>
+              <div>Selected Client Name: <span className="font-bold">{clients.find(c => c.id === selectedClientId)?.name || 'NONE'}</span></div>
+              <div>Total Clients Available: {clients.length}</div>
+            </div>
           </div>
           
           <Select 
             value={selectedClientId || undefined} 
-            onValueChange={setSelectedClientId}
+            onValueChange={(value) => {
+              console.log('CLIENT CHANGED TO:', value);
+              setSelectedClientId(value);
+            }}
           >
             <SelectTrigger className="w-full">
               <SelectValue placeholder="Select a client..." />
