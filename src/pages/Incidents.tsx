@@ -142,9 +142,19 @@ const IncidentsContent = () => {
     }
   };
 
-  const filteredIncidents = incidents.filter((incident) =>
-    incident.clients?.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredIncidents = incidents.filter((incident) => {
+    const search = searchTerm.toLowerCase();
+    return (
+      incident.clients?.name.toLowerCase().includes(search) ||
+      incident.priority.toLowerCase().includes(search) ||
+      incident.status.toLowerCase().includes(search) ||
+      incident.id.toLowerCase().includes(search) ||
+      incident.timeline_json.some((event: any) => 
+        event.event?.toLowerCase().includes(search) ||
+        event.details?.toLowerCase().includes(search)
+      )
+    );
+  });
 
   const stats = {
     total: incidents.length,
