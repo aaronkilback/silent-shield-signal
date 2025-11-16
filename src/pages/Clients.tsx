@@ -1,6 +1,7 @@
 import { Header } from "@/components/Header";
 import { ClientOnboarding } from "@/components/ClientOnboarding";
 import { ClientRiskSnapshot } from "@/components/ClientRiskSnapshot";
+import { ClientSelector } from "@/components/ClientSelector";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
@@ -33,6 +34,7 @@ const Clients = () => {
       <Header />
       <main className="container mx-auto px-6 py-8 space-y-8">
         <ClientOnboarding />
+        <ClientSelector />
         <ClientRiskSnapshot />
       </main>
     </div>
