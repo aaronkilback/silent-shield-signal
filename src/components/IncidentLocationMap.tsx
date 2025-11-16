@@ -82,16 +82,30 @@ export const IncidentLocationMap = ({ location }: IncidentLocationMapProps) => {
     }
     
     try {
+      // Filter out obviously non-geographic terms
+      const nonGeoTerms = ['Provincial Jurisdiction', 'Industry News', 'National', 'Federal'];
+      if (nonGeoTerms.some(term => locationStr.includes(term))) {
+        console.warn('Location too vague to geocode:', locationStr);
+        return null;
+      }
+
+      // Add Canada bias for better Canadian location results
+      const searchQuery = locationStr.includes('Canada') ? locationStr : `${locationStr}, Canada`;
+      
       // Use Mapbox Geocoding API to convert location string to coordinates
       const response = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(locationStr)}.json?access_token=${mapboxToken}&limit=1`
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(searchQuery)}.json?access_token=${mapboxToken}&country=CA&limit=1`
       );
       const data = await response.json();
       
       if (data.features && data.features.length > 0) {
         const [lng, lat] = data.features[0].center;
+        const placeName = data.features[0].place_name;
+        console.log(`Geocoded "${locationStr}" to "${placeName}":`, { lat, lng });
         return { lat, lng };
       }
+      
+      console.warn('No coordinates found for location:', locationStr);
       return null;
     } catch (error) {
       console.error('Error geocoding location:', error);
@@ -139,6 +153,22 @@ export const IncidentLocationMap = ({ location }: IncidentLocationMapProps) => {
       <div className="bg-muted/50 border border-border rounded-lg p-4 text-center text-muted-foreground">
         <MapPin className="w-8 h-8 mx-auto mb-2 opacity-50" />
         <p className="text-sm">No location data available</p>
+      </div>
+    );
+  }
+
+  // Check if location is too vague to map
+  const nonGeoTerms = ['Provincial Jurisdiction', 'Industry News', 'National', 'Federal'];
+  const isTooVague = nonGeoTerms.some(term => location.includes(term));
+
+  if (isTooVague) {
+    return (
+      <div className="bg-muted/50 border border-border rounded-lg p-4 text-center">
+        <MapPin className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
+        <p className="text-sm font-medium">Location: {location}</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Location information is too general to display on map
+        </p>
       </div>
     );
   }
