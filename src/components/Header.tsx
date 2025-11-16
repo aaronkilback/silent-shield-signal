@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Building2, Home } from "lucide-react";
+import { Shield, Activity, LogOut, Building2, Home, AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -41,6 +41,14 @@ export const Header = () => {
               >
                 <Building2 className="w-4 h-4 mr-2" />
                 Clients
+              </Button>
+              <Button
+                onClick={() => navigate("/incidents")}
+                variant={location.pathname === "/incidents" ? "default" : "ghost"}
+                size="sm"
+              >
+                <AlertTriangle className="w-4 h-4 mr-2" />
+                Incidents
               </Button>
             </nav>
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/50">
