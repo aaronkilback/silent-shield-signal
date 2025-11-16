@@ -8,6 +8,7 @@ import { History, Clock, AlertCircle, Eye } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { SignalDetailDialog } from "./SignalDetailDialog";
+import { SignalFalsePositiveButton } from "./SignalFalsePositiveButton";
 
 interface Signal {
   id: string;
@@ -204,6 +205,11 @@ export const SignalHistory = () => {
                       <span>
                         Confidence: {((signal.confidence || 0) * 100).toFixed(0)}%
                       </span>
+                      <SignalFalsePositiveButton
+                        signalId={signal.id}
+                        currentStatus={signal.status}
+                        onSuccess={loadSignals}
+                      />
                       <Button
                         size="sm"
                         variant="ghost"
