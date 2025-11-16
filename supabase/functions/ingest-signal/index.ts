@@ -287,24 +287,85 @@ Respond ONLY with valid JSON.`
       }
     }
 
-    // Match signal to clients based on content
-    let clientId = null;
+    // Match signal to clients using AI-powered contextual matching
+    let clientId: string | null = null;
     const { data: clients } = await supabase
       .from('clients')
-      .select('id, name, organization, industry');
+      .select('id, name, organization, industry, locations, high_value_assets');
     
     if (clients && clients.length > 0) {
-      const textLower = signalText.toLowerCase();
+      const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
       
-      // Try to match by client name or organization
-      for (const client of clients) {
-        const clientName = client.name.toLowerCase();
-        const orgName = client.organization?.toLowerCase() || '';
+      // Build client context for AI matching
+      const clientsContext = clients.map(c => ({
+        id: c.id,
+        name: c.name,
+        organization: c.organization,
+        industry: c.industry,
+        locations: c.locations,
+        assets: c.high_value_assets
+      }));
+      
+      try {
+        const matchResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'google/gemini-2.5-flash',
+            messages: [
+              {
+                role: 'system',
+                content: `You are a client matching specialist. Match security signals to clients based on:
+- Direct mentions of client names or organizations
+- Industry relevance (e.g., pipeline activism → energy companies)
+- Geographic overlap (locations mentioned)
+- Asset relevance (e.g., "CGL" or "Coastal GasLink" → pipeline assets)
+- Project connections (e.g., LNG projects → energy sector)
+
+Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": null} if no match.`
+              },
+              {
+                role: 'user',
+                content: `Signal content:\n${signalText.substring(0, 2000)}\n\nAvailable clients:\n${JSON.stringify(clientsContext, null, 2)}\n\nWhich client does this signal relate to?`
+              }
+            ],
+            max_completion_tokens: 150
+          }),
+        });
+
+        if (matchResponse.ok) {
+          const matchData = await matchResponse.json();
+          let matchContent = matchData.choices?.[0]?.message?.content || '';
+          
+          // Strip markdown if present
+          if (matchContent.startsWith('```')) {
+            matchContent = matchContent.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+          }
+          
+          const matchResult = JSON.parse(matchContent);
+          if (matchResult.client_id) {
+            clientId = matchResult.client_id;
+            const matchedClient = clients.find(c => c.id === clientId);
+            console.log(`Signal matched to client via AI: ${matchedClient?.name}`);
+          }
+        }
+      } catch (error) {
+        console.error('AI client matching failed, falling back to simple matching:', error);
         
-        if (textLower.includes(clientName) || (orgName && textLower.includes(orgName))) {
-          clientId = client.id;
-          console.log(`Signal matched to client: ${client.name}`);
-          break;
+        // Fallback to simple name matching
+        const textLower = signalText.toLowerCase();
+        for (const client of clients) {
+          const clientName = client.name.toLowerCase();
+          const orgName = client.organization?.toLowerCase() || '';
+          
+          if (textLower.includes(clientName) || (orgName && textLower.includes(orgName))) {
+            clientId = client.id;
+            console.log(`Signal matched to client via fallback: ${client.name}`);
+            break;
+          }
         }
       }
     }
