@@ -2,8 +2,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { useState } from "react";
+import { CreateEntityDialog } from "@/components/CreateEntityDialog";
 
 interface SignalDetailDialogProps {
   signal: any;
@@ -12,6 +15,8 @@ interface SignalDetailDialogProps {
 }
 
 export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailDialogProps) => {
+  const [createEntityOpen, setCreateEntityOpen] = useState(false);
+  
   if (!signal) return null;
 
   const aiAnalysis = signal.raw_json?.ai_analysis;
@@ -35,9 +40,19 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailD
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[90vh]">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Brain className="w-5 h-5" />
-            Strategic Intelligence Analysis
+          <DialogTitle className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Brain className="w-5 h-5" />
+              Strategic Intelligence Analysis
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCreateEntityOpen(true)}
+            >
+              <UserPlus className="w-4 h-4 mr-2" />
+              Create Entity
+            </Button>
           </DialogTitle>
         </DialogHeader>
 
@@ -238,6 +253,11 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailD
           </div>
         </ScrollArea>
       </DialogContent>
+      <CreateEntityDialog
+        open={createEntityOpen}
+        onOpenChange={setCreateEntityOpen}
+        signalId={signal.id}
+      />
     </Dialog>
   );
 };
