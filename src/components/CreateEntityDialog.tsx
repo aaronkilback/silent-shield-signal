@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ interface CreateEntityDialogProps {
   prefilledName?: string;
   signalId?: string;
   incidentId?: string;
+  context?: string;
 }
 
 const ENTITY_TYPES = [
@@ -42,18 +43,72 @@ export const CreateEntityDialog = ({
   onOpenChange, 
   prefilledName = '',
   signalId,
-  incidentId 
+  incidentId,
+  context 
 }: CreateEntityDialogProps) => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [loading, setLoading] = useState(false);
+  const [enriching, setEnriching] = useState(false);
   const [formData, setFormData] = useState({
     name: prefilledName,
     type: 'person',
     description: '',
     risk_level: 'medium',
-    aliases: ''
+    aliases: '',
+    threat_score: 50,
+    threat_indicators: '',
+    associations: ''
   });
+
+  // Auto-enrich when dialog opens with a prefilled name
+  useEffect(() => {
+    if (open && prefilledName && prefilledName !== formData.name) {
+      setFormData(prev => ({ ...prev, name: prefilledName }));
+      handleEnrich(prefilledName);
+    }
+  }, [open, prefilledName]);
+
+  const handleEnrich = async (entityName: string) => {
+    if (!entityName.trim()) return;
+    
+    setEnriching(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('enrich-entity', {
+        body: { entityName, context: context || '' }
+      });
+
+      if (error) throw error;
+
+      if (data.success) {
+        const enriched = data.data;
+        setFormData(prev => ({
+          ...prev,
+          type: enriched.type || prev.type,
+          description: enriched.description || prev.description,
+          risk_level: enriched.risk_level || prev.risk_level,
+          aliases: enriched.aliases?.join(', ') || prev.aliases,
+          threat_score: enriched.threat_score || prev.threat_score,
+          threat_indicators: enriched.threat_indicators?.join(', ') || '',
+          associations: enriched.associations?.join(', ') || ''
+        }));
+
+        toast({
+          title: "Entity Enriched",
+          description: enriched.risk_justification || "AI has populated entity information for your review."
+        });
+      }
+    } catch (error) {
+      console.error('Error enriching entity:', error);
+      toast({
+        title: "Enrichment Failed",
+        description: "Could not auto-populate entity data. Please enter manually.",
+        variant: "destructive"
+      });
+    } finally {
+      setEnriching(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,6 +123,16 @@ export const CreateEntityDialog = ({
         .map(a => a.trim())
         .filter(a => a.length > 0);
 
+      const threatIndicatorsArray = formData.threat_indicators
+        .split(',')
+        .map(a => a.trim())
+        .filter(a => a.length > 0);
+
+      const associationsArray = formData.associations
+        .split(',')
+        .map(a => a.trim())
+        .filter(a => a.length > 0);
+
       const { data: entity, error: entityError } = await supabase
         .from('entities')
         .insert([{
@@ -76,6 +141,9 @@ export const CreateEntityDialog = ({
           description: formData.description,
           risk_level: formData.risk_level,
           aliases: aliasesArray,
+          threat_score: formData.threat_score,
+          threat_indicators: threatIndicatorsArray.length > 0 ? threatIndicatorsArray : null,
+          associations: associationsArray.length > 0 ? associationsArray : null,
           created_by: user.id
         }])
         .select()
@@ -104,7 +172,16 @@ export const CreateEntityDialog = ({
 
       queryClient.invalidateQueries({ queryKey: ['entities'] });
       onOpenChange(false);
-      setFormData({ name: '', type: 'person', description: '', risk_level: 'medium', aliases: '' });
+      setFormData({ 
+        name: '', 
+        type: 'person', 
+        description: '', 
+        risk_level: 'medium', 
+        aliases: '',
+        threat_score: 50,
+        threat_indicators: '',
+        associations: ''
+      });
     } catch (error) {
       console.error('Error creating entity:', error);
       toast({
@@ -119,9 +196,12 @@ export const CreateEntityDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create Entity</DialogTitle>
+          {enriching && (
+            <p className="text-sm text-muted-foreground">AI is enriching entity data...</p>
+          )}
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
@@ -193,12 +273,49 @@ export const CreateEntityDialog = ({
             />
           </div>
 
+          <div className="space-y-2">
+            <Label htmlFor="threat_score">Threat Score (0-100)</Label>
+            <Input
+              id="threat_score"
+              type="number"
+              min="0"
+              max="100"
+              value={formData.threat_score}
+              onChange={(e) => setFormData({ ...formData, threat_score: parseInt(e.target.value) || 0 })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Perceived threat level to client (0=minimal, 100=critical)
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="threat_indicators">Threat Indicators (comma-separated)</Label>
+            <Textarea
+              id="threat_indicators"
+              value={formData.threat_indicators}
+              onChange={(e) => setFormData({ ...formData, threat_indicators: e.target.value })}
+              placeholder="e.g., known activist, previous incidents, affiliated groups"
+              rows={2}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="associations">Associations (comma-separated)</Label>
+            <Textarea
+              id="associations"
+              value={formData.associations}
+              onChange={(e) => setFormData({ ...formData, associations: e.target.value })}
+              placeholder="e.g., linked organizations, locations, other entities"
+              rows={2}
+            />
+          </div>
+
           <div className="flex gap-2 justify-end">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={loading}>
-              {loading ? "Creating..." : "Create Entity"}
+            <Button type="submit" disabled={loading || enriching}>
+              {loading ? "Creating..." : enriching ? "Enriching..." : "Create Entity"}
             </Button>
           </div>
         </form>

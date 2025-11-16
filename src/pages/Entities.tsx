@@ -132,9 +132,16 @@ export default function Entities() {
                       <Icon className="w-5 h-5 text-primary" />
                       <h3 className="font-semibold">{entity.name}</h3>
                     </div>
-                    <Badge variant={getRiskColor(entity.risk_level) as any}>
-                      {entity.risk_level}
-                    </Badge>
+                    <div className="flex flex-col items-end gap-1">
+                      <Badge variant={getRiskColor(entity.risk_level) as any}>
+                        {entity.risk_level}
+                      </Badge>
+                      {entity.threat_score !== null && entity.threat_score !== undefined && (
+                        <Badge variant="secondary" className="text-xs">
+                          Threat: {entity.threat_score}/100
+                        </Badge>
+                      )}
+                    </div>
                   </div>
 
                   {entity.description && (

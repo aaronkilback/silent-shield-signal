@@ -41,3 +41,6 @@ verify_jwt = false
 
 [functions.generate-executive-report]
 verify_jwt = true
+
+[functions.enrich-entity]
+verify_jwt = true
