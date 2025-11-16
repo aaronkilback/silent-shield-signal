@@ -6,38 +6,105 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Brain, TrendingUp, Target, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { useClientSelection } from '@/hooks/useClientSelection';
 
 export default function LearningDashboard() {
+  const { selectedClientId } = useClientSelection();
   const [metrics, setMetrics] = useState<any[]>([]);
   const [outcomes, setOutcomes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadData();
+    if (selectedClientId) {
+      loadData();
+    }
     
-    const interval = setInterval(loadData, 60000);
+    const interval = setInterval(() => {
+      if (selectedClientId) loadData();
+    }, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedClientId]);
 
   const loadData = async () => {
+    if (!selectedClientId) return;
+
     try {
-      // Load automation metrics (last 30 days)
+      // Calculate client-specific metrics from signals and incidents
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-      const { data: metricsData, error: metricsError } = await supabase
-        .from('automation_metrics')
-        .select('*')
-        .gte('metric_date', thirtyDaysAgo.toISOString().split('T')[0])
-        .order('metric_date', { ascending: true });
+      // Get signals and incidents for the client
+      const { data: signalsData } = await supabase
+        .from('signals')
+        .select('id, status, created_at')
+        .eq('client_id', selectedClientId)
+        .gte('created_at', thirtyDaysAgo.toISOString());
 
-      if (metricsError) throw metricsError;
-      setMetrics(metricsData || []);
+      const { data: incidentsData } = await supabase
+        .from('incidents')
+        .select('id, priority, status, created_at')
+        .eq('client_id', selectedClientId)
+        .gte('created_at', thirtyDaysAgo.toISOString());
 
-      // Load incident outcomes
+      // Group by date and calculate daily metrics
+      const metricsMap = new Map();
+      
+      signalsData?.forEach(signal => {
+        const date = signal.created_at.split('T')[0];
+        if (!metricsMap.has(date)) {
+          metricsMap.set(date, {
+            metric_date: date,
+            signals_processed: 0,
+            incidents_created: 0,
+            incidents_auto_escalated: 0,
+            accuracy_rate: 0,
+            false_positive_rate: 0,
+          });
+        }
+        const metrics = metricsMap.get(date);
+        metrics.signals_processed++;
+        
+        if (signal.status === 'resolved') metrics.accuracy_rate++;
+        if (signal.status === 'false_positive') metrics.false_positive_rate++;
+      });
+
+      incidentsData?.forEach(incident => {
+        const date = incident.created_at.split('T')[0];
+        if (!metricsMap.has(date)) {
+          metricsMap.set(date, {
+            metric_date: date,
+            signals_processed: 0,
+            incidents_created: 0,
+            incidents_auto_escalated: 0,
+            accuracy_rate: 0,
+            false_positive_rate: 0,
+          });
+        }
+        const metrics = metricsMap.get(date);
+        metrics.incidents_created++;
+        
+        if (incident.priority === 'p1' || incident.priority === 'p2') {
+          metrics.incidents_auto_escalated++;
+        }
+      });
+
+      // Convert to array and calculate percentages
+      const metricsArray = Array.from(metricsMap.values()).map(m => {
+        const total = m.accuracy_rate + m.false_positive_rate;
+        return {
+          ...m,
+          accuracy_rate: total > 0 ? (m.accuracy_rate / total) * 100 : 0,
+          false_positive_rate: total > 0 ? (m.false_positive_rate / total) * 100 : 0,
+        };
+      });
+
+      setMetrics(metricsArray);
+
+      // Load incident outcomes for the client
       const { data: outcomesData, error: outcomesError } = await supabase
         .from('incident_outcomes')
-        .select('*')
+        .select('*, incidents!inner(client_id)')
+        .eq('incidents.client_id', selectedClientId)
         .order('created_at', { ascending: false })
         .limit(100);
 
