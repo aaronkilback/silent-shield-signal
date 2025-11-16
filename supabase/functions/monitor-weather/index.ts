@@ -33,19 +33,23 @@ serve(async (req) => {
 
     for (const client of clients || []) {
       try {
-        // Use Weather.gov API (free, US-focused)
-        // For demo, using a default location. In production, parse client.location to get coordinates
+        // Use Weather.gov API (free, US-focused) with timeout
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+        
         const weatherResponse = await fetch(
-          'https://api.weather.gov/alerts/active?status=actual&message_type=alert&severity=severe,extreme',
+          'https://api.weather.gov/alerts/active',
           {
             headers: {
-              'User-Agent': 'OSINT-Monitoring-System',
-            }
+              'User-Agent': '(Fortress-AI-Security-Platform, security@fortressai.com)',
+              'Accept': 'application/geo+json',
+            },
+            signal: controller.signal
           }
-        );
+        ).finally(() => clearTimeout(timeout));
 
         if (!weatherResponse.ok) {
-          console.log(`Weather API error for ${client.name}: ${weatherResponse.status}`);
+          console.log(`Weather API error for ${client.name}: ${weatherResponse.status} - ${await weatherResponse.text().catch(() => 'no details')}`);
           continue;
         }
 
@@ -55,9 +59,13 @@ serve(async (req) => {
           for (const alert of weatherData.features.slice(0, 3)) {
             const properties = alert.properties;
             
-            // Check if alert affects client locations (simplified check)
+            // Check if alert affects client locations or is high severity
             const clientLocations = (client.locations || []) as string[];
-            if (clientLocations.some(loc => properties.areaDesc?.toLowerCase().includes(loc.toLowerCase()))) {
+            const isHighSeverity = properties.severity === 'Extreme' || properties.severity === 'Severe';
+            const affectsClientLocation = clientLocations.length === 0 || 
+              clientLocations.some(loc => properties.areaDesc?.toLowerCase().includes(loc.toLowerCase()));
+            
+            if (affectsClientLocation && isHighSeverity) {
               const signalText = `Weather Alert: ${properties.event} - ${properties.headline}`;
               
               const { error: signalError } = await supabase
@@ -85,7 +93,14 @@ serve(async (req) => {
           }
         }
       } catch (error) {
-        console.error(`Error processing weather for ${client.name}:`, error);
+        // Handle timeout and network errors gracefully
+        if (error instanceof Error) {
+          if (error.name === 'AbortError') {
+            console.log(`Weather API timeout for ${client.name}`);
+          } else {
+            console.error(`Error processing weather for ${client.name}:`, error.message);
+          }
+        }
       }
     }
 
