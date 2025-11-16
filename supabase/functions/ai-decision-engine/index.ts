@@ -263,7 +263,7 @@ Think like 3Si Security: provide intelligence that explains WHY this matters and
         .from('incidents')
         .select('id')
         .eq('signal_id', signal.id)
-        .single();
+        .maybeSingle();
 
       if (existingIncident) {
         console.log(`Incident already exists for signal ${signal.id}, skipping creation`);
