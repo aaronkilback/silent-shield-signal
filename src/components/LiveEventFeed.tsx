@@ -65,6 +65,8 @@ export const LiveEventFeed = () => {
         .order('received_at', { ascending: false })
         .limit(10);
 
+      // Only filter by client_id if a specific client is selected
+      // When selectedClientId is null, show all signals including unassigned ones
       if (selectedClientId) {
         query = query.eq('client_id', selectedClientId);
       }
