@@ -42,7 +42,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailD
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh]">
+      <DialogContent className="max-w-4xl max-h-[90vh]" key={signal.id}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Brain className="w-5 h-5" />
@@ -50,7 +50,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailD
           </DialogTitle>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[calc(90vh-100px)] pr-4">
+        <ScrollArea className="max-h-[calc(90vh-100px)] pr-4" key={`scroll-${signal.id}`}>
           <div className="space-y-6">
             {/* Signal Overview */}
             <div>
