@@ -5,9 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Activity, Zap, TrendingUp, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/components/ui/use-toast';
+import { useClientSelection } from '@/hooks/useClientSelection';
 
 export default function AutonomousSystemStatus() {
   const { toast } = useToast();
+  const { selectedClientId } = useClientSelection();
   const [metrics, setMetrics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [autoMode, setAutoMode] = useState(true);
@@ -18,19 +20,62 @@ export default function AutonomousSystemStatus() {
     // Refresh metrics every 30 seconds
     const interval = setInterval(loadMetrics, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedClientId]);
 
   const loadMetrics = async () => {
     try {
-      const { data, error } = await supabase
-        .from('automation_metrics')
-        .select('*')
-        .order('metric_date', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      // Calculate client-specific metrics from signals and incidents
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-      if (error) throw error;
-      setMetrics(data || undefined);
+      // Build query with optional client filter
+      let signalsQuery = supabase
+        .from('signals')
+        .select('id, status, created_at', { count: 'exact' })
+        .gte('created_at', thirtyDaysAgo.toISOString());
+      
+      let incidentsQuery = supabase
+        .from('incidents')
+        .select('id, status, priority, created_at', { count: 'exact' })
+        .gte('created_at', thirtyDaysAgo.toISOString());
+
+      if (selectedClientId) {
+        signalsQuery = signalsQuery.eq('client_id', selectedClientId);
+        incidentsQuery = incidentsQuery.eq('client_id', selectedClientId);
+      }
+
+      const [signalsResult, incidentsResult] = await Promise.all([
+        signalsQuery,
+        incidentsQuery
+      ]);
+
+      if (signalsResult.error) throw signalsResult.error;
+      if (incidentsResult.error) throw incidentsResult.error;
+
+      const signalsProcessed = signalsResult.count || 0;
+      const incidentsCreated = incidentsResult.count || 0;
+      const autoEscalated = incidentsResult.data?.filter(i => 
+        i.priority === 'p1' || i.priority === 'p2'
+      ).length || 0;
+      
+      // Calculate accuracy rate based on resolved vs false positive
+      const resolvedSignals = signalsResult.data?.filter(s => 
+        s.status === 'resolved'
+      ).length || 0;
+      const falsePositives = signalsResult.data?.filter(s => 
+        s.status === 'false_positive'
+      ).length || 0;
+      const totalProcessed = resolvedSignals + falsePositives;
+      const accuracyRate = totalProcessed > 0 
+        ? ((resolvedSignals / totalProcessed) * 100).toFixed(1)
+        : '0.0';
+
+      setMetrics({
+        signals_processed: signalsProcessed,
+        incidents_created: incidentsCreated,
+        incidents_auto_escalated: autoEscalated,
+        accuracy_rate: parseFloat(accuracyRate)
+      });
     } catch (error) {
       console.error('Error loading metrics:', error);
     } finally {
