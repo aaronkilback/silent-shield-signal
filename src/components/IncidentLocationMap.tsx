@@ -1,7 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { MapPin } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 interface IncidentLocationMapProps {
   location: string | null;
@@ -10,16 +13,27 @@ interface IncidentLocationMapProps {
 export const IncidentLocationMap = ({ location }: IncidentLocationMapProps) => {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
+  const [mapboxToken, setMapboxToken] = useState<string>('');
+  const [showTokenInput, setShowTokenInput] = useState(false);
 
   useEffect(() => {
-    if (!location || !mapContainer.current) return;
-
-    const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN;
-    
-    if (!mapboxToken) {
-      console.error('Mapbox token is not configured. Please add VITE_MAPBOX_TOKEN to your environment variables.');
-      return;
+    const savedToken = localStorage.getItem('mapbox_token');
+    if (savedToken) {
+      setMapboxToken(savedToken);
+    } else {
+      setShowTokenInput(true);
     }
+  }, []);
+
+  const handleSaveToken = () => {
+    if (mapboxToken.trim()) {
+      localStorage.setItem('mapbox_token', mapboxToken.trim());
+      setShowTokenInput(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!location || !mapContainer.current || !mapboxToken) return;
 
     // Initialize map
     mapboxgl.accessToken = mapboxToken;
@@ -59,43 +73,66 @@ export const IncidentLocationMap = ({ location }: IncidentLocationMapProps) => {
     return () => {
       map.current?.remove();
     };
-  }, [location]);
+  }, [location, mapboxToken]);
 
   const fetchCoordinates = async (locationStr: string): Promise<{ lat: number; lng: number } | null> => {
-    const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN;
-    
     if (!mapboxToken) {
       console.error('Cannot geocode: Mapbox token is missing');
       return null;
     }
     
     try {
-      console.log('Geocoding location:', locationStr);
       // Use Mapbox Geocoding API to convert location string to coordinates
       const response = await fetch(
         `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(locationStr)}.json?access_token=${mapboxToken}&limit=1`
       );
-      
-      if (!response.ok) {
-        console.error('Geocoding API error:', response.status, response.statusText);
-        return null;
-      }
-      
       const data = await response.json();
-      console.log('Geocoding response:', data);
       
       if (data.features && data.features.length > 0) {
         const [lng, lat] = data.features[0].center;
-        console.log('Found coordinates:', { lat, lng });
         return { lat, lng };
       }
-      console.warn('No coordinates found for location:', locationStr);
       return null;
     } catch (error) {
       console.error('Error geocoding location:', error);
       return null;
     }
   };
+
+  if (showTokenInput) {
+    return (
+      <div className="bg-muted/50 border border-border rounded-lg p-4 space-y-3">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <MapPin className="w-4 h-4" />
+          <span>Configure Mapbox</span>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          To display maps, enter your Mapbox public token. Get one at{' '}
+          <a 
+            href="https://account.mapbox.com/" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-primary hover:underline"
+          >
+            mapbox.com
+          </a>
+        </p>
+        <div className="space-y-2">
+          <Label htmlFor="mapbox-token">Mapbox Public Token</Label>
+          <Input
+            id="mapbox-token"
+            type="text"
+            placeholder="pk.eyJ1..."
+            value={mapboxToken}
+            onChange={(e) => setMapboxToken(e.target.value)}
+          />
+        </div>
+        <Button onClick={handleSaveToken} disabled={!mapboxToken.trim()}>
+          Save Token
+        </Button>
+      </div>
+    );
+  }
 
   if (!location) {
     return (
@@ -108,9 +145,22 @@ export const IncidentLocationMap = ({ location }: IncidentLocationMapProps) => {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2 text-sm font-medium">
-        <MapPin className="w-4 h-4" />
-        <span>Location: {location}</span>
+      <div className="flex items-center justify-between text-sm font-medium">
+        <div className="flex items-center gap-2">
+          <MapPin className="w-4 h-4" />
+          <span>Location: {location}</span>
+        </div>
+        <Button 
+          variant="ghost" 
+          size="sm"
+          onClick={() => {
+            localStorage.removeItem('mapbox_token');
+            setMapboxToken('');
+            setShowTokenInput(true);
+          }}
+        >
+          Change Token
+        </Button>
       </div>
       <div ref={mapContainer} className="w-full h-64 rounded-lg overflow-hidden border border-border" />
     </div>
