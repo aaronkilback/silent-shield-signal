@@ -49,9 +49,6 @@ export const TripwireAlerts = () => {
   useEffect(() => {
     const loadIncidents = async () => {
       try {
-        console.log('🔴 TripwireAlerts LOADING - Client ID:', selectedClientId);
-        console.log('🔴 Client ID type:', typeof selectedClientId);
-        
         let query = supabase
           .from("incidents")
           .select("*, clients(name)")
@@ -60,17 +57,12 @@ export const TripwireAlerts = () => {
           .limit(5);
 
         if (selectedClientId) {
-          console.log('🔴 APPLYING FILTER for client:', selectedClientId);
           query = query.eq("client_id", selectedClientId);
-        } else {
-          console.log('🔴 NO FILTER - showing all incidents');
         }
 
         const { data, error } = await query;
 
         if (error) throw error;
-        console.log('🔴 TripwireAlerts - Loaded incidents:', data);
-        console.log('🔴 Number of incidents:', data?.length || 0);
         setIncidents((data || []) as Incident[]);
       } catch (error) {
         console.error("Error loading incidents:", error);
@@ -79,7 +71,6 @@ export const TripwireAlerts = () => {
       }
     };
 
-    console.log('🔴 TripwireAlerts useEffect triggered, selectedClientId:', selectedClientId);
     loadIncidents();
 
     // Set up realtime subscription
@@ -116,13 +107,6 @@ export const TripwireAlerts = () => {
   if (incidents.length === 0) {
     return (
       <Card className="p-6 bg-card border-border">
-        {/* Debug display */}
-        <div className="p-2 mb-4 bg-yellow-500/20 rounded text-xs border border-yellow-500">
-          <div className="font-bold">DEBUG INFO:</div>
-          <div>TripwireAlerts using client ID: {selectedClientId || 'None'}</div>
-          <div>Showing {incidents.length} incidents</div>
-        </div>
-        
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-status-success/10">
@@ -138,13 +122,6 @@ export const TripwireAlerts = () => {
 
   return (
     <Card className="p-6 bg-card border-border">
-      {/* Debug display */}
-      <div className="p-2 mb-4 bg-yellow-500/20 rounded text-xs border border-yellow-500">
-        <div className="font-bold">DEBUG INFO:</div>
-        <div>TripwireAlerts using client ID: {selectedClientId || 'None'}</div>
-        <div>Showing {incidents.length} incidents</div>
-      </div>
-      
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-lg bg-destructive/10">

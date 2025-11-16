@@ -11,31 +11,20 @@ const STORAGE_KEY = 'selected_client_id';
 
 export function ClientSelectionProvider({ children }: { children: ReactNode }) {
   const [selectedClientId, setSelectedClientId] = useState<string | null>(() => {
-    // Clear any corrupted localStorage
-    localStorage.removeItem(STORAGE_KEY);
-    console.log('🟢 ClientSelectionProvider INIT - starting fresh');
-    return null;
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored || null;
   });
 
-  // Persist to localStorage whenever it changes
   useEffect(() => {
-    console.log('🟢 ClientSelectionProvider - selectedClientId changed to:', selectedClientId);
     if (selectedClientId) {
       localStorage.setItem(STORAGE_KEY, selectedClientId);
-      console.log('🟢 Saved to localStorage:', selectedClientId);
     } else {
       localStorage.removeItem(STORAGE_KEY);
-      console.log('🟢 Removed from localStorage');
     }
   }, [selectedClientId]);
 
-  const wrappedSetSelectedClientId = (id: string | null) => {
-    console.log('🟢 setSelectedClientId called with:', id);
-    setSelectedClientId(id);
-  };
-
   return (
-    <ClientSelectionContext.Provider value={{ selectedClientId, setSelectedClientId: wrappedSetSelectedClientId }}>
+    <ClientSelectionContext.Provider value={{ selectedClientId, setSelectedClientId }}>
       {children}
     </ClientSelectionContext.Provider>
   );
