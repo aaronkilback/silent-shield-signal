@@ -14,8 +14,17 @@ export const IncidentLocationMap = ({ location }: IncidentLocationMapProps) => {
   useEffect(() => {
     if (!location || !mapContainer.current) return;
 
+    const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN;
+    
+    if (!mapboxToken) {
+      console.error('Mapbox token is not configured. Please add VITE_MAPBOX_TOKEN to your environment variables.');
+      return;
+    }
+
     // Initialize map
-    mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
+    mapboxgl.accessToken = mapboxToken;
+    
+    console.log('Fetching coordinates for location:', location);
     
     // Parse location string to get coordinates or city name
     // Try to geocode the location
@@ -53,17 +62,34 @@ export const IncidentLocationMap = ({ location }: IncidentLocationMapProps) => {
   }, [location]);
 
   const fetchCoordinates = async (locationStr: string): Promise<{ lat: number; lng: number } | null> => {
+    const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN;
+    
+    if (!mapboxToken) {
+      console.error('Cannot geocode: Mapbox token is missing');
+      return null;
+    }
+    
     try {
+      console.log('Geocoding location:', locationStr);
       // Use Mapbox Geocoding API to convert location string to coordinates
       const response = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(locationStr)}.json?access_token=${import.meta.env.VITE_MAPBOX_TOKEN}&limit=1`
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(locationStr)}.json?access_token=${mapboxToken}&limit=1`
       );
+      
+      if (!response.ok) {
+        console.error('Geocoding API error:', response.status, response.statusText);
+        return null;
+      }
+      
       const data = await response.json();
+      console.log('Geocoding response:', data);
       
       if (data.features && data.features.length > 0) {
         const [lng, lat] = data.features[0].center;
+        console.log('Found coordinates:', { lat, lng });
         return { lat, lng };
       }
+      console.warn('No coordinates found for location:', locationStr);
       return null;
     } catch (error) {
       console.error('Error geocoding location:', error);
