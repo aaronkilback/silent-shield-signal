@@ -19,6 +19,26 @@ export const DashboardClientSelector = () => {
 
   useEffect(() => {
     fetchClients();
+
+    // Subscribe to client changes
+    const channel = supabase
+      .channel('dashboard-clients-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'clients'
+        },
+        () => {
+          fetchClients();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const fetchClients = async () => {
