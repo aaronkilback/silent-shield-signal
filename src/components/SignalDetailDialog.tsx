@@ -4,7 +4,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { useEffect, useState } from "react";
 
 interface SignalDetailDialogProps {
   signal: any;
@@ -13,27 +12,12 @@ interface SignalDetailDialogProps {
 }
 
 export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailDialogProps) => {
-  const [currentSignal, setCurrentSignal] = useState(signal);
-  
-  // Force update when signal changes
-  useEffect(() => {
-    if (signal && open) {
-      console.log('Dialog received new signal:', {
-        id: signal.id,
-        text: signal.normalized_text?.substring(0, 40),
-        hasAiAnalysis: !!signal.raw_json?.ai_analysis,
-        aiAnalysisKeys: signal.raw_json?.ai_analysis ? Object.keys(signal.raw_json.ai_analysis) : []
-      });
-      setCurrentSignal(signal);
-    }
-  }, [signal, open]);
+  if (!signal) return null;
 
-  if (!currentSignal) return null;
-
-  const aiAnalysis = currentSignal.raw_json?.ai_analysis;
-  const aiDecision = aiAnalysis?.ai_decision || currentSignal.raw_json?.ai_decision;
-  const patternAnalysis = currentSignal.raw_json?.pattern_analysis;
-  const processingMethod = currentSignal.raw_json?.processing_method;
+  const aiAnalysis = signal.raw_json?.ai_analysis;
+  const aiDecision = aiAnalysis?.ai_decision || signal.raw_json?.ai_decision;
+  const patternAnalysis = signal.raw_json?.pattern_analysis;
+  const processingMethod = signal.raw_json?.processing_method;
 
   const getSeverityColor = (severity: string) => {
     const colors: Record<string, string> = {
@@ -64,22 +48,22 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailD
                 Signal Overview
               </h3>
               <div className="bg-muted p-4 rounded-lg space-y-2">
-                <p className="font-medium">{currentSignal.normalized_text}</p>
+                <p className="font-medium">{signal.normalized_text}</p>
                 <div className="flex flex-wrap gap-2 mt-2">
-                  <Badge variant={getSeverityColor(currentSignal.severity) as any}>
-                    {currentSignal.severity?.toUpperCase()}
+                  <Badge variant={getSeverityColor(signal.severity) as any}>
+                    {signal.severity?.toUpperCase()}
                   </Badge>
-                  <Badge variant="outline">{currentSignal.category}</Badge>
-                  <Badge variant="secondary">{currentSignal.status}</Badge>
-                  {currentSignal.confidence && (
+                  <Badge variant="outline">{signal.category}</Badge>
+                  <Badge variant="secondary">{signal.status}</Badge>
+                  {signal.confidence && (
                     <Badge variant="outline">
-                      {Math.round(currentSignal.confidence * 100)}% confidence
+                      {Math.round(signal.confidence * 100)}% confidence
                     </Badge>
                   )}
                 </div>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground mt-2">
                   <Clock className="w-3 h-3" />
-                  {formatDistanceToNow(new Date(currentSignal.created_at), { addSuffix: true })}
+                  {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
                 </div>
               </div>
             </div>
