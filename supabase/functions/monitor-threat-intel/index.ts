@@ -88,11 +88,15 @@ serve(async (req) => {
       console.error('Error fetching CISA KEV:', error);
     }
 
-    // Monitor CVE Trending from cvetrend.com RSS
+    // Monitor CVE Trending from cvetrend.com RSS with timeout
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+      
       const trendResponse = await fetch(
-        'https://cvetrend.com/api/rss'
-      );
+        'https://cvetrend.com/api/rss',
+        { signal: controller.signal }
+      ).finally(() => clearTimeout(timeout));
 
       if (trendResponse.ok) {
         const xmlText = await trendResponse.text();
@@ -144,7 +148,14 @@ serve(async (req) => {
         }
       }
     } catch (error) {
-      console.error('Error fetching CVE trends:', error);
+      // Handle timeout and network errors gracefully
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          console.log('CVE Trend API timeout - continuing with other sources');
+        } else {
+          console.error('Error fetching CVE trends:', error.message);
+        }
+      }
     }
 
     console.log(`Threat intelligence monitoring complete. Created ${signalsCreated} signals.`);
