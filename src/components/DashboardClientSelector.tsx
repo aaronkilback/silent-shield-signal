@@ -106,6 +106,7 @@ export const DashboardClientSelector = () => {
           <Select 
             value={selectedClientId || undefined} 
             onValueChange={(value) => {
+              alert(`🔴 SELECTING CLIENT: ${value}\nName: ${clients.find(c => c.id === value)?.name}`);
               console.log('CLIENT CHANGED TO:', value);
               setSelectedClientId(value);
             }}
