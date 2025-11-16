@@ -65,8 +65,8 @@ export default function Entities() {
 
   const getThreatFlames = (score: number | null | undefined) => {
     if (score === null || score === undefined) return '';
-    // Convert 0-100 to 1-5 scale
-    const flames = Math.min(5, Math.max(1, Math.ceil(score / 20)));
+    // Convert 0-10 to 1-5 scale: 0-2=1🔥, 2-4=2🔥, 4-6=3🔥, 6-8=4🔥, 8-10=5🔥
+    const flames = Math.min(5, Math.max(1, Math.ceil(score / 2)));
     return '🔥'.repeat(flames);
   };
 
@@ -139,7 +139,7 @@ export default function Entities() {
                       <Icon className="w-5 h-5 text-primary" />
                       <h3 className="font-semibold">{entity.name}</h3>
                       {entity.threat_score !== null && entity.threat_score !== undefined && (
-                        <span className="text-lg" title={`Threat Score: ${entity.threat_score}/100`}>
+                        <span className="text-lg" title={`Threat Score: ${entity.threat_score}/10 (Recency + Confidence + Relevancy)`}>
                           {getThreatFlames(entity.threat_score)}
                         </span>
                       )}
