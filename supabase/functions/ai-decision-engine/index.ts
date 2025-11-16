@@ -28,6 +28,21 @@ serve(async (req) => {
 
     if (signalError) throw signalError;
 
+    // Fetch recent signals for the same client to enable pattern detection (last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const { data: recentSignals } = await supabase
+      .from('signals')
+      .select('id, normalized_text, category, severity, entity_tags, confidence, created_at')
+      .eq('client_id', signal.client_id)
+      .gte('created_at', thirtyDaysAgo.toISOString())
+      .neq('id', signal_id)
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    console.log(`Found ${recentSignals?.length || 0} recent signals for pattern analysis`);
+
     // SMART FILTERING: Only use AI for high-priority signals
     const shouldUseAI = force_ai || 
       signal.severity === 'critical' || 
@@ -101,14 +116,30 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: `You are an autonomous SOC decision engine. Analyze security signals and make decisions without human intervention.
-            
+            content: `You are a strategic threat intelligence analyst and autonomous SOC decision engine, similar to 3Si Security.
+
 Your responsibilities:
-1. Assess threat severity and impact
-2. Recommend immediate containment actions
-3. Determine escalation priority
-4. Suggest remediation steps
-5. Identify patterns and correlations
+1. Assess threat severity and strategic impact
+2. Identify patterns and correlations across multiple signals
+3. Detect coordinated campaigns (e.g., activist groups + physical threats + media)
+4. Analyze trends and escalation trajectories
+5. Provide strategic context, not just tactical response
+6. Recommend immediate containment actions
+7. Determine escalation priority based on pattern analysis
+
+PATTERN ANALYSIS FOCUS:
+- Look for correlated threats across categories (reputational + physical + deal-related)
+- Identify activist campaign escalation (social media → protests → sabotage)
+- Detect coordinated timing of threats
+- Recognize visual propaganda and viral content impact
+- Assess industry-wide vs client-specific targeting
+
+STRATEGIC INTELLIGENCE:
+- Explain WHY this matters in the broader threat landscape
+- Identify if this is part of a larger campaign
+- Assess momentum and trajectory (escalating, sustained, declining)
+- Provide context from recent activity patterns
+- Flag sector-wide threats that might affect the client
 
 Respond with structured JSON containing:
 {
@@ -120,26 +151,58 @@ Respond with structured JSON containing:
   "remediation_steps": ["step1", "step2"],
   "alert_recipients": ["email1@example.com"],
   "estimated_impact": string,
-  "reasoning": string
+  "reasoning": string,
+  "strategic_context": "Explain the broader threat landscape and patterns",
+  "threat_correlation": "Describe connections to other recent signals",
+  "campaign_assessment": "Is this part of a coordinated campaign? What's the trajectory?",
+  "sector_implications": "Industry-wide relevance and peer impact"
 }`
           },
           {
             role: 'user',
-            content: `Analyze this security signal and provide autonomous decision:
+            content: `Analyze this security signal with strategic intelligence focus:
 
+=== CURRENT SIGNAL ===
 Signal: ${signal.normalized_text}
 Category: ${signal.category}
 Severity: ${signal.severity}
 Location: ${signal.location}
 Entity Tags: ${signal.entity_tags?.join(', ')}
 Confidence: ${signal.confidence}
+Raw Details: ${JSON.stringify(signal.raw_json)}
 
-Client Context:
+=== CLIENT CONTEXT ===
 Name: ${signal.clients?.name}
 Industry: ${signal.clients?.industry}
+Locations: ${signal.clients?.locations?.join(', ')}
+High-Value Assets: ${signal.clients?.high_value_assets?.join(', ')}
 Risk Assessment: ${JSON.stringify(signal.clients?.risk_assessment)}
+Threat Profile: ${JSON.stringify(signal.clients?.threat_profile)}
 
-Make an autonomous decision about how to handle this signal.`
+=== RECENT ACTIVITY PATTERN (Last 30 Days) ===
+${recentSignals && recentSignals.length > 0 ? 
+  `Found ${recentSignals.length} recent signals:
+${recentSignals.map((s: any, i: number) => 
+  `${i + 1}. [${s.severity?.toUpperCase()}] ${s.category}: ${s.normalized_text} (${s.entity_tags?.join(', ')})`
+).join('\n')}
+
+PATTERN ANALYSIS REQUIRED:
+- Are there correlated threats? (e.g., activist social media + physical threats + deal backlash)
+- Is this part of an escalating campaign?
+- Do you see coordinated timing or targeting?
+- Are multiple threat vectors converging?
+- What's the momentum: escalating, sustained, or declining?
+` : 'No recent signals - this appears to be an isolated event.'}
+
+=== STRATEGIC ANALYSIS TASK ===
+Provide:
+1. Threat assessment with strategic context (not just tactical response)
+2. Pattern correlation analysis across recent signals
+3. Campaign trajectory assessment (is this escalating?)
+4. Sector-wide implications
+5. Actionable recommendations with strategic rationale
+
+Think like 3Si Security: provide intelligence that explains WHY this matters and HOW it fits into larger threat patterns.`
           }
         ],
         tools: [{
@@ -158,7 +221,11 @@ Make an autonomous decision about how to handle this signal.`
                 remediation_steps: { type: 'array', items: { type: 'string' } },
                 alert_recipients: { type: 'array', items: { type: 'string' } },
                 estimated_impact: { type: 'string' },
-                reasoning: { type: 'string' }
+                reasoning: { type: 'string' },
+                strategic_context: { type: 'string' },
+                threat_correlation: { type: 'string' },
+                campaign_assessment: { type: 'string' },
+                sector_implications: { type: 'string' }
               },
               required: ['threat_level', 'confidence', 'should_create_incident', 'reasoning']
             }
@@ -202,7 +269,7 @@ Make an autonomous decision about how to handle this signal.`
           timeline_json: [{
             timestamp: new Date().toISOString(),
             event: 'Incident automatically created by AI',
-            details: decision.reasoning,
+            details: `${decision.reasoning}\n\n🎯 Strategic Context: ${decision.strategic_context}\n\n🔗 Threat Correlation: ${decision.threat_correlation}`,
             actor: 'AI Decision Engine'
           }]
         })
@@ -243,29 +310,83 @@ Make an autonomous decision about how to handle this signal.`
           channel: 'email',
           status: 'pending',
           response_json: {
-            subject: `[${decision.threat_level.toUpperCase()}] ${signal.category} Alert`,
+            subject: `[${decision.threat_level.toUpperCase()}] ${signal.category} Alert - Strategic Intelligence`,
             body: `
-Threat Level: ${decision.threat_level}
-Signal: ${signal.normalized_text}
+🚨 THREAT ALERT: ${signal.category}
+Threat Level: ${decision.threat_level.toUpperCase()}
+Priority: ${decision.incident_priority?.toUpperCase()}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📍 SIGNAL DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${signal.normalized_text}
 Location: ${signal.location}
+Confidence: ${(signal.confidence || 0) * 100}%
 
-AI Analysis:
-${decision.reasoning}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 STRATEGIC CONTEXT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${decision.strategic_context}
 
-Recommended Actions:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔗 THREAT CORRELATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${decision.threat_correlation}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 CAMPAIGN ASSESSMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${decision.campaign_assessment}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🏭 SECTOR IMPLICATIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${decision.sector_implications}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ IMMEDIATE ACTIONS REQUIRED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ${decision.containment_actions?.map((a: string, i: number) => `${i + 1}. ${a}`).join('\n')}
 
-This alert was generated and sent automatically by the AI Decision Engine.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 REMEDIATION STEPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${decision.remediation_steps?.map((s: string, i: number) => `${i + 1}. ${s}`).join('\n')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📈 IMPACT ASSESSMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${decision.estimated_impact}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This strategic intelligence alert was generated and sent automatically by the AI Decision Engine using pattern analysis across ${recentSignals?.length || 0} recent signals.
+
+Analyzed by: AI Decision Engine (3Si-style Strategic Intelligence)
+Generated: ${new Date().toISOString()}
             `
           }
         });
       }
     }
 
-    // Update signal status
+    // Update signal status with enhanced decision data
     await supabase
       .from('signals')
-      .update({ status: 'processed' })
+      .update({ 
+        status: 'processed',
+        raw_json: {
+          ...signal.raw_json,
+          ai_decision: decision,
+          processing_method: 'ai',
+          pattern_analysis: {
+            recent_signals_analyzed: recentSignals?.length || 0,
+            strategic_context: decision.strategic_context,
+            threat_correlation: decision.threat_correlation,
+            campaign_assessment: decision.campaign_assessment
+          }
+        }
+      })
       .eq('id', signal.id);
 
     return new Response(
@@ -275,6 +396,12 @@ This alert was generated and sent automatically by the AI Decision Engine.
         incident_id,
         processing_method: 'ai',
         credits_used: true,
+        pattern_analysis: {
+          signals_analyzed: recentSignals?.length || 0,
+          timeframe_days: 30,
+          correlation_detected: decision.threat_correlation !== 'No significant correlation detected.',
+          campaign_identified: decision.campaign_assessment?.includes('coordinated') || decision.campaign_assessment?.includes('campaign')
+        },
         actions_taken: {
           incident_created: decision.should_create_incident,
           alerts_sent: decision.alert_recipients?.length || 0,
