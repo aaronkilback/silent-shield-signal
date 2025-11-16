@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, CheckCircle, Shield, XCircle } from "lucide-react";
+import { IncidentLocationMap } from "./IncidentLocationMap";
 
 interface Incident {
   id: string;
@@ -46,6 +47,30 @@ export const IncidentActionDialog = ({
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState("");
+  const [signalLocation, setSignalLocation] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchSignalLocation = async () => {
+      if (!incident.signal_id) return;
+      
+      try {
+        const { data, error } = await supabase
+          .from("signals")
+          .select("location")
+          .eq("id", incident.signal_id)
+          .single();
+
+        if (error) throw error;
+        setSignalLocation(data?.location || null);
+      } catch (error) {
+        console.error("Error fetching signal location:", error);
+      }
+    };
+
+    if (open) {
+      fetchSignalLocation();
+    }
+  }, [incident.signal_id, open]);
 
   const handleAction = async (action: "acknowledge" | "contain" | "resolve") => {
     try {
@@ -156,6 +181,14 @@ export const IncidentActionDialog = ({
           </div>
 
           <Separator />
+
+          {/* Location Map */}
+          {signalLocation && (
+            <>
+              <IncidentLocationMap location={signalLocation} />
+              <Separator />
+            </>
+          )}
 
           {/* Event History */}
           <div>
