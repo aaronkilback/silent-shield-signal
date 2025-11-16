@@ -144,6 +144,13 @@ const Incidents = () => {
 
   const filteredIncidents = incidents.filter((incident) => {
     const search = searchTerm.toLowerCase();
+    
+    // Filter out closed false positive incidents unless "all" or "closed" is selected
+    const isFalsePositiveClosed = incident.status === "closed";
+    if (statusFilter !== "all" && statusFilter !== "closed" && isFalsePositiveClosed) {
+      return false;
+    }
+    
     return (
       incident.clients?.name.toLowerCase().includes(search) ||
       incident.priority.toLowerCase().includes(search) ||

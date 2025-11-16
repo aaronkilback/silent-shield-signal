@@ -33,17 +33,64 @@ export const SignalFalsePositiveButton = ({
     try {
       setLoading(true);
 
-      const { error } = await supabase
+      // Update signal status
+      const { error: signalError } = await supabase
         .from("signals")
         .update({ status: "false_positive" })
         .eq("id", signalId);
 
-      if (error) throw error;
+      if (signalError) throw signalError;
 
-      toast({
-        title: "Marked as False Positive",
-        description: "This signal has been marked as a false positive and will help improve AI accuracy",
-      });
+      // Find and handle associated incident
+      const { data: incidents, error: incidentFetchError } = await supabase
+        .from("incidents")
+        .select("id, status, opened_at")
+        .eq("signal_id", signalId);
+
+      if (incidentFetchError) throw incidentFetchError;
+
+      if (incidents && incidents.length > 0) {
+        const incident = incidents[0];
+        
+        // Close the incident
+        const { error: incidentUpdateError } = await supabase
+          .from("incidents")
+          .update({
+            status: "closed",
+            resolved_at: new Date().toISOString(),
+          })
+          .eq("id", incident.id);
+
+        if (incidentUpdateError) throw incidentUpdateError;
+
+        // Create incident outcome marking it as false positive
+        const responseTimeSeconds = Math.floor(
+          (new Date().getTime() - new Date(incident.opened_at).getTime()) / 1000
+        );
+
+        const { error: outcomeError } = await supabase
+          .from("incident_outcomes")
+          .insert({
+            incident_id: incident.id,
+            was_accurate: false,
+            false_positive: true,
+            outcome_type: "false_positive",
+            response_time_seconds: responseTimeSeconds,
+            lessons_learned: "Signal and incident marked as false positive - AI detection needs refinement",
+          });
+
+        if (outcomeError) throw outcomeError;
+
+        toast({
+          title: "Marked as False Positive",
+          description: "Signal and associated incident have been closed and flagged as false positive",
+        });
+      } else {
+        toast({
+          title: "Marked as False Positive",
+          description: "Signal has been marked as a false positive",
+        });
+      }
 
       setShowDialog(false);
       onSuccess();
@@ -84,8 +131,14 @@ export const SignalFalsePositiveButton = ({
           <AlertDialogHeader>
             <AlertDialogTitle>Mark as False Positive?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will mark the signal as a false positive, indicating the AI incorrectly
-              identified this as a threat. This helps improve future detection accuracy.
+              This will mark the signal as a false positive and automatically close any
+              associated incident. This action will:
+              <ul className="list-disc list-inside mt-2 space-y-1">
+                <li>Flag the signal as not a real threat</li>
+                <li>Close and remove the associated incident (if any)</li>
+                <li>Record this as a false positive in learning analytics</li>
+                <li>Help improve future AI detection accuracy</li>
+              </ul>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
