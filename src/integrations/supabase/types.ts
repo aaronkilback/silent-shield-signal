@@ -184,6 +184,217 @@ export type Database = {
         }
         Relationships: []
       }
+      entities: {
+        Row: {
+          aliases: string[] | null
+          attributes: Json | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          risk_level: string | null
+          type: Database["public"]["Enums"]["entity_type"]
+          updated_at: string
+        }
+        Insert: {
+          aliases?: string[] | null
+          attributes?: Json | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          risk_level?: string | null
+          type: Database["public"]["Enums"]["entity_type"]
+          updated_at?: string
+        }
+        Update: {
+          aliases?: string[] | null
+          attributes?: Json | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          risk_level?: string | null
+          type?: Database["public"]["Enums"]["entity_type"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entities_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      entity_mentions: {
+        Row: {
+          confidence: number | null
+          context: string | null
+          created_at: string
+          detected_at: string
+          entity_id: string
+          id: string
+          incident_id: string | null
+          signal_id: string | null
+        }
+        Insert: {
+          confidence?: number | null
+          context?: string | null
+          created_at?: string
+          detected_at?: string
+          entity_id: string
+          id?: string
+          incident_id?: string | null
+          signal_id?: string | null
+        }
+        Update: {
+          confidence?: number | null
+          context?: string | null
+          created_at?: string
+          detected_at?: string
+          entity_id?: string
+          id?: string
+          incident_id?: string | null
+          signal_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entity_mentions_entity_id_fkey"
+            columns: ["entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entity_mentions_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entity_mentions_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      entity_notifications: {
+        Row: {
+          created_at: string
+          entity_id: string
+          id: string
+          is_read: boolean | null
+          mention_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          entity_id: string
+          id?: string
+          is_read?: boolean | null
+          mention_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          entity_id?: string
+          id?: string
+          is_read?: boolean | null
+          mention_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entity_notifications_entity_id_fkey"
+            columns: ["entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entity_notifications_mention_id_fkey"
+            columns: ["mention_id"]
+            isOneToOne: false
+            referencedRelation: "entity_mentions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entity_notifications_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      entity_relationships: {
+        Row: {
+          created_at: string
+          description: string | null
+          entity_a_id: string
+          entity_b_id: string
+          first_observed: string
+          id: string
+          last_observed: string
+          occurrence_count: number | null
+          relationship_type: string
+          strength: number | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          entity_a_id: string
+          entity_b_id: string
+          first_observed?: string
+          id?: string
+          last_observed?: string
+          occurrence_count?: number | null
+          relationship_type: string
+          strength?: number | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          entity_a_id?: string
+          entity_b_id?: string
+          first_observed?: string
+          id?: string
+          last_observed?: string
+          occurrence_count?: number | null
+          relationship_type?: string
+          strength?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entity_relationships_entity_a_id_fkey"
+            columns: ["entity_a_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entity_relationships_entity_b_id_fkey"
+            columns: ["entity_b_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       escalation_rules: {
         Row: {
           actions: Json
@@ -700,6 +911,17 @@ export type Database = {
     Enums: {
       alert_status: "pending" | "sent" | "delivered" | "failed" | "acknowledged"
       app_role: "admin" | "analyst" | "viewer"
+      entity_type:
+        | "person"
+        | "organization"
+        | "location"
+        | "infrastructure"
+        | "domain"
+        | "ip_address"
+        | "email"
+        | "phone"
+        | "vehicle"
+        | "other"
       improvement_type: "shot" | "brick"
       incident_priority: "p1" | "p2" | "p3" | "p4"
       incident_status:
@@ -843,6 +1065,18 @@ export const Constants = {
     Enums: {
       alert_status: ["pending", "sent", "delivered", "failed", "acknowledged"],
       app_role: ["admin", "analyst", "viewer"],
+      entity_type: [
+        "person",
+        "organization",
+        "location",
+        "infrastructure",
+        "domain",
+        "ip_address",
+        "email",
+        "phone",
+        "vehicle",
+        "other",
+      ],
       improvement_type: ["shot", "brick"],
       incident_priority: ["p1", "p2", "p3", "p4"],
       incident_status: [

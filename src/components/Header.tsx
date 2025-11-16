@@ -1,8 +1,9 @@
-import { Shield, Activity, LogOut, Building2, Home, AlertTriangle } from "lucide-react";
+import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate, useLocation } from "react-router-dom";
+import { EntityNotifications } from "@/components/EntityNotifications";
 
 export const Header = () => {
   const { signOut } = useAuth();
@@ -50,7 +51,16 @@ export const Header = () => {
                 <AlertTriangle className="w-4 h-4 mr-2" />
                 Incidents
               </Button>
+              <Button
+                onClick={() => navigate("/entities")}
+                variant={location.pathname === "/entities" ? "default" : "ghost"}
+                size="sm"
+              >
+                <Users className="w-4 h-4 mr-2" />
+                Entities
+              </Button>
             </nav>
+            <EntityNotifications />
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/50">
               <Activity className="w-4 h-4 text-status-active animate-pulse" />
               <span className="text-sm text-foreground font-medium">Systems Operational</span>
