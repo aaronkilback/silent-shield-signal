@@ -385,35 +385,63 @@ serve(async (req) => {
     }
 
     // === TWITTER/X MONITORING (via scraping) ===
-    // Using nitter.net (Twitter frontend that's easier to scrape - no API needed)
+    // Using multiple nitter instances with fallback
+    const nitterInstances = [
+      'https://nitter.poast.org',
+      'https://nitter.privacydev.net',
+      'https://nitter.net'
+    ];
+    
     const twitterKeywords = [
-      ...SECURITY_KEYWORDS.slice(0, 5),
-      ...ACTIVIST_KEYWORDS.slice(0, 5),
-      'data breach', 'ransomware attack', 'climate protest'
+      ...SECURITY_KEYWORDS.slice(0, 3),
+      ...ACTIVIST_KEYWORDS.slice(0, 2),
+      'data breach'
     ];
 
     for (const keyword of twitterKeywords) {
-      try {
-        const searchQuery = encodeURIComponent(keyword);
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-        
-        // Use nitter.net (Twitter frontend for easier scraping)
-        const response = await fetch(
-          `https://nitter.net/search?f=tweets&q=${searchQuery}&since=&until=&near=`,
-          {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Accept': 'text/html,application/xhtml+xml',
-            },
-            signal: controller.signal
-          }
-        ).finally(() => clearTimeout(timeout));
+      // Add delay between keyword searches
+      await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
+      
+      const searchQuery = encodeURIComponent(keyword);
+      let response = null;
+      let successfulInstance = null;
+      
+      // Try each nitter instance until one works
+      for (const nitterUrl of nitterInstances) {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15000);
+          
+          response = await fetch(
+            `${nitterUrl}/search?f=tweets&q=${searchQuery}&since=&until=&near=`,
+            {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+              },
+              signal: controller.signal
+            }
+          ).finally(() => clearTimeout(timeout));
 
-        if (!response.ok) {
-          console.log(`Twitter scrape failed for "${keyword}": ${response.status}`);
+          if (response.ok) {
+            successfulInstance = nitterUrl;
+            console.log(`Twitter search successful via ${nitterUrl} for "${keyword}"`);
+            break;
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          console.log(`Failed to reach ${nitterUrl}: ${errorMessage}`);
           continue;
         }
+      }
+      
+      if (!response || !response.ok || !successfulInstance) {
+        console.log(`Twitter scrape failed for "${keyword}": all instances failed`);
+        continue;
+      }
+      
+      try {
 
         const html = await response.text();
         
