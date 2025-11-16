@@ -127,26 +127,42 @@ serve(async (req) => {
 
         const html = await websiteResponse.text();
         
-        // Extract text content from HTML
-        const textContent = html
+        // Improved content extraction
+        let textContent = html
+          // Remove scripts, styles, and comments
           .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
           .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+          .replace(/<!--[\s\S]*?-->/g, '')
+          // Remove navigation, headers, footers
+          .replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, '')
+          .replace(/<header\b[^<]*(?:(?!<\/header>)<[^<]*)*<\/header>/gi, '')
+          .replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, '')
+          // Extract main content preferentially
+          .replace(/<(main|article)[^>]*>([\s\S]*?)<\/(main|article)>/gi, (match, tag, content) => {
+            return '\n\n' + content + '\n\n';
+          });
+        
+        // Now strip remaining HTML and clean up
+        textContent = textContent
           .replace(/<[^>]+>/g, ' ')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
           .replace(/&[^;]+;/g, ' ')
           .replace(/\s+/g, ' ')
-          .trim()
-          .substring(0, 5000); // Limit to 5000 chars
+          .trim();
+        
+        // Take more content for better analysis
+        const contentForAnalysis = textContent.substring(0, 8000);
 
-        console.log(`Extracted ${textContent.length} characters from website`);
-
-        // Get all clients to check for mentions
-        const { data: clients } = await supabase
-          .from('clients')
-          .select('id, name, industry');
+        console.log(`Extracted ${contentForAnalysis.length} characters from website`);
 
         const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
         
-        // Analyze website content with AI
+        // Enhanced AI analysis with better prompting
         const analysisResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -158,14 +174,34 @@ serve(async (req) => {
             messages: [
               {
                 role: 'system',
-                content: 'You are a security analyst. Analyze website content for security threats, breaches, vulnerabilities, attacks, or other security concerns. List any companies or organizations mentioned.'
+                content: `You are a corporate security intelligence analyst specializing in threat assessment. Analyze web content for security-relevant information including:
+- Direct threats or security incidents
+- Activist campaigns or protests targeting corporations
+- Legal disputes or regulatory actions
+- Operational disruptions or risks
+- Reputation threats or negative publicity
+- Supply chain or infrastructure vulnerabilities
+
+Provide a structured, actionable summary focused on business impact.`
               },
               {
                 role: 'user',
-                content: `Analyze this website content from ${url}:\n\n${textContent}\n\nProvide:\n1. Security threats/concerns found\n2. Companies/organizations mentioned\n3. Severity assessment (low/medium/high/critical)`
+                content: `Analyze this content from ${url}
+
+CONTENT:
+${contentForAnalysis}
+
+Provide a clear summary including:
+1. KEY FINDINGS: What security-relevant events or threats are described?
+2. AFFECTED PARTIES: Which companies, organizations, or projects are mentioned or impacted?
+3. THREAT LEVEL: Rate as CRITICAL, HIGH, MEDIUM, or LOW
+4. BUSINESS IMPACT: What are the potential operational, legal, or reputational consequences?
+5. ACTIONABLE INTEL: What specific details (dates, locations, actors, tactics) are relevant for security teams?
+
+Be specific and concise. Focus on facts, not speculation.`
               }
             ],
-            max_completion_tokens: 800
+            max_completion_tokens: 1200
           }),
         });
 
