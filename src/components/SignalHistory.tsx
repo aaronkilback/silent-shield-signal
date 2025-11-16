@@ -216,8 +216,12 @@ export const SignalHistory = () => {
                             hasAiAnalysis: !!signal.raw_json?.ai_analysis,
                             processingMethod: signal.raw_json?.processing_method
                           });
-                          setSelectedSignal(signal);
-                          setDialogOpen(true);
+                          // Force close then reopen to ensure fresh render
+                          setDialogOpen(false);
+                          setTimeout(() => {
+                            setSelectedSignal(signal);
+                            setDialogOpen(true);
+                          }, 50);
                         }}
                       >
                         <Eye className="w-3 h-3" />
