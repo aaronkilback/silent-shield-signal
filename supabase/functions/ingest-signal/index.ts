@@ -12,10 +12,11 @@ const SignalInputSchema = z.object({
   source_key: z.string().optional(),
   event: z.any().optional(),
   text: z.string().min(1).max(10000).optional(),
+  url: z.string().url().optional(),
   location: z.string().max(500).optional(),
   raw_json: z.any().optional()
-}).refine(data => data.text || data.event, {
-  message: "Either 'text' or 'event' must be provided"
+}).refine(data => data.text || data.event || data.url, {
+  message: "Either 'text', 'event', or 'url' must be provided"
 });
 
 // Rules-based classification (rules.yaml equivalent)
@@ -98,12 +99,96 @@ serve(async (req) => {
       );
     }
 
-    const { source_key, event, text, location, raw_json } = validationResult.data;
+    const { source_key, event, text, url, location, raw_json } = validationResult.data;
     
-    // Support both webhook format (source_key + event) and direct format (text + location)
-    const signalText = text || JSON.stringify(event);
-    const signalLocation = location || null;
-    const signalRaw = raw_json || event || { text: signalText };
+    let signalText = text || JSON.stringify(event);
+    let signalLocation = location || null;
+    let signalRaw = raw_json || event || { text: signalText };
+    
+    // If URL is provided, fetch and analyze the website
+    if (url) {
+      console.log('Fetching website content from:', url);
+      
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000);
+        
+        const websiteResponse = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; SOCBot/1.0)',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          },
+          signal: controller.signal
+        }).finally(() => clearTimeout(timeout));
+
+        if (!websiteResponse.ok) {
+          throw new Error(`Failed to fetch website: ${websiteResponse.status}`);
+        }
+
+        const html = await websiteResponse.text();
+        
+        // Extract text content from HTML
+        const textContent = html
+          .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+          .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/&[^;]+;/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .substring(0, 5000); // Limit to 5000 chars
+
+        console.log(`Extracted ${textContent.length} characters from website`);
+
+        // Get all clients to check for mentions
+        const { data: clients } = await supabase
+          .from('clients')
+          .select('id, name, industry');
+
+        const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+        
+        // Analyze website content with AI
+        const analysisResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'google/gemini-2.5-flash',
+            messages: [
+              {
+                role: 'system',
+                content: 'You are a security analyst. Analyze website content for security threats, breaches, vulnerabilities, attacks, or other security concerns. List any companies or organizations mentioned.'
+              },
+              {
+                role: 'user',
+                content: `Analyze this website content from ${url}:\n\n${textContent}\n\nProvide:\n1. Security threats/concerns found\n2. Companies/organizations mentioned\n3. Severity assessment (low/medium/high/critical)`
+              }
+            ],
+            max_completion_tokens: 800
+          }),
+        });
+
+        const analysisData = await analysisResponse.json();
+        const analysis = analysisData.choices?.[0]?.message?.content || '';
+        
+        signalText = `Website Analysis - ${url}\n\n${analysis}`;
+        signalLocation = url;
+        signalRaw = {
+          url,
+          analysis,
+          snippet: textContent.substring(0, 500),
+          scannedAt: new Date().toISOString()
+        };
+
+        console.log('Website analysis complete:', analysis.substring(0, 200));
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('Error fetching/analyzing website:', error);
+        signalText = `Failed to scan website ${url}: ${errorMessage}`;
+        signalRaw = { url, error: errorMessage };
+      }
+    }
     
     console.log('Ingesting signal:', signalText.substring(0, 100));
 

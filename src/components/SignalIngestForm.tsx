@@ -11,26 +11,36 @@ import { toast } from "sonner";
 export const SignalIngestForm = () => {
   const [text, setText] = useState("");
   const [location, setLocation] = useState("");
+  const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!text.trim()) return;
+    if (!text.trim() && !url.trim()) return;
 
     setLoading(true);
     try {
+      const body: any = {
+        location: location.trim() || undefined,
+      };
+
+      if (url.trim()) {
+        body.url = url.trim();
+        toast.loading("Scanning website...");
+      } else {
+        body.text = text.trim();
+      }
+
       const { error } = await supabase.functions.invoke("ingest-signal", {
-        body: {
-          text: text.trim(),
-          location: location.trim() || undefined,
-        },
+        body,
       });
 
       if (error) throw error;
 
-      toast.success("Signal ingested successfully");
+      toast.success(url.trim() ? "Website scanned and signals created" : "Signal ingested successfully");
       setText("");
       setLocation("");
+      setUrl("");
     } catch (error) {
       console.error("Error ingesting signal:", error);
       toast.error("Failed to ingest signal");
@@ -78,20 +88,39 @@ export const SignalIngestForm = () => {
       <CardHeader>
         <CardTitle>Ingest Signal</CardTitle>
         <CardDescription>
-          Submit a signal manually or upload JSON file
+          Submit a signal manually, scan a website URL, or upload JSON file
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="url">Website URL (Optional)</Label>
+            <Input
+              id="url"
+              type="url"
+              placeholder="https://example.com - AI will scan and analyze the website"
+              value={url}
+              onChange={(e) => {
+                setUrl(e.target.value);
+                if (e.target.value.trim()) setText("");
+              }}
+            />
+          </div>
+
+          <div className="text-center text-sm text-muted-foreground">OR</div>
+
           <div className="space-y-2">
             <Label htmlFor="text">Signal Text</Label>
             <Textarea
               id="text"
               placeholder="Enter threat intelligence, suspicious activity, or security event..."
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => {
+                setText(e.target.value);
+                if (e.target.value.trim()) setUrl("");
+              }}
               rows={4}
-              required
+              disabled={!!url.trim()}
             />
           </div>
 
