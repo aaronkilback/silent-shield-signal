@@ -49,6 +49,7 @@ export const TripwireAlerts = () => {
   useEffect(() => {
     const loadIncidents = async () => {
       try {
+        console.log('TripwireAlerts - Loading incidents for client:', selectedClientId);
         let query = supabase
           .from("incidents")
           .select("*, clients(name)")
@@ -63,6 +64,7 @@ export const TripwireAlerts = () => {
         const { data, error } = await query;
 
         if (error) throw error;
+        console.log('TripwireAlerts - Loaded incidents:', data);
         setIncidents((data || []) as Incident[]);
       } catch (error) {
         console.error("Error loading incidents:", error);
