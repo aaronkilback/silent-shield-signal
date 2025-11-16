@@ -269,7 +269,13 @@ Respond ONLY with valid JSON.`
       const aiContent = aiData.choices?.[0]?.message?.content;
       if (aiContent) {
         try {
-          const parsed = JSON.parse(aiContent);
+          // Strip markdown code blocks if present
+          let jsonStr = aiContent.trim();
+          if (jsonStr.startsWith('```')) {
+            jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+          }
+          
+          const parsed = JSON.parse(jsonStr);
           classification = { ...classification, ...parsed };
           // Keep rules-based severity if matched
           if (rulesResult.severity) {
@@ -281,11 +287,34 @@ Respond ONLY with valid JSON.`
       }
     }
 
+    // Match signal to clients based on content
+    let clientId = null;
+    const { data: clients } = await supabase
+      .from('clients')
+      .select('id, name, organization, industry');
+    
+    if (clients && clients.length > 0) {
+      const textLower = signalText.toLowerCase();
+      
+      // Try to match by client name or organization
+      for (const client of clients) {
+        const clientName = client.name.toLowerCase();
+        const orgName = client.organization?.toLowerCase() || '';
+        
+        if (textLower.includes(clientName) || (orgName && textLower.includes(orgName))) {
+          clientId = client.id;
+          console.log(`Signal matched to client: ${client.name}`);
+          break;
+        }
+      }
+    }
+
     // Insert signal
     const { data: signal, error: insertError } = await supabase
       .from('signals')
       .insert({
         source_id: sourceId,
+        client_id: clientId,
         raw_json: signalRaw,
         normalized_text: classification.normalized_text,
         entity_tags: classification.entity_tags,
