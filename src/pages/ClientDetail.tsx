@@ -19,9 +19,11 @@ import {
   TrendingUp,
   Calendar,
   FileText,
-  Loader2
+  Loader2,
+  Trash2
 } from "lucide-react";
 import { toast } from "sonner";
+import { DeleteClientDialog } from "@/components/DeleteClientDialog";
 
 interface Client {
   id: string;
@@ -72,6 +74,7 @@ const ClientDetail = () => {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -184,13 +187,24 @@ const ClientDetail = () => {
                   </div>
                 </div>
               </div>
-              <div className="text-right">
-                <div className="flex items-center gap-2 mb-2">
-                  <Shield className={`w-5 h-5 ${riskColor}`} />
-                  <span className="text-sm text-muted-foreground">Risk Score</span>
+              <div className="flex flex-col gap-3">
+                <div className="text-right">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Shield className={`w-5 h-5 ${riskColor}`} />
+                    <span className="text-sm text-muted-foreground">Risk Score</span>
+                  </div>
+                  <div className={`text-3xl font-bold ${riskColor}`}>{riskScore}</div>
+                  <div className="text-sm text-muted-foreground">{riskLevel} Risk</div>
                 </div>
-                <div className={`text-3xl font-bold ${riskColor}`}>{riskScore}</div>
-                <div className="text-sm text-muted-foreground">{riskLevel} Risk</div>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setShowDeleteDialog(true)}
+                  className="gap-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete Client
+                </Button>
               </div>
             </div>
           </CardHeader>
@@ -441,6 +455,16 @@ const ClientDetail = () => {
           </TabsContent>
         </Tabs>
       </main>
+
+      <DeleteClientDialog
+        clientId={client.id}
+        clientName={client.name}
+        signalCount={signals.length}
+        incidentCount={incidents.length}
+        open={showDeleteDialog}
+        onClose={() => setShowDeleteDialog(false)}
+        onSuccess={() => navigate("/clients")}
+      />
     </div>
   );
 };
