@@ -171,6 +171,38 @@ serve(async (req) => {
       }
     }
 
+    // Update automation metrics in database
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Get existing metrics for today
+    const { data: existingMetrics } = await supabase
+      .from('automation_metrics')
+      .select('*')
+      .eq('metric_date', today)
+      .maybeSingle();
+
+    if (existingMetrics) {
+      // Update existing metrics
+      await supabase
+        .from('automation_metrics')
+        .update({
+          signals_processed: (existingMetrics.signals_processed || 0) + processedSignals,
+          incidents_auto_escalated: (existingMetrics.incidents_auto_escalated || 0) + (staleIncidents?.length || 0),
+          osint_scans_completed: (existingMetrics.osint_scans_completed || 0) + monitorsRun
+        })
+        .eq('id', existingMetrics.id);
+    } else {
+      // Create new metrics entry
+      await supabase
+        .from('automation_metrics')
+        .insert({
+          metric_date: today,
+          signals_processed: processedSignals,
+          incidents_auto_escalated: staleIncidents?.length || 0,
+          osint_scans_completed: monitorsRun
+        });
+    }
+
     return new Response(
       JSON.stringify({
         success: !aiCreditsError,
