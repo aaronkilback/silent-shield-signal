@@ -11,7 +11,7 @@ import { useNavigate } from "react-router-dom";
 import { Loader2, AlertTriangle, Search, Filter } from "lucide-react";
 import { IncidentActionDialog } from "@/components/IncidentActionDialog";
 import { useToast } from "@/hooks/use-toast";
-import { ClientSelectionProvider, useClientSelection } from "@/hooks/useClientSelection";
+import { useClientSelection } from "@/hooks/useClientSelection";
 import { DashboardClientSelector } from "@/components/DashboardClientSelector";
 
 interface Incident {
@@ -30,7 +30,7 @@ interface Incident {
   };
 }
 
-const IncidentsContent = () => {
+const Incidents = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -316,14 +316,6 @@ const IncidentsContent = () => {
         />
       )}
     </div>
-  );
-};
-
-const Incidents = () => {
-  return (
-    <ClientSelectionProvider>
-      <IncidentsContent />
-    </ClientSelectionProvider>
   );
 };
 
