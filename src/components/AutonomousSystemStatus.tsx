@@ -41,9 +41,14 @@ export default function AutonomousSystemStatus() {
   const triggerManualScan = async () => {
     try {
       setLoading(true);
-      const { error } = await supabase.functions.invoke('auto-orchestrator');
+      const { data, error } = await supabase.functions.invoke('auto-orchestrator');
       
-      if (error) throw error;
+      if (error) {
+        console.error('Auto-orchestrator error:', error);
+        throw error;
+      }
+      
+      console.log('Auto-orchestrator response:', data);
       
       toast({
         title: "Manual scan triggered",
@@ -56,7 +61,7 @@ export default function AutonomousSystemStatus() {
       console.error('Error triggering scan:', error);
       toast({
         title: "Error",
-        description: "Failed to trigger manual scan",
+        description: `Failed to trigger manual scan: ${error.message || 'Unknown error'}`,
         variant: "destructive",
       });
     } finally {
