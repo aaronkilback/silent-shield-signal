@@ -19,7 +19,31 @@ const ACTIVIST_KEYWORDS = [
   'protest', 'campaign', 'boycott', 'divestment', 'divest', 'activism',
   'climate', 'fossil fuel', 'oil spill', 'environmental', 'indigenous',
   'stand.earth', 'stand', 'greenpeace', 'extinction rebellion', '350.org',
-  'pipeline protest', 'blockade', 'occupation', 'lawsuit', 'litigation'
+  'pipeline protest', 'blockade', 'occupation', 'lawsuit', 'litigation',
+  // Visual propaganda & viral content
+  'flaring', 'video', 'viral', 'expose', 'footage', 'documentary',
+  'instagram', 'tiktok', 'youtube', 'social media campaign',
+  // Activist hashtags
+  'stoppetrochemical', 'protecttheclimate', 'fossilfree', 'keepitintheground',
+  'noLNG', 'nopipeline', 'climatejustice', 'decolonize',
+  // Indigenous rights
+  'landback', 'indigenous rights', 'treaty rights', 'unceded territory',
+  'first nations', 'reconciliation'
+];
+
+// Physical threat keywords for sabotage/infrastructure threats
+const PHYSICAL_THREAT_KEYWORDS = [
+  'sabotage', 'tree-spiking', 'tree spike', 'infrastructure attack',
+  'valve turner', 'monkey wrench', 'direct action', 'occupation',
+  'lock down', 'lockdown', 'chain', 'tripod', 'blockade tactics',
+  'equipment damage', 'trespassing', 'illegal entry', 'security breach'
+];
+
+// Deal/Partnership keywords that trigger activist responses
+const DEAL_KEYWORDS = [
+  'acquisition', 'merger', 'partnership', 'supply deal', 'contract',
+  'mou', 'agreement', 'offtake', 'LNG deal', 'pipeline deal',
+  'joint venture', 'investment', 'financing', 'expansion'
 ];
 
 // Industry-specific threat keywords
@@ -86,7 +110,7 @@ serve(async (req) => {
           const selftext = post.data.selftext?.toLowerCase() || '';
           const combinedText = `${title} ${selftext}`;
 
-          // Check if security-related OR activist-related
+          // Check if security-related, activist-related, physical threat, or deal-related
           const isSecurityRelated = SECURITY_KEYWORDS.some(keyword => 
             combinedText.includes(keyword)
           );
@@ -94,57 +118,86 @@ serve(async (req) => {
           const isActivistRelated = ACTIVIST_KEYWORDS.some(keyword => 
             combinedText.includes(keyword)
           );
+          
+          const isPhysicalThreat = PHYSICAL_THREAT_KEYWORDS.some(keyword => 
+            combinedText.includes(keyword)
+          );
+          
+          const isDealRelated = DEAL_KEYWORDS.some(keyword => 
+            combinedText.includes(keyword)
+          );
 
-          if (!isSecurityRelated && !isActivistRelated) continue;
+          if (!isSecurityRelated && !isActivistRelated && !isPhysicalThreat && !isDealRelated) continue;
 
           // Determine category and severity
           let category = 'threat-intelligence';
           let severity = 'low';
           
-          if (isActivistRelated) {
+          if (isPhysicalThreat) {
+            category = 'physical-security';
+            severity = combinedText.includes('sabotage') || combinedText.includes('tree-spik') || combinedText.includes('equipment damage')
+              ? 'critical'
+              : combinedText.includes('blockade') || combinedText.includes('occupation')
+              ? 'high'
+              : 'medium';
+          } else if (isActivistRelated) {
             category = 'reputational-risk';
-            severity = combinedText.includes('lawsuit') || combinedText.includes('blockade') 
-              ? 'high' 
-              : combinedText.includes('protest') || combinedText.includes('campaign')
-              ? 'medium' 
-              : 'low';
+            // Viral visual content is high severity
+            if (combinedText.includes('viral') || combinedText.includes('flaring') || combinedText.includes('footage')) {
+              severity = 'high';
+            } else if (combinedText.includes('lawsuit') || combinedText.includes('blockade')) {
+              severity = 'high';
+            } else if (combinedText.includes('protest') || combinedText.includes('campaign')) {
+              severity = 'medium';
+            } else {
+              severity = 'low';
+            }
+          } else if (isDealRelated) {
+            category = 'reputational-risk';
+            severity = 'medium'; // Deals can trigger activist responses
           } else if (isSecurityRelated) {
             category = 'threat-intelligence';
             severity = combinedText.includes('breach') || combinedText.includes('ransomware') 
-              ? 'high' 
-              : combinedText.includes('vulnerability') 
-              ? 'medium' 
-              : 'low';
+              ? 'critical' 
+              : combinedText.includes('vulnerability') || combinedText.includes('exploit')
+              ? 'high'
+              : 'medium';
           }
 
           // Create signals for relevant clients
           for (const client of clients || []) {
             try {
-              // Check if relevant to client's name, organization, or industry
-              const clientName = client.name?.toLowerCase() || '';
-              const clientOrg = client.organization?.toLowerCase() || '';
-              const clientIndustry = client.industry?.toLowerCase() || '';
+              // Enhanced name matching - check for partial matches and common variations
+              const clientNameLower = client.name?.toLowerCase() || '';
+              const clientOrgLower = client.organization?.toLowerCase() || '';
               
-              // Check for direct mention OR industry-specific threats
-              const hasDirectMention = 
-                (clientName && combinedText.includes(clientName)) ||
-                (clientOrg && combinedText.includes(clientOrg));
+              // Split client name into words for partial matching (e.g., "Petronas" matches "Petronas Canada")
+              const clientNameWords = clientNameLower.split(' ').filter((w: string) => w.length > 3);
+              const hasNameMatch = clientNameWords.some((word: string) => combinedText.includes(word)) ||
+                combinedText.includes(clientNameLower) ||
+                (clientOrgLower && combinedText.includes(clientOrgLower));
               
-              // Check for industry-relevant threats
-              const industryKeywords = INDUSTRY_THREATS[clientIndustry] || [];
-              const hasIndustryThreat = industryKeywords.some(keyword => 
-                combinedText.includes(keyword)
+              const hasIndustryMatch = client.industry && INDUSTRY_THREATS[client.industry.toLowerCase()]?.some(
+                (term: string) => combinedText.includes(term)
               );
-
-              const isRelevant = hasDirectMention || (hasIndustryThreat && clientIndustry);
+              
+              const isRelevant = hasNameMatch || hasIndustryMatch;
 
               if (isRelevant) {
                 const entityTags = ['reddit', 'social-media'];
-                if (category === 'reputational-risk') {
+                if (category === 'physical-security') {
+                  entityTags.push('sabotage', 'infrastructure-threat', 'physical');
+                } else if (category === 'reputational-risk') {
                   entityTags.push('activism', 'environmental', 'reputational');
+                  if (combinedText.includes('viral') || combinedText.includes('video')) {
+                    entityTags.push('visual-propaganda');
+                  }
                 } else {
                   entityTags.push('threat-intel');
                 }
+                
+                // Boost confidence if client name directly mentioned
+                const confidence = hasNameMatch ? 0.90 : 0.70;
                 
                 const { error: signalError } = await supabase
                   .from('signals')
@@ -154,7 +207,7 @@ serve(async (req) => {
                     severity: severity,
                     category: category,
                     entity_tags: entityTags,
-                    confidence: 0.75,
+                    confidence: confidence,
                     raw_json: {
                       source: 'reddit',
                       subreddit: subreddit,
@@ -162,7 +215,13 @@ serve(async (req) => {
                       author: post.data.author,
                       created: post.data.created_utc,
                       score: post.data.score,
-                      type: category
+                      type: category,
+                      matched_categories: [
+                        ...(isPhysicalThreat ? ['physical-threat'] : []),
+                        ...(isActivistRelated ? ['activist'] : []),
+                        ...(isDealRelated ? ['deal'] : []),
+                        ...(isSecurityRelated ? ['security'] : [])
+                      ]
                     },
                     client_id: client.id,
                     status: 'new'
@@ -203,7 +262,7 @@ serve(async (req) => {
             
             const title = story.title.toLowerCase();
             
-            // Check if security-related OR activist-related
+            // Check if security-related, activist-related, physical threat, or deal-related
             const isSecurityRelated = SECURITY_KEYWORDS.some(keyword => 
               title.includes(keyword)
             );
@@ -212,49 +271,74 @@ serve(async (req) => {
               title.includes(keyword)
             );
             
-            if (!isSecurityRelated && !isActivistRelated) continue;
+            const isPhysicalThreat = PHYSICAL_THREAT_KEYWORDS.some(keyword => 
+              title.includes(keyword)
+            );
+            
+            const isDealRelated = DEAL_KEYWORDS.some(keyword => 
+              title.includes(keyword)
+            );
+            
+            if (!isSecurityRelated && !isActivistRelated && !isPhysicalThreat && !isDealRelated) continue;
             
             // Determine category and severity
             let category = 'threat-intelligence';
             let severity = 'low';
             
-            if (isActivistRelated) {
+            if (isPhysicalThreat) {
+              category = 'physical-security';
+              severity = title.includes('sabotage') || title.includes('tree-spik') 
+                ? 'critical'
+                : title.includes('blockade') || title.includes('occupation')
+                ? 'high'
+                : 'medium';
+            } else if (isActivistRelated) {
               category = 'reputational-risk';
-              severity = title.includes('lawsuit') || title.includes('blockade') 
-                ? 'high' 
-                : title.includes('protest') || title.includes('campaign')
-                ? 'medium' 
-                : 'low';
+              if (title.includes('viral') || title.includes('flaring')) {
+                severity = 'high';
+              } else if (title.includes('lawsuit') || title.includes('blockade')) {
+                severity = 'high';
+              } else if (title.includes('protest') || title.includes('campaign')) {
+                severity = 'medium';
+              } else {
+                severity = 'low';
+              }
+            } else if (isDealRelated) {
+              category = 'reputational-risk';
+              severity = 'medium';
             } else if (isSecurityRelated) {
               severity = title.includes('breach') || title.includes('ransomware') 
-                ? 'high' 
-                : title.includes('vulnerability') 
-                ? 'medium' 
-                : 'low';
+                ? 'critical' 
+                : title.includes('vulnerability') || title.includes('exploit')
+                ? 'high'
+                : 'medium';
             }
             
-            // Check relevance to clients
+            // Check relevance to clients with enhanced matching
             for (const client of clients || []) {
-              const clientName = client.name?.toLowerCase() || '';
-              const clientOrg = client.organization?.toLowerCase() || '';
-              const clientIndustry = client.industry?.toLowerCase() || '';
+              const clientNameLower = client.name?.toLowerCase() || '';
+              const clientOrgLower = client.organization?.toLowerCase() || '';
               
-              const hasDirectMention = 
-                (clientName && title.includes(clientName)) ||
-                (clientOrg && title.includes(clientOrg));
+              const clientNameWords = clientNameLower.split(' ').filter((w: string) => w.length > 3);
+              const hasNameMatch = clientNameWords.some((word: string) => title.includes(word)) ||
+                title.includes(clientNameLower) ||
+                (clientOrgLower && title.includes(clientOrgLower));
               
-              const industryKeywords = INDUSTRY_THREATS[clientIndustry] || [];
-              const hasIndustryThreat = industryKeywords.some(keyword => 
-                title.includes(keyword)
+              const hasIndustryMatch = client.industry && INDUSTRY_THREATS[client.industry.toLowerCase()]?.some(
+                (term: string) => title.includes(term)
               );
               
-              if (hasDirectMention || (hasIndustryThreat && clientIndustry)) {
+              if (hasNameMatch || hasIndustryMatch) {
                 const entityTags = ['hacker-news', 'social-media'];
-                if (category === 'reputational-risk') {
+                if (category === 'physical-security') {
+                  entityTags.push('sabotage', 'infrastructure-threat');
+                } else if (category === 'reputational-risk') {
                   entityTags.push('activism', 'environmental', 'reputational');
                 } else {
                   entityTags.push('threat-intel');
                 }
+                
+                const confidence = hasNameMatch ? 0.90 : 0.70;
                 
                 const { error: signalError } = await supabase
                   .from('signals')
@@ -264,7 +348,7 @@ serve(async (req) => {
                     severity: severity,
                     category: category,
                     entity_tags: entityTags,
-                    confidence: 0.80,
+                    confidence: confidence,
                     raw_json: {
                       source: 'hackernews',
                       url: story.url || `https://news.ycombinator.com/item?id=${story.id}`,
@@ -272,7 +356,13 @@ serve(async (req) => {
                       author: story.by,
                       score: story.score,
                       comments: story.descendants,
-                      type: category
+                      type: category,
+                      matched_categories: [
+                        ...(isPhysicalThreat ? ['physical-threat'] : []),
+                        ...(isActivistRelated ? ['activist'] : []),
+                        ...(isDealRelated ? ['deal'] : []),
+                        ...(isSecurityRelated ? ['security'] : [])
+                      ]
                     },
                     client_id: client.id,
                     status: 'new'
