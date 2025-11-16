@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { History, Clock, AlertCircle } from "lucide-react";
+import { History, Clock, AlertCircle, Eye } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { SignalDetailDialog } from "./SignalDetailDialog";
 
 interface Signal {
   id: string;
@@ -16,6 +18,7 @@ interface Signal {
   confidence: number;
   created_at: string;
   client_id: string;
+  raw_json: any;
   clients: {
     name: string;
   };
@@ -24,6 +27,8 @@ interface Signal {
 export const SignalHistory = () => {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const { selectedClientId } = useClientSelection();
 
   useEffect(() => {
@@ -69,6 +74,7 @@ export const SignalHistory = () => {
           confidence,
           created_at,
           client_id,
+          raw_json,
           clients (
             name
           )
@@ -171,6 +177,12 @@ export const SignalHistory = () => {
                           {signal.status}
                         </Badge>
                         <Badge variant="outline">{signal.category}</Badge>
+                        {signal.raw_json?.processing_method === 'ai' && (
+                          <Badge variant="secondary" className="gap-1">
+                            <AlertCircle className="w-3 h-3" />
+                            AI Analyzed
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-sm font-medium line-clamp-2">
                         {signal.normalized_text}
@@ -188,9 +200,23 @@ export const SignalHistory = () => {
                         <span>Client: {signal.clients.name}</span>
                       )}
                     </div>
-                    <span>
-                      Confidence: {((signal.confidence || 0) * 100).toFixed(0)}%
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span>
+                        Confidence: {((signal.confidence || 0) * 100).toFixed(0)}%
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1"
+                        onClick={() => {
+                          setSelectedSignal(signal);
+                          setDialogOpen(true);
+                        }}
+                      >
+                        <Eye className="w-3 h-3" />
+                        View Analysis
+                      </Button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -198,6 +224,12 @@ export const SignalHistory = () => {
           </ScrollArea>
         )}
       </CardContent>
+      
+      <SignalDetailDialog 
+        signal={selectedSignal}
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+      />
     </Card>
   );
 };
