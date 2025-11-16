@@ -49,7 +49,9 @@ export const TripwireAlerts = () => {
   useEffect(() => {
     const loadIncidents = async () => {
       try {
-        console.log('TripwireAlerts - Loading incidents for client:', selectedClientId);
+        console.log('🔴 TripwireAlerts LOADING - Client ID:', selectedClientId);
+        console.log('🔴 Client ID type:', typeof selectedClientId);
+        
         let query = supabase
           .from("incidents")
           .select("*, clients(name)")
@@ -58,13 +60,17 @@ export const TripwireAlerts = () => {
           .limit(5);
 
         if (selectedClientId) {
+          console.log('🔴 APPLYING FILTER for client:', selectedClientId);
           query = query.eq("client_id", selectedClientId);
+        } else {
+          console.log('🔴 NO FILTER - showing all incidents');
         }
 
         const { data, error } = await query;
 
         if (error) throw error;
-        console.log('TripwireAlerts - Loaded incidents:', data);
+        console.log('🔴 TripwireAlerts - Loaded incidents:', data);
+        console.log('🔴 Number of incidents:', data?.length || 0);
         setIncidents((data || []) as Incident[]);
       } catch (error) {
         console.error("Error loading incidents:", error);
@@ -73,6 +79,7 @@ export const TripwireAlerts = () => {
       }
     };
 
+    console.log('🔴 TripwireAlerts useEffect triggered, selectedClientId:', selectedClientId);
     loadIncidents();
 
     // Set up realtime subscription
