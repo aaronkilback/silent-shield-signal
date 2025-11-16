@@ -39,18 +39,27 @@ export default function AutonomousSystemStatus() {
         .select('id, status, priority, created_at', { count: 'exact' })
         .gte('created_at', thirtyDaysAgo.toISOString());
 
+      // Get OSINT scan metrics from automation_metrics table
+      const metricsQuery = supabase
+        .from('automation_metrics')
+        .select('osint_scans_completed')
+        .gte('metric_date', thirtyDaysAgo.toISOString().split('T')[0])
+        .order('metric_date', { ascending: false });
+
       if (selectedClientId) {
         signalsQuery = signalsQuery.eq('client_id', selectedClientId);
         incidentsQuery = incidentsQuery.eq('client_id', selectedClientId);
       }
 
-      const [signalsResult, incidentsResult] = await Promise.all([
+      const [signalsResult, incidentsResult, metricsResult] = await Promise.all([
         signalsQuery,
-        incidentsQuery
+        incidentsQuery,
+        metricsQuery
       ]);
 
       if (signalsResult.error) throw signalsResult.error;
       if (incidentsResult.error) throw incidentsResult.error;
+      if (metricsResult.error) throw metricsResult.error;
 
       const signalsProcessed = signalsResult.count || 0;
       const incidentsCreated = incidentsResult.count || 0;
@@ -70,11 +79,17 @@ export default function AutonomousSystemStatus() {
         ? ((resolvedSignals / totalProcessed) * 100).toFixed(1)
         : '0.0';
 
+      // Sum up OSINT scans from all days in the period
+      const totalOsintScans = metricsResult.data?.reduce((sum, day) => 
+        sum + (day.osint_scans_completed || 0), 0
+      ) || 0;
+
       setMetrics({
         signals_processed: signalsProcessed,
         incidents_created: incidentsCreated,
         incidents_auto_escalated: autoEscalated,
-        accuracy_rate: parseFloat(accuracyRate)
+        accuracy_rate: parseFloat(accuracyRate),
+        osint_scans_completed: totalOsintScans
       });
     } catch (error) {
       console.error('Error loading metrics:', error);
