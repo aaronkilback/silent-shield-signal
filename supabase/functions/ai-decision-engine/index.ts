@@ -31,6 +31,17 @@ serve(async (req) => {
     // Use Lovable AI to make autonomous decisions
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     
+    if (!LOVABLE_API_KEY) {
+      throw new Error('LOVABLE_API_KEY not configured');
+    }
+    
+    console.log('Calling AI with signal:', {
+      id: signal.id,
+      category: signal.category,
+      severity: signal.severity,
+      client: signal.clients?.name
+    });
+    
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -111,14 +122,17 @@ Make an autonomous decision about how to handle this signal.`
 
     const aiData = await aiResponse.json();
     
+    console.log('AI response status:', aiResponse.status);
+    console.log('AI response data:', JSON.stringify(aiData).slice(0, 500)); // Log first 500 chars
+    
     if (!aiResponse.ok) {
-      console.error('AI API error:', aiData);
-      throw new Error(`AI API error: ${JSON.stringify(aiData)}`);
+      console.error('AI API error response:', aiData);
+      throw new Error(`AI API error (${aiResponse.status}): ${JSON.stringify(aiData)}`);
     }
     
     if (!aiData.choices || !aiData.choices[0] || !aiData.choices[0].message?.tool_calls) {
-      console.error('Invalid AI response structure:', aiData);
-      throw new Error('Invalid AI response structure');
+      console.error('Invalid AI response structure. Full response:', JSON.stringify(aiData));
+      throw new Error('Invalid AI response structure - no tool calls found');
     }
     
     const decision = JSON.parse(aiData.choices[0].message.tool_calls[0].function.arguments);
