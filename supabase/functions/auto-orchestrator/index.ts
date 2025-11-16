@@ -31,6 +31,7 @@ serve(async (req) => {
     console.log(`Found ${newSignals?.length || 0} new signals to process`);
 
     let processedSignals = 0;
+    let aiCreditsError = false;
     for (const signal of newSignals || []) {
       try {
         const response = await fetch(
@@ -45,9 +46,19 @@ serve(async (req) => {
           }
         );
 
+        if (response.status === 402) {
+          const errorData = await response.json();
+          console.error('AI credits exhausted:', errorData);
+          aiCreditsError = true;
+          break; // Stop processing if out of credits
+        }
+
         if (response.ok) {
           processedSignals++;
           console.log(`Processed signal ${signal.id}`);
+        } else {
+          const errorData = await response.json();
+          console.error(`Error processing signal ${signal.id}:`, errorData);
         }
       } catch (error) {
         console.error(`Error processing signal ${signal.id}:`, error);
@@ -153,15 +164,21 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        success: true,
+        success: !aiCreditsError,
         timestamp: new Date().toISOString(),
         summary: {
           signals_processed: processedSignals,
           incidents_escalated: staleIncidents?.length || 0,
           monitors_executed: monitorsRun
-        }
+        },
+        ...(aiCreditsError && { 
+          error: 'Lovable AI credits exhausted. Please add credits in Settings → Workspace → Usage to continue.' 
+        })
       }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { 
+        status: aiCreditsError ? 402 : 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      }
     );
 
   } catch (error) {

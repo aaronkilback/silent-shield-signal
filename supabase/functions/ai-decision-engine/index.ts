@@ -236,8 +236,20 @@ This alert was generated and sent automatically by the AI Decision Engine.
 
   } catch (error) {
     console.error('Error in AI decision engine:', error);
+    
+    // Return specific error for payment required
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (errorMessage.includes('402') || errorMessage.includes('Not enough credits')) {
+      return new Response(
+        JSON.stringify({ 
+          error: 'Lovable AI credits exhausted. Please add credits in Settings → Workspace → Usage to continue.' 
+        }),
+        { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

@@ -45,10 +45,31 @@ export default function AutonomousSystemStatus() {
       
       if (error) {
         console.error('Auto-orchestrator error:', error);
+        
+        // Check if it's a credits error
+        if (error.message?.includes('credits') || error.message?.includes('402')) {
+          toast({
+            title: "AI Credits Exhausted",
+            description: "Please add credits in Settings → Workspace → Usage to continue using AI features.",
+            variant: "destructive",
+          });
+          return;
+        }
+        
         throw error;
       }
       
       console.log('Auto-orchestrator response:', data);
+      
+      // Check if response indicates credits error
+      if (data?.error && data.error.includes('credits')) {
+        toast({
+          title: "AI Credits Exhausted",
+          description: data.error,
+          variant: "destructive",
+        });
+        return;
+      }
       
       toast({
         title: "Manual scan triggered",
