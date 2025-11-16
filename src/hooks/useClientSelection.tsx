@@ -11,10 +11,10 @@ const STORAGE_KEY = 'selected_client_id';
 
 export function ClientSelectionProvider({ children }: { children: ReactNode }) {
   const [selectedClientId, setSelectedClientId] = useState<string | null>(() => {
-    // Initialize from localStorage
-    const stored = localStorage.getItem(STORAGE_KEY);
-    console.log('🟢 ClientSelectionProvider INIT - localStorage value:', stored);
-    return stored || null;
+    // Clear any corrupted localStorage
+    localStorage.removeItem(STORAGE_KEY);
+    console.log('🟢 ClientSelectionProvider INIT - starting fresh');
+    return null;
   });
 
   // Persist to localStorage whenever it changes
