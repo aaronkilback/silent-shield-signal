@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, Shield, Activity, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 interface Signal {
   id: string;
@@ -49,17 +50,24 @@ const getSeverityIcon = (severity: string | null) => {
 };
 
 export const LiveEventFeed = () => {
+  const { selectedClientId } = useClientSelection();
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     // Fetch initial signals
     const fetchSignals = async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('signals')
         .select('*')
         .order('received_at', { ascending: false })
         .limit(10);
+
+      if (selectedClientId) {
+        query = query.eq('client_id', selectedClientId);
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         console.error('Error fetching signals:', error);
@@ -91,7 +99,7 @@ export const LiveEventFeed = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [selectedClientId]);
 
   if (loading) {
     return (
