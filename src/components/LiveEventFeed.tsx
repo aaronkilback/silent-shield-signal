@@ -17,6 +17,7 @@ interface Signal {
   confidence: number | null;
   entity_tags: string[] | null;
   raw_json: any;
+  client_id: string | null;
 }
 
 const getSeverityColor = (severity: string | null) => {
@@ -60,6 +61,7 @@ export const LiveEventFeed = () => {
       let query = supabase
         .from('signals')
         .select('*')
+        .neq('status', 'false_positive') // Exclude false positives
         .order('received_at', { ascending: false })
         .limit(10);
 
@@ -91,7 +93,13 @@ export const LiveEventFeed = () => {
         },
         (payload) => {
           console.log('New signal received:', payload);
-          setSignals(prev => [payload.new as Signal, ...prev].slice(0, 10));
+          const newSignal = payload.new as Signal;
+          // Only add if not a false positive and matches client filter
+          if (newSignal.status !== 'false_positive') {
+            if (!selectedClientId || newSignal.client_id === selectedClientId) {
+              setSignals(prev => [newSignal, ...prev].slice(0, 10));
+            }
+          }
         }
       )
       .subscribe();
