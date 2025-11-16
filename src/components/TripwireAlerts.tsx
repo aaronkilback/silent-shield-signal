@@ -109,6 +109,13 @@ export const TripwireAlerts = () => {
   if (incidents.length === 0) {
     return (
       <Card className="p-6 bg-card border-border">
+        {/* Debug display */}
+        <div className="p-2 mb-4 bg-yellow-500/20 rounded text-xs border border-yellow-500">
+          <div className="font-bold">DEBUG INFO:</div>
+          <div>TripwireAlerts using client ID: {selectedClientId || 'None'}</div>
+          <div>Showing {incidents.length} incidents</div>
+        </div>
+        
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-status-success/10">
@@ -125,7 +132,8 @@ export const TripwireAlerts = () => {
   return (
     <Card className="p-6 bg-card border-border">
       {/* Debug display */}
-      <div className="p-2 mb-4 bg-muted rounded text-xs">
+      <div className="p-2 mb-4 bg-yellow-500/20 rounded text-xs border border-yellow-500">
+        <div className="font-bold">DEBUG INFO:</div>
         <div>TripwireAlerts using client ID: {selectedClientId || 'None'}</div>
         <div>Showing {incidents.length} incidents</div>
       </div>
