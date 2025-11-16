@@ -12,6 +12,8 @@ import EscalationRulesManager from "@/components/EscalationRulesManager";
 import { ExecutiveReportGenerator } from "@/components/ExecutiveReportGenerator";
 import { TestSignalGenerator } from "@/components/TestSignalGenerator";
 import { SignalHistory } from "@/components/SignalHistory";
+import { DashboardClientSelector } from "@/components/DashboardClientSelector";
+import { ClientSelectionProvider } from "@/hooks/useClientSelection";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
@@ -40,40 +42,40 @@ const Index = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      <main className="container mx-auto px-6 py-8 space-y-6">
-        <AutonomousSystemStatus />
-        <MetricsPanel />
-        
-        <div className="grid grid-cols-1 gap-6">
-          <LearningDashboard />
-          <EscalationRulesManager />
-        </div>
-        
-        <div className="grid grid-cols-1 gap-6">
-          <ExecutiveReportGenerator />
-        </div>
-        
-        <div className="grid grid-cols-1 gap-6">
+    <ClientSelectionProvider>
+      <div className="min-h-screen bg-background">
+        <Header />
+        <main className="container mx-auto px-6 py-8 space-y-6">
+          <DashboardClientSelector />
+          <AutonomousSystemStatus />
           <SignalHistory />
-        </div>
-        
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-6">
-            <TestSignalGenerator />
-            <SignalIngestForm />
-            <SLAMetrics />
-            <TripwireAlerts />
-            <LiveEventFeed />
+          <MetricsPanel />
+          
+          <div className="grid grid-cols-1 gap-6">
+            <LearningDashboard />
+            <EscalationRulesManager />
           </div>
-          <div className="space-y-6">
-            <RiskSnapshotExport />
-            <RiskSnapshot />
+          
+          <div className="grid grid-cols-1 gap-6">
+            <ExecutiveReportGenerator />
           </div>
-        </div>
-      </main>
-    </div>
+          
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-6">
+              <TestSignalGenerator />
+              <SignalIngestForm />
+              <SLAMetrics />
+              <TripwireAlerts />
+              <LiveEventFeed />
+            </div>
+            <div className="space-y-6">
+              <RiskSnapshotExport />
+              <RiskSnapshot />
+            </div>
+          </div>
+        </main>
+      </div>
+    </ClientSelectionProvider>
   );
 };
 

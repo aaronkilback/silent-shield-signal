@@ -5,6 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/integrations/supabase/client";
 import { History, Clock, AlertCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 interface Signal {
   id: string;
@@ -23,9 +24,12 @@ interface Signal {
 export const SignalHistory = () => {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
+  const { selectedClientId } = useClientSelection();
 
   useEffect(() => {
-    loadSignals();
+    if (selectedClientId) {
+      loadSignals();
+    }
     
     // Subscribe to real-time updates
     const channel = supabase
@@ -37,16 +41,22 @@ export const SignalHistory = () => {
           schema: 'public',
           table: 'signals'
         },
-        () => loadSignals()
+        () => {
+          if (selectedClientId) {
+            loadSignals();
+          }
+        }
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [selectedClientId]);
 
   const loadSignals = async () => {
+    if (!selectedClientId) return;
+    
     try {
       const { data, error } = await supabase
         .from('signals')
@@ -63,6 +73,7 @@ export const SignalHistory = () => {
             name
           )
         `)
+        .eq('client_id', selectedClientId)
         .order('created_at', { ascending: false })
         .limit(50);
 
@@ -104,6 +115,22 @@ export const SignalHistory = () => {
             <History className="w-5 h-5 animate-pulse" />
             Loading Signal History...
           </CardTitle>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  if (!selectedClientId) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <History className="w-5 h-5" />
+            Signal History
+          </CardTitle>
+          <CardDescription>
+            Select a client to view their signal history
+          </CardDescription>
         </CardHeader>
       </Card>
     );
