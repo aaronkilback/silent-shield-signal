@@ -388,12 +388,18 @@ async function updateMetrics(supabase: any, updates: {
 }) {
   try {
     const today = new Date().toISOString().split('T')[0];
+    console.log(`Updating metrics for ${today}:`, updates);
     
-    const { data: existingMetrics } = await supabase
+    const { data: existingMetrics, error: selectError } = await supabase
       .from('automation_metrics')
       .select('*')
       .eq('metric_date', today)
       .maybeSingle();
+
+    if (selectError) {
+      console.error('Error fetching existing metrics:', selectError);
+      throw selectError;
+    }
 
     if (existingMetrics) {
       const updateData: any = {};
@@ -407,22 +413,38 @@ async function updateMetrics(supabase: any, updates: {
         updateData.osint_scans_completed = (existingMetrics.osint_scans_completed || 0) + updates.osint_scans_completed;
       }
 
-      await supabase
+      console.log(`Updating existing metrics with:`, updateData);
+      const { error: updateError } = await supabase
         .from('automation_metrics')
         .update(updateData)
         .eq('id', existingMetrics.id);
+
+      if (updateError) {
+        console.error('Error updating metrics:', updateError);
+        throw updateError;
+      }
+      console.log('Metrics updated successfully');
     } else {
-      await supabase
+      const insertData: any = {
+        metric_date: today,
+        signals_processed: updates.signals_processed || 0,
+        incidents_auto_escalated: updates.incidents_auto_escalated || 0,
+        osint_scans_completed: updates.osint_scans_completed || 0
+      };
+      
+      console.log(`Inserting new metrics:`, insertData);
+      const { error: insertError } = await supabase
         .from('automation_metrics')
-        .insert({
-          metric_date: today,
-          signals_processed: updates.signals_processed || 0,
-          incidents_auto_escalated: updates.incidents_auto_escalated || 0,
-          osint_scans_completed: updates.osint_scans_completed || 0
-        });
+        .insert(insertData);
+
+      if (insertError) {
+        console.error('Error inserting metrics:', insertError);
+        throw insertError;
+      }
+      console.log('New metrics record created successfully');
     }
   } catch (error) {
-    console.error('Error updating metrics:', error);
+    console.error('Error in updateMetrics function:', error);
   }
 }
 
