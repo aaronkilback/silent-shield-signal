@@ -63,6 +63,13 @@ export default function Entities() {
     return colors[level] || 'outline';
   };
 
+  const getThreatFlames = (score: number | null | undefined) => {
+    if (score === null || score === undefined) return '';
+    // Convert 0-100 to 1-5 scale
+    const flames = Math.min(5, Math.max(1, Math.ceil(score / 20)));
+    return '🔥'.repeat(flames);
+  };
+
   const entityTypes = [
     { value: 'person', label: 'People' },
     { value: 'organization', label: 'Organizations' },
@@ -131,17 +138,15 @@ export default function Entities() {
                     <div className="flex items-center gap-2">
                       <Icon className="w-5 h-5 text-primary" />
                       <h3 className="font-semibold">{entity.name}</h3>
-                    </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <Badge variant={getRiskColor(entity.risk_level) as any}>
-                        {entity.risk_level}
-                      </Badge>
                       {entity.threat_score !== null && entity.threat_score !== undefined && (
-                        <Badge variant="secondary" className="text-xs">
-                          Threat: {entity.threat_score}/100
-                        </Badge>
+                        <span className="text-lg" title={`Threat Score: ${entity.threat_score}/100`}>
+                          {getThreatFlames(entity.threat_score)}
+                        </span>
                       )}
                     </div>
+                    <Badge variant={getRiskColor(entity.risk_level) as any}>
+                      {entity.risk_level}
+                    </Badge>
                   </div>
 
                   {entity.description && (
