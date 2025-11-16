@@ -209,6 +209,13 @@ export const SignalHistory = () => {
                         variant="ghost"
                         className="h-7 gap-1"
                         onClick={() => {
+                          console.log('Viewing analysis for signal:', {
+                            id: signal.id,
+                            text: signal.normalized_text?.substring(0, 30),
+                            hasRawJson: !!signal.raw_json,
+                            hasAiAnalysis: !!signal.raw_json?.ai_analysis,
+                            processingMethod: signal.raw_json?.processing_method
+                          });
                           setSelectedSignal(signal);
                           setDialogOpen(true);
                         }}
