@@ -246,27 +246,33 @@ Respond ONLY with valid JSON.`
       }
     }
 
-    // Automatically trigger AI decision engine for autonomous processing
+    // Enqueue signal for batch processing instead of immediate processing
+    // This is more scalable and prevents memory issues
     try {
-      fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/ai-decision-engine`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
-        },
-        body: JSON.stringify({ signal_id: signal.id })
-      }).catch(err => {
-        console.error('Error triggering AI decision engine:', err);
+      const priority = rulesResult.priority === 'p1' ? 1 :
+                      rulesResult.priority === 'p2' ? 2 : 5;
+      
+      const { error: queueError } = await supabase.rpc('enqueue_signal_processing', {
+        signal_id: signal.id,
+        priority_level: priority
       });
+
+      if (queueError) {
+        console.error('Error enqueuing signal:', queueError);
+        // Don't fail the main request if queuing fails
+      } else {
+        console.log(`Signal ${signal.id} enqueued for processing with priority ${priority}`);
+      }
     } catch (error) {
-      console.error('Failed to trigger AI decision engine:', error);
-      // Don't fail the main request if AI processing fails
+      console.error('Failed to enqueue signal:', error);
+      // Don't fail the main request if queuing fails
     }
 
     return new Response(
       JSON.stringify({ 
         signal_id: signal.id,
-        ai_processing: 'triggered'
+        status: 'enqueued',
+        message: 'Signal enqueued for batch processing'
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
