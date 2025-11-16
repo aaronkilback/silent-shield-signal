@@ -279,6 +279,33 @@ Think like 3Si Security: provide intelligence that explains WHY this matters and
       if (!incidentError) {
         incident_id = incident.id;
         
+        // Update automation metrics - increment incidents_created
+        const today = new Date().toISOString().split('T')[0];
+        const { data: existingMetric } = await supabase
+          .from('automation_metrics')
+          .select('*')
+          .eq('metric_date', today)
+          .single();
+
+        if (existingMetric) {
+          await supabase
+            .from('automation_metrics')
+            .update({ 
+              incidents_created: (existingMetric.incidents_created || 0) + 1 
+            })
+            .eq('id', existingMetric.id);
+        } else {
+          await supabase
+            .from('automation_metrics')
+            .insert({ 
+              metric_date: today,
+              incidents_created: 1,
+              signals_processed: 0,
+              incidents_auto_escalated: 0,
+              osint_scans_completed: 0
+            });
+        }
+        
         // Auto-assign based on priority
         if (decision.incident_priority === 'p1' || decision.incident_priority === 'p2') {
           // Update incident timeline with containment actions
