@@ -39,6 +39,7 @@ const Incidents = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
+  const [reloadTrigger, setReloadTrigger] = useState(0);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -46,62 +47,62 @@ const Incidents = () => {
     }
   }, [user, authLoading, navigate]);
 
-  const loadIncidents = async () => {
-    try {
-      setLoading(true);
-      let query = supabase
-        .from("incidents")
-        .select("*, clients(name)")
-        .order("opened_at", { ascending: false });
-
-      if (statusFilter !== "all") {
-        query = query.eq("status", statusFilter as any);
-      }
-      if (priorityFilter !== "all") {
-        query = query.eq("priority", priorityFilter as any);
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-      setIncidents((data || []) as Incident[]);
-    } catch (error) {
-      console.error("Error loading incidents:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load incidents",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    if (user) {
-      loadIncidents();
+    if (!user) return;
 
-      // Set up realtime subscription
-      const channel = supabase
-        .channel("incidents-changes")
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "incidents",
-          },
-          () => {
-            loadIncidents();
-          }
-        )
-        .subscribe();
+    const loadIncidents = async () => {
+      try {
+        setLoading(true);
+        let query = supabase
+          .from("incidents")
+          .select("*, clients(name)")
+          .order("opened_at", { ascending: false });
 
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    }
-  }, [user, statusFilter, priorityFilter]);
+        if (statusFilter !== "all") {
+          query = query.eq("status", statusFilter as any);
+        }
+        if (priorityFilter !== "all") {
+          query = query.eq("priority", priorityFilter as any);
+        }
+
+        const { data, error } = await query;
+
+        if (error) throw error;
+        setIncidents((data || []) as Incident[]);
+      } catch (error) {
+        console.error("Error loading incidents:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load incidents",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadIncidents();
+
+    // Set up realtime subscription
+    const channel = supabase
+      .channel("incidents-changes")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "incidents",
+        },
+        () => {
+          loadIncidents();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, statusFilter, priorityFilter, toast, reloadTrigger]);
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
@@ -293,7 +294,7 @@ const Incidents = () => {
           onClose={() => setSelectedIncident(null)}
           onSuccess={() => {
             setSelectedIncident(null);
-            loadIncidents();
+            setReloadTrigger(prev => prev + 1);
           }}
         />
       )}
