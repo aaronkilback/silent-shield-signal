@@ -14,6 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, CheckCircle, Shield, XCircle } from "lucide-react";
 import { IncidentLocationMap } from "./IncidentLocationMap";
+import { IncidentOutcomeDialog } from "./IncidentOutcomeDialog";
 
 interface Incident {
   id: string;
@@ -48,6 +49,7 @@ export const IncidentActionDialog = ({
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState("");
   const [signalLocation, setSignalLocation] = useState<string | null>(null);
+  const [showOutcomeDialog, setShowOutcomeDialog] = useState(false);
 
   useEffect(() => {
     const fetchSignalLocation = async () => {
@@ -92,7 +94,14 @@ export const IncidentActionDialog = ({
       });
 
       setNote("");
-      onSuccess();
+      
+      // Show outcome dialog after resolving
+      if (action === "resolve") {
+        onClose();
+        setShowOutcomeDialog(true);
+      } else {
+        onSuccess();
+      }
     } catch (error) {
       console.error("Error performing action:", error);
       toast({
@@ -307,6 +316,17 @@ export const IncidentActionDialog = ({
           )}
         </div>
       </DialogContent>
+
+      <IncidentOutcomeDialog
+        incidentId={incident.id}
+        open={showOutcomeDialog}
+        onClose={() => setShowOutcomeDialog(false)}
+        onSuccess={() => {
+          setShowOutcomeDialog(false);
+          onSuccess();
+        }}
+        openedAt={incident.opened_at}
+      />
     </Dialog>
   );
 };
