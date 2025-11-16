@@ -18,6 +18,8 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailD
   const aiDecision = aiAnalysis?.ai_decision || signal.raw_json?.ai_decision;
   const patternAnalysis = signal.raw_json?.pattern_analysis;
   const processingMethod = signal.raw_json?.processing_method;
+  const urlAnalysis = signal.raw_json?.analysis; // Analysis from URL scanner
+  const isUrlScan = signal.raw_json?.url;
 
   const getSeverityColor = (severity: string) => {
     const colors: Record<string, string> = {
@@ -204,6 +206,24 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailD
                       </div>
                     )}
                   </div>
+                </div>
+              </>
+            ) : isUrlScan && urlAnalysis ? (
+              <>
+                <Separator />
+                <div>
+                  <h3 className="font-semibold mb-2 flex items-center gap-2">
+                    <Brain className="w-4 h-4" />
+                    Website Intelligence Analysis
+                  </h3>
+                  <div className="bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg border border-blue-200 dark:border-blue-900">
+                    <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{urlAnalysis}</p>
+                  </div>
+                  {signal.raw_json?.url && (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      Source: <a href={signal.raw_json.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">{signal.raw_json.url}</a>
+                    </div>
+                  )}
                 </div>
               </>
             ) : (
