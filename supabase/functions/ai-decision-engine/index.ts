@@ -258,26 +258,37 @@ Think like 3Si Security: provide intelligence that explains WHY this matters and
     let incident_id = null;
 
     if (decision.should_create_incident) {
-      // Automatically create incident
-      const { data: incident, error: incidentError } = await supabase
+      // Check if incident already exists for this signal
+      const { data: existingIncident } = await supabase
         .from('incidents')
-        .insert({
-          signal_id: signal.id,
-          client_id: signal.client_id,
-          priority: decision.incident_priority || 'p3',
-          status: 'open',
-          timeline_json: [{
-            timestamp: new Date().toISOString(),
-            event: 'Incident automatically created by AI',
-            details: `${decision.reasoning}\n\n🎯 Strategic Context: ${decision.strategic_context}\n\n🔗 Threat Correlation: ${decision.threat_correlation}`,
-            actor: 'AI Decision Engine'
-          }]
-        })
-        .select()
+        .select('id')
+        .eq('signal_id', signal.id)
         .single();
 
-      if (!incidentError) {
-        incident_id = incident.id;
+      if (existingIncident) {
+        console.log(`Incident already exists for signal ${signal.id}, skipping creation`);
+        incident_id = existingIncident.id;
+      } else {
+        // Automatically create incident
+        const { data: incident, error: incidentError } = await supabase
+          .from('incidents')
+          .insert({
+            signal_id: signal.id,
+            client_id: signal.client_id,
+            priority: decision.incident_priority || 'p3',
+            status: 'open',
+            timeline_json: [{
+              timestamp: new Date().toISOString(),
+              event: 'Incident automatically created by AI',
+              details: `${decision.reasoning}\n\n🎯 Strategic Context: ${decision.strategic_context}\n\n🔗 Threat Correlation: ${decision.threat_correlation}`,
+              actor: 'AI Decision Engine'
+            }]
+          })
+          .select()
+          .single();
+
+        if (!incidentError) {
+          incident_id = incident.id;
         
         // Update automation metrics - increment incidents_created
         const today = new Date().toISOString().split('T')[0];
@@ -306,24 +317,25 @@ Think like 3Si Security: provide intelligence that explains WHY this matters and
             });
         }
         
-        // Auto-assign based on priority
-        if (decision.incident_priority === 'p1' || decision.incident_priority === 'p2') {
-          // Update incident timeline with containment actions
-          const { error: updateError } = await supabase
-            .from('incidents')
-            .update({
-              timeline_json: [
-                ...incident.timeline_json,
-                {
-                  timestamp: new Date().toISOString(),
-                  event: 'Automated containment initiated',
-                  details: decision.containment_actions?.join(', '),
-                  actor: 'AI Decision Engine'
-                }
-              ],
-              acknowledged_at: new Date().toISOString()
-            })
-            .eq('id', incident.id);
+          // Auto-assign based on priority
+          if (decision.incident_priority === 'p1' || decision.incident_priority === 'p2') {
+            // Update incident timeline with containment actions
+            const { error: updateError } = await supabase
+              .from('incidents')
+              .update({
+                timeline_json: [
+                  ...incident.timeline_json,
+                  {
+                    timestamp: new Date().toISOString(),
+                    event: 'Automated containment initiated',
+                    details: decision.containment_actions?.join(', '),
+                    actor: 'AI Decision Engine'
+                  }
+                ],
+                acknowledged_at: new Date().toISOString()
+              })
+              .eq('id', incident.id);
+          }
         }
       }
     }
