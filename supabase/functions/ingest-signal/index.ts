@@ -297,7 +297,7 @@ Respond ONLY with valid JSON.`
       location: signalLocation,
       category: 'unknown',
       severity: rulesResult.severity || 'medium',
-      confidence: 50
+      confidence: 0.5
     };
 
     if (aiResponse.ok) {
@@ -313,6 +313,10 @@ Respond ONLY with valid JSON.`
           
           const parsed = JSON.parse(jsonStr);
           classification = { ...classification, ...parsed };
+          // Normalize confidence to 0-1 range
+          if (parsed.confidence && parsed.confidence > 1) {
+            classification.confidence = parsed.confidence / 100;
+          }
           // Keep rules-based severity if matched
           if (rulesResult.severity) {
             classification.severity = rulesResult.severity;
