@@ -19,6 +19,17 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailD
   const patternAnalysis = signal.raw_json?.pattern_analysis;
   const processingMethod = signal.raw_json?.processing_method;
 
+  console.log('Signal Dialog Debug:', {
+    signalId: signal.id,
+    hasAiAnalysis: !!aiAnalysis,
+    hasStrategicContext: !!aiAnalysis?.strategic_context,
+    hasThreatCorrelation: !!aiAnalysis?.threat_correlation,
+    hasCampaignAssessment: !!aiAnalysis?.campaign_assessment,
+    hasSectorImplications: !!aiAnalysis?.sector_implications,
+    processingMethod,
+    rawJson: signal.raw_json
+  });
+
   const getSeverityColor = (severity: string) => {
     const colors: Record<string, string> = {
       critical: 'destructive',
