@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 
 interface ClientSelectionContextType {
   selectedClientId: string | null;
@@ -7,8 +7,23 @@ interface ClientSelectionContextType {
 
 const ClientSelectionContext = createContext<ClientSelectionContextType | undefined>(undefined);
 
+const STORAGE_KEY = 'selected_client_id';
+
 export function ClientSelectionProvider({ children }: { children: ReactNode }) {
-  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(() => {
+    // Initialize from localStorage
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored || null;
+  });
+
+  // Persist to localStorage whenever it changes
+  useEffect(() => {
+    if (selectedClientId) {
+      localStorage.setItem(STORAGE_KEY, selectedClientId);
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }, [selectedClientId]);
 
   return (
     <ClientSelectionContext.Provider value={{ selectedClientId, setSelectedClientId }}>
