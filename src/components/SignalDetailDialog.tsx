@@ -14,7 +14,8 @@ interface SignalDetailDialogProps {
 export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailDialogProps) => {
   if (!signal) return null;
 
-  const aiDecision = signal.raw_json?.ai_decision;
+  const aiAnalysis = signal.raw_json?.ai_analysis;
+  const aiDecision = aiAnalysis?.ai_decision || signal.raw_json?.ai_decision;
   const patternAnalysis = signal.raw_json?.pattern_analysis;
   const processingMethod = signal.raw_json?.processing_method;
 
@@ -67,32 +68,32 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailD
               </div>
             </div>
 
-            {processingMethod === 'ai' && aiDecision ? (
-              <>
-                <Separator />
+        {processingMethod === 'ai' && aiAnalysis ? (
+          <>
+            <Separator />
 
-                {/* Strategic Context */}
-                {aiDecision.strategic_context && (
+            {/* Strategic Context */}
+            {aiAnalysis.strategic_context && (
                   <div>
                     <h3 className="font-semibold mb-2 flex items-center gap-2">
                       <TrendingUp className="w-4 h-4" />
                       Strategic Context
                     </h3>
                     <div className="bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg border border-blue-200 dark:border-blue-900">
-                      <p className="text-sm whitespace-pre-wrap">{aiDecision.strategic_context}</p>
+                      <p className="text-sm whitespace-pre-wrap">{aiAnalysis.strategic_context}</p>
                     </div>
                   </div>
                 )}
 
-                {/* Threat Correlation */}
-                {aiDecision.threat_correlation && (
+            {/* Threat Correlation */}
+            {aiAnalysis.threat_correlation && (
                   <div>
                     <h3 className="font-semibold mb-2 flex items-center gap-2">
                       <Network className="w-4 h-4" />
                       Threat Correlation
                     </h3>
                     <div className="bg-purple-50 dark:bg-purple-950/20 p-4 rounded-lg border border-purple-200 dark:border-purple-900">
-                      <p className="text-sm whitespace-pre-wrap">{aiDecision.threat_correlation}</p>
+                      <p className="text-sm whitespace-pre-wrap">{aiAnalysis.threat_correlation}</p>
                       {patternAnalysis?.recent_signals_analyzed > 0 && (
                         <p className="text-xs text-muted-foreground mt-2">
                           Analyzed {patternAnalysis.recent_signals_analyzed} recent signals from the last 30 days
@@ -102,28 +103,28 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailD
                   </div>
                 )}
 
-                {/* Campaign Assessment */}
-                {aiDecision.campaign_assessment && (
+            {/* Campaign Assessment */}
+            {aiAnalysis.campaign_assessment && (
                   <div>
                     <h3 className="font-semibold mb-2 flex items-center gap-2">
                       <AlertTriangle className="w-4 h-4" />
                       Campaign Assessment
                     </h3>
                     <div className="bg-orange-50 dark:bg-orange-950/20 p-4 rounded-lg border border-orange-200 dark:border-orange-900">
-                      <p className="text-sm whitespace-pre-wrap">{aiDecision.campaign_assessment}</p>
+                      <p className="text-sm whitespace-pre-wrap">{aiAnalysis.campaign_assessment}</p>
                     </div>
                   </div>
                 )}
 
-                {/* Sector Implications */}
-                {aiDecision.sector_implications && (
+            {/* Sector Implications */}
+            {aiAnalysis.sector_implications && (
                   <div>
                     <h3 className="font-semibold mb-2 flex items-center gap-2">
                       <Building2 className="w-4 h-4" />
                       Sector Implications
                     </h3>
                     <div className="bg-green-50 dark:bg-green-950/20 p-4 rounded-lg border border-green-200 dark:border-green-900">
-                      <p className="text-sm whitespace-pre-wrap">{aiDecision.sector_implications}</p>
+                      <p className="text-sm whitespace-pre-wrap">{aiAnalysis.sector_implications}</p>
                     </div>
                   </div>
                 )}
