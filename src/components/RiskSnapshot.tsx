@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Shield, AlertCircle, Activity, CheckCircle, ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 interface Signal {
   id: string;
@@ -53,43 +54,50 @@ const getRiskIcon = (level: string) => {
 };
 
 export const RiskSnapshot = () => {
+  const { selectedClientId } = useClientSelection();
   const [riskLevels, setRiskLevels] = useState<RiskLevel[]>([]);
   const [expandedLevel, setExpandedLevel] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchSignals = async () => {
-      const { data, error } = await supabase
-        .from('signals')
-        .select('id, normalized_text, severity, category, location, confidence, entity_tags, received_at')
-        .gte('received_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-        .order('received_at', { ascending: false });
+    if (selectedClientId) {
+      fetchSignals();
+    }
+  }, [selectedClientId]);
 
-      if (error) {
-        console.error('Error fetching signals:', error);
-        setLoading(false);
-        return;
-      }
+  const fetchSignals = async () => {
+    if (!selectedClientId) return;
 
-      const signals = data || [];
-      const total = signals.length;
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('signals')
+      .select('id, normalized_text, severity, category, location, confidence, entity_tags, received_at')
+      .eq('client_id', selectedClientId)
+      .gte('received_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .order('received_at', { ascending: false });
 
-      const levels: RiskLevel[] = ['critical', 'high', 'medium', 'low'].map(level => {
-        const levelSignals = signals.filter(s => s.severity === level);
-        return {
-          level: level as "critical" | "high" | "medium" | "low",
-          count: levelSignals.length,
-          percentage: total > 0 ? Math.round((levelSignals.length / total) * 100) : 0,
-          signals: levelSignals
-        };
-      });
-
-      setRiskLevels(levels);
+    if (error) {
+      console.error('Error fetching signals:', error);
       setLoading(false);
-    };
+      return;
+    }
 
-    fetchSignals();
-  }, []);
+    const signals = data || [];
+    const total = signals.length;
+
+    const levels: RiskLevel[] = ['critical', 'high', 'medium', 'low'].map(level => {
+      const levelSignals = signals.filter(s => s.severity === level);
+      return {
+        level: level as "critical" | "high" | "medium" | "low",
+        count: levelSignals.length,
+        percentage: total > 0 ? Math.round((levelSignals.length / total) * 100) : 0,
+        signals: levelSignals
+      };
+    });
+
+    setRiskLevels(levels);
+    setLoading(false);
+  };
 
   const totalEvents = riskLevels.reduce((sum, level) => sum + level.count, 0);
   const criticalAndHigh = riskLevels

@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { Clock, Target } from "lucide-react";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 interface SLAData {
   avgMTTD: number; // in minutes
@@ -12,6 +13,7 @@ interface SLAData {
 }
 
 export const SLAMetrics = () => {
+  const { selectedClientId } = useClientSelection();
   const [slaData, setSLAData] = useState<SLAData>({
     avgMTTD: 0,
     avgMTTR: 0,
@@ -20,13 +22,18 @@ export const SLAMetrics = () => {
   });
 
   useEffect(() => {
-    fetchSLAMetrics();
-  }, []);
+    if (selectedClientId) {
+      fetchSLAMetrics();
+    }
+  }, [selectedClientId]);
 
   const fetchSLAMetrics = async () => {
+    if (!selectedClientId) return;
+
     const { data: incidents } = await supabase
       .from("incidents")
       .select("opened_at, acknowledged_at, resolved_at")
+      .eq("client_id", selectedClientId)
       .not("acknowledged_at", "is", null);
 
     if (!incidents || incidents.length === 0) return;
