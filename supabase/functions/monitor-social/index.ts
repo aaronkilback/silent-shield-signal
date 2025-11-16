@@ -384,6 +384,127 @@ serve(async (req) => {
       console.error('Error monitoring Hacker News:', error);
     }
 
+    // === TWITTER/X MONITORING (via scraping) ===
+    // Using nitter.net (Twitter frontend that's easier to scrape - no API needed)
+    const twitterKeywords = [
+      ...SECURITY_KEYWORDS.slice(0, 5),
+      ...ACTIVIST_KEYWORDS.slice(0, 5),
+      'data breach', 'ransomware attack', 'climate protest'
+    ];
+
+    for (const keyword of twitterKeywords) {
+      try {
+        const searchQuery = encodeURIComponent(keyword);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        
+        // Use nitter.net (Twitter frontend for easier scraping)
+        const response = await fetch(
+          `https://nitter.net/search?f=tweets&q=${searchQuery}&since=&until=&near=`,
+          {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Accept': 'text/html,application/xhtml+xml',
+            },
+            signal: controller.signal
+          }
+        ).finally(() => clearTimeout(timeout));
+
+        if (!response.ok) {
+          console.log(`Twitter scrape failed for "${keyword}": ${response.status}`);
+          continue;
+        }
+
+        const html = await response.text();
+        
+        // Parse tweets from HTML (nitter has clean structure)
+        const tweetMatches = html.matchAll(/<div class="tweet-content[^"]*"[^>]*>(.*?)<\/div>/gs);
+        const tweets: { content: string; link: string }[] = [];
+        
+        for (const match of Array.from(tweetMatches).slice(0, 5)) {
+          const content = match[1]
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&[^;]+;/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          
+          if (content.length > 20) {
+            tweets.push({
+              content,
+              link: `https://twitter.com/search?q=${searchQuery}`
+            });
+          }
+        }
+
+        console.log(`Found ${tweets.length} tweets for "${keyword}"`);
+
+        // Match tweets against clients
+        for (const tweet of tweets) {
+          for (const client of clients || []) {
+            const clientName = client.name.toLowerCase();
+            const tweetLower = tweet.content.toLowerCase();
+            
+            const mentionsClient = tweetLower.includes(clientName);
+            const industryMatch = client.industry && 
+              INDUSTRY_THREATS[client.industry.toLowerCase()]?.some(term => 
+                tweetLower.includes(term.toLowerCase())
+              );
+
+            if (mentionsClient || (industryMatch && tweetLower.includes(keyword.toLowerCase()))) {
+              let category = 'social_media';
+              let severity = 'low';
+              
+              if (SECURITY_KEYWORDS.some(kw => tweetLower.includes(kw.toLowerCase()))) {
+                category = 'cybersecurity';
+                severity = 'medium';
+              } else if (ACTIVIST_KEYWORDS.some(kw => tweetLower.includes(kw.toLowerCase()))) {
+                category = 'reputation';
+                severity = 'medium';
+              } else if (PHYSICAL_THREAT_KEYWORDS.some(kw => tweetLower.includes(kw.toLowerCase()))) {
+                category = 'physical';
+                severity = 'high';
+              }
+
+              const signalText = `Twitter: ${tweet.content.substring(0, 200)}`;
+              
+              const { error: signalError } = await supabase
+                .from('signals')
+                .insert({
+                  client_id: client.id,
+                  normalized_text: signalText,
+                  category,
+                  severity,
+                  location: 'Twitter/X',
+                  raw_json: {
+                    platform: 'twitter',
+                    keyword,
+                    link: tweet.link,
+                    content: tweet.content
+                  },
+                  status: 'new',
+                  confidence: mentionsClient ? 0.8 : 0.5
+                });
+
+              if (!signalError) {
+                signalsCreated++;
+                console.log(`Created Twitter signal for ${client.name}: ${category}`);
+              }
+            }
+          }
+        }
+
+        // Rate limiting between searches
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          console.log(`Twitter scrape timeout for: ${keyword}`);
+        } else {
+          console.error(`Error scraping Twitter for "${keyword}":`, error);
+        }
+      }
+    }
+
     console.log(`Social media monitoring complete. Created ${signalsCreated} signals.`);
 
     return new Response(
