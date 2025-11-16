@@ -233,6 +233,7 @@ export const SignalHistory = () => {
       </CardContent>
       
       <SignalDetailDialog 
+        key={selectedSignal?.id}
         signal={selectedSignal}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
