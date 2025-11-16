@@ -110,6 +110,17 @@ Make an autonomous decision about how to handle this signal.`
     });
 
     const aiData = await aiResponse.json();
+    
+    if (!aiResponse.ok) {
+      console.error('AI API error:', aiData);
+      throw new Error(`AI API error: ${JSON.stringify(aiData)}`);
+    }
+    
+    if (!aiData.choices || !aiData.choices[0] || !aiData.choices[0].message?.tool_calls) {
+      console.error('Invalid AI response structure:', aiData);
+      throw new Error('Invalid AI response structure');
+    }
+    
     const decision = JSON.parse(aiData.choices[0].message.tool_calls[0].function.arguments);
 
     console.log('AI Decision:', decision);
