@@ -31,7 +31,10 @@ serve(async (req) => {
     console.log(`Found ${newSignals?.length || 0} new signals to process`);
 
     let processedSignals = 0;
+    let aiProcessed = 0;
+    let ruleBasedProcessed = 0;
     let aiCreditsError = false;
+    
     for (const signal of newSignals || []) {
       try {
         const response = await fetch(
@@ -55,7 +58,13 @@ serve(async (req) => {
 
         if (response.ok) {
           processedSignals++;
-          console.log(`Processed signal ${signal.id}`);
+          const result = await response.json();
+          if (result.processing_method === 'ai') {
+            aiProcessed++;
+          } else {
+            ruleBasedProcessed++;
+          }
+          console.log(`Processed signal ${signal.id} via ${result.processing_method || 'unknown'}`);
         } else {
           const errorData = await response.json();
           console.error(`Error processing signal ${signal.id}:`, errorData);
@@ -168,6 +177,8 @@ serve(async (req) => {
         timestamp: new Date().toISOString(),
         summary: {
           signals_processed: processedSignals,
+          ai_processed: aiProcessed,
+          rule_based_processed: ruleBasedProcessed,
           incidents_escalated: staleIncidents?.length || 0,
           monitors_executed: monitorsRun
         },

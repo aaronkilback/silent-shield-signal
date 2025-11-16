@@ -17,7 +17,7 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { signal_id } = await req.json();
+    const { signal_id, force_ai = false } = await req.json();
 
     // Get signal details
     const { data: signal, error: signalError } = await supabase
@@ -27,6 +27,54 @@ serve(async (req) => {
       .single();
 
     if (signalError) throw signalError;
+
+    // SMART FILTERING: Only use AI for high-priority signals
+    const shouldUseAI = force_ai || 
+      signal.severity === 'critical' || 
+      signal.severity === 'high' ||
+      (signal.confidence && signal.confidence >= 0.8);
+
+    if (!shouldUseAI) {
+      console.log(`Using rule-based logic for low-priority signal ${signal_id}`);
+      
+      // Rule-based decision for low-priority signals
+      const ruleBasedDecision = {
+        threat_level: signal.severity || 'low',
+        confidence: signal.confidence || 0.5,
+        should_create_incident: signal.severity === 'high' || signal.severity === 'critical',
+        incident_priority: signal.severity === 'high' ? 'p3' : 'p4',
+        containment_actions: ['Monitor situation', 'Log for review'],
+        remediation_steps: ['Continue monitoring', 'Review if pattern emerges'],
+        alert_recipients: [],
+        estimated_impact: 'Minimal - low severity signal',
+        reasoning: 'Auto-classified as low priority based on severity and confidence scores'
+      };
+
+      // Update signal status
+      await supabase
+        .from('signals')
+        .update({ 
+          status: 'triaged',
+          raw_json: { 
+            ...signal.raw_json,
+            ai_decision: ruleBasedDecision,
+            processing_method: 'rule-based'
+          }
+        })
+        .eq('id', signal_id);
+
+      return new Response(
+        JSON.stringify({ 
+          success: true,
+          decision: ruleBasedDecision,
+          processing_method: 'rule-based',
+          credits_used: false
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    console.log(`Using AI analysis for high-priority signal ${signal_id}`);
 
     // Use Lovable AI to make autonomous decisions
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
@@ -225,6 +273,8 @@ This alert was generated and sent automatically by the AI Decision Engine.
         success: true,
         decision,
         incident_id,
+        processing_method: 'ai',
+        credits_used: true,
         actions_taken: {
           incident_created: decision.should_create_incident,
           alerts_sent: decision.alert_recipients?.length || 0,
