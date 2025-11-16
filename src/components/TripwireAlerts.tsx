@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 interface Incident {
   id: string;
@@ -41,18 +42,25 @@ const getTimeAgo = (date: string) => {
 
 export const TripwireAlerts = () => {
   const navigate = useNavigate();
+  const { selectedClientId } = useClientSelection();
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const loadIncidents = async () => {
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from("incidents")
           .select("*, clients(name)")
           .in("status", ["open", "acknowledged"])
           .order("opened_at", { ascending: false })
           .limit(5);
+
+        if (selectedClientId) {
+          query = query.eq("client_id", selectedClientId);
+        }
+
+        const { data, error } = await query;
 
         if (error) throw error;
         setIncidents((data || []) as Incident[]);
@@ -84,7 +92,7 @@ export const TripwireAlerts = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [selectedClientId]);
 
   if (loading) {
     return (

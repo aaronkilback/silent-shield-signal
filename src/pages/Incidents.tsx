@@ -11,6 +11,8 @@ import { useNavigate } from "react-router-dom";
 import { Loader2, AlertTriangle, Search, Filter } from "lucide-react";
 import { IncidentActionDialog } from "@/components/IncidentActionDialog";
 import { useToast } from "@/hooks/use-toast";
+import { ClientSelectionProvider, useClientSelection } from "@/hooks/useClientSelection";
+import { DashboardClientSelector } from "@/components/DashboardClientSelector";
 
 interface Incident {
   id: string;
@@ -28,10 +30,11 @@ interface Incident {
   };
 }
 
-const Incidents = () => {
+const IncidentsContent = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { selectedClientId } = useClientSelection();
   
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,6 +61,9 @@ const Incidents = () => {
           .select("*, clients(name)")
           .order("opened_at", { ascending: false });
 
+        if (selectedClientId) {
+          query = query.eq("client_id", selectedClientId);
+        }
         if (statusFilter !== "all") {
           query = query.eq("status", statusFilter as any);
         }
@@ -102,7 +108,7 @@ const Incidents = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, statusFilter, priorityFilter, toast, reloadTrigger]);
+  }, [user, selectedClientId, statusFilter, priorityFilter, toast, reloadTrigger]);
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
@@ -159,6 +165,7 @@ const Incidents = () => {
     <div className="min-h-screen bg-background">
       <Header />
       <main className="container mx-auto px-6 py-8 space-y-6">
+        <DashboardClientSelector />
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
@@ -299,6 +306,14 @@ const Incidents = () => {
         />
       )}
     </div>
+  );
+};
+
+const Incidents = () => {
+  return (
+    <ClientSelectionProvider>
+      <IncidentsContent />
+    </ClientSelectionProvider>
   );
 };
 
