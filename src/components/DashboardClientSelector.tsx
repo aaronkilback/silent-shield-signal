@@ -31,9 +31,21 @@ export const DashboardClientSelector = () => {
       if (error) throw error;
       setClients(data || []);
       
-      // Auto-select first client if none selected
-      if (data && data.length > 0 && !selectedClientId) {
-        setSelectedClientId(data[0].id);
+      // Only auto-select first client if:
+      // 1. No client is currently selected AND
+      // 2. The stored client doesn't exist in the list
+      if (data && data.length > 0) {
+        if (!selectedClientId) {
+          // No selection at all, pick first
+          setSelectedClientId(data[0].id);
+        } else {
+          // Validate the stored selection exists
+          const isValid = data.some(client => client.id === selectedClientId);
+          if (!isValid) {
+            // Stored client doesn't exist, pick first
+            setSelectedClientId(data[0].id);
+          }
+        }
       }
     } catch (error) {
       console.error("Error fetching clients:", error);
