@@ -16,8 +16,25 @@ interface SignalDetailDialogProps {
 
 export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailDialogProps) => {
   const [createEntityOpen, setCreateEntityOpen] = useState(false);
+  const [selectedText, setSelectedText] = useState("");
+  const [selectionContext, setSelectionContext] = useState("");
   
   if (!signal) return null;
+
+  const handleTextSelection = () => {
+    const selection = window.getSelection();
+    const text = selection?.toString().trim();
+    if (text && text.length > 0) {
+      setSelectedText(text);
+      setSelectionContext(signal.normalized_text || "");
+    }
+  };
+
+  const handleCreateEntity = () => {
+    if (selectedText) {
+      setCreateEntityOpen(true);
+    }
+  };
 
   const aiAnalysis = signal.raw_json?.ai_analysis;
   const aiDecision = aiAnalysis?.ai_decision || signal.raw_json?.ai_decision;
@@ -45,6 +62,16 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailD
               <Brain className="w-5 h-5" />
               Strategic Intelligence Analysis
             </div>
+          {selectedText ? (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={handleCreateEntity}
+            >
+              <UserPlus className="w-4 h-4 mr-2" />
+              Create Entity: "{selectedText.substring(0, 20)}{selectedText.length > 20 ? '...' : ''}"
+            </Button>
+          ) : (
             <Button
               variant="outline"
               size="sm"
@@ -53,11 +80,12 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailD
               <UserPlus className="w-4 h-4 mr-2" />
               Create Entity
             </Button>
+          )}
           </DialogTitle>
         </DialogHeader>
 
         <ScrollArea className="max-h-[calc(90vh-100px)] pr-4">
-          <div className="space-y-6">
+          <div className="space-y-6" onMouseUp={handleTextSelection}>
             {/* Signal Overview */}
             <div>
               <h3 className="font-semibold mb-2 flex items-center gap-2">
@@ -255,8 +283,16 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailD
       </DialogContent>
       <CreateEntityDialog
         open={createEntityOpen}
-        onOpenChange={setCreateEntityOpen}
+        onOpenChange={(open) => {
+          setCreateEntityOpen(open);
+          if (!open) {
+            setSelectedText("");
+            setSelectionContext("");
+          }
+        }}
+        prefilledName={selectedText}
         signalId={signal.id}
+        context={selectionContext}
       />
     </Dialog>
   );

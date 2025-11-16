@@ -187,6 +187,7 @@ export type Database = {
       entities: {
         Row: {
           aliases: string[] | null
+          associations: string[] | null
           attributes: Json | null
           created_at: string
           created_by: string | null
@@ -195,11 +196,14 @@ export type Database = {
           is_active: boolean | null
           name: string
           risk_level: string | null
+          threat_indicators: string[] | null
+          threat_score: number | null
           type: Database["public"]["Enums"]["entity_type"]
           updated_at: string
         }
         Insert: {
           aliases?: string[] | null
+          associations?: string[] | null
           attributes?: Json | null
           created_at?: string
           created_by?: string | null
@@ -208,11 +212,14 @@ export type Database = {
           is_active?: boolean | null
           name: string
           risk_level?: string | null
+          threat_indicators?: string[] | null
+          threat_score?: number | null
           type: Database["public"]["Enums"]["entity_type"]
           updated_at?: string
         }
         Update: {
           aliases?: string[] | null
+          associations?: string[] | null
           attributes?: Json | null
           created_at?: string
           created_by?: string | null
@@ -221,6 +228,8 @@ export type Database = {
           is_active?: boolean | null
           name?: string
           risk_level?: string | null
+          threat_indicators?: string[] | null
+          threat_score?: number | null
           type?: Database["public"]["Enums"]["entity_type"]
           updated_at?: string
         }
