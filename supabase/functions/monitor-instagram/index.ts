@@ -38,16 +38,20 @@ serve(async (req) => {
     // Monitor Instagram via Google search (Instagram blocks direct scraping)
     for (const client of clients || []) {
       try {
+        // Add initial delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 3000));
+        
         const searchQuery = encodeURIComponent(`site:instagram.com "${client.name}" (hack OR scam OR fake OR phishing)`);
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
+        const timeout = setTimeout(() => controller.abort(), 15000);
         
         const response = await fetch(
           `https://www.google.com/search?q=${searchQuery}&num=10`,
           {
             headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Accept': 'text/html,application/xhtml+xml',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.9',
             },
             signal: controller.signal
           }
@@ -55,6 +59,10 @@ serve(async (req) => {
 
         if (!response.ok) {
           console.log(`Instagram search failed for ${client.name}: ${response.status}`);
+          if (response.status === 429) {
+            console.log('Rate limited, waiting longer...');
+            await new Promise(resolve => setTimeout(resolve, 30000));
+          }
           continue;
         }
 
@@ -111,8 +119,7 @@ serve(async (req) => {
           }
         }
 
-        // Rate limiting
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // Extended rate limiting removed - delay is at start of loop
 
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
