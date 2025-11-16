@@ -116,7 +116,14 @@ serve(async (req) => {
       'monitor-earthquakes',
       'monitor-news',
       'monitor-social',
-      'monitor-threat-intel'
+      'monitor-threat-intel',
+      'monitor-github',
+      'monitor-pastebin',
+      'monitor-linkedin',
+      'monitor-darkweb',
+      'monitor-domains',
+      'monitor-facebook',
+      'monitor-instagram'
     ];
 
     let monitorsRun = 0;
