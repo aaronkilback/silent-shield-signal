@@ -92,27 +92,35 @@ export const DashboardClientSelector = () => {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <Select 
-          value={selectedClientId || undefined} 
-          onValueChange={setSelectedClientId}
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select a client..." />
-          </SelectTrigger>
-          <SelectContent>
-            {clients.map((client) => (
-              <SelectItem key={client.id} value={client.id}>
-                <div className="flex items-center gap-2">
-                  <Building2 className="w-4 h-4" />
-                  <span>{client.name}</span>
-                  {client.organization && (
-                    <span className="text-muted-foreground">({client.organization})</span>
-                  )}
-                </div>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="space-y-4">
+          {/* Debug display */}
+          <div className="p-2 bg-muted rounded text-xs">
+            <div>Selected ID: {selectedClientId || 'None'}</div>
+            <div>Selected Name: {clients.find(c => c.id === selectedClientId)?.name || 'None'}</div>
+          </div>
+          
+          <Select 
+            value={selectedClientId || undefined} 
+            onValueChange={setSelectedClientId}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select a client..." />
+            </SelectTrigger>
+            <SelectContent>
+              {clients.map((client) => (
+                <SelectItem key={client.id} value={client.id}>
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-4 h-4" />
+                    <span>{client.name}</span>
+                    {client.organization && (
+                      <span className="text-muted-foreground">({client.organization})</span>
+                    )}
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </CardContent>
     </Card>
   );
