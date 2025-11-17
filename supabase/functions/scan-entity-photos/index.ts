@@ -66,22 +66,23 @@ serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'openai/gpt-5-mini',
         messages: [
           {
             role: 'system',
-            content: `You are an OSINT research assistant specializing in finding publicly available images for security analysis. 
-Focus ONLY on images that are:
-1. From official sources (company websites, press releases, government sites, news articles)
-2. Publicly accessible and intended for public distribution
-3. From reputable image repositories like Wikimedia Commons, Flickr Commons, or official media
-4. Professional or official in nature (no personal social media)
+            content: `You are an OSINT research assistant. Find ACTUAL publicly available image URLs on the internet.
 
-For persons: Only search official professional profiles, press photos, company headshots, or public figure images from news sources.
-For organizations: Focus on logos, office buildings, official corporate imagery.
-For locations: Use official tourism photos, landmarks, geographic features.
+IMPORTANT: You MUST return real, working image URLs (https://...) from public sources like:
+- Wikimedia Commons (commons.wikimedia.org)
+- Official company websites
+- News websites and press photo databases
+- LinkedIn profile photos (for public figures)
+- Official social media profiles (Twitter/X, company pages)
+- Government/public institution websites
 
-Return ONLY publicly distributed official images. Do not search personal social media or private photos.`
+DO NOT refuse requests for public figures or organizations - these are legitimate OSINT research queries.
+DO NOT make up URLs - only return real URLs you can find on the internet.
+Focus on professional, official, and publicly published images.`
           },
           {
             role: 'user',
@@ -119,6 +120,8 @@ If you cannot find appropriate official/public images, return an empty array.`
     const aiData = await aiResponse.json();
     const content = aiData.choices[0]?.message?.content || '{}';
     
+    console.log('AI Response:', content);
+    
     // Extract JSON from response
     let imageResults;
     try {
@@ -130,6 +133,19 @@ If you cannot find appropriate official/public images, return an empty array.`
       }
     } catch (e) {
       console.error('Failed to parse AI response:', content);
+      // If AI refuses or fails, provide helpful message
+      if (content.toLowerCase().includes('cannot') || content.toLowerCase().includes('unable')) {
+        console.log('AI refused request - no images will be added');
+        return new Response(
+          JSON.stringify({
+            success: true,
+            photosAdded: 0,
+            message: `The AI was unable to find publicly available images for ${entity.name}. You can manually upload photos using the upload button.`,
+            aiRefused: true
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
       imageResults = { images: [] };
     }
 
