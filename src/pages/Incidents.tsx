@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Loader2, AlertTriangle, Search, Filter, ClipboardList } from "lucide-react";
 import { IncidentActionDialog } from "@/components/IncidentActionDialog";
 import { useToast } from "@/hooks/use-toast";
@@ -37,6 +37,7 @@ const Incidents = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { selectedClientId } = useClientSelection();
+  const [searchParams, setSearchParams] = useSearchParams();
   
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
@@ -112,6 +113,19 @@ const Incidents = () => {
       supabase.removeChannel(channel);
     };
   }, [user, selectedClientId, statusFilter, priorityFilter, toast, reloadTrigger]);
+
+  // Auto-open incident from URL parameter (e.g., from investigation page)
+  useEffect(() => {
+    const incidentIdFromUrl = searchParams.get('incident');
+    if (incidentIdFromUrl && incidents.length > 0 && !selectedIncident) {
+      const incident = incidents.find(i => i.id === incidentIdFromUrl);
+      if (incident) {
+        setSelectedIncident(incident);
+        // Clear the URL parameter after opening
+        setSearchParams({});
+      }
+    }
+  }, [searchParams, incidents, selectedIncident, setSearchParams]);
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
