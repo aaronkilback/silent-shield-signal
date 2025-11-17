@@ -795,6 +795,7 @@ export type Database = {
           client_id: string | null
           created_at: string | null
           created_by_name: string | null
+          cross_references: string[] | null
           file_number: string
           file_status: string | null
           id: string
@@ -811,6 +812,7 @@ export type Database = {
           client_id?: string | null
           created_at?: string | null
           created_by_name?: string | null
+          cross_references?: string[] | null
           file_number: string
           file_status?: string | null
           id?: string
@@ -827,6 +829,7 @@ export type Database = {
           client_id?: string | null
           created_at?: string | null
           created_by_name?: string | null
+          cross_references?: string[] | null
           file_number?: string
           file_status?: string | null
           id?: string

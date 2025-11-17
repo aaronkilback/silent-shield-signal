@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import { 
   ArrowLeft, Save, Plus, Trash2, Upload, Download, 
   FileText, Image as ImageIcon, Video, Music, File,
-  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle
+  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X
 } from "lucide-react";
 import { format } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
@@ -35,6 +35,8 @@ const InvestigationDetail = () => {
   const [newPersonPhone, setNewPersonPhone] = useState("");
   const [newPersonPosition, setNewPersonPosition] = useState("");
   const [newPersonCompany, setNewPersonCompany] = useState("");
+  const [suggestedReferences, setSuggestedReferences] = useState<any[]>([]);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
 
   const { data: investigation, isLoading } = useQuery({
     queryKey: ['investigation', id],
@@ -105,6 +107,24 @@ const InvestigationDetail = () => {
       return withUrls;
     },
     enabled: !!id
+  });
+
+  const { data: crossReferences = [] } = useQuery({
+    queryKey: ['investigation-cross-references', id],
+    queryFn: async () => {
+      if (!investigation?.cross_references || investigation.cross_references.length === 0) {
+        return [];
+      }
+
+      const { data, error } = await supabase
+        .from('investigations')
+        .select('id, file_number, synopsis, file_status')
+        .in('id', investigation.cross_references);
+      
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!investigation
   });
 
   const updateInvestigation = async (field: string, value: any) => {
@@ -294,6 +314,80 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
       case 'audio': return <Music className="w-4 h-4" />;
       case 'document': return <FileText className="w-4 h-4" />;
       default: return <File className="w-4 h-4" />;
+    }
+  };
+
+  const getSuggestedReferences = async () => {
+    if (!id) return;
+
+    setIsLoadingSuggestions(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('suggest-investigation-references', {
+        body: { investigationId: id }
+      });
+
+      if (error) throw error;
+
+      setSuggestedReferences(data.suggestions || []);
+      if (data.suggestions && data.suggestions.length > 0) {
+        toast.success(`Found ${data.suggestions.length} potential cross-references`);
+      } else {
+        toast.info("No similar investigations found");
+      }
+    } catch (error: any) {
+      console.error('Error getting suggestions:', error);
+      toast.error(error.message || "Failed to get suggestions");
+    } finally {
+      setIsLoadingSuggestions(false);
+    }
+  };
+
+  const addCrossReference = async (refId: string) => {
+    if (!id || !investigation) return;
+
+    const currentRefs = investigation.cross_references || [];
+    if (currentRefs.includes(refId)) {
+      toast.error("This investigation is already cross-referenced");
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('investigations')
+        .update({ cross_references: [...currentRefs, refId] })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      queryClient.invalidateQueries({ queryKey: ['investigation', id] });
+      queryClient.invalidateQueries({ queryKey: ['investigation-cross-references', id] });
+      toast.success("Cross-reference added");
+      
+      // Remove from suggestions
+      setSuggestedReferences(prev => prev.filter(s => s.id !== refId));
+    } catch (error: any) {
+      toast.error(error.message || "Failed to add cross-reference");
+    }
+  };
+
+  const removeCrossReference = async (refId: string) => {
+    if (!id || !investigation) return;
+
+    try {
+      const newRefs = (investigation.cross_references || []).filter(r => r !== refId);
+      
+      const { error } = await supabase
+        .from('investigations')
+        .update({ cross_references: newRefs })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      queryClient.invalidateQueries({ queryKey: ['investigation', id] });
+      queryClient.invalidateQueries({ queryKey: ['investigation-cross-references', id] });
+      toast.success("Cross-reference removed");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to remove cross-reference");
     }
   };
 
@@ -572,6 +666,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
             <TabsTrigger value="persons">Persons</TabsTrigger>
             <TabsTrigger value="entries">Entries</TabsTrigger>
             <TabsTrigger value="attachments">Attachments</TabsTrigger>
+            <TabsTrigger value="references">Cross-References</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
@@ -932,6 +1027,112 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                       </CardContent>
                     </Card>
                   ))}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="references" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <Link className="w-5 h-5" />
+                    Cross-Referenced Investigations
+                  </CardTitle>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={getSuggestedReferences}
+                    disabled={isLoadingSuggestions}
+                  >
+                    {isLoadingSuggestions ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Analyzing...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 mr-2" />
+                        AI Suggest References
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* AI Suggestions */}
+                {suggestedReferences.length > 0 && (
+                  <div className="space-y-2">
+                    <Label className="text-sm text-muted-foreground">AI Suggestions</Label>
+                    <div className="space-y-2">
+                      {suggestedReferences.map((suggestion) => (
+                        <div key={suggestion.id} className="flex items-start gap-3 p-3 border rounded-lg bg-purple-50 dark:bg-purple-900/20">
+                          <Sparkles className="w-4 h-4 text-purple-600 mt-1" />
+                          <div className="flex-1">
+                            <p className="font-medium">{suggestion.file_number}</p>
+                            <p className="text-sm text-muted-foreground line-clamp-2">
+                              {suggestion.synopsis || 'No synopsis available'}
+                            </p>
+                          </div>
+                          <Button 
+                            size="sm"
+                            onClick={() => addCrossReference(suggestion.id)}
+                          >
+                            <Plus className="w-4 h-4 mr-2" />
+                            Add
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Current Cross-References */}
+                <div className="space-y-2">
+                  <Label>Linked Investigations</Label>
+                  {crossReferences.length === 0 ? (
+                    <p className="text-sm text-muted-foreground p-4 border rounded-lg text-center">
+                      No cross-references yet. Use AI to find related investigations.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {crossReferences.map((ref) => (
+                        <div 
+                          key={ref.id} 
+                          className="flex items-start gap-3 p-3 border rounded-lg hover:bg-accent/5 cursor-pointer"
+                          onClick={() => navigate(`/investigation/${ref.id}`)}
+                        >
+                          <FileText className="w-4 h-4 text-primary mt-1" />
+                          <div className="flex-1">
+                            <p className="font-medium">{ref.file_number}</p>
+                            <p className="text-sm text-muted-foreground line-clamp-1">
+                              {ref.synopsis || 'No synopsis available'}
+                            </p>
+                            <span className={`text-xs px-2 py-1 rounded mt-1 inline-block ${
+                              ref.file_status === 'open' 
+                                ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                                : ref.file_status === 'under_review'
+                                ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                                : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200'
+                            }`}>
+                              {ref.file_status.replace('_', ' ')}
+                            </span>
+                          </div>
+                          <Button 
+                            variant="ghost" 
+                            size="icon"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeCrossReference(ref.id);
+                            }}
+                          >
+                            <X className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
