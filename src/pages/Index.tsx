@@ -3,7 +3,6 @@ import { MetricsPanel } from "@/components/MetricsPanel";
 import { SignalIngestForm } from "@/components/SignalIngestForm";
 import AutonomousSystemStatus from "@/components/AutonomousSystemStatus";
 import LearningDashboard from "@/components/LearningDashboard";
-import { SignalHistory } from "@/components/SignalHistory";
 import { DashboardClientSelector } from "@/components/DashboardClientSelector";
 import { MonitoringHistory } from "@/components/MonitoringHistory";
 import { useAuth } from "@/hooks/useAuth";
@@ -40,7 +39,6 @@ const Index = () => {
         <DashboardClientSelector />
         <AutonomousSystemStatus />
         <MonitoringHistory />
-        <SignalHistory />
         <MetricsPanel />
         
         <div className="grid grid-cols-1 gap-6">
