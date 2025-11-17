@@ -1,6 +1,7 @@
 import { Header } from "@/components/Header";
 import { ExecutiveReportGenerator } from "@/components/ExecutiveReportGenerator";
 import { RiskSnapshotExport } from "@/components/RiskSnapshotExport";
+import { RiskSnapshot } from "@/components/RiskSnapshot";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
@@ -43,6 +44,7 @@ const Reports = () => {
         </div>
 
         <div className="grid grid-cols-1 gap-6">
+          <RiskSnapshot />
           <ExecutiveReportGenerator />
           <RiskSnapshotExport />
         </div>
