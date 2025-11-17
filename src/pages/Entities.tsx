@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
 import { EntityDetailDialog } from "@/components/EntityDetailDialog";
-import { Plus, Search, Users, MapPin, Building2, Globe, Upload } from "lucide-react";
+import { Plus, Search, Users, MapPin, Building2, Globe, Upload, LayoutGrid, List } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 
@@ -19,6 +19,7 @@ export default function Entities() {
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
   const { data: entities = [], refetch } = useQuery({
     queryKey: ['entities', searchTerm, selectedType],
@@ -174,85 +175,154 @@ export default function Entities() {
             />
           </div>
 
-          <div className="flex gap-2 flex-wrap">
-            <Button
-              variant={selectedType === null ? "default" : "outline"}
-              size="sm"
-              onClick={() => setSelectedType(null)}
-            >
-              All
-            </Button>
-            {entityTypes.map(type => (
+          <div className="flex items-center justify-between">
+            <div className="flex gap-2 flex-wrap">
               <Button
-                key={type.value}
-                variant={selectedType === type.value ? "default" : "outline"}
+                variant={selectedType === null ? "default" : "outline"}
                 size="sm"
-                onClick={() => setSelectedType(type.value)}
+                onClick={() => setSelectedType(null)}
               >
-                {type.label}
+                All
               </Button>
-            ))}
+              {entityTypes.map(type => (
+                <Button
+                  key={type.value}
+                  variant={selectedType === type.value ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setSelectedType(type.value)}
+                >
+                  {type.label}
+                </Button>
+              ))}
+            </div>
+            <div className="flex gap-1">
+              <Button
+                variant={viewMode === 'grid' ? "default" : "outline"}
+                size="sm"
+                onClick={() => setViewMode('grid')}
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </Button>
+              <Button
+                variant={viewMode === 'list' ? "default" : "outline"}
+                size="sm"
+                onClick={() => setViewMode('list')}
+              >
+                <List className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {entities.map((entity: any) => {
-            const Icon = getTypeIcon(entity.type);
-            return (
-              <Card 
-                key={entity.id} 
-                className="p-4 hover:shadow-lg transition-shadow cursor-pointer"
-                onClick={() => {
-                  setSelectedEntityId(entity.id);
-                  setDetailDialogOpen(true);
-                }}
-              >
-                <div className="space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-2">
-                      <Icon className="w-5 h-5 text-primary" />
-                      <h3 className="font-semibold">{entity.name}</h3>
-                      {entity.threat_score !== null && entity.threat_score !== undefined && (
-                        <span className="text-lg" title={`Threat Score: ${entity.threat_score}/10 (Recency + Confidence + Relevancy)`}>
-                          {getThreatFlames(entity.threat_score)}
-                        </span>
+        {viewMode === 'grid' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {entities.map((entity: any) => {
+              const Icon = getTypeIcon(entity.type);
+              return (
+                <Card 
+                  key={entity.id} 
+                  className="p-4 hover:shadow-lg transition-shadow cursor-pointer"
+                  onClick={() => {
+                    setSelectedEntityId(entity.id);
+                    setDetailDialogOpen(true);
+                  }}
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-2">
+                        <Icon className="w-5 h-5 text-primary" />
+                        <h3 className="font-semibold">{entity.name}</h3>
+                        {entity.threat_score !== null && entity.threat_score !== undefined && (
+                          <span className="text-lg" title={`Threat Score: ${entity.threat_score}/10 (Recency + Confidence + Relevancy)`}>
+                            {getThreatFlames(entity.threat_score)}
+                          </span>
+                        )}
+                      </div>
+                      <Badge variant={getRiskColor(entity.risk_level) as any}>
+                        {entity.risk_level || 'unknown'}
+                      </Badge>
+                    </div>
+                    
+                    {entity.description && (
+                      <p className="text-sm text-muted-foreground line-clamp-2">
+                        {entity.description}
+                      </p>
+                    )}
+
+                    {entity.aliases && entity.aliases.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {entity.aliases.slice(0, 3).map((alias: string, idx: number) => (
+                          <Badge key={idx} variant="outline" className="text-xs">
+                            {alias}
+                          </Badge>
+                        ))}
+                        {entity.aliases.length > 3 && (
+                          <Badge variant="outline" className="text-xs">
+                            +{entity.aliases.length - 3}
+                          </Badge>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>{entity.entity_mentions[0]?.count || 0} mentions</span>
+                      <span>{formatDistanceToNow(new Date(entity.created_at), { addSuffix: true })}</span>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {entities.map((entity: any) => {
+              const Icon = getTypeIcon(entity.type);
+              return (
+                <Card 
+                  key={entity.id} 
+                  className="p-4 hover:shadow-lg transition-shadow cursor-pointer"
+                  onClick={() => {
+                    setSelectedEntityId(entity.id);
+                    setDetailDialogOpen(true);
+                  }}
+                >
+                  <div className="flex items-center gap-4">
+                    <Icon className="w-5 h-5 text-primary flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold truncate">{entity.name}</h3>
+                        {entity.threat_score !== null && entity.threat_score !== undefined && (
+                          <span className="text-lg flex-shrink-0" title={`Threat Score: ${entity.threat_score}/10 (Recency + Confidence + Relevancy)`}>
+                            {getThreatFlames(entity.threat_score)}
+                          </span>
+                        )}
+                      </div>
+                      {entity.description && (
+                        <p className="text-sm text-muted-foreground line-clamp-1">
+                          {entity.description}
+                        </p>
                       )}
                     </div>
-                    <Badge variant={getRiskColor(entity.risk_level) as any}>
-                      {entity.risk_level}
-                    </Badge>
-                  </div>
-
-                  {entity.description && (
-                    <p className="text-sm text-muted-foreground line-clamp-2">
-                      {entity.description}
-                    </p>
-                  )}
-
-                  {entity.aliases && entity.aliases.length > 0 && (
-                    <div className="flex gap-1 flex-wrap">
-                      {entity.aliases.slice(0, 3).map((alias: string, idx: number) => (
-                        <Badge key={idx} variant="outline" className="text-xs">
-                          {alias}
-                        </Badge>
-                      ))}
-                      {entity.aliases.length > 3 && (
-                        <Badge variant="outline" className="text-xs">
-                          +{entity.aliases.length - 3}
-                        </Badge>
-                      )}
+                    <div className="flex items-center gap-4 flex-shrink-0">
+                      <Badge variant="outline" className="text-xs">
+                        {entity.type}
+                      </Badge>
+                      <Badge variant={getRiskColor(entity.risk_level) as any}>
+                        {entity.risk_level || 'unknown'}
+                      </Badge>
+                      <span className="text-sm text-muted-foreground">
+                        {entity.entity_mentions[0]?.count || 0} mentions
+                      </span>
+                      <span className="text-xs text-muted-foreground w-24 text-right">
+                        {formatDistanceToNow(new Date(entity.created_at), { addSuffix: true })}
+                      </span>
                     </div>
-                  )}
-
-                  <div className="flex items-center justify-between text-xs text-muted-foreground pt-2 border-t">
-                    <span>{entity.entity_mentions?.[0]?.count || 0} mentions</span>
-                    <span>{formatDistanceToNow(new Date(entity.created_at), { addSuffix: true })}</span>
                   </div>
-                </div>
-              </Card>
-            );
-          })}
-        </div>
+                </Card>
+              );
+            })}
+          </div>
+        )}
 
         {entities.length === 0 && (
           <div className="text-center py-12">
