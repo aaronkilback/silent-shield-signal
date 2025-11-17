@@ -42,6 +42,7 @@ Deno.serve(async (req) => {
     // List of available monitors
     const monitors = [
       'monitor-canadian-sources-enhanced',
+      'monitor-rss-sources',
       'monitor-news',
       'monitor-social',
       'monitor-threat-intel',

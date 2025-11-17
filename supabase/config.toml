@@ -1,5 +1,8 @@
 project_id = "udbjjeppbgwjlqmaeftn"
 
+[functions.monitor-rss-sources]
+verify_jwt = false
+
 [functions.scan-entity-content]
 verify_jwt = true
 
