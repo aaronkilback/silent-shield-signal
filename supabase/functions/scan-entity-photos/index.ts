@@ -106,6 +106,7 @@ serve(async (req) => {
 
     // Collect all image URLs
     const imageUrls: Array<{url: string, source: string, title: string}> = [];
+    const seenUrls = new Set<string>(); // Track URLs to prevent duplicates
 
     // STEP 1: Search web pages and extract images
     const webSearchUrl = new URL('https://www.googleapis.com/customsearch/v1');
@@ -124,7 +125,8 @@ serve(async (req) => {
       for (const page of webData.items || []) {
         if (page.pagemap?.cse_image) {
           for (const img of page.pagemap.cse_image) {
-            if (img.src) {
+            if (img.src && !seenUrls.has(img.src)) {
+              seenUrls.add(img.src);
               imageUrls.push({
                 url: img.src,
                 source: page.displayLink,
@@ -135,7 +137,8 @@ serve(async (req) => {
         }
         if (page.pagemap?.metatags) {
           for (const meta of page.pagemap.metatags) {
-            if (meta['og:image']) {
+            if (meta['og:image'] && !seenUrls.has(meta['og:image'])) {
+              seenUrls.add(meta['og:image']);
               imageUrls.push({
                 url: meta['og:image'],
                 source: page.displayLink,
@@ -165,11 +168,14 @@ serve(async (req) => {
       console.log(`Found ${imgData.items?.length || 0} direct images`);
       
       for (const item of imgData.items || []) {
-        imageUrls.push({
-          url: item.link,
-          source: new URL(item.link).hostname,
-          title: item.title || ''
-        });
+        if (!seenUrls.has(item.link)) {
+          seenUrls.add(item.link);
+          imageUrls.push({
+            url: item.link,
+            source: new URL(item.link).hostname,
+            title: item.title || ''
+          });
+        }
       }
     }
 
@@ -191,11 +197,14 @@ serve(async (req) => {
         console.log(`Found ${linkedinData.items?.length || 0} LinkedIn images`);
         
         for (const item of linkedinData.items || []) {
-          imageUrls.push({
-            url: item.link,
-            source: 'linkedin.com',
-            title: item.title || 'LinkedIn Profile'
-          });
+          if (!seenUrls.has(item.link)) {
+            seenUrls.add(item.link);
+            imageUrls.push({
+              url: item.link,
+              source: 'linkedin.com',
+              title: item.title || 'LinkedIn Profile'
+            });
+          }
         }
       }
     }
