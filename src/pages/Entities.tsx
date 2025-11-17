@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
 import { EntityDetailDialog } from "@/components/EntityDetailDialog";
-import { Plus, Search, Users, MapPin, Building2, Globe } from "lucide-react";
+import { Plus, Search, Users, MapPin, Building2, Globe, Upload } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { toast } from "sonner";
 
 export default function Entities() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -17,8 +18,9 @@ export default function Entities() {
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const { data: entities = [] } = useQuery({
+  const { data: entities = [], refetch } = useQuery({
     queryKey: ['entities', searchTerm, selectedType],
     queryFn: async () => {
       let query = supabase
@@ -44,6 +46,51 @@ export default function Entities() {
       return data;
     }
   });
+
+  const handleDocumentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setLoading(true);
+    try {
+      toast.loading("Processing document and extracting entities...");
+      
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      
+      await new Promise((resolve, reject) => {
+        reader.onload = async () => {
+          try {
+            const base64 = (reader.result as string).split(',')[1];
+            
+            const { data, error } = await supabase.functions.invoke("parse-entities-document", {
+              body: {
+                file: base64,
+                filename: file.name,
+                mimeType: file.type,
+              },
+            });
+
+            if (error) throw error;
+            
+            const count = data.entities?.length || 0;
+            toast.success(`Successfully created ${count} entities from document`);
+            refetch();
+            resolve(data);
+          } catch (err) {
+            reject(err);
+          }
+        };
+        reader.onerror = reject;
+      });
+    } catch (error) {
+      console.error("Error uploading document:", error);
+      toast.error("Failed to process document");
+    } finally {
+      setLoading(false);
+      e.target.value = "";
+    }
+  };
 
   const getTypeIcon = (type: string) => {
     const icons: Record<string, any> = {
@@ -93,10 +140,27 @@ export default function Entities() {
               Track persons, organizations, and indicators across signals
             </p>
           </div>
-          <Button onClick={() => setCreateDialogOpen(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Create Entity
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              variant="outline"
+              disabled={loading}
+              onClick={() => document.getElementById("entity-document-upload")?.click()}
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Upload Document
+            </Button>
+            <input
+              id="entity-document-upload"
+              type="file"
+              accept=".pdf,.doc,.docx,.txt,.csv,.md"
+              className="hidden"
+              onChange={handleDocumentUpload}
+            />
+            <Button onClick={() => setCreateDialogOpen(true)}>
+              <Plus className="w-4 h-4 mr-2" />
+              Create Entity
+            </Button>
+          </div>
         </div>
 
         <div className="space-y-4 mb-6">
