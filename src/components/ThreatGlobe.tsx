@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useLoader } from "@react-three/fiber";
 import { OrbitControls, Sphere, Html } from "@react-three/drei";
 import * as THREE from "three";
 import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import earthTexture from "@/assets/earth-texture.jpg";
 
 interface ClientLocation {
   id: string;
@@ -59,6 +60,7 @@ function Starfield() {
 
 function Globe() {
   const meshRef = useRef<THREE.Mesh>(null);
+  const texture = useLoader(THREE.TextureLoader, earthTexture);
   
   useFrame(() => {
     if (meshRef.current) {
@@ -68,70 +70,21 @@ function Globe() {
 
   return (
     <group>
-      {/* Ocean base - realistic ocean blue */}
+      {/* Earth with realistic texture */}
       <Sphere ref={meshRef} args={[2, 64, 64]}>
         <meshStandardMaterial
-          color="#1a4d7a"
-          roughness={0.6}
-          metalness={0.4}
-        />
-      </Sphere>
-      
-      {/* Land masses - creating continents with overlapping spheres */}
-      {/* North America */}
-      <Sphere args={[0.5, 32, 32]} position={[-0.8, 0.6, 1.7]}>
-        <meshStandardMaterial
-          color="#3a7d44"
-          roughness={0.9}
-        />
-      </Sphere>
-      
-      {/* South America */}
-      <Sphere args={[0.4, 32, 32]} position={[-0.5, -0.8, 1.8]}>
-        <meshStandardMaterial
-          color="#3a7d44"
-          roughness={0.9}
-        />
-      </Sphere>
-      
-      {/* Europe/Africa */}
-      <Sphere args={[0.6, 32, 32]} position={[0.3, 0.3, 1.8]}>
-        <meshStandardMaterial
-          color="#4a8d54"
-          roughness={0.9}
-        />
-      </Sphere>
-      
-      {/* Africa lower */}
-      <Sphere args={[0.5, 32, 32]} position={[0.4, -0.5, 1.8]}>
-        <meshStandardMaterial
-          color="#4a8d54"
-          roughness={0.9}
-        />
-      </Sphere>
-      
-      {/* Asia */}
-      <Sphere args={[0.7, 32, 32]} position={[1.2, 0.5, 1.2]}>
-        <meshStandardMaterial
-          color="#3a7d44"
-          roughness={0.9}
-        />
-      </Sphere>
-      
-      {/* Australia */}
-      <Sphere args={[0.3, 32, 32]} position={[1.3, -0.8, 1.0]}>
-        <meshStandardMaterial
-          color="#4a8d54"
-          roughness={0.9}
+          map={texture}
+          roughness={0.7}
+          metalness={0.1}
         />
       </Sphere>
       
       {/* Atmospheric glow */}
-      <Sphere args={[2.15, 32, 32]}>
+      <Sphere args={[2.12, 32, 32]}>
         <meshBasicMaterial
-          color="#4a9eff"
+          color="#88ccff"
           transparent
-          opacity={0.08}
+          opacity={0.1}
           side={THREE.BackSide}
         />
       </Sphere>
