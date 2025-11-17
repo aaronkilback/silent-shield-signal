@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
+import { EntityDetailDialog } from "@/components/EntityDetailDialog";
 import { Plus, Search, Users, MapPin, Building2, Globe } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -14,6 +15,8 @@ export default function Entities() {
   const [searchTerm, setSearchTerm] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<string | null>(null);
+  const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
 
   const { data: entities = [] } = useQuery({
     queryKey: ['entities', searchTerm, selectedType],
@@ -132,7 +135,14 @@ export default function Entities() {
           {entities.map((entity: any) => {
             const Icon = getTypeIcon(entity.type);
             return (
-              <Card key={entity.id} className="p-4 hover:shadow-lg transition-shadow cursor-pointer">
+              <Card 
+                key={entity.id} 
+                className="p-4 hover:shadow-lg transition-shadow cursor-pointer"
+                onClick={() => {
+                  setSelectedEntityId(entity.id);
+                  setDetailDialogOpen(true);
+                }}
+              >
                 <div className="space-y-3">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2">
@@ -195,10 +205,16 @@ export default function Entities() {
         )}
       </main>
 
-      <CreateEntityDialog
-        open={createDialogOpen}
-        onOpenChange={setCreateDialogOpen}
-      />
+        <CreateEntityDialog 
+          open={createDialogOpen} 
+          onOpenChange={setCreateDialogOpen}
+        />
+        
+        <EntityDetailDialog
+          entityId={selectedEntityId}
+          open={detailDialogOpen}
+          onOpenChange={setDetailDialogOpen}
+        />
     </div>
   );
 }

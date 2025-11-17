@@ -347,6 +347,47 @@ export type Database = {
           },
         ]
       }
+      entity_photos: {
+        Row: {
+          caption: string | null
+          created_at: string
+          created_by: string | null
+          entity_id: string
+          id: string
+          source: string | null
+          storage_path: string
+          updated_at: string
+        }
+        Insert: {
+          caption?: string | null
+          created_at?: string
+          created_by?: string | null
+          entity_id: string
+          id?: string
+          source?: string | null
+          storage_path: string
+          updated_at?: string
+        }
+        Update: {
+          caption?: string | null
+          created_at?: string
+          created_by?: string | null
+          entity_id?: string
+          id?: string
+          source?: string | null
+          storage_path?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entity_photos_entity_id_fkey"
+            columns: ["entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       entity_relationships: {
         Row: {
           created_at: string
