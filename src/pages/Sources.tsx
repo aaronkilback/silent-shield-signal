@@ -2,7 +2,7 @@ import { Header } from "@/components/Header";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, Play } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -74,6 +74,21 @@ const Sources = () => {
     },
   });
 
+  const runScansMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke('manual-scan-trigger');
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success(`Scans triggered: ${data.summary.successful} successful, ${data.summary.failed} failed`);
+    },
+    onError: (error) => {
+      console.error("Error running scans:", error);
+      toast.error("Failed to trigger scans");
+    },
+  });
+
   if (loading || isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -97,10 +112,24 @@ const Sources = () => {
               Manage your intelligence sources and monitoring configurations
             </p>
           </div>
-          <Button onClick={() => setIsAddDialogOpen(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Add Source
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              onClick={() => runScansMutation.mutate()}
+              disabled={runScansMutation.isPending}
+              variant="outline"
+            >
+              {runScansMutation.isPending ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Play className="w-4 h-4 mr-2" />
+              )}
+              Run All Scans
+            </Button>
+            <Button onClick={() => setIsAddDialogOpen(true)}>
+              <Plus className="w-4 h-4 mr-2" />
+              Add Source
+            </Button>
+          </div>
         </div>
 
         <Card>

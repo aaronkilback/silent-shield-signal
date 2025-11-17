@@ -50,6 +50,13 @@ export const SourcesList = ({ sources, onToggleActive, onDelete }: SourcesListPr
                 </Badge>
               )}
             </div>
+            {source.monitor_type && (
+              <p className="text-sm text-muted-foreground">
+                Assigned to: <Badge variant="secondary" className="text-xs ml-1">
+                  {source.monitor_type.replace('monitor-', '').replace(/-/g, ' ')}
+                </Badge>
+              </p>
+            )}
             {source.config_json && (
               <p className="text-sm text-muted-foreground">
                 <Settings className="w-3 h-3 inline mr-1" />

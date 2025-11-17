@@ -24,6 +24,7 @@ interface AddSourceDialogProps {
 export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) => {
   const [name, setName] = useState("");
   const [type, setType] = useState("");
+  const [monitorType, setMonitorType] = useState("");
   const [configJson, setConfigJson] = useState("");
 
   const sourceTypes = [
@@ -32,6 +33,22 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
     { value: "drivebc", label: "DriveBC Alerts", example: '{"regions": ["Fort St John", "Pink Mountain"], "event_types": ["closure", "delay", "advisory"]}' },
     { value: "webhook", label: "Webhook", example: '{"endpoint": "/webhook/source-name"}' },
     { value: "manual", label: "Manual Entry", example: '{}' },
+  ];
+
+  const monitorTypes = [
+    { value: "monitor-canadian-sources-enhanced", label: "Canadian Sources" },
+    { value: "monitor-news", label: "News Monitoring" },
+    { value: "monitor-social", label: "Social Media" },
+    { value: "monitor-threat-intel", label: "Threat Intelligence" },
+    { value: "monitor-darkweb", label: "Dark Web" },
+    { value: "monitor-domains", label: "Domain Monitoring" },
+    { value: "monitor-weather", label: "Weather" },
+    { value: "monitor-wildfires", label: "Wildfires" },
+    { value: "monitor-earthquakes", label: "Earthquakes" },
+    { value: "monitor-github", label: "GitHub" },
+    { value: "monitor-linkedin", label: "LinkedIn" },
+    { value: "monitor-facebook", label: "Facebook" },
+    { value: "monitor-instagram", label: "Instagram" },
   ];
 
   const selectedSourceType = sourceTypes.find(st => st.value === type);
@@ -59,6 +76,7 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
         .insert({
           name: name.trim(),
           type: type.trim(),
+          monitor_type: monitorType || null,
           config_json: parsedConfig,
           is_active: true,
         });
@@ -70,6 +88,7 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
       toast.success("Source added successfully");
       setName("");
       setType("");
+      setMonitorType("");
       setConfigJson("");
       onOpenChange(false);
     },
@@ -124,6 +143,23 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="monitor">Assign to Monitor</Label>
+            <Select value={monitorType} onValueChange={setMonitorType}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select monitor (optional)" />
+              </SelectTrigger>
+              <SelectContent>
+                {monitorTypes.map(mt => (
+                  <SelectItem key={mt.value} value={mt.value}>{mt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Choose which monitoring scan should use this source
+            </p>
           </div>
 
           {selectedSourceType && (
