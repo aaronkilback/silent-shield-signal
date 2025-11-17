@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
 
 interface CreateEntityDialogProps {
   open: boolean;
@@ -37,6 +38,21 @@ const RISK_LEVELS = [
   { value: 'medium', label: 'Medium' },
   { value: 'low', label: 'Low' }
 ];
+
+const entitySchema = z.object({
+  name: z.string()
+    .trim()
+    .min(1, "Name is required")
+    .max(200, "Name must be less than 200 characters")
+    .refine(val => val.length > 0, "Name cannot be empty"),
+  type: z.string(),
+  description: z.string().max(2000, "Description must be less than 2000 characters").optional(),
+  risk_level: z.string(),
+  aliases: z.string().max(500, "Aliases must be less than 500 characters").optional(),
+  threat_score: z.number().min(0).max(10),
+  threat_indicators: z.string().max(1000, "Threat indicators must be less than 1000 characters").optional(),
+  associations: z.string().max(1000, "Associations must be less than 1000 characters").optional()
+});
 
 export const CreateEntityDialog = ({ 
   open, 
@@ -112,33 +128,56 @@ export const CreateEntityDialog = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validate inputs
+    const validation = entitySchema.safeParse(formData);
+    if (!validation.success) {
+      toast({
+        title: "Validation Error",
+        description: validation.error.issues[0].message,
+        variant: "destructive"
+      });
+      return;
+    }
+    
     setLoading(true);
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
+      if (!user) {
+        toast({
+          title: "Authentication Required",
+          description: "Please sign in to create entities",
+          variant: "destructive"
+        });
+        setLoading(false);
+        return;
+      }
+
+      // Sanitize text to remove problematic special characters
+      const sanitizeText = (text: string) => text.trim().replace(/[<>{}]/g, '');
 
       const aliasesArray = formData.aliases
         .split(',')
-        .map(a => a.trim())
+        .map(a => sanitizeText(a))
         .filter(a => a.length > 0);
 
       const threatIndicatorsArray = formData.threat_indicators
         .split(',')
-        .map(a => a.trim())
+        .map(a => sanitizeText(a))
         .filter(a => a.length > 0);
 
       const associationsArray = formData.associations
         .split(',')
-        .map(a => a.trim())
+        .map(a => sanitizeText(a))
         .filter(a => a.length > 0);
 
       const { data: entity, error: entityError } = await supabase
         .from('entities')
         .insert([{
-          name: formData.name,
+          name: sanitizeText(formData.name),
           type: formData.type as any,
-          description: formData.description,
+          description: formData.description ? sanitizeText(formData.description) : null,
           risk_level: formData.risk_level,
           aliases: aliasesArray,
           threat_score: formData.threat_score,
@@ -182,11 +221,11 @@ export const CreateEntityDialog = ({
         threat_indicators: '',
         associations: ''
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating entity:', error);
       toast({
-        title: "Error",
-        description: "Failed to create entity",
+        title: "Error Creating Entity",
+        description: error?.message || "Failed to create entity. Please check your input and try again.",
         variant: "destructive"
       });
     } finally {
