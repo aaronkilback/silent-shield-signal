@@ -17,7 +17,7 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { signal_id } = await req.json();
+    const { signal_id, time_window_hours = 24 } = await req.json();
     
     if (!signal_id) {
       return new Response(
@@ -25,6 +25,8 @@ serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    console.log(`Using correlation window: ${time_window_hours} hours`);
 
     console.log('Correlating signal:', signal_id);
 
@@ -52,12 +54,12 @@ serve(async (req) => {
       );
     }
 
-    // Get signals from last 24 hours (excluding this one)
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Get signals from configurable time window (default 24 hours, excluding this one)
+    const timeWindowAgo = new Date(Date.now() - time_window_hours * 60 * 60 * 1000).toISOString();
     const { data: recentSignals } = await supabase
       .from('signals')
       .select('id, normalized_text, category, severity, location, confidence, source_id, created_at, correlation_group_id, is_primary_signal')
-      .gte('created_at', twentyFourHoursAgo)
+      .gte('created_at', timeWindowAgo)
       .neq('id', signal_id)
       .order('created_at', { ascending: false })
       .limit(100);

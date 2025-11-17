@@ -36,14 +36,15 @@ export const Header = () => {
                 <Home className="w-4 h-4 mr-2" />
                 Dashboard
               </Button>
-              <Button
+              {/* Temporarily hidden */}
+              {/* <Button
                 onClick={() => navigate("/clients")}
                 variant={location.pathname === "/clients" ? "default" : "ghost"}
                 size="sm"
               >
                 <Building2 className="w-4 h-4 mr-2" />
                 Clients
-              </Button>
+              </Button> */}
               <Button
                 onClick={() => navigate("/incidents")}
                 variant={location.pathname === "/incidents" ? "default" : "ghost"}
