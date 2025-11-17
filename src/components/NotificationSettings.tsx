@@ -98,12 +98,13 @@ export const NotificationSettings = () => {
     }
   });
 
-  const handleSave = () => {
+  const handleSave = (e?: React.FormEvent) => {
+    e?.preventDefault();
     saveMutation.mutate();
   };
 
   return (
-    <div className="space-y-6">
+    <form onSubmit={handleSave} className="space-y-6">
       <div>
         <h3 className="text-lg font-medium">Notification Settings</h3>
         <p className="text-sm text-muted-foreground">
@@ -224,11 +225,11 @@ export const NotificationSettings = () => {
       </Card>
 
       <div className="flex justify-end">
-        <Button onClick={handleSave} disabled={saveMutation.isPending}>
+        <Button type="submit" disabled={saveMutation.isPending}>
           {saveMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
           Save Settings
         </Button>
       </div>
-    </div>
+    </form>
   );
 };
