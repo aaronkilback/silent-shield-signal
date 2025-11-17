@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ClientSelectionProvider } from "@/hooks/useClientSelection";
+import SupportChatWidget from "@/components/SupportChatWidget";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import Clients from "./pages/Clients";
@@ -33,6 +34,7 @@ const App = () => (
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
+          <SupportChatWidget />
         </ClientSelectionProvider>
       </BrowserRouter>
     </TooltipProvider>
