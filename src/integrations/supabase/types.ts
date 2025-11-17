@@ -1318,6 +1318,7 @@ export type Database = {
           created_at: string
           id: string
           is_active: boolean
+          monitor_type: string | null
           name: string
           type: string
           updated_at: string
@@ -1327,6 +1328,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          monitor_type?: string | null
           name: string
           type: string
           updated_at?: string
@@ -1336,6 +1338,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          monitor_type?: string | null
           name?: string
           type?: string
           updated_at?: string
