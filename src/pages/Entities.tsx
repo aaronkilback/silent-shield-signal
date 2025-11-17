@@ -16,8 +16,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
+import { DashboardClientSelector } from "@/components/DashboardClientSelector";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 export default function Entities() {
+  const { selectedClientId } = useClientSelection();
   const [searchTerm, setSearchTerm] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<string | null>(null);
@@ -31,6 +34,8 @@ export default function Entities() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [crossReferenceDialogOpen, setCrossReferenceDialogOpen] = useState(false);
+
+  // Note: Entities are global - not filtered by client as they can be referenced across multiple clients
 
   const { data: entities = [], refetch } = useQuery({
     queryKey: ['entities', searchTerm, selectedType],
@@ -223,11 +228,12 @@ export default function Entities() {
     <div className="min-h-screen bg-background">
       <Header />
       <main className="container mx-auto px-4 py-8">
-        <div className="flex items-center justify-between mb-6">
+        <DashboardClientSelector />
+        <div className="flex items-center justify-between mb-6 mt-6">
           <div>
             <h1 className="text-3xl font-bold">Entity Tracking</h1>
             <p className="text-muted-foreground">
-              Track persons, organizations, and indicators across signals
+              Track persons, organizations, and indicators across signals (global across all clients)
             </p>
           </div>
           <div className="flex gap-2">
