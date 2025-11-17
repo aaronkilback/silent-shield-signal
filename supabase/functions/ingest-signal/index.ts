@@ -508,8 +508,10 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
         .from('incidents')
         .insert({
           signal_id: signal.id,
+          client_id: signal.client_id,
           priority: rulesResult.priority,
           status: 'open',
+          is_test: signal.is_test || false,
           sla_targets_json: { 
             mttd: 10, 
             mttr: rulesResult.priority === 'p1' ? 60 : 120 
