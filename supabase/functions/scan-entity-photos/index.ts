@@ -63,18 +63,20 @@ serve(async (req) => {
     searchUrl.searchParams.set('cx', GOOGLE_CX);
     searchUrl.searchParams.set('q', searchQuery);
     searchUrl.searchParams.set('searchType', 'image');
-    searchUrl.searchParams.set('num', '5');
+    searchUrl.searchParams.set('num', '3');
     searchUrl.searchParams.set('safe', 'active');
-    searchUrl.searchParams.set('imgSize', 'medium');
 
     console.log(`Searching Google Images for: ${searchQuery}`);
+    console.log(`Using Search Engine ID: ${GOOGLE_CX}`);
+    console.log(`Full URL: ${searchUrl.toString()}`);
 
     const searchResponse = await fetch(searchUrl.toString());
 
     if (!searchResponse.ok) {
       const errorText = await searchResponse.text();
       console.error('Google Search API error:', errorText);
-      throw new Error('Failed to search for photos');
+      console.error('Status:', searchResponse.status);
+      throw new Error(`Google Search API returned ${searchResponse.status}: ${errorText}`);
     }
 
     const searchData = await searchResponse.json();
