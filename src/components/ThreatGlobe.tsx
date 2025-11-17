@@ -6,12 +6,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import earthTexture from "@/assets/earth-texture.jpg";
 
-interface ClientLocation {
+interface EntityLocation {
   id: string;
   name: string;
   lat: number;
   lng: number;
-  incidentCount: number;
+  type: string;
+  riskLevel?: string;
 }
 
 // Convert lat/lng to 3D coordinates on sphere
@@ -111,31 +112,34 @@ function Atmosphere() {
   );
 }
 
-function LocationPin({ location }: { location: ClientLocation }) {
+function LocationPin({ location }: { location: EntityLocation }) {
   const position = latLngToVector3(location.lat, location.lng, 2.05);
   const [hovered, setHovered] = useState(false);
+  
+  const isHighRisk = location.riskLevel === 'critical' || location.riskLevel === 'high';
 
   return (
     <group position={position}>
       {/* Larger, brighter pin */}
       <Sphere args={[0.04, 16, 16]}>
         <meshStandardMaterial
-          color={location.incidentCount > 0 ? "#ff3333" : "#00ffff"}
-          emissive={location.incidentCount > 0 ? "#ff3333" : "#00ffff"}
+          color={isHighRisk ? "#ff3333" : "#00ffff"}
+          emissive={isHighRisk ? "#ff3333" : "#00ffff"}
           emissiveIntensity={2}
         />
       </Sphere>
       
-      {location.incidentCount > 0 && <PulsingRing />}
+      {isHighRisk && <PulsingRing />}
       
       {/* Only show label on hover */}
       {hovered && (
         <Html distanceFactor={8} center>
           <div className="bg-card/95 backdrop-blur-sm border border-border rounded-lg px-3 py-2 shadow-xl pointer-events-none whitespace-nowrap">
             <div className="text-sm font-semibold text-foreground">{location.name}</div>
-            {location.incidentCount > 0 && (
-              <div className="text-xs text-destructive font-medium">
-                {location.incidentCount} active incident{location.incidentCount !== 1 ? 's' : ''}
+            <div className="text-xs text-muted-foreground">{location.type}</div>
+            {location.riskLevel && (
+              <div className={`text-xs font-medium ${isHighRisk ? 'text-destructive' : 'text-primary'}`}>
+                Risk: {location.riskLevel}
               </div>
             )}
           </div>
@@ -176,7 +180,7 @@ function PulsingRing() {
 }
 
 export const ThreatGlobe = () => {
-  const [locations, setLocations] = useState<ClientLocation[]>([]);
+  const [locations, setLocations] = useState<EntityLocation[]>([]);
   const [loading, setLoading] = useState(true);
   const { selectedClientId } = useClientSelection();
 
@@ -188,58 +192,58 @@ export const ThreatGlobe = () => {
     try {
       setLoading(true);
 
-      // Fetch clients with their locations
-      let clientsQuery = supabase
-        .from("clients")
-        .select("id, name, locations")
-        .eq("status", "active");
+      // Get entity IDs that are mentioned in signals for the selected client
+      let entityIdsQuery = supabase
+        .from("entity_mentions")
+        .select("entity_id, signals!inner(client_id)")
+        .order("detected_at", { ascending: false });
 
       if (selectedClientId) {
-        clientsQuery = clientsQuery.eq("id", selectedClientId);
+        entityIdsQuery = entityIdsQuery.eq("signals.client_id", selectedClientId);
       }
 
-      const { data: clients, error: clientsError } = await clientsQuery;
+      const { data: mentions, error: mentionsError } = await entityIdsQuery;
+      if (mentionsError) throw mentionsError;
 
-      if (clientsError) throw clientsError;
+      const entityIds = [...new Set(mentions?.map(m => m.entity_id) || [])];
 
-      // Fetch incident counts per client
-      const { data: incidents, error: incidentsError } = await supabase
-        .from("incidents")
-        .select("client_id")
-        .in("status", ["open", "acknowledged", "contained"]);
+      if (entityIds.length === 0) {
+        setLocations([]);
+        setLoading(false);
+        return;
+      }
 
-      if (incidentsError) throw incidentsError;
+      // Fetch entities with locations
+      const { data: entities, error: entitiesError } = await supabase
+        .from("entities")
+        .select("id, name, type, current_location, risk_level")
+        .in("id", entityIds)
+        .not("current_location", "is", null);
 
-      const incidentCounts = incidents?.reduce((acc, inc) => {
-        acc[inc.client_id] = (acc[inc.client_id] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>) || {};
+      if (entitiesError) throw entitiesError;
 
-      // Parse locations and create pins
-      const locationPins: ClientLocation[] = [];
+      // Parse entity locations and create pins
+      const locationPins: EntityLocation[] = [];
       
-      clients?.forEach((client) => {
-        if (client.locations && Array.isArray(client.locations)) {
-          client.locations.forEach((location: string) => {
-            // Try to parse coordinates from location strings
-            // Expected format: "City, Country (lat,lng)" or just use defaults
-            const coords = parseLocationCoords(location);
-            if (coords) {
-              locationPins.push({
-                id: `${client.id}-${location}`,
-                name: `${client.name} - ${location}`,
-                lat: coords.lat,
-                lng: coords.lng,
-                incidentCount: incidentCounts[client.id] || 0,
-              });
-            }
-          });
+      entities?.forEach((entity) => {
+        if (entity.current_location) {
+          const coords = parseLocationCoords(entity.current_location);
+          if (coords) {
+            locationPins.push({
+              id: entity.id,
+              name: entity.name,
+              lat: coords.lat,
+              lng: coords.lng,
+              type: entity.type,
+              riskLevel: entity.risk_level,
+            });
+          }
         }
       });
 
       setLocations(locationPins);
     } catch (error) {
-      console.error("Error loading locations:", error);
+      console.error("Error loading entity locations:", error);
     } finally {
       setLoading(false);
     }
@@ -356,7 +360,7 @@ export const ThreatGlobe = () => {
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="bg-card/80 backdrop-blur-sm border border-border rounded-lg px-6 py-4">
             <p className="text-muted-foreground text-sm">
-              No client locations configured yet
+              No entity locations found for {selectedClientId ? 'selected client' : 'monitoring'}
             </p>
           </div>
         </div>
