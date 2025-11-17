@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { RefreshCw, CheckCircle, XCircle, Clock, Play, Activity } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
@@ -135,21 +136,23 @@ export function MonitoringHistory() {
         </div>
       </CardHeader>
       <CardContent>
-        <div className="space-y-4">
-          {isLoading ? (
-            <div className="text-center py-8 text-muted-foreground">
-              Loading scan history...
-            </div>
-          ) : !history || history.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-muted-foreground mb-4">No scans recorded yet</p>
-              <Button onClick={handleManualRun}>
-                <Play className="h-4 w-4 mr-2" />
-                Run First Scan
-              </Button>
-            </div>
-          ) : (
-            history.map((scan) => (
+        {isLoading ? (
+          <div className="text-center py-8 text-muted-foreground">
+            Loading scan history...
+          </div>
+        ) : !history || history.length === 0 ? (
+          <div className="text-center py-8">
+            <p className="text-muted-foreground mb-4">No scans recorded yet</p>
+            <Button onClick={handleManualRun}>
+              <Play className="h-4 w-4 mr-2" />
+              Run First Scan
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <ScrollArea className="h-[400px] pr-4">
+              <div className="space-y-4">
+                {history.map((scan) => (
               <div
                 key={scan.id}
                 className="flex items-start justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
@@ -214,9 +217,16 @@ export function MonitoringHistory() {
                   </div>
                 </div>
               </div>
-            ))
-          )}
-        </div>
+                ))}
+              </div>
+            </ScrollArea>
+            {history.length > 3 && (
+              <p className="text-xs text-center text-muted-foreground mt-2">
+                Showing {history.length} scans • Scroll to view more
+              </p>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
