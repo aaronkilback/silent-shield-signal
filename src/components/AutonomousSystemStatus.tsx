@@ -6,6 +6,7 @@ import { Activity, Zap, TrendingUp, AlertTriangle, CheckCircle2, Clock } from 'l
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/components/ui/use-toast';
 import { useClientSelection } from '@/hooks/useClientSelection';
+import { OSINTSourcesDialog } from './OSINTSourcesDialog';
 
 export default function AutonomousSystemStatus() {
   const { toast } = useToast();
@@ -13,6 +14,7 @@ export default function AutonomousSystemStatus() {
   const [metrics, setMetrics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [autoMode, setAutoMode] = useState(true);
+  const [osintDialogOpen, setOsintDialogOpen] = useState(false);
 
   useEffect(() => {
     loadMetrics();
@@ -281,7 +283,10 @@ export default function AutonomousSystemStatus() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card 
+          className="cursor-pointer hover:bg-accent/50 transition-colors"
+          onClick={() => setOsintDialogOpen(true)}
+        >
           <CardHeader>
             <CardTitle className="text-sm font-medium">OSINT Monitors</CardTitle>
           </CardHeader>
@@ -289,15 +294,20 @@ export default function AutonomousSystemStatus() {
             <div className="flex items-center justify-between">
               <span className="text-2xl font-bold">{metrics?.osint_scans_completed || 0}</span>
               <Badge variant="default" className="bg-purple-500">
-                6 sources
+                30+ sources
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Weather, wildfire, earthquake, news, threat intel, Reddit & Hacker News
+              Click to view all monitoring sources and their status
             </p>
           </CardContent>
         </Card>
       </div>
+
+      <OSINTSourcesDialog 
+        open={osintDialogOpen} 
+        onOpenChange={setOsintDialogOpen}
+      />
     </div>
   );
 }
