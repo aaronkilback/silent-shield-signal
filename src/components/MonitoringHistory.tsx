@@ -62,16 +62,21 @@ export function MonitoringHistory() {
 
   const handleManualRun = async () => {
     try {
-      toast.info("Starting Canadian sources scan...");
-      const { error } = await supabase.functions.invoke('monitor-canadian-sources-enhanced');
+      toast.info("Triggering all monitoring scans...");
+      const { data, error } = await supabase.functions.invoke('manual-scan-trigger');
       
       if (error) throw error;
       
-      toast.success("Scan initiated successfully");
+      if (data?.summary) {
+        toast.success(`Scans triggered: ${data.summary.successful} successful, ${data.summary.failed} failed`);
+      } else {
+        toast.success("All scans initiated successfully");
+      }
+      
       setTimeout(() => refetch(), 2000);
     } catch (error) {
       console.error('Manual scan error:', error);
-      toast.error("Failed to start scan");
+      toast.error("Failed to start scans");
     }
   };
 
