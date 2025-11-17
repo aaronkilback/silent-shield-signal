@@ -26,6 +26,7 @@ export const EditSourceDialog = ({ open, onOpenChange, source }: EditSourceDialo
   const [name, setName] = useState("");
   const [type, setType] = useState("");
   const [monitorType, setMonitorType] = useState("");
+  const [url, setUrl] = useState("");
   const [configJson, setConfigJson] = useState("");
 
   const sourceTypes = [
@@ -60,7 +61,15 @@ export const EditSourceDialog = ({ open, onOpenChange, source }: EditSourceDialo
       setName(source.name || "");
       setType(source.type || "");
       setMonitorType(source.monitor_type || "");
-      setConfigJson(source.config_json ? JSON.stringify(source.config_json, null, 2) : "");
+      const config = source.config_json;
+      if (config && typeof config === 'object' && 'url' in config) {
+        setUrl(config.url || "");
+        const { url: _, ...restConfig } = config;
+        setConfigJson(Object.keys(restConfig).length > 0 ? JSON.stringify(restConfig, null, 2) : "");
+      } else {
+        setUrl("");
+        setConfigJson(config ? JSON.stringify(config, null, 2) : "");
+      }
     }
   }, [source]);
 
@@ -78,6 +87,13 @@ export const EditSourceDialog = ({ open, onOpenChange, source }: EditSourceDialo
         } catch (e) {
           throw new Error("Invalid JSON configuration");
         }
+      }
+
+      // Add URL to config if provided
+      if (url.trim() && parsedConfig) {
+        parsedConfig.url = url.trim();
+      } else if (url.trim()) {
+        parsedConfig = { url: url.trim() };
       }
 
       const { error } = await supabase
@@ -149,6 +165,22 @@ export const EditSourceDialog = ({ open, onOpenChange, source }: EditSourceDialo
               </SelectContent>
             </Select>
           </div>
+
+          {(type === 'api' || type === 'rss' || type === 'webhook') && (
+            <div className="space-y-2">
+              <Label htmlFor="url">URL</Label>
+              <Input
+                id="url"
+                type="url"
+                placeholder="https://bc-north.com/"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                The URL to monitor or fetch data from
+              </p>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="monitor">Assign to Monitor</Label>

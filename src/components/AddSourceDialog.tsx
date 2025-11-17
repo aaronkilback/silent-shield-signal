@@ -25,6 +25,7 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
   const [name, setName] = useState("");
   const [type, setType] = useState("");
   const [monitorType, setMonitorType] = useState("");
+  const [url, setUrl] = useState("");
   const [configJson, setConfigJson] = useState("");
 
   const sourceTypes = [
@@ -71,6 +72,13 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
         }
       }
 
+      // Add URL to config if provided
+      if (url.trim() && parsedConfig) {
+        parsedConfig.url = url.trim();
+      } else if (url.trim()) {
+        parsedConfig = { url: url.trim() };
+      }
+
       const { error } = await supabase
         .from("sources")
         .insert({
@@ -89,6 +97,7 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
       setName("");
       setType("");
       setMonitorType("");
+      setUrl("");
       setConfigJson("");
       onOpenChange(false);
     },
@@ -144,6 +153,22 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
               </SelectContent>
             </Select>
           </div>
+
+          {(type === 'api' || type === 'rss' || type === 'webhook') && (
+            <div className="space-y-2">
+              <Label htmlFor="url">URL</Label>
+              <Input
+                id="url"
+                type="url"
+                placeholder="https://bc-north.com/"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                The URL to monitor or fetch data from
+              </p>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="monitor">Assign to Monitor</Label>
