@@ -801,6 +801,7 @@ export type Database = {
           incident_id: string | null
           information: string | null
           maximo_number: string | null
+          police_file_number: string | null
           prepared_by: string | null
           recommendations: string | null
           synopsis: string | null
@@ -816,6 +817,7 @@ export type Database = {
           incident_id?: string | null
           information?: string | null
           maximo_number?: string | null
+          police_file_number?: string | null
           prepared_by?: string | null
           recommendations?: string | null
           synopsis?: string | null
@@ -831,6 +833,7 @@ export type Database = {
           incident_id?: string | null
           information?: string | null
           maximo_number?: string | null
+          police_file_number?: string | null
           prepared_by?: string | null
           recommendations?: string | null
           synopsis?: string | null
