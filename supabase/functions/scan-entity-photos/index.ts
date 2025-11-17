@@ -123,7 +123,8 @@ serve(async (req) => {
         const imageResponse = await fetch(item.link, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; FortressAI/1.0; +https://fortressai.com)'
-          }
+          },
+          redirect: 'follow'
         });
 
         if (!imageResponse.ok) {
@@ -132,6 +133,15 @@ serve(async (req) => {
 
         const imageBlob = await imageResponse.blob();
         const imageBuffer = await imageBlob.arrayBuffer();
+        
+        // Skip images that are too small (likely blank/placeholder)
+        if (imageBuffer.byteLength < 1000) {
+          console.log(`Skipping tiny image (${imageBuffer.byteLength} bytes): ${item.link}`);
+          errors.push(`Skipped ${item.link}: Image too small (likely blank)`);
+          continue;
+        }
+        
+        console.log(`Downloaded image: ${imageBuffer.byteLength} bytes`);
         
         // Determine file extension from content type
         const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
