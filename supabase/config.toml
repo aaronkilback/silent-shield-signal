@@ -1,5 +1,8 @@
 project_id = "udbjjeppbgwjlqmaeftn"
 
+[functions.scan-entity-content]
+verify_jwt = true
+
 [functions.ingest-signal]
 verify_jwt = true
 
