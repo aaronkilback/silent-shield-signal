@@ -8,7 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
 import { EntityDetailDialog } from "@/components/EntityDetailDialog";
-import { Plus, Search, Users, MapPin, Building2, Globe, Upload, LayoutGrid, List } from "lucide-react";
+import { SecurityBulletinGenerator } from "@/components/SecurityBulletinGenerator";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Plus, Search, Users, MapPin, Building2, Globe, Upload, LayoutGrid, List, FileText } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 
@@ -18,6 +20,8 @@ export default function Entities() {
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [bulletinDialogOpen, setBulletinDialogOpen] = useState(false);
+  const [bulletinEntityId, setBulletinEntityId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
@@ -221,15 +225,17 @@ export default function Entities() {
               return (
                 <Card 
                   key={entity.id} 
-                  className="p-4 hover:shadow-lg transition-shadow cursor-pointer"
-                  onClick={() => {
-                    setSelectedEntityId(entity.id);
-                    setDetailDialogOpen(true);
-                  }}
+                  className="p-4 hover:shadow-lg transition-shadow"
                 >
                   <div className="space-y-3">
                     <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-2">
+                      <div 
+                        className="flex items-center gap-2 cursor-pointer flex-1"
+                        onClick={() => {
+                          setSelectedEntityId(entity.id);
+                          setDetailDialogOpen(true);
+                        }}
+                      >
                         <Icon className="w-5 h-5 text-primary" />
                         <h3 className="font-semibold">{entity.name}</h3>
                         {entity.threat_score !== null && entity.threat_score !== undefined && (
@@ -268,6 +274,32 @@ export default function Entities() {
                       <span>{entity.entity_mentions[0]?.count || 0} mentions</span>
                       <span>{formatDistanceToNow(new Date(entity.created_at), { addSuffix: true })}</span>
                     </div>
+
+                    <div className="flex gap-2 pt-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedEntityId(entity.id);
+                          setDetailDialogOpen(true);
+                        }}
+                        className="flex-1"
+                      >
+                        View Details
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setBulletinEntityId(entity.id);
+                          setBulletinDialogOpen(true);
+                        }}
+                      >
+                        <FileText className="w-4 h-4" />
+                      </Button>
+                    </div>
                   </div>
                 </Card>
               );
@@ -280,15 +312,23 @@ export default function Entities() {
               return (
                 <Card 
                   key={entity.id} 
-                  className="p-4 hover:shadow-lg transition-shadow cursor-pointer"
-                  onClick={() => {
-                    setSelectedEntityId(entity.id);
-                    setDetailDialogOpen(true);
-                  }}
+                  className="p-4 hover:shadow-lg transition-shadow"
                 >
                   <div className="flex items-center gap-4">
-                    <Icon className="w-5 h-5 text-primary flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
+                    <Icon 
+                      className="w-5 h-5 text-primary flex-shrink-0 cursor-pointer" 
+                      onClick={() => {
+                        setSelectedEntityId(entity.id);
+                        setDetailDialogOpen(true);
+                      }}
+                    />
+                    <div 
+                      className="flex-1 min-w-0 cursor-pointer"
+                      onClick={() => {
+                        setSelectedEntityId(entity.id);
+                        setDetailDialogOpen(true);
+                      }}
+                    >
                       <div className="flex items-center gap-2">
                         <h3 className="font-semibold truncate">{entity.name}</h3>
                         {entity.threat_score !== null && entity.threat_score !== undefined && (
@@ -316,6 +356,17 @@ export default function Entities() {
                       <span className="text-xs text-muted-foreground w-24 text-right">
                         {formatDistanceToNow(new Date(entity.created_at), { addSuffix: true })}
                       </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setBulletinEntityId(entity.id);
+                          setBulletinDialogOpen(true);
+                        }}
+                      >
+                        <FileText className="w-4 h-4" />
+                      </Button>
                     </div>
                   </div>
                 </Card>
@@ -344,11 +395,20 @@ export default function Entities() {
           onOpenChange={setCreateDialogOpen}
         />
         
-        <EntityDetailDialog
-          entityId={selectedEntityId}
-          open={detailDialogOpen}
-          onOpenChange={setDetailDialogOpen}
-        />
+      <EntityDetailDialog
+        entityId={selectedEntityId}
+        open={detailDialogOpen}
+        onOpenChange={setDetailDialogOpen}
+      />
+
+      <Dialog open={bulletinDialogOpen} onOpenChange={setBulletinDialogOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Generate Security Bulletin</DialogTitle>
+          </DialogHeader>
+          <SecurityBulletinGenerator preselectedEntityId={bulletinEntityId || undefined} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
