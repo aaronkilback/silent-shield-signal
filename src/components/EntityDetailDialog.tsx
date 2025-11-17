@@ -405,6 +405,30 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     }
   };
 
+  const handleDeleteContent = async (contentId: string) => {
+    try {
+      const { error } = await supabase
+        .from('entity_content')
+        .delete()
+        .eq('id', contentId);
+
+      if (error) throw error;
+
+      toast({ 
+        title: "Content Deleted",
+        description: "The article/mention has been removed"
+      });
+      queryClient.invalidateQueries({ queryKey: ['entity-content', entityId] });
+    } catch (error: any) {
+      console.error('Error deleting content:', error);
+      toast({ 
+        title: "Delete Failed", 
+        description: error.message,
+        variant: "destructive" 
+      });
+    }
+  };
+
   if (!entity) return null;
 
   return (
@@ -784,13 +808,23 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                           {item.author && <span>✍️ {item.author}</span>}
                         </div>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => window.open(item.url, '_blank')}
-                      >
-                        <LinkIcon className="w-4 h-4" />
-                      </Button>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => window.open(item.url, '_blank')}
+                        >
+                          <LinkIcon className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDeleteContent(item.id)}
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </div>
                   </Card>
                 ))}
