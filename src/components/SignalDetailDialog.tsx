@@ -3,9 +3,9 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
-import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw } from "lucide-react";
+import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -22,8 +22,46 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
   const [selectedText, setSelectedText] = useState("");
   const [selectionContext, setSelectionContext] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [correlationData, setCorrelationData] = useState<any>(null);
+  const [correlatedSignals, setCorrelatedSignals] = useState<any[]>([]);
   
   if (!signal) return null;
+
+  // Fetch correlation data when dialog opens
+  useEffect(() => {
+    const fetchCorrelationData = async () => {
+      if (!signal?.correlation_group_id || !open) return;
+
+      try {
+        // Get correlation group
+        const { data: group } = await supabase
+          .from('signal_correlation_groups')
+          .select('*')
+          .eq('id', signal.correlation_group_id)
+          .single();
+
+        if (group) {
+          setCorrelationData(group);
+
+          // Get all signals in this group (excluding current signal)
+          const { data: signals } = await supabase
+            .from('signals')
+            .select('id, normalized_text, category, severity, confidence, created_at, sources(name)')
+            .eq('correlation_group_id', signal.correlation_group_id)
+            .neq('id', signal.id)
+            .order('created_at', { ascending: false });
+
+          if (signals) {
+            setCorrelatedSignals(signals);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching correlation data:', error);
+      }
+    };
+
+    fetchCorrelationData();
+  }, [signal?.correlation_group_id, open]);
 
   const handleRunAIAnalysis = async () => {
     setIsAnalyzing(true);
@@ -156,6 +194,81 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                 </div>
               </div>
             </div>
+
+            {/* Signal Correlation */}
+            {signal.correlation_group_id && correlationData && (
+              <>
+                <Separator />
+                <div>
+                  <h3 className="font-semibold mb-2 flex items-center gap-2">
+                    <LinkIcon className="w-4 h-4" />
+                    Signal Correlation
+                  </h3>
+                  <div className="bg-amber-50 dark:bg-amber-950/20 p-4 rounded-lg border border-amber-200 dark:border-amber-900 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                        This signal is correlated with {correlatedSignals.length} other {correlatedSignals.length === 1 ? 'signal' : 'signals'}
+                      </p>
+                      {signal.correlation_confidence && (
+                        <Badge variant="outline" className="bg-white dark:bg-gray-800">
+                          {Math.round(signal.correlation_confidence * 100)}% match
+                        </Badge>
+                      )}
+                    </div>
+                    
+                    {correlationData.sources_json && correlationData.sources_json.length > 0 && (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Sources reporting this event:</p>
+                        <div className="flex flex-wrap gap-1">
+                          {correlationData.sources_json.map((source: any, idx: number) => (
+                            <Badge key={idx} variant="secondary" className="text-xs">
+                              {source.name}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {correlatedSignals.length > 0 && (
+                      <div className="mt-3 space-y-2">
+                        <p className="text-xs text-muted-foreground">Related signals:</p>
+                        {correlatedSignals.slice(0, 3).map((relSignal) => (
+                          <div key={relSignal.id} className="bg-white dark:bg-gray-800 p-2 rounded text-xs border border-gray-200 dark:border-gray-700">
+                            <div className="flex items-center gap-2 mb-1">
+                              <Badge variant={getSeverityColor(relSignal.severity) as any} className="text-xs">
+                                {relSignal.severity}
+                              </Badge>
+                              <span className="text-muted-foreground">
+                                {formatDistanceToNow(new Date(relSignal.created_at), { addSuffix: true })}
+                              </span>
+                            </div>
+                            <p className="line-clamp-2">{relSignal.normalized_text}</p>
+                          </div>
+                        ))}
+                        {correlatedSignals.length > 3 && (
+                          <p className="text-xs text-muted-foreground italic">
+                            +{correlatedSignals.length - 3} more correlated {correlatedSignals.length - 3 === 1 ? 'signal' : 'signals'}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-1">
+                        <span>Avg Confidence:</span>
+                        <span className="font-medium">{Math.round((correlationData.avg_confidence || 0) * 100)}%</span>
+                      </div>
+                      {signal.confidence && (
+                        <div className="flex items-center gap-1">
+                          <span>•</span>
+                          <span>Boosted from {Math.round((signal.confidence / (1 + correlatedSignals.length * 0.1)) * 100)}%</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
 
         {processingMethod === 'ai' && aiAnalysis ? (
           <>
