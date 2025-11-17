@@ -211,12 +211,21 @@ serve(async (req) => {
     let photosAdded = 0;
     const errors = [];
     const startTime = Date.now();
-    const MAX_PROCESSING_TIME = 25000; // 25 seconds to leave buffer before timeout
-    const MAX_IMAGES_TO_PROCESS = 12; // Increased to process more diverse results
-    const MAX_IMAGE_SIZE = 500000; // 500KB max per image
+    const MAX_PROCESSING_TIME = 28000; // Increased to 28 seconds
+    const MAX_IMAGES_TO_PROCESS = 15; // Increased to process more diverse results
+    const MAX_IMAGE_SIZE = 2000000; // Increased to 2MB to allow news site images
+    
+    // Prioritize news sources and diverse domains
+    const sortedImages = imageUrls.sort((a, b) => {
+      const aIsNews = a.source.includes('news') || a.source.includes('post') || a.source.includes('times') || a.source.includes('journal');
+      const bIsNews = b.source.includes('news') || b.source.includes('post') || b.source.includes('times') || b.source.includes('journal');
+      if (aIsNews && !bIsNews) return -1;
+      if (!aIsNews && bIsNews) return 1;
+      return 0;
+    });
 
     // Limit images to process
-    const imagesToProcess = imageUrls.slice(0, MAX_IMAGES_TO_PROCESS);
+    const imagesToProcess = sortedImages.slice(0, MAX_IMAGES_TO_PROCESS);
     console.log(`Processing ${imagesToProcess.length} of ${imageUrls.length} images`);
 
     // Process each image
@@ -228,7 +237,7 @@ serve(async (req) => {
       }
       
       // Stop if we have enough photos
-      if (photosAdded >= 6) {
+      if (photosAdded >= 8) {
         console.log('Found enough photos, stopping');
         break;
       }
@@ -241,7 +250,7 @@ serve(async (req) => {
           continue;
         }
         
-        console.log(`Processing: ${item.url}`);
+        console.log(`Processing: ${item.url} (source: ${item.source})`);
         
         const imageResponse = await fetch(item.url, {
           headers: {
