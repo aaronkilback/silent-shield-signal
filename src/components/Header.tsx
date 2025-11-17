@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate, useLocation } from "react-router-dom";
 import { EntityNotifications } from "@/components/EntityNotifications";
+import { SettingsSheet } from "@/components/SettingsSheet";
 
 export const Header = () => {
   const { signOut } = useAuth();
@@ -68,6 +69,7 @@ export const Header = () => {
             <Badge variant="outline" className="text-primary border-primary/50 font-mono">
               {new Date().toLocaleTimeString()}
             </Badge>
+            <SettingsSheet />
             <Button
               variant="outline"
               size="sm"
