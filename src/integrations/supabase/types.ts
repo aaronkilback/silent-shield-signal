@@ -132,6 +132,7 @@ export type Database = {
       }
       clients: {
         Row: {
+          competitor_names: string[] | null
           contact_email: string | null
           contact_phone: string | null
           created_at: string
@@ -140,15 +141,19 @@ export type Database = {
           id: string
           industry: string | null
           locations: string[] | null
+          monitoring_config: Json | null
+          monitoring_keywords: string[] | null
           name: string
           onboarding_data: Json | null
           organization: string | null
           risk_assessment: Json | null
           status: string
+          supply_chain_entities: string[] | null
           threat_profile: Json | null
           updated_at: string
         }
         Insert: {
+          competitor_names?: string[] | null
           contact_email?: string | null
           contact_phone?: string | null
           created_at?: string
@@ -157,15 +162,19 @@ export type Database = {
           id?: string
           industry?: string | null
           locations?: string[] | null
+          monitoring_config?: Json | null
+          monitoring_keywords?: string[] | null
           name: string
           onboarding_data?: Json | null
           organization?: string | null
           risk_assessment?: Json | null
           status?: string
+          supply_chain_entities?: string[] | null
           threat_profile?: Json | null
           updated_at?: string
         }
         Update: {
+          competitor_names?: string[] | null
           contact_email?: string | null
           contact_phone?: string | null
           created_at?: string
@@ -174,11 +183,14 @@ export type Database = {
           id?: string
           industry?: string | null
           locations?: string[] | null
+          monitoring_config?: Json | null
+          monitoring_keywords?: string[] | null
           name?: string
           onboarding_data?: Json | null
           organization?: string | null
           risk_assessment?: Json | null
           status?: string
+          supply_chain_entities?: string[] | null
           threat_profile?: Json | null
           updated_at?: string
         }

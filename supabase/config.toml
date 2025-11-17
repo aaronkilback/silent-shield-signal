@@ -83,3 +83,6 @@ verify_jwt = false
 
 [functions.monitor-csis]
 verify_jwt = false
+
+[functions.monitor-canadian-sources-enhanced]
+verify_jwt = false

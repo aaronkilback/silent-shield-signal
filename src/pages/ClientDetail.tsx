@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { DeleteClientDialog } from "@/components/DeleteClientDialog";
+import { ClientMonitoringConfig } from "@/components/ClientMonitoringConfig";
 
 interface Client {
   id: string;
@@ -36,15 +37,18 @@ interface Client {
   high_value_assets: string[];
   employee_count: number;
   status: string;
-  risk_assessment: {
-    risk_score: number;
-    threat_profile: string[];
-    risk_factors: string[];
-    recommendations: string[];
-    generated_at: string;
-  };
+  risk_assessment: any;
   threat_profile: any;
   onboarding_data: any;
+  monitoring_keywords?: string[];
+  competitor_names?: string[];
+  supply_chain_entities?: string[];
+  monitoring_config?: {
+    min_relevance_score: number;
+    auto_create_incidents: boolean;
+    priority_keywords: string[];
+    exclude_keywords: string[];
+  };
   created_at: string;
   updated_at: string;
 }
@@ -247,11 +251,12 @@ const ClientDetail = () => {
 
         {/* Tabs for Detailed Information */}
         <Tabs defaultValue="overview" className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="threats">Threats</TabsTrigger>
             <TabsTrigger value="signals">Signals ({signals.length})</TabsTrigger>
             <TabsTrigger value="incidents">Incidents ({incidents.length})</TabsTrigger>
+            <TabsTrigger value="monitoring">Monitoring</TabsTrigger>
             <TabsTrigger value="recommendations">Actions</TabsTrigger>
           </TabsList>
 
@@ -429,6 +434,19 @@ const ClientDetail = () => {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="monitoring" className="space-y-4 mt-6">
+            <ClientMonitoringConfig
+              clientId={client.id}
+              config={{
+                monitoring_keywords: client.monitoring_keywords,
+                competitor_names: client.competitor_names,
+                supply_chain_entities: client.supply_chain_entities,
+                monitoring_config: client.monitoring_config
+              }}
+              onUpdate={fetchClientData}
+            />
           </TabsContent>
 
           <TabsContent value="recommendations" className="space-y-4 mt-6">
