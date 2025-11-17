@@ -1,10 +1,7 @@
 import { Header } from "@/components/Header";
 import { MetricsPanel } from "@/components/MetricsPanel";
-import { LiveEventFeed } from "@/components/LiveEventFeed";
-import { TripwireAlerts } from "@/components/TripwireAlerts";
 import { RiskSnapshot } from "@/components/RiskSnapshot";
 import { SignalIngestForm } from "@/components/SignalIngestForm";
-import { SLAMetrics } from "@/components/SLAMetrics";
 import { RiskSnapshotExport } from "@/components/RiskSnapshotExport";
 import AutonomousSystemStatus from "@/components/AutonomousSystemStatus";
 import LearningDashboard from "@/components/LearningDashboard";
@@ -58,9 +55,6 @@ const Index = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
             <SignalIngestForm />
-            <SLAMetrics />
-            <TripwireAlerts />
-            <LiveEventFeed />
           </div>
           <div className="space-y-6">
             <RiskSnapshotExport />
