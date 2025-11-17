@@ -32,6 +32,41 @@ serve(async (req) => {
 
     console.log(`Scanning for photos of: ${entity.name} (${entity.type})`);
 
+    // Check for existing reference photo
+    const { data: existingPhotos } = await supabaseClient
+      .from('entity_photos')
+      .select('storage_path')
+      .eq('entity_id', entityId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    let referenceImage: { base64: string; mimeType: string } | null = null;
+    
+    if (existingPhotos && existingPhotos.length > 0) {
+      console.log('Found reference photo, will use for comparison');
+      try {
+        const { data: photoData } = await supabaseClient.storage
+          .from('entity-photos')
+          .download(existingPhotos[0].storage_path);
+        
+        if (photoData) {
+          const photoBuffer = await photoData.arrayBuffer();
+          const photoBase64 = btoa(
+            new Uint8Array(photoBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+          );
+          referenceImage = {
+            base64: photoBase64,
+            mimeType: photoData.type || 'image/jpeg'
+          };
+          console.log('Reference photo loaded successfully');
+        }
+      } catch (err) {
+        console.error('Failed to load reference photo:', err);
+      }
+    } else {
+      console.log('No reference photo found - will accept professional photos');
+    }
+
     // Build search query
     let searchQuery = `"${entity.name}"`;
     
@@ -208,6 +243,43 @@ serve(async (req) => {
             
             const mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
             
+            // Build AI prompt based on whether we have a reference photo
+            const aiContent = [];
+            let verificationPrompt = '';
+            
+            if (referenceImage) {
+              // Compare with reference photo
+              verificationPrompt = entity.type === 'person'
+                ? `Look at these two images. The first image is a reference photo. Does the second image show the SAME PERSON as the first image? Answer YES only if they are clearly the same person. Answer NO if they are different people, or if the second image is a logo, illustration, or unrelated content.`
+                : `Look at these two images. The first image is a reference. Does the second image show the SAME organization/entity as the first image? Answer YES only if they match. Answer NO if different or unrelated.`;
+              
+              aiContent.push(
+                { type: 'text', text: verificationPrompt },
+                {
+                  type: 'image_url',
+                  image_url: { url: `data:${referenceImage.mimeType};base64,${referenceImage.base64}` }
+                },
+                { type: 'text', text: 'Second image to compare:' },
+                {
+                  type: 'image_url',
+                  image_url: { url: `data:${mimeType};base64,${base64Image}` }
+                }
+              );
+            } else {
+              // No reference - use generic check
+              verificationPrompt = entity.type === 'person' 
+                ? `Is this a professional photo of a real person (headshot, portrait, or profile photo)? Answer YES if it shows a clear photo of a person's face. Answer NO if it's a logo, illustration, group photo, stock image, or unrelated content.`
+                : `Is this a professional photo or logo of an organization/company? Answer YES if it's a clear organizational image. Answer NO if it's unrelated, stock, or illustration.`;
+              
+              aiContent.push(
+                { type: 'text', text: verificationPrompt },
+                {
+                  type: 'image_url',
+                  image_url: { url: `data:${mimeType};base64,${base64Image}` }
+                }
+              );
+            }
+            
             const verifyResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
               method: 'POST',
               headers: {
@@ -219,20 +291,7 @@ serve(async (req) => {
                 messages: [
                   {
                     role: 'user',
-                    content: [
-                      {
-                        type: 'text',
-                        text: entity.type === 'person' 
-                          ? `Is this a professional photo of a real person (headshot, portrait, or profile photo)? Answer YES if it shows a clear photo of a person's face. Answer NO if it's a logo, illustration, group photo, stock image, or unrelated content.`
-                          : `Is this a professional photo or logo of an organization/company? Answer YES if it's a clear organizational image. Answer NO if it's unrelated, stock, or illustration.`
-                      },
-                      {
-                        type: 'image_url',
-                        image_url: {
-                          url: `data:${mimeType};base64,${base64Image}`
-                        }
-                      }
-                    ]
+                    content: aiContent
                   }
                 ],
                 max_tokens: 10
@@ -246,12 +305,18 @@ serve(async (req) => {
               console.log(`AI verification: ${aiAnswer}`);
               
               if (aiAnswer !== 'YES') {
-                console.log(`AI rejected - not a suitable professional photo`);
-                errors.push(`AI rejected ${item.url}`);
+                const rejectReason = referenceImage 
+                  ? 'AI rejected - does not match reference photo'
+                  : 'AI rejected - not a suitable professional photo';
+                console.log(rejectReason);
+                errors.push(`Rejected ${item.url}`);
                 continue;
               }
               
-              console.log(`AI approved image from ${item.source}`);
+              const approvalMsg = referenceImage
+                ? `AI approved - matches reference photo from ${item.source}`
+                : `AI approved image from ${item.source}`;
+              console.log(approvalMsg);
             } else {
               console.log('AI verification request failed, skipping image');
               continue;
