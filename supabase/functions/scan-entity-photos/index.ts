@@ -138,9 +138,28 @@ serve(async (req) => {
 
     let photosAdded = 0;
     const errors = [];
+    const startTime = Date.now();
+    const MAX_PROCESSING_TIME = 25000; // 25 seconds to leave buffer before timeout
+    const MAX_IMAGES_TO_PROCESS = 8; // Process max 8 images per scan
+    const MAX_IMAGE_SIZE = 500000; // 500KB max per image
+
+    // Limit images to process
+    const imagesToProcess = imageUrls.slice(0, MAX_IMAGES_TO_PROCESS);
+    console.log(`Processing ${imagesToProcess.length} of ${imageUrls.length} images`);
 
     // Process each image
-    for (const item of imageUrls) {
+    for (const item of imagesToProcess) {
+      // Check time budget
+      if (Date.now() - startTime > MAX_PROCESSING_TIME) {
+        console.log('Time budget exceeded, stopping early');
+        break;
+      }
+      
+      // Stop if we have enough photos
+      if (photosAdded >= 5) {
+        console.log('Found enough photos, stopping');
+        break;
+      }
       try {
         const imageUrl = new URL(item.url);
         const isBlocked = blockedDomains.some(d => imageUrl.hostname.includes(d));
@@ -169,6 +188,11 @@ serve(async (req) => {
         
         if (imageBuffer.byteLength < 1000) {
           console.log(`Image too small: ${imageBuffer.byteLength} bytes`);
+          continue;
+        }
+        
+        if (imageBuffer.byteLength > MAX_IMAGE_SIZE) {
+          console.log(`Image too large: ${imageBuffer.byteLength} bytes, skipping`);
           continue;
         }
         
@@ -274,13 +298,20 @@ serve(async (req) => {
     }
 
     console.log(`Photo scan complete. Added ${photosAdded} photos`);
+    
+    let message = `Successfully added ${photosAdded} photos for ${entity.name}`;
+    if (imageUrls.length > MAX_IMAGES_TO_PROCESS) {
+      message += `. Found ${imageUrls.length} total images, processed ${MAX_IMAGES_TO_PROCESS} to stay within time limits`;
+    }
 
     return new Response(
       JSON.stringify({
         success: true,
         photosAdded,
+        totalFound: imageUrls.length,
+        processed: Math.min(imageUrls.length, MAX_IMAGES_TO_PROCESS),
         errors: errors.length > 0 ? errors.slice(0, 5) : undefined,
-        message: `Successfully added ${photosAdded} photos for ${entity.name}`
+        message
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
