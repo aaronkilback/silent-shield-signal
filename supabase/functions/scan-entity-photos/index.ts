@@ -113,10 +113,33 @@ serve(async (req) => {
 
     let photosAdded = 0;
     const errors = [];
+    
+    // Skip images from problematic domains that require authentication or block downloads
+    const blockedDomains = [
+      'linkedin.com',
+      'facebook.com', 
+      'fb.com',
+      'instagram.com',
+      'twitter.com',
+      'x.com',
+      'resourceworks.com' // Add specific sites as needed
+    ];
 
     // Download and store each image
     for (const item of searchData.items || []) {
       try {
+        // Check if image is from a blocked domain
+        const imageUrl = new URL(item.link);
+        const isBlocked = blockedDomains.some(domain => 
+          imageUrl.hostname.includes(domain)
+        );
+        
+        if (isBlocked) {
+          console.log(`Skipping blocked domain: ${imageUrl.hostname}`);
+          errors.push(`Skipped ${item.link}: Source requires authentication`);
+          continue;
+        }
+        
         console.log(`Downloading image from: ${item.link}`);
         
         // Download the image
