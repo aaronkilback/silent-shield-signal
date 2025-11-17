@@ -222,7 +222,9 @@ serve(async (req) => {
                     content: [
                       {
                         type: 'text',
-                        text: `Does this image clearly show "${entity.name}"? Answer only YES or NO. Only say YES if you can identify ${entity.name}. If it's generic, stock photo, or wrong person, say NO.`
+                        text: entity.type === 'person' 
+                          ? `Is this a professional photo of a real person (headshot, portrait, or profile photo)? Answer YES if it shows a clear photo of a person's face. Answer NO if it's a logo, illustration, group photo, stock image, or unrelated content.`
+                          : `Is this a professional photo or logo of an organization/company? Answer YES if it's a clear organizational image. Answer NO if it's unrelated, stock, or illustration.`
                       },
                       {
                         type: 'image_url',
@@ -244,14 +246,22 @@ serve(async (req) => {
               console.log(`AI verification: ${aiAnswer}`);
               
               if (aiAnswer !== 'YES') {
-                console.log(`AI rejected - not ${entity.name}`);
+                console.log(`AI rejected - not a suitable professional photo`);
                 errors.push(`AI rejected ${item.url}`);
                 continue;
               }
+              
+              console.log(`AI approved image from ${item.source}`);
+            } else {
+              console.log('AI verification request failed, skipping image');
+              continue;
             }
           } catch (aiError) {
             console.error('AI verification error:', aiError);
+            continue;
           }
+        } else {
+          console.log('No LOVABLE_API_KEY, accepting image without verification');
         }
         
         // Save image
