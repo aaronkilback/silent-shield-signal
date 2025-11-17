@@ -243,6 +243,78 @@ export type Database = {
           },
         ]
       }
+      entity_content: {
+        Row: {
+          author: string | null
+          content_text: string | null
+          content_type: string
+          created_at: string | null
+          created_by: string | null
+          entity_id: string
+          excerpt: string | null
+          id: string
+          metadata: Json | null
+          published_date: string | null
+          relevance_score: number | null
+          sentiment: string | null
+          source: string | null
+          title: string | null
+          updated_at: string | null
+          url: string
+        }
+        Insert: {
+          author?: string | null
+          content_text?: string | null
+          content_type: string
+          created_at?: string | null
+          created_by?: string | null
+          entity_id: string
+          excerpt?: string | null
+          id?: string
+          metadata?: Json | null
+          published_date?: string | null
+          relevance_score?: number | null
+          sentiment?: string | null
+          source?: string | null
+          title?: string | null
+          updated_at?: string | null
+          url: string
+        }
+        Update: {
+          author?: string | null
+          content_text?: string | null
+          content_type?: string
+          created_at?: string | null
+          created_by?: string | null
+          entity_id?: string
+          excerpt?: string | null
+          id?: string
+          metadata?: Json | null
+          published_date?: string | null
+          relevance_score?: number | null
+          sentiment?: string | null
+          source?: string | null
+          title?: string | null
+          updated_at?: string | null
+          url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entity_content_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entity_content_entity_id_fkey"
+            columns: ["entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       entity_mentions: {
         Row: {
           confidence: number | null
