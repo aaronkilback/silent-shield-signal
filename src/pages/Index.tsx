@@ -5,7 +5,6 @@ import AutonomousSystemStatus from "@/components/AutonomousSystemStatus";
 import LearningDashboard from "@/components/LearningDashboard";
 import { SignalHistory } from "@/components/SignalHistory";
 import { DashboardClientSelector } from "@/components/DashboardClientSelector";
-import SupportChatWidget from "@/components/SupportChatWidget";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
@@ -50,7 +49,6 @@ const Index = () => {
           <SignalIngestForm />
         </div>
       </main>
-      <SupportChatWidget />
     </div>
   );
 };
