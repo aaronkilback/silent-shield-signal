@@ -54,8 +54,16 @@ serve(async (req) => {
     const GOOGLE_API_KEY = Deno.env.get('GOOGLE_SEARCH_API_KEY');
     const GOOGLE_CX = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
     
+    console.log('API Key exists:', !!GOOGLE_API_KEY);
+    console.log('Search Engine ID:', GOOGLE_CX);
+    
     if (!GOOGLE_API_KEY || !GOOGLE_CX) {
       throw new Error('Google Search API credentials not configured');
+    }
+    
+    // Verify credentials format
+    if (GOOGLE_CX.length < 10) {
+      throw new Error(`Invalid Search Engine ID format: ${GOOGLE_CX}`);
     }
 
     const searchUrl = new URL('https://www.googleapis.com/customsearch/v1');
@@ -64,23 +72,44 @@ serve(async (req) => {
     searchUrl.searchParams.set('q', searchQuery);
     searchUrl.searchParams.set('searchType', 'image');
     searchUrl.searchParams.set('num', '3');
-    searchUrl.searchParams.set('safe', 'active');
 
     console.log(`Searching Google Images for: ${searchQuery}`);
-    console.log(`Using Search Engine ID: ${GOOGLE_CX}`);
-    console.log(`Full URL: ${searchUrl.toString()}`);
+    console.log(`Search parameters:`, {
+      cx: GOOGLE_CX,
+      q: searchQuery,
+      searchType: 'image',
+      num: 3
+    });
 
     const searchResponse = await fetch(searchUrl.toString());
 
+    console.log('Response status:', searchResponse.status);
+    console.log('Response headers:', Object.fromEntries(searchResponse.headers.entries()));
+
     if (!searchResponse.ok) {
       const errorText = await searchResponse.text();
-      console.error('Google Search API error:', errorText);
-      console.error('Status:', searchResponse.status);
-      throw new Error(`Google Search API returned ${searchResponse.status}: ${errorText}`);
+      console.error('Google Search API full error:', errorText);
+      
+      let errorDetail = errorText;
+      try {
+        const errorJson = JSON.parse(errorText);
+        errorDetail = JSON.stringify(errorJson, null, 2);
+        console.error('Parsed error:', errorJson);
+      } catch (e) {
+        console.error('Could not parse error as JSON');
+      }
+      
+      throw new Error(`Google Search API returned ${searchResponse.status}: ${errorDetail}`);
     }
 
     const searchData = await searchResponse.json();
+    console.log('Search response keys:', Object.keys(searchData));
     console.log(`Found ${searchData.items?.length || 0} potential images`);
+    
+    if (searchData.error) {
+      console.error('API returned error in response:', searchData.error);
+      throw new Error(`Google Search API error: ${JSON.stringify(searchData.error)}`);
+    }
 
     let photosAdded = 0;
     const errors = [];
