@@ -83,12 +83,59 @@ export const SignalIngestForm = () => {
     }
   };
 
+  const handleDocumentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setLoading(true);
+    try {
+      toast.loading("Processing document...");
+      
+      // Convert file to base64 for sending to edge function
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      
+      await new Promise((resolve, reject) => {
+        reader.onload = async () => {
+          try {
+            const base64 = (reader.result as string).split(',')[1];
+            
+            const { data, error } = await supabase.functions.invoke("parse-document", {
+              body: {
+                file: base64,
+                filename: file.name,
+                mimeType: file.type,
+                location: location.trim() || undefined,
+              },
+            });
+
+            if (error) throw error;
+            
+            toast.success("Document processed and signals created");
+            setText("");
+            setLocation("");
+            resolve(data);
+          } catch (err) {
+            reject(err);
+          }
+        };
+        reader.onerror = reject;
+      });
+    } catch (error) {
+      console.error("Error uploading document:", error);
+      toast.error("Failed to process document");
+    } finally {
+      setLoading(false);
+      e.target.value = "";
+    }
+  };
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Ingest Signal</CardTitle>
         <CardDescription>
-          Submit a signal manually, scan a website URL, or upload JSON file
+          Submit a signal manually, scan a website URL, upload documents (PDF, DOCX, TXT), or upload JSON file
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -139,6 +186,23 @@ export const SignalIngestForm = () => {
               <Send className="w-4 h-4 mr-2" />
               Submit Signal
             </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              disabled={loading}
+              onClick={() => document.getElementById("document-upload")?.click()}
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Upload Document
+            </Button>
+            <input
+              id="document-upload"
+              type="file"
+              accept=".pdf,.doc,.docx,.txt,.csv,.md"
+              className="hidden"
+              onChange={handleDocumentUpload}
+            />
 
             <Button
               type="button"
