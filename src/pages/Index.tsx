@@ -4,6 +4,7 @@ import AutonomousSystemStatus from "@/components/AutonomousSystemStatus";
 import LearningDashboard from "@/components/LearningDashboard";
 import { DashboardClientSelector } from "@/components/DashboardClientSelector";
 import { MonitoringHistory } from "@/components/MonitoringHistory";
+import { ThreatGlobe } from "@/components/ThreatGlobe";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
@@ -36,6 +37,7 @@ const Index = () => {
       <Header />
       <main className="container mx-auto px-6 py-8 space-y-6">
         <DashboardClientSelector />
+        <ThreatGlobe />
         <AutonomousSystemStatus />
         <MonitoringHistory />
         <MetricsPanel />
