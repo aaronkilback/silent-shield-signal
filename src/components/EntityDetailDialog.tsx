@@ -381,6 +381,30 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     }
   };
 
+  const handleDeleteRelationship = async (relationshipId: string) => {
+    try {
+      const { error } = await supabase
+        .from('entity_relationships')
+        .delete()
+        .eq('id', relationshipId);
+
+      if (error) throw error;
+
+      toast({ 
+        title: "Relationship Deleted",
+        description: "The relationship has been removed"
+      });
+      queryClient.invalidateQueries({ queryKey: ['entity-relationships', entityId] });
+    } catch (error: any) {
+      console.error('Error deleting relationship:', error);
+      toast({ 
+        title: "Delete Failed", 
+        description: error.message,
+        variant: "destructive" 
+      });
+    }
+  };
+
   if (!entity) return null;
 
   return (
@@ -835,6 +859,14 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                             <span>Occurrences: {rel.occurrence_count || 1}</span>
                           </div>
                         </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDeleteRelationship(rel.id)}
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
                       </div>
                     </Card>
                   );
