@@ -192,40 +192,40 @@ export const ThreatGlobe = () => {
     try {
       setLoading(true);
 
-      // Get entity IDs that are mentioned in signals for the selected client
-      let entityIdsQuery = supabase
-        .from("entity_mentions")
-        .select("entity_id, signals!inner(client_id)")
-        .order("detected_at", { ascending: false });
-
-      if (selectedClientId) {
-        entityIdsQuery = entityIdsQuery.eq("signals.client_id", selectedClientId);
-      }
-
-      const { data: mentions, error: mentionsError } = await entityIdsQuery;
-      if (mentionsError) throw mentionsError;
-
-      const entityIds = [...new Set(mentions?.map(m => m.entity_id) || [])];
-
-      if (entityIds.length === 0) {
-        setLocations([]);
-        setLoading(false);
-        return;
-      }
-
-      // Fetch entities with locations
-      const { data: entities, error: entitiesError } = await supabase
+      // Fetch all entities with locations (not just those with mentions)
+      let entitiesQuery = supabase
         .from("entities")
         .select("id, name, type, current_location, risk_level")
-        .in("id", entityIds)
-        .not("current_location", "is", null);
+        .not("current_location", "is", null)
+        .eq("is_active", true);
+
+      const { data: entities, error: entitiesError } = await entitiesQuery;
 
       if (entitiesError) throw entitiesError;
+
+      // If client is selected, filter to entities mentioned in that client's signals
+      let filteredEntities = entities;
+      
+      if (selectedClientId) {
+        const { data: mentions, error: mentionsError } = await supabase
+          .from("entity_mentions")
+          .select("entity_id, signals!inner(client_id)")
+          .eq("signals.client_id", selectedClientId);
+
+        if (mentionsError) throw mentionsError;
+
+        const mentionedEntityIds = new Set(mentions?.map(m => m.entity_id) || []);
+        
+        // Show entities mentioned in selected client's signals, or all if none mentioned
+        if (mentionedEntityIds.size > 0) {
+          filteredEntities = entities?.filter(e => mentionedEntityIds.has(e.id)) || [];
+        }
+      }
 
       // Parse entity locations and create pins
       const locationPins: EntityLocation[] = [];
       
-      entities?.forEach((entity) => {
+      filteredEntities?.forEach((entity) => {
         if (entity.current_location) {
           const coords = parseLocationCoords(entity.current_location);
           if (coords) {
