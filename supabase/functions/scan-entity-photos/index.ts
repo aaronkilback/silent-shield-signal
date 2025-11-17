@@ -106,8 +106,7 @@ Return JSON format:
 
 If you cannot find appropriate official/public images, return an empty array.`
           }
-        ],
-        temperature: 0.3,
+        ]
       }),
     });
 
