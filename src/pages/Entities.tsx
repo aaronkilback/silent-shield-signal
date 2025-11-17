@@ -9,8 +9,9 @@ import { Input } from "@/components/ui/input";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
 import { EntityDetailDialog } from "@/components/EntityDetailDialog";
 import { SecurityBulletinGenerator } from "@/components/SecurityBulletinGenerator";
+import { EntityCrossReferenceDialog } from "@/components/EntityCrossReferenceDialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Search, Users, MapPin, Building2, Globe, Upload, LayoutGrid, List, FileText, Trash2 } from "lucide-react";
+import { Plus, Search, Users, MapPin, Building2, Globe, Upload, LayoutGrid, List, FileText, Trash2, GitCompare } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { formatDistanceToNow } from "date-fns";
@@ -29,6 +30,7 @@ export default function Entities() {
   const [selectedEntityIds, setSelectedEntityIds] = useState<Set<string>>(new Set());
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [crossReferenceDialogOpen, setCrossReferenceDialogOpen] = useState(false);
 
   const { data: entities = [], refetch } = useQuery({
     queryKey: ['entities', searchTerm, selectedType],
@@ -229,6 +231,14 @@ export default function Entities() {
             </p>
           </div>
           <div className="flex gap-2">
+            <Button 
+              variant="outline"
+              disabled={loading}
+              onClick={() => setCrossReferenceDialogOpen(true)}
+            >
+              <GitCompare className="w-4 h-4 mr-2" />
+              Cross-Reference
+            </Button>
             <Button 
               variant="outline"
               disabled={loading}
@@ -553,6 +563,11 @@ export default function Entities() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <EntityCrossReferenceDialog
+        open={crossReferenceDialogOpen}
+        onOpenChange={setCrossReferenceDialogOpen}
+      />
     </div>
   );
 }

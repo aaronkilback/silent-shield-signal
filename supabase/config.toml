@@ -68,3 +68,6 @@ verify_jwt = true
 
 [functions.suggest-investigation-references]
 verify_jwt = true
+
+[functions.cross-reference-entities]
+verify_jwt = true
