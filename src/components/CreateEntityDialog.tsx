@@ -180,7 +180,7 @@ export const CreateEntityDialog = ({
           description: formData.description ? sanitizeText(formData.description) : null,
           risk_level: formData.risk_level,
           aliases: aliasesArray,
-          threat_score: formData.threat_score,
+          threat_score: Math.round(formData.threat_score),
           threat_indicators: threatIndicatorsArray.length > 0 ? threatIndicatorsArray : null,
           associations: associationsArray.length > 0 ? associationsArray : null,
           created_by: user.id
@@ -319,9 +319,9 @@ export const CreateEntityDialog = ({
               type="number"
               min="0"
               max="10"
-              step="0.5"
+              step="1"
               value={formData.threat_score}
-              onChange={(e) => setFormData({ ...formData, threat_score: parseFloat(e.target.value) || 0 })}
+              onChange={(e) => setFormData({ ...formData, threat_score: parseInt(e.target.value) || 0 })}
             />
             <p className="text-xs text-muted-foreground">
               Based on: Recency (0-3) + Confidence (0-4) + Relevancy (0-3)
