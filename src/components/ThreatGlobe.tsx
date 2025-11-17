@@ -58,20 +58,20 @@ function Starfield() {
   );
 }
 
-function Globe() {
-  const meshRef = useRef<THREE.Mesh>(null);
+function Globe({ children }: { children?: React.ReactNode }) {
+  const groupRef = useRef<THREE.Group>(null);
   const texture = useLoader(THREE.TextureLoader, earthTexture);
   
   useFrame(() => {
-    if (meshRef.current) {
-      meshRef.current.rotation.y += 0.001;
+    if (groupRef.current) {
+      groupRef.current.rotation.y += 0.001;
     }
   });
 
   return (
-    <group>
+    <group ref={groupRef}>
       {/* Earth with realistic texture */}
-      <Sphere ref={meshRef} args={[2, 64, 64]}>
+      <Sphere args={[2, 64, 64]}>
         <meshStandardMaterial
           map={texture}
           roughness={0.7}
@@ -88,6 +88,9 @@ function Globe() {
           side={THREE.BackSide}
         />
       </Sphere>
+      
+      {/* Location pins as children */}
+      {children}
     </group>
   );
 }
@@ -327,12 +330,14 @@ export const ThreatGlobe = () => {
         <pointLight position={[-5, -5, -5]} intensity={0.3} color="#4a9eff" />
         
         <Starfield />
-        <Globe />
-        <Atmosphere />
         
-        {locations.map((location) => (
-          <LocationPin key={location.id} location={location} />
-        ))}
+        <Globe>
+          {locations.map((location) => (
+            <LocationPin key={location.id} location={location} />
+          ))}
+        </Globe>
+        
+        <Atmosphere />
         
         <OrbitControls
           enableZoom={true}
