@@ -247,6 +247,7 @@ export const SignalHistory = () => {
         signal={selectedSignal}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
+        onSignalUpdated={loadSignals}
       />
     </Card>
   );

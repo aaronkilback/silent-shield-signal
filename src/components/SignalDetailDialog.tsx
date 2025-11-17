@@ -3,23 +3,54 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
-import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus } from "lucide-react";
+import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 interface SignalDetailDialogProps {
   signal: any;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSignalUpdated?: () => void;
 }
 
-export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailDialogProps) => {
+export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated }: SignalDetailDialogProps) => {
   const [createEntityOpen, setCreateEntityOpen] = useState(false);
   const [selectedText, setSelectedText] = useState("");
   const [selectionContext, setSelectionContext] = useState("");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   
   if (!signal) return null;
+
+  const handleRunAIAnalysis = async () => {
+    setIsAnalyzing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('ai-decision-engine', {
+        body: { signal_id: signal.id, force_ai: true }
+      });
+
+      if (error) {
+        if (error.message?.includes('402') || error.message?.includes('credits')) {
+          toast.error('AI credits exhausted. Please add credits in Settings → Workspace → Usage.');
+        } else {
+          toast.error('Failed to run AI analysis: ' + error.message);
+        }
+        return;
+      }
+
+      toast.success('AI analysis completed successfully!');
+      onSignalUpdated?.();
+      onOpenChange(false);
+    } catch (error) {
+      console.error('Error running AI analysis:', error);
+      toast.error('Failed to run AI analysis');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
   const handleTextSelection = () => {
     const selection = window.getSelection();
@@ -62,25 +93,38 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange }: SignalDetailD
               <Brain className="w-5 h-5" />
               Strategic Intelligence Analysis
             </div>
-          {selectedText ? (
-            <Button
-              variant="default"
-              size="sm"
-              onClick={handleCreateEntity}
-            >
-              <UserPlus className="w-4 h-4 mr-2" />
-              Create Entity: "{selectedText.substring(0, 20)}{selectedText.length > 20 ? '...' : ''}"
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCreateEntityOpen(true)}
-            >
-              <UserPlus className="w-4 h-4 mr-2" />
-              Create Entity
-            </Button>
-          )}
+            <div className="flex items-center gap-2">
+              {!aiDecision && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={handleRunAIAnalysis}
+                  disabled={isAnalyzing}
+                >
+                  <RefreshCw className={`w-4 h-4 mr-2 ${isAnalyzing ? 'animate-spin' : ''}`} />
+                  {isAnalyzing ? 'Analyzing...' : 'Run AI Analysis'}
+                </Button>
+              )}
+              {selectedText ? (
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={handleCreateEntity}
+                >
+                  <UserPlus className="w-4 h-4 mr-2" />
+                  Create Entity: "{selectedText.substring(0, 20)}{selectedText.length > 20 ? '...' : ''}"
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCreateEntityOpen(true)}
+                >
+                  <UserPlus className="w-4 h-4 mr-2" />
+                  Create Entity
+                </Button>
+              )}
+            </div>
           </DialogTitle>
         </DialogHeader>
 

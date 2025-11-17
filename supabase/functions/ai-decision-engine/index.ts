@@ -287,8 +287,14 @@ Think like 3Si Security: provide intelligence that explains WHY this matters and
           .select()
           .single();
 
-        if (!incidentError) {
+        if (incidentError) {
+          console.error('Error creating incident:', incidentError);
+          throw new Error(`Failed to create incident: ${incidentError.message}`);
+        }
+        
+        if (incident) {
           incident_id = incident.id;
+          console.log(`Incident created successfully: ${incident_id}`);
         
         // Update automation metrics - increment incidents_created
         const today = new Date().toISOString().split('T')[0];
@@ -410,7 +416,7 @@ Generated: ${new Date().toISOString()}
     }
 
     // Update signal status with enhanced decision data
-    await supabase
+    const { error: updateError } = await supabase
       .from('signals')
       .update({ 
         status: 'processed',
@@ -427,6 +433,13 @@ Generated: ${new Date().toISOString()}
         }
       })
       .eq('id', signal.id);
+    
+    if (updateError) {
+      console.error('Error updating signal:', updateError);
+      throw new Error(`Failed to update signal: ${updateError.message}`);
+    }
+    
+    console.log(`Signal ${signal.id} updated successfully with AI decision`);
 
     return new Response(
       JSON.stringify({
