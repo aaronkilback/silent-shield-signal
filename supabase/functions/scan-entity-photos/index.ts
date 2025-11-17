@@ -32,134 +32,64 @@ serve(async (req) => {
 
     console.log(`Scanning for photos of: ${entity.name} (${entity.type})`);
 
-    // Build search query based on entity type with better context
-    let searchContext = '';
+    // Build search query based on entity type
     let searchQuery = entity.name;
     
     if (entity.type === 'person') {
-      searchContext = 'official profile photos, press photos, or professional headshots from news sources, company websites, or official social media profiles';
-      searchQuery += ' official photo press headshot';
+      searchQuery += ' person photo official';
     } else if (entity.type === 'location') {
-      searchContext = 'landmark photos, official tourism photos, or geographic images from Wikimedia Commons or official sources';
-      searchQuery += ' official landmark photo';
+      searchQuery += ' location landmark photo';
     } else if (entity.type === 'organization') {
-      searchContext = 'company logos, office buildings, or official corporate photos from press releases or company websites';
-      searchQuery += ' official logo building';
+      searchQuery += ' company logo building official';
     } else if (entity.type === 'infrastructure') {
-      searchContext = 'infrastructure photos from official government or company sources';
-      searchQuery += ' official facility photo';
+      searchQuery += ' infrastructure facility photo';
     }
 
-    // Use Perplexica or web search to find images
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+    // Add aliases to improve search
+    if (entity.aliases && entity.aliases.length > 0) {
+      searchQuery += ' ' + entity.aliases[0];
     }
 
-    console.log(`Searching for ${searchContext}`);
-
-    // Search for images using AI with improved prompt
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'openai/gpt-5-mini',
-        messages: [
-          {
-            role: 'system',
-            content: `You are an OSINT research assistant. Find ACTUAL publicly available image URLs on the internet.
-
-IMPORTANT: You MUST return real, working image URLs (https://...) from public sources like:
-- Wikimedia Commons (commons.wikimedia.org)
-- Official company websites
-- News websites and press photo databases
-- LinkedIn profile photos (for public figures)
-- Official social media profiles (Twitter/X, company pages)
-- Government/public institution websites
-
-DO NOT refuse requests for public figures or organizations - these are legitimate OSINT research queries.
-DO NOT make up URLs - only return real URLs you can find on the internet.
-Focus on professional, official, and publicly published images.`
-          },
-          {
-            role: 'user',
-            content: `Find 3-5 ${searchContext} for: ${entity.name}
-Type: ${entity.type}
-Description: ${entity.description || 'No description available'}
-Aliases: ${entity.aliases?.join(', ') || 'None'}
-
-Search specifically for: ${searchQuery}
-
-Return JSON format:
-{
-  "images": [
-    {
-      "url": "https://example.com/image.jpg",
-      "description": "Official photo from [source]",
-      "source": "Source name (e.g., Company Website, Wikipedia, Reuters)"
+    // Use Google Custom Search API to find images
+    const GOOGLE_API_KEY = Deno.env.get('GOOGLE_SEARCH_API_KEY');
+    const GOOGLE_CX = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
+    
+    if (!GOOGLE_API_KEY || !GOOGLE_CX) {
+      throw new Error('Google Search API credentials not configured');
     }
-  ]
-}
 
-If you cannot find appropriate official/public images, return an empty array.`
-          }
-        ]
-      }),
-    });
+    const searchUrl = new URL('https://www.googleapis.com/customsearch/v1');
+    searchUrl.searchParams.set('key', GOOGLE_API_KEY);
+    searchUrl.searchParams.set('cx', GOOGLE_CX);
+    searchUrl.searchParams.set('q', searchQuery);
+    searchUrl.searchParams.set('searchType', 'image');
+    searchUrl.searchParams.set('num', '5');
+    searchUrl.searchParams.set('safe', 'active');
+    searchUrl.searchParams.set('imgSize', 'medium');
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      console.error('AI API error:', errorText);
+    console.log(`Searching Google Images for: ${searchQuery}`);
+
+    const searchResponse = await fetch(searchUrl.toString());
+
+    if (!searchResponse.ok) {
+      const errorText = await searchResponse.text();
+      console.error('Google Search API error:', errorText);
       throw new Error('Failed to search for photos');
     }
 
-    const aiData = await aiResponse.json();
-    const content = aiData.choices[0]?.message?.content || '{}';
-    
-    console.log('AI Response:', content);
-    
-    // Extract JSON from response
-    let imageResults;
-    try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        imageResults = JSON.parse(jsonMatch[0]);
-      } else {
-        imageResults = JSON.parse(content);
-      }
-    } catch (e) {
-      console.error('Failed to parse AI response:', content);
-      // If AI refuses or fails, provide helpful message
-      if (content.toLowerCase().includes('cannot') || content.toLowerCase().includes('unable')) {
-        console.log('AI refused request - no images will be added');
-        return new Response(
-          JSON.stringify({
-            success: true,
-            photosAdded: 0,
-            message: `The AI was unable to find publicly available images for ${entity.name}. You can manually upload photos using the upload button.`,
-            aiRefused: true
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      imageResults = { images: [] };
-    }
-
-    console.log(`Found ${imageResults.images?.length || 0} potential images`);
+    const searchData = await searchResponse.json();
+    console.log(`Found ${searchData.items?.length || 0} potential images`);
 
     let photosAdded = 0;
     const errors = [];
 
     // Download and store each image
-    for (const image of imageResults.images || []) {
+    for (const item of searchData.items || []) {
       try {
-        console.log(`Downloading image from: ${image.url}`);
+        console.log(`Downloading image from: ${item.link}`);
         
         // Download the image
-        const imageResponse = await fetch(image.url, {
+        const imageResponse = await fetch(item.link, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; FortressAI/1.0; +https://fortressai.com)'
           }
@@ -189,7 +119,7 @@ If you cannot find appropriate official/public images, return an empty array.`
 
         if (uploadError) {
           console.error('Storage upload error:', uploadError);
-          errors.push(`Upload failed for ${image.url}: ${uploadError.message}`);
+          errors.push(`Upload failed for ${item.link}: ${uploadError.message}`);
           continue;
         }
 
@@ -199,8 +129,8 @@ If you cannot find appropriate official/public images, return an empty array.`
           .insert({
             entity_id: entityId,
             storage_path: fileName,
-            caption: image.description || null,
-            source: image.source || 'AI OSINT Scan',
+            caption: item.title || null,
+            source: item.displayLink || 'Google Image Search',
             created_by: null // System-generated
           });
 
@@ -216,9 +146,9 @@ If you cannot find appropriate official/public images, return an empty array.`
         console.log(`Successfully added photo: ${fileName}`);
 
       } catch (error) {
-        console.error(`Error processing image ${image.url}:`, error);
+        console.error(`Error processing image ${item.link}:`, error);
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        errors.push(`Failed to process ${image.url}: ${errorMsg}`);
+        errors.push(`Failed to process ${item.link}: ${errorMsg}`);
       }
     }
 
