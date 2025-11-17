@@ -93,9 +93,11 @@ serve(async (req) => {
 
     let totalSignals = 0;
     let totalItems = 0;
+    const scannedSourceNames: string[] = [];
 
     // Process each RSS source
     for (const source of rssSources) {
+      scannedSourceNames.push(source.name);
       try {
         const feedUrl = source.config_json?.url || source.config_json?.feed_url;
         
@@ -206,7 +208,11 @@ serve(async (req) => {
         status: 'completed',
         scan_completed_at: new Date().toISOString(),
         items_scanned: totalItems,
-        signals_created: totalSignals
+        signals_created: totalSignals,
+        scan_metadata: {
+          sources: scannedSourceNames,
+          source_count: rssSources.length
+        }
       })
       .eq('id', historyEntry.id);
 
