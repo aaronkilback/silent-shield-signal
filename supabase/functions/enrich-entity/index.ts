@@ -37,7 +37,7 @@ serve(async (req) => {
           },
           { 
             role: 'user', 
-            content: `Research and provide structured information about: ${entityName}\n\nContext: ${context || 'No additional context'}\n\nProvide:\n1. Entity type (person/organization/location/infrastructure/domain/ip_address/email/phone/vehicle/other)\n2. Brief description (2-3 sentences)\n3. Risk level (critical/high/medium/low) with justification\n4. Known aliases or alternate names\n5. Threat indicators (if any)\n6. Associated organizations or locations\n7. Threat score (0-10) calculated by:\n   - Recency: Recent activity/mentions = higher score (0-3 points)\n   - Confidence: Source reliability and verification level (0-4 points)\n   - Relevancy: Direct threat to client interests/assets (0-3 points)\n\nFormat as JSON with keys: type, description, risk_level, risk_justification, aliases, threat_indicators, associations, threat_score, recency_factor, confidence_factor, relevancy_factor` 
+            content: `Research and provide structured information about: ${entityName}\n\nContext: ${context || 'No additional context'}\n\nProvide:\n1. Entity type (person/organization/location/infrastructure/domain/ip_address/email/phone/vehicle/other)\n2. Brief description (2-3 sentences)\n3. Risk level (critical/high/medium/low) with justification\n4. Known aliases or alternate names\n5. Threat indicators (if any)\n6. Associated organizations or locations\n7. Contact information:\n   - Email addresses\n   - Phone numbers\n   - Website URL\n   - Physical address\n   - Social media profiles (LinkedIn, Twitter, Facebook, etc.)\n8. Threat score (0-10) calculated by:\n   - Recency: Recent activity/mentions = higher score (0-3 points)\n   - Confidence: Source reliability and verification level (0-4 points)\n   - Relevancy: Direct threat to client interests/assets (0-3 points)\n\nFormat as JSON with keys: type, description, risk_level, risk_justification, aliases, threat_indicators, associations, contact_info (object with email, phone, website, address, social_media), threat_score, recency_factor, confidence_factor, relevancy_factor` 
           }
         ],
         tools: [
@@ -94,6 +94,36 @@ serve(async (req) => {
                     minimum: 0,
                     maximum: 3,
                     description: "Relevance to client threats"
+                  },
+                  contact_info: {
+                    type: "object",
+                    properties: {
+                      email: { 
+                        type: "array",
+                        items: { type: "string" },
+                        description: "Email addresses"
+                      },
+                      phone: { 
+                        type: "array",
+                        items: { type: "string" },
+                        description: "Phone numbers"
+                      },
+                      website: { type: "string", description: "Website URL" },
+                      address: { type: "string", description: "Physical address" },
+                      social_media: {
+                        type: "object",
+                        properties: {
+                          linkedin: { type: "string" },
+                          twitter: { type: "string" },
+                          facebook: { type: "string" },
+                          instagram: { type: "string" },
+                          other: { 
+                            type: "array",
+                            items: { type: "string" }
+                          }
+                        }
+                      }
+                    }
                   }
                 },
                 required: ["type", "description", "risk_level", "threat_score"],
