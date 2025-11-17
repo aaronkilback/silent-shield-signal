@@ -97,7 +97,7 @@ const Sources = () => {
           <div>
             <h1 className="text-3xl font-bold">OSINT Sources</h1>
             <p className="text-muted-foreground mt-2">
-              Manage your intelligence sources and monitoring configurations
+              Global monitoring sources that scan for signals (signals are then assigned to clients)
             </p>
           </div>
           <Button onClick={() => setIsAddDialogOpen(true)}>
