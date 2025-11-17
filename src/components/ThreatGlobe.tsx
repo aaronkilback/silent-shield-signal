@@ -16,9 +16,12 @@ interface ClientLocation {
 
 // Convert lat/lng to 3D coordinates on sphere
 function latLngToVector3(lat: number, lng: number, radius: number) {
-  const phi = (90 - lat) * (Math.PI / 180);
-  const theta = (lng + 180) * (Math.PI / 180);
-
+  // Convert lat/lng to radians
+  const phi = (90 - lat) * (Math.PI / 180); // polar angle
+  const theta = (lng + 180) * (Math.PI / 180); // azimuthal angle
+  
+  // Spherical to Cartesian conversion
+  // Adjusted to match Earth texture orientation
   return new THREE.Vector3(
     -radius * Math.sin(phi) * Math.cos(theta),
     radius * Math.cos(phi),
@@ -69,8 +72,8 @@ function Globe({ children }: { children?: React.ReactNode }) {
   });
 
   return (
-    <group ref={groupRef}>
-      {/* Earth with realistic texture */}
+    <group ref={groupRef} rotation={[0, -Math.PI / 2, 0]}>
+      {/* Earth with realistic texture - rotated to show Americas initially */}
       <Sphere args={[2, 64, 64]}>
         <meshStandardMaterial
           map={texture}
