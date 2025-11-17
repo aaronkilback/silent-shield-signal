@@ -32,23 +32,39 @@ serve(async (req) => {
 
     console.log(`Scanning for photos of: ${entity.name} (${entity.type})`);
 
-    // Build search query based on entity type
-    let searchQuery = entity.name;
+    // Build more specific search query based on entity type and attributes
+    let searchQuery = `"${entity.name}"`;
     
     if (entity.type === 'person') {
-      searchQuery += ' person photo official';
-    } else if (entity.type === 'location') {
-      searchQuery += ' location landmark photo';
+      // For people, add professional/official context
+      searchQuery += ' professional photo OR headshot OR portrait';
+      
+      // Add company/organization if available in attributes
+      if (entity.attributes && entity.attributes.company) {
+        searchQuery += ` "${entity.attributes.company}"`;
+      }
+      
+      // Add title/position if available
+      if (entity.attributes && entity.attributes.title) {
+        searchQuery += ` "${entity.attributes.title}"`;
+      }
     } else if (entity.type === 'organization') {
-      searchQuery += ' company logo building official';
+      searchQuery += ' official logo OR headquarters OR building';
+    } else if (entity.type === 'location') {
+      searchQuery += ' official photo OR landmark';
     } else if (entity.type === 'infrastructure') {
-      searchQuery += ' infrastructure facility photo';
+      searchQuery += ' facility photo';
     }
 
-    // Add aliases to improve search
+    // Add most relevant alias if available (only first one for precision)
     if (entity.aliases && entity.aliases.length > 0) {
-      searchQuery += ' ' + entity.aliases[0];
+      searchQuery += ` OR "${entity.aliases[0]}"`;
     }
+    
+    // Exclude common wrong results
+    searchQuery += ' -stock -clipart -illustration -cartoon -drawing';
+
+    console.log(`Enhanced search query: ${searchQuery}`);
 
     // Use Google Custom Search API to find images
     const GOOGLE_API_KEY = Deno.env.get('GOOGLE_SEARCH_API_KEY');
@@ -125,7 +141,25 @@ serve(async (req) => {
       'instagram.com',
       'twitter.com',
       'x.com',
-      'resourceworks.com' // Add specific sites as needed
+      'resourceworks.com',
+      'pinterest.com',
+      'gettyimages.com',
+      'shutterstock.com',
+      'istockphoto.com',
+      'dreamstime.com',
+      'alamy.com',
+      '123rf.com' // Block stock photo sites
+    ];
+    
+    // Prefer these reliable sources
+    const preferredDomains = [
+      'wikipedia.org',
+      'wikimedia.org',
+      'linkedin.com', // Paradox: blocked from download but good for verification
+      'news',
+      'gov',
+      'edu',
+      'org'
     ];
 
     // Download and store each image
@@ -139,7 +173,18 @@ serve(async (req) => {
         
         if (isBlocked) {
           console.log(`Skipping blocked domain: ${imageUrl.hostname}`);
-          errors.push(`Skipped ${item.link}: Source requires authentication`);
+          errors.push(`Skipped ${item.link}: Source requires authentication or is stock photo`);
+          continue;
+        }
+        
+        // Check if image URL or title contains entity name for relevance
+        const titleLower = (item.title || '').toLowerCase();
+        const nameLower = entity.name.toLowerCase();
+        const isRelevant = titleLower.includes(nameLower) || item.link.toLowerCase().includes(nameLower);
+        
+        if (!isRelevant) {
+          console.log(`Skipping irrelevant image: ${item.title}`);
+          errors.push(`Skipped ${item.link}: Not relevant to entity`);
           continue;
         }
         
