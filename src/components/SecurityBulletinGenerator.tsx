@@ -8,8 +8,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { FileText, Download, Eye, Loader2 } from "lucide-react";
+import { FileText, Download, Eye, Loader2, FileDown } from "lucide-react";
 import { format } from "date-fns";
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 interface SecurityBulletinGeneratorProps {
   preselectedEntityId?: string;
@@ -209,7 +211,7 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
     }
   };
 
-  const downloadBulletin = () => {
+  const downloadBulletinHTML = () => {
     if (!generatedBulletin) return;
 
     const blob = new Blob([generatedBulletin], { type: 'text/html' });
@@ -221,7 +223,57 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    toast.success("Bulletin downloaded");
+    toast.success("HTML bulletin downloaded");
+  };
+
+  const downloadBulletinPDF = async () => {
+    if (!generatedBulletin) return;
+
+    const container = document.createElement('div');
+    container.style.position = 'absolute';
+    container.style.left = '-9999px';
+    container.style.width = '210mm';
+    container.innerHTML = generatedBulletin;
+    document.body.appendChild(container);
+
+    try {
+      toast.loading("Generating PDF...");
+
+      const canvas = await html2canvas(container, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+      });
+
+      const imgWidth = 210;
+      const pageHeight = 297;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+
+      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      pdf.save(`security_bulletin_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+      toast.dismiss();
+      toast.success("PDF bulletin downloaded");
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+      toast.error("Failed to generate PDF");
+    } finally {
+      document.body.removeChild(container);
+    }
   };
 
   const openInNewTab = () => {
@@ -308,15 +360,21 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
           </Button>
 
           {generatedBulletin && (
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={openInNewTab} className="flex-1">
+            <div className="space-y-2">
+              <Button variant="outline" onClick={openInNewTab} className="w-full">
                 <Eye className="w-4 h-4 mr-2" />
                 Preview
               </Button>
-              <Button variant="outline" onClick={downloadBulletin} className="flex-1">
-                <Download className="w-4 h-4 mr-2" />
-                Download
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={downloadBulletinHTML} className="flex-1">
+                  <Download className="w-4 h-4 mr-2" />
+                  HTML
+                </Button>
+                <Button variant="outline" onClick={downloadBulletinPDF} className="flex-1">
+                  <FileDown className="w-4 h-4 mr-2" />
+                  PDF
+                </Button>
+              </div>
             </div>
           )}
         </div>
