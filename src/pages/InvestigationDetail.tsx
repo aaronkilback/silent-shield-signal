@@ -14,10 +14,12 @@ import { toast } from "sonner";
 import { 
   ArrowLeft, Save, Plus, Trash2, Upload, Download, 
   FileText, Image as ImageIcon, Video, Music, File,
-  Loader2, Sparkles, Users, ClipboardList, Paperclip
+  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown
 } from "lucide-react";
 import { format } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 const InvestigationDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -26,6 +28,7 @@ const InvestigationDetail = () => {
   const queryClient = useQueryClient();
   const [isSaving, setIsSaving] = useState(false);
   const [isAiGenerating, setIsAiGenerating] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [newEntry, setNewEntry] = useState("");
   const [newPersonName, setNewPersonName] = useState("");
   const [newPersonStatus, setNewPersonStatus] = useState("witness");
@@ -294,6 +297,233 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
     }
   };
 
+  const downloadInvestigationReport = async () => {
+    if (!investigation) return;
+
+    setIsDownloading(true);
+    try {
+      const currentDate = format(new Date(), "MMMM dd, yyyy");
+      
+      // Build attachments HTML
+      const attachmentsHtml = attachments.length > 0
+        ? attachments.map(att => {
+            if (att.file_type === 'image') {
+              return `
+                <div style="margin: 10px 0; page-break-inside: avoid;">
+                  <img src="${att.url}" style="max-width: 100%; max-height: 400px; border: 1px solid #ddd; border-radius: 4px;" />
+                  <p style="margin: 5px 0 0 0; font-size: 11px; color: #666;">${att.filename}</p>
+                </div>
+              `;
+            }
+            return `<p style="font-size: 12px; margin: 5px 0;">📎 ${att.filename}</p>`;
+          }).join('')
+        : '<p style="color: #999; font-size: 12px;">No attachments</p>';
+
+      // Build persons table
+      const personsRows = persons.map(p => `
+        <tr>
+          <td style="border: 1px solid #ddd; padding: 8px; text-transform: capitalize;">${p.status}</td>
+          <td style="border: 1px solid #ddd; padding: 8px;">${p.name}</td>
+          <td style="border: 1px solid #ddd; padding: 8px;">${p.phone || ''}</td>
+          <td style="border: 1px solid #ddd; padding: 8px;">${p.position || ''}</td>
+          <td style="border: 1px solid #ddd; padding: 8px;">${p.company || ''}</td>
+        </tr>
+      `).join('');
+
+      const reportHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 40px 20px;
+      color: #333;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      border-bottom: 2px solid #1a365d;
+      padding-bottom: 15px;
+      margin-bottom: 20px;
+    }
+    .header-item {
+      margin: 5px 0;
+      font-size: 13px;
+    }
+    .header-label {
+      font-weight: bold;
+      color: #1a365d;
+    }
+    h2 {
+      color: #1a365d;
+      font-size: 16px;
+      margin: 25px 0 10px 0;
+      padding-bottom: 5px;
+      border-bottom: 1px solid #ddd;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 12px;
+    }
+    th {
+      background: #1a365d;
+      color: white;
+      padding: 8px;
+      text-align: left;
+      border: 1px solid #ddd;
+    }
+    td {
+      border: 1px solid #ddd;
+      padding: 8px;
+    }
+    .section-content {
+      font-size: 13px;
+      line-height: 1.6;
+      margin: 10px 0;
+      white-space: pre-wrap;
+    }
+    .entry {
+      background: #f8f9fa;
+      padding: 12px;
+      margin: 10px 0;
+      border-left: 3px solid #1a365d;
+      page-break-inside: avoid;
+    }
+    .entry-header {
+      font-size: 11px;
+      color: #666;
+      margin-bottom: 5px;
+    }
+    .entry-text {
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .footer {
+      margin-top: 30px;
+      padding-top: 15px;
+      border-top: 1px solid #ddd;
+      text-align: center;
+      font-size: 11px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="header-item"><span class="header-label">PECL FSC File:</span> ${investigation.file_number}</div>
+      <div class="header-item"><span class="header-label">Maximo #:</span> ${investigation.maximo_number || 'N/A'}</div>
+    </div>
+    <div>
+      <div class="header-item"><span class="header-label">Date:</span> ${currentDate}</div>
+      <div class="header-item"><span class="header-label">Prepared By:</span> ${investigation.created_by_name}</div>
+    </div>
+  </div>
+
+  <h2>PERSONS MENTIONED IN THIS REPORT</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>STATUS</th>
+        <th>NAME</th>
+        <th>PHONE</th>
+        <th>POSITION</th>
+        <th>COMPANY</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${personsRows || '<tr><td colspan="5" style="text-align: center; color: #999;">No persons listed</td></tr>'}
+    </tbody>
+  </table>
+
+  <h2>SYNOPSIS</h2>
+  <div class="section-content">${investigation.synopsis || 'Not provided'}</div>
+
+  <h2>INFORMATION</h2>
+  <div class="section-content">${investigation.information || 'Not provided'}</div>
+
+  <h2>INVESTIGATION ENTRIES</h2>
+  ${entries.map(entry => `
+    <div class="entry">
+      <div class="entry-header">
+        ${entry.created_by_name} - ${format(new Date(entry.entry_timestamp), 'MMM dd, yyyy HH:mm')}
+      </div>
+      <div class="entry-text">${entry.entry_text}</div>
+    </div>
+  `).join('') || '<p style="color: #999;">No entries</p>'}
+
+  <h2>RECOMMENDATIONS & FILE STATUS</h2>
+  <div class="section-content">
+    <strong>File Status:</strong> ${investigation.file_status.replace('_', ' ').toUpperCase()}<br><br>
+    ${investigation.recommendations || 'Not provided'}
+  </div>
+
+  <h2>ATTACHMENTS</h2>
+  ${attachmentsHtml}
+
+  <div class="footer">
+    <p><strong>CONFIDENTIAL</strong> - This report contains sensitive investigation information.</p>
+    <p>Generated on ${currentDate} via Fortress AI Security Intelligence Platform</p>
+  </div>
+</body>
+</html>
+      `;
+
+      const container = document.createElement('div');
+      container.style.position = 'absolute';
+      container.style.left = '-9999px';
+      container.style.width = '210mm';
+      container.innerHTML = reportHtml;
+      document.body.appendChild(container);
+
+      toast.loading("Generating PDF...");
+
+      const canvas = await html2canvas(container, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+      });
+
+      const imgWidth = 210;
+      const pageHeight = 297;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+
+      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      pdf.save(`${investigation.file_number}_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+      document.body.removeChild(container);
+      
+      toast.dismiss();
+      toast.success("Investigation report downloaded");
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+      toast.dismiss();
+      toast.error("Failed to generate PDF");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -310,14 +540,29 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
     <div className="min-h-screen bg-background">
       <Header />
       <main className="container mx-auto px-6 py-8">
-        <div className="flex items-center gap-4 mb-6">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/investigations')}>
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <div>
-            <h1 className="text-3xl font-bold">{investigation.file_number}</h1>
-            <p className="text-muted-foreground">Investigation File</p>
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="icon" onClick={() => navigate('/investigations')}>
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+            <div>
+              <h1 className="text-3xl font-bold">{investigation.file_number}</h1>
+              <p className="text-muted-foreground">Investigation File</p>
+            </div>
           </div>
+          <Button onClick={downloadInvestigationReport} disabled={isDownloading}>
+            {isDownloading ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Generating...
+              </>
+            ) : (
+              <>
+                <FileDown className="w-4 h-4 mr-2" />
+                Download Report
+              </>
+            )}
+          </Button>
         </div>
 
         <Tabs defaultValue="overview" className="space-y-6">
