@@ -686,7 +686,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                       <Button 
                         variant="ghost" 
                         size="sm"
-                        onClick={() => navigate('/incidents')}
+                        onClick={() => navigate(`/incidents?incident=${investigation.incident_id}`)}
                       >
                         View Incident
                       </Button>
