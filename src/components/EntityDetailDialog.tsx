@@ -126,7 +126,14 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     aliases: '',
     threat_score: 5,
     threat_indicators: '',
-    associations: ''
+    associations: '',
+    contact_email: '',
+    contact_phone: '',
+    contact_website: '',
+    contact_address: '',
+    contact_linkedin: '',
+    contact_twitter: '',
+    contact_facebook: ''
   });
 
   const updateMutation = useMutation({
@@ -159,6 +166,20 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     const aliases = formData.aliases.split(',').map(a => a.trim()).filter(Boolean);
     const threatIndicators = formData.threat_indicators.split(',').map(t => t.trim()).filter(Boolean);
     const associations = formData.associations.split(',').map(a => a.trim()).filter(Boolean);
+    
+    const contactInfo = {
+      email: formData.contact_email.split(',').map(e => e.trim()).filter(Boolean),
+      phone: formData.contact_phone.split(',').map(p => p.trim()).filter(Boolean),
+      website: formData.contact_website.trim() || null,
+      address: formData.contact_address.trim() || null,
+      social_media: {
+        linkedin: formData.contact_linkedin.trim() || null,
+        twitter: formData.contact_twitter.trim() || null,
+        facebook: formData.contact_facebook.trim() || null
+      }
+    };
+    
+    const currentAttributes = (entity?.attributes as any) || {};
 
     updateMutation.mutate({
       name: formData.name.trim(),
@@ -168,7 +189,11 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
       aliases,
       threat_score: formData.threat_score,
       threat_indicators: threatIndicators.length > 0 ? threatIndicators : null,
-      associations: associations.length > 0 ? associations : null
+      associations: associations.length > 0 ? associations : null,
+      attributes: {
+        ...currentAttributes,
+        contact_info: contactInfo
+      }
     });
   };
 
@@ -276,6 +301,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
 
   const startEditing = () => {
     if (entity) {
+      const contactInfo = (entity.attributes as any)?.contact_info || {};
       setFormData({
         name: entity.name,
         type: entity.type,
@@ -284,7 +310,14 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
         aliases: entity.aliases?.join(', ') || '',
         threat_score: entity.threat_score || 5,
         threat_indicators: entity.threat_indicators?.join(', ') || '',
-        associations: entity.associations?.join(', ') || ''
+        associations: entity.associations?.join(', ') || '',
+        contact_email: contactInfo.email?.join(', ') || '',
+        contact_phone: contactInfo.phone?.join(', ') || '',
+        contact_website: contactInfo.website || '',
+        contact_address: contactInfo.address || '',
+        contact_linkedin: contactInfo.social_media?.linkedin || '',
+        contact_twitter: contactInfo.social_media?.twitter || '',
+        contact_facebook: contactInfo.social_media?.facebook || ''
       });
     }
     setIsEditing(true);
@@ -546,6 +579,78 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                   />
                 </div>
 
+                <div className="space-y-4 border-t pt-4">
+                  <Label className="text-base font-semibold">Contact Information</Label>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Email (comma-separated)</Label>
+                      <Input
+                        value={formData.contact_email}
+                        onChange={(e) => setFormData({ ...formData, contact_email: e.target.value })}
+                        placeholder="email@example.com, other@example.com"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Phone (comma-separated)</Label>
+                      <Input
+                        value={formData.contact_phone}
+                        onChange={(e) => setFormData({ ...formData, contact_phone: e.target.value })}
+                        placeholder="+1234567890, +0987654321"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Website</Label>
+                    <Input
+                      value={formData.contact_website}
+                      onChange={(e) => setFormData({ ...formData, contact_website: e.target.value })}
+                      placeholder="https://example.com"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Address</Label>
+                    <Textarea
+                      value={formData.contact_address}
+                      onChange={(e) => setFormData({ ...formData, contact_address: e.target.value })}
+                      rows={2}
+                      placeholder="Street, City, State, ZIP"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label>LinkedIn</Label>
+                      <Input
+                        value={formData.contact_linkedin}
+                        onChange={(e) => setFormData({ ...formData, contact_linkedin: e.target.value })}
+                        placeholder="linkedin.com/in/..."
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Twitter</Label>
+                      <Input
+                        value={formData.contact_twitter}
+                        onChange={(e) => setFormData({ ...formData, contact_twitter: e.target.value })}
+                        placeholder="twitter.com/..."
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Facebook</Label>
+                      <Input
+                        value={formData.contact_facebook}
+                        onChange={(e) => setFormData({ ...formData, contact_facebook: e.target.value })}
+                        placeholder="facebook.com/..."
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 <div className="flex gap-2 justify-end">
                   <Button variant="outline" onClick={() => setIsEditing(false)}>
                     Cancel
@@ -615,6 +720,92 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                     </div>
                   </div>
                 )}
+
+                {(() => {
+                  const contactInfo = (entity.attributes as any)?.contact_info;
+                  const hasContactInfo = contactInfo && (
+                    contactInfo.email?.length > 0 ||
+                    contactInfo.phone?.length > 0 ||
+                    contactInfo.website ||
+                    contactInfo.address ||
+                    contactInfo.social_media?.linkedin ||
+                    contactInfo.social_media?.twitter ||
+                    contactInfo.social_media?.facebook
+                  );
+
+                  return hasContactInfo ? (
+                    <div className="border-t pt-4 space-y-3">
+                      <Label className="text-base font-semibold">Contact Information</Label>
+                      
+                      {contactInfo.email && contactInfo.email.length > 0 && (
+                        <div>
+                          <Label className="text-muted-foreground text-sm">Email</Label>
+                          <div className="flex flex-wrap gap-2 mt-1">
+                            {contactInfo.email.map((email: string, idx: number) => (
+                              <a key={idx} href={`mailto:${email}`} className="text-primary hover:underline">
+                                {email}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {contactInfo.phone && contactInfo.phone.length > 0 && (
+                        <div>
+                          <Label className="text-muted-foreground text-sm">Phone</Label>
+                          <div className="flex flex-wrap gap-2 mt-1">
+                            {contactInfo.phone.map((phone: string, idx: number) => (
+                              <a key={idx} href={`tel:${phone}`} className="text-primary hover:underline">
+                                {phone}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {contactInfo.website && (
+                        <div>
+                          <Label className="text-muted-foreground text-sm">Website</Label>
+                          <div className="mt-1">
+                            <a href={contactInfo.website} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                              {contactInfo.website}
+                            </a>
+                          </div>
+                        </div>
+                      )}
+
+                      {contactInfo.address && (
+                        <div>
+                          <Label className="text-muted-foreground text-sm">Address</Label>
+                          <p className="mt-1">{contactInfo.address}</p>
+                        </div>
+                      )}
+
+                      {(contactInfo.social_media?.linkedin || contactInfo.social_media?.twitter || contactInfo.social_media?.facebook) && (
+                        <div>
+                          <Label className="text-muted-foreground text-sm">Social Media</Label>
+                          <div className="flex flex-wrap gap-3 mt-1">
+                            {contactInfo.social_media?.linkedin && (
+                              <a href={contactInfo.social_media.linkedin} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                                LinkedIn
+                              </a>
+                            )}
+                            {contactInfo.social_media?.twitter && (
+                              <a href={contactInfo.social_media.twitter} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                                Twitter
+                              </a>
+                            )}
+                            {contactInfo.social_media?.facebook && (
+                              <a href={contactInfo.social_media.facebook} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                                Facebook
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : null;
+                })()}
               </div>
             )}
           </TabsContent>

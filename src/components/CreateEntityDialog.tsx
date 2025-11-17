@@ -66,6 +66,7 @@ export const CreateEntityDialog = ({
   const queryClient = useQueryClient();
   const [loading, setLoading] = useState(false);
   const [enriching, setEnriching] = useState(false);
+  const [enrichedContactInfo, setEnrichedContactInfo] = useState<any>(null);
   const [formData, setFormData] = useState({
     name: prefilledName,
     type: 'person',
@@ -108,6 +109,11 @@ export const CreateEntityDialog = ({
           threat_indicators: enriched.threat_indicators?.join(', ') || '',
           associations: enriched.associations?.join(', ') || ''
         }));
+        
+        // Store contact info separately
+        if (enriched.contact_info) {
+          setEnrichedContactInfo(enriched.contact_info);
+        }
 
         toast({
           title: "Entity Enriched",
@@ -183,7 +189,8 @@ export const CreateEntityDialog = ({
           threat_score: Math.round(formData.threat_score),
           threat_indicators: threatIndicatorsArray.length > 0 ? threatIndicatorsArray : null,
           associations: associationsArray.length > 0 ? associationsArray : null,
-          created_by: user.id
+          created_by: user.id,
+          attributes: enrichedContactInfo ? { contact_info: enrichedContactInfo } : null
         }])
         .select()
         .single();
@@ -221,6 +228,7 @@ export const CreateEntityDialog = ({
         threat_indicators: '',
         associations: ''
       });
+      setEnrichedContactInfo(null);
     } catch (error: any) {
       console.error('Error creating entity:', error);
       toast({
