@@ -74,3 +74,12 @@ verify_jwt = true
 
 [functions.cross-reference-entities]
 verify_jwt = true
+
+[functions.monitor-canadian-sources]
+verify_jwt = false
+
+[functions.monitor-court-registry]
+verify_jwt = false
+
+[functions.monitor-csis]
+verify_jwt = false
