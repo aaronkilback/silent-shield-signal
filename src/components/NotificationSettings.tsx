@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -7,10 +8,12 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 import { Loader2 } from "lucide-react";
 
 export const NotificationSettings = () => {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [settings, setSettings] = useState({
     emailNotifications: true,
     incidentAlerts: true,
@@ -22,8 +25,81 @@ export const NotificationSettings = () => {
     teamsWebhook: ''
   });
 
+  // Fetch user preferences
+  const { data: preferences } = useQuery({
+    queryKey: ['notification-preferences'],
+    queryFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { data, error } = await supabase
+        .from('notification_preferences')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (error && error.code !== 'PGRST116') throw error;
+      return data;
+    }
+  });
+
+  // Update form when preferences are loaded
+  useEffect(() => {
+    if (preferences) {
+      setSettings({
+        emailNotifications: preferences.email_notifications,
+        incidentAlerts: preferences.incident_alerts,
+        entityMentions: preferences.entity_mentions,
+        weeklyReports: preferences.weekly_reports,
+        alertFrequency: preferences.alert_frequency,
+        emailAddress: preferences.email_address || '',
+        slackWebhook: preferences.slack_webhook || '',
+        teamsWebhook: preferences.teams_webhook || ''
+      });
+    }
+  }, [preferences]);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const upsertData = {
+        user_id: user.id,
+        email_notifications: settings.emailNotifications,
+        incident_alerts: settings.incidentAlerts,
+        entity_mentions: settings.entityMentions,
+        weekly_reports: settings.weeklyReports,
+        alert_frequency: settings.alertFrequency,
+        email_address: settings.emailAddress || null,
+        slack_webhook: settings.slackWebhook || null,
+        teams_webhook: settings.teamsWebhook || null
+      };
+
+      const { data, error } = await supabase
+        .from('notification_preferences')
+        .upsert(upsertData, { onConflict: 'user_id' })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      toast({ title: "Settings Saved", description: "Notification preferences updated" });
+      queryClient.invalidateQueries({ queryKey: ['notification-preferences'] });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: "Save Failed", 
+        description: error.message,
+        variant: "destructive" 
+      });
+    }
+  });
+
   const handleSave = () => {
-    toast({ title: "Settings Saved", description: "Notification preferences updated" });
+    saveMutation.mutate();
   };
 
   return (
@@ -148,7 +224,8 @@ export const NotificationSettings = () => {
       </Card>
 
       <div className="flex justify-end">
-        <Button onClick={handleSave}>
+        <Button onClick={handleSave} disabled={saveMutation.isPending}>
+          {saveMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
           Save Settings
         </Button>
       </div>

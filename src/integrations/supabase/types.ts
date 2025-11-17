@@ -655,6 +655,51 @@ export type Database = {
           },
         ]
       }
+      notification_preferences: {
+        Row: {
+          alert_frequency: string | null
+          created_at: string | null
+          email_address: string | null
+          email_notifications: boolean | null
+          entity_mentions: boolean | null
+          id: string
+          incident_alerts: boolean | null
+          slack_webhook: string | null
+          teams_webhook: string | null
+          updated_at: string | null
+          user_id: string
+          weekly_reports: boolean | null
+        }
+        Insert: {
+          alert_frequency?: string | null
+          created_at?: string | null
+          email_address?: string | null
+          email_notifications?: boolean | null
+          entity_mentions?: boolean | null
+          id?: string
+          incident_alerts?: boolean | null
+          slack_webhook?: string | null
+          teams_webhook?: string | null
+          updated_at?: string | null
+          user_id: string
+          weekly_reports?: boolean | null
+        }
+        Update: {
+          alert_frequency?: string | null
+          created_at?: string | null
+          email_address?: string | null
+          email_notifications?: boolean | null
+          entity_mentions?: boolean | null
+          id?: string
+          incident_alerts?: boolean | null
+          slack_webhook?: string | null
+          teams_webhook?: string | null
+          updated_at?: string | null
+          user_id?: string
+          weekly_reports?: boolean | null
+        }
+        Relationships: []
+      }
       playbooks: {
         Row: {
           created_at: string

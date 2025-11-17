@@ -47,3 +47,6 @@ verify_jwt = true
 
 [functions.osint-entity-scan]
 verify_jwt = false
+
+[functions.send-notification-email]
+verify_jwt = false
