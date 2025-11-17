@@ -27,23 +27,50 @@ function latLngToVector3(lat: number, lng: number, radius: number) {
 
 function Globe() {
   const meshRef = useRef<THREE.Mesh>(null);
+  const wireframeRef = useRef<THREE.LineSegments>(null);
   
   useFrame(() => {
     if (meshRef.current) {
       meshRef.current.rotation.y += 0.001;
     }
+    if (wireframeRef.current) {
+      wireframeRef.current.rotation.y += 0.001;
+    }
   });
 
   return (
-    <Sphere ref={meshRef} args={[2, 64, 64]}>
-      <meshStandardMaterial
-        color="#0a1929"
-        emissive="#0a4a6e"
-        emissiveIntensity={0.3}
-        roughness={0.8}
-        metalness={0.2}
-      />
-    </Sphere>
+    <group>
+      {/* Main globe with oceanic blue color */}
+      <Sphere ref={meshRef} args={[2, 64, 64]}>
+        <meshStandardMaterial
+          color="#1e3a5f"
+          emissive="#0d2847"
+          emissiveIntensity={0.2}
+          roughness={0.9}
+          metalness={0.1}
+        />
+      </Sphere>
+      
+      {/* Wireframe grid for latitude/longitude lines */}
+      <Sphere args={[2.01, 32, 32]}>
+        <meshBasicMaterial
+          color="#00d9ff"
+          wireframe
+          transparent
+          opacity={0.15}
+        />
+      </Sphere>
+      
+      {/* Land masses approximation with brighter color */}
+      <Sphere args={[2.005, 64, 64]}>
+        <meshStandardMaterial
+          color="#2d5a3f"
+          transparent
+          opacity={0.6}
+          roughness={0.95}
+        />
+      </Sphere>
+    </group>
   );
 }
 
@@ -66,31 +93,30 @@ function LocationPin({ location }: { location: ClientLocation }) {
 
   return (
     <group position={position}>
-      <Sphere args={[0.02, 16, 16]}>
+      <Sphere args={[0.03, 16, 16]}>
         <meshStandardMaterial
           color={location.incidentCount > 0 ? "#ef4444" : "#00d9ff"}
           emissive={location.incidentCount > 0 ? "#ef4444" : "#00d9ff"}
-          emissiveIntensity={location.incidentCount > 0 ? 1 : 0.5}
+          emissiveIntensity={location.incidentCount > 0 ? 1.5 : 0.8}
         />
       </Sphere>
       
       {location.incidentCount > 0 && <PulsingRing />}
       
-      {hovered && (
-        <Html distanceFactor={10}>
-          <div className="bg-card border border-border rounded-lg px-3 py-2 shadow-lg pointer-events-none whitespace-nowrap">
-            <div className="text-sm font-semibold text-foreground">{location.name}</div>
-            {location.incidentCount > 0 && (
-              <div className="text-xs text-destructive">
-                {location.incidentCount} active incident{location.incidentCount !== 1 ? 's' : ''}
-              </div>
-            )}
-          </div>
-        </Html>
-      )}
+      {/* Always show labels */}
+      <Html distanceFactor={8} center>
+        <div className={`bg-card/95 backdrop-blur-sm border border-border rounded-lg px-3 py-2 shadow-xl pointer-events-none whitespace-nowrap transition-opacity ${hovered ? 'opacity-100' : 'opacity-80'}`}>
+          <div className="text-sm font-semibold text-foreground">{location.name}</div>
+          {location.incidentCount > 0 && (
+            <div className="text-xs text-destructive font-medium">
+              {location.incidentCount} active incident{location.incidentCount !== 1 ? 's' : ''}
+            </div>
+          )}
+        </div>
+      </Html>
       
       <Sphere
-        args={[0.05, 16, 16]}
+        args={[0.06, 16, 16]}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
       >
