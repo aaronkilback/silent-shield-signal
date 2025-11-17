@@ -40,20 +40,7 @@ export default function Entities() {
   const { data: entities = [], refetch } = useQuery({
     queryKey: ['entities', searchTerm, selectedType, selectedClientId],
     queryFn: async () => {
-      if (!selectedClientId) return [];
-
-      // Get entity IDs that have mentions in signals for this client
-      const { data: mentionedEntityIds } = await supabase
-        .from('entity_mentions')
-        .select('entity_id, signals!inner(client_id)')
-        .eq('signals.client_id', selectedClientId);
-
-      if (!mentionedEntityIds || mentionedEntityIds.length === 0) {
-        return [];
-      }
-
-      const entityIds = [...new Set(mentionedEntityIds.map(m => m.entity_id))];
-
+      // Show all entities - they are global resources that can be referenced across clients
       let query = supabase
         .from('entities')
         .select(`
@@ -61,7 +48,6 @@ export default function Entities() {
           entity_mentions(count),
           created_by_profile:profiles!entities_created_by_fkey(name)
         `)
-        .in('id', entityIds)
         .eq('is_active', true)
         .order('created_at', { ascending: false });
 
