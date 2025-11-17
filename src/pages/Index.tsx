@@ -1,6 +1,5 @@
 import { Header } from "@/components/Header";
 import { MetricsPanel } from "@/components/MetricsPanel";
-import { SignalIngestForm } from "@/components/SignalIngestForm";
 import AutonomousSystemStatus from "@/components/AutonomousSystemStatus";
 import LearningDashboard from "@/components/LearningDashboard";
 import { DashboardClientSelector } from "@/components/DashboardClientSelector";
@@ -43,10 +42,6 @@ const Index = () => {
         
         <div className="grid grid-cols-1 gap-6">
           <LearningDashboard />
-        </div>
-        
-        <div className="grid grid-cols-1 gap-6">
-          <SignalIngestForm />
         </div>
       </main>
     </div>
