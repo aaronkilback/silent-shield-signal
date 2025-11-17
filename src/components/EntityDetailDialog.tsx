@@ -366,9 +366,39 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
       if (error) throw error;
 
       const photosAdded = data?.photosAdded || 0;
+      const diagnostics = data?.diagnostics;
+      const sampleRejections = data?.sampleRejections || [];
+      
+      // Build detailed diagnostic message
+      let diagnosticMessage = `Added ${photosAdded} photos`;
+      
+      if (diagnostics) {
+        diagnosticMessage += `\n\nDiagnostics:`;
+        diagnosticMessage += `\n• Found ${diagnostics.totalFound} images`;
+        diagnosticMessage += `\n• Processed ${diagnostics.processed} images`;
+        diagnosticMessage += `\n• Approved ${diagnostics.approved} images`;
+        diagnosticMessage += `\n• Rejected ${diagnostics.rejected} images`;
+        if (diagnostics.referencePhotosUsed > 0) {
+          diagnosticMessage += `\n• Used ${diagnostics.referencePhotosUsed} existing photos for comparison`;
+        } else {
+          diagnosticMessage += `\n• No reference photos available (add approved photos for better matching)`;
+        }
+        if (diagnostics.feedbackAvailable > 0) {
+          diagnosticMessage += `\n• ${diagnostics.feedbackAvailable} photos with feedback for AI learning`;
+        }
+        if (diagnostics.timeoutReached) {
+          diagnosticMessage += `\n\n⏱️ Scan stopped early due to time limit`;
+        }
+      }
+      
+      if (sampleRejections.length > 0) {
+        diagnosticMessage += `\n\nSample rejections:\n${sampleRejections.slice(0, 3).join('\n')}`;
+      }
+      
       toast({ 
         title: "Scan Complete", 
-        description: `Successfully added ${photosAdded} photos` 
+        description: diagnosticMessage,
+        duration: 10000 // Show longer to read diagnostics
       });
       queryClient.invalidateQueries({ queryKey: ['entity-photos', entityId] });
     } catch (error: any) {

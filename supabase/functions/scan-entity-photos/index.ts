@@ -32,13 +32,13 @@ serve(async (req) => {
 
     console.log(`Scanning for photos of: ${entity.name} (${entity.type})`);
 
-    // Check for existing photos with feedback data
+    // Get ALL existing photos to use as references
     const { data: existingPhotos } = await supabaseClient
       .from('entity_photos')
       .select('storage_path, feedback_rating, source')
       .eq('entity_id', entityId)
       .order('created_at', { ascending: false })
-      .limit(1);
+      .limit(10); // Load up to 10 reference photos
     
     // Get all photos with feedback for learning patterns
     const { data: allPhotosWithFeedback } = await supabaseClient
@@ -50,31 +50,34 @@ serve(async (req) => {
     const approvedPhotos = allPhotosWithFeedback?.filter(p => p.feedback_rating === 1) || [];
     const rejectedPhotos = allPhotosWithFeedback?.filter(p => p.feedback_rating === -1) || [];
 
-    let referenceImage: { base64: string; mimeType: string } | null = null;
+    const referenceImages: Array<{ base64: string; mimeType: string }> = [];
     
     if (existingPhotos && existingPhotos.length > 0) {
-      console.log('Found reference photo, will use for comparison');
-      try {
-        const { data: photoData } = await supabaseClient.storage
-          .from('entity-photos')
-          .download(existingPhotos[0].storage_path);
-        
-        if (photoData) {
-          const photoBuffer = await photoData.arrayBuffer();
-          const photoBase64 = btoa(
-            new Uint8Array(photoBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-          );
-          referenceImage = {
-            base64: photoBase64,
-            mimeType: photoData.type || 'image/jpeg'
-          };
-          console.log('Reference photo loaded successfully');
+      console.log(`Found ${existingPhotos.length} existing photos, loading as references`);
+      
+      for (const photo of existingPhotos) {
+        try {
+          const { data: photoData } = await supabaseClient.storage
+            .from('entity-photos')
+            .download(photo.storage_path);
+          
+          if (photoData) {
+            const photoBuffer = await photoData.arrayBuffer();
+            const photoBase64 = btoa(
+              new Uint8Array(photoBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+            );
+            referenceImages.push({
+              base64: photoBase64,
+              mimeType: photoData.type || 'image/jpeg'
+            });
+          }
+        } catch (err) {
+          console.error(`Failed to load reference photo ${photo.storage_path}:`, err);
         }
-      } catch (err) {
-        console.error('Failed to load reference photo:', err);
       }
+      console.log(`Successfully loaded ${referenceImages.length} reference photos for comparison`);
     } else {
-      console.log('No reference photo found - will accept professional photos');
+      console.log('No reference photos found - will accept professional photos');
     }
 
     // Build search query
@@ -298,7 +301,7 @@ serve(async (req) => {
             
             const mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
             
-            // Build AI prompt based on whether we have a reference photo
+            // Build AI prompt based on whether we have reference photos
             const aiContent = [];
             let verificationPrompt = '';
             
@@ -317,24 +320,27 @@ serve(async (req) => {
               feedbackContext += '\n\nPlease use this feedback pattern to make better decisions.';
             }
             
-            if (referenceImage) {
-              // Compare with reference photo
+            if (referenceImages.length > 0) {
+              // Compare with multiple reference photos
               verificationPrompt = entity.type === 'person'
-                ? `Look at these two images. The first image is a reference photo. Does the second image show the SAME PERSON as the first image? Answer YES only if they are clearly the same person. Answer NO if they are different people, or if the second image is a logo, illustration, or unrelated content.${feedbackContext}`
-                : `Look at these two images. The first image is a reference. Does the second image show the SAME organization/entity as the first image? Answer YES only if they match. Answer NO if different or unrelated.${feedbackContext}`;
+                ? `I'm showing you ${referenceImages.length} reference photo(s) of the same person, followed by a new candidate photo. Does the candidate photo (the LAST image) show the SAME PERSON as the reference photos? Answer YES only if they are clearly the same person. Answer NO if different, or if the candidate is a logo, illustration, or unrelated.${feedbackContext}`
+                : `I'm showing you ${referenceImages.length} reference photo(s), followed by a new candidate. Does the candidate (the LAST image) show the SAME organization/entity as the references? Answer YES only if they match. Answer NO if different or unrelated.${feedbackContext}`;
               
-              aiContent.push(
-                { type: 'text', text: verificationPrompt },
-                {
+              aiContent.push({ type: 'text', text: verificationPrompt });
+              
+              // Add all reference images
+              for (let i = 0; i < referenceImages.length; i++) {
+                aiContent.push({
                   type: 'image_url',
-                  image_url: { url: `data:${referenceImage.mimeType};base64,${referenceImage.base64}` }
-                },
-                { type: 'text', text: 'Second image to compare:' },
-                {
-                  type: 'image_url',
-                  image_url: { url: `data:${mimeType};base64,${base64Image}` }
-                }
-              );
+                  image_url: { url: `data:${referenceImages[i].mimeType};base64,${referenceImages[i].base64}` }
+                });
+              }
+              
+              aiContent.push({ type: 'text', text: 'Candidate photo to compare:' });
+              aiContent.push({
+                type: 'image_url',
+                image_url: { url: `data:${mimeType};base64,${base64Image}` }
+              });
             } else {
               // No reference - use generic check with feedback context
               verificationPrompt = entity.type === 'person' 
@@ -375,16 +381,16 @@ serve(async (req) => {
               console.log(`AI verification: ${aiAnswer}`);
               
               if (aiAnswer !== 'YES') {
-                const rejectReason = referenceImage 
-                  ? 'AI rejected - does not match reference photo'
+                const rejectReason = referenceImages.length > 0
+                  ? `AI rejected - does not match ${referenceImages.length} reference photo(s)`
                   : 'AI rejected - not a suitable professional photo';
                 console.log(rejectReason);
-                errors.push(`Rejected ${item.url}`);
+                errors.push(`Rejected ${item.url}: ${aiAnswer || 'AI said NO'}`);
                 continue;
               }
               
-              const approvalMsg = referenceImage
-                ? `AI approved - matches reference photo from ${item.source}`
+              const approvalMsg = referenceImages.length > 0
+                ? `AI approved - matches ${referenceImages.length} reference photo(s) from ${item.source}`
                 : `AI approved image from ${item.source}`;
               console.log(approvalMsg);
             } else {
@@ -444,18 +450,41 @@ serve(async (req) => {
 
     console.log(`Photo scan complete. Added ${photosAdded} photos`);
     
+    // Diagnostic summary
+    const diagnostics = {
+      totalFound: imageUrls.length,
+      processed: Math.min(imageUrls.length, MAX_IMAGES_TO_PROCESS),
+      approved: photosAdded,
+      rejected: errors.length,
+      referencePhotosUsed: referenceImages.length,
+      feedbackAvailable: approvedPhotos.length + rejectedPhotos.length
+    };
+    
+    console.log('Scan diagnostics:', JSON.stringify(diagnostics, null, 2));
+    console.log('Sample rejections:', errors.slice(0, 3));
+    
     let message = `Successfully added ${photosAdded} photos for ${entity.name}`;
     if (imageUrls.length > MAX_IMAGES_TO_PROCESS) {
       message += `. Found ${imageUrls.length} total images, processed ${MAX_IMAGES_TO_PROCESS} to stay within time limits`;
+    }
+    if (referenceImages.length > 0) {
+      message += `. Used ${referenceImages.length} existing photos for comparison`;
     }
 
     return new Response(
       JSON.stringify({
         success: true,
         photosAdded,
-        totalFound: imageUrls.length,
-        processed: Math.min(imageUrls.length, MAX_IMAGES_TO_PROCESS),
-        errors: errors.length > 0 ? errors.slice(0, 5) : undefined,
+        diagnostics: {
+          totalFound: imageUrls.length,
+          processed: Math.min(imageUrls.length, MAX_IMAGES_TO_PROCESS),
+          approved: photosAdded,
+          rejected: errors.length,
+          referencePhotosUsed: referenceImages.length,
+          feedbackAvailable: approvedPhotos.length + rejectedPhotos.length,
+          timeoutReached: errors.some(e => e.includes('Time budget'))
+        },
+        sampleRejections: errors.slice(0, 5),
         message
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
