@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2, CheckCircle, Shield, XCircle } from "lucide-react";
 import { IncidentLocationMap } from "./IncidentLocationMap";
 import { IncidentOutcomeDialog } from "./IncidentOutcomeDialog";
+import IncidentFeedbackDialog from "./IncidentFeedbackDialog";
 
 interface Incident {
   id: string;
@@ -49,28 +50,30 @@ export const IncidentActionDialog = ({
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState("");
   const [signalLocation, setSignalLocation] = useState<string | null>(null);
+  const [signalText, setSignalText] = useState<string>("");
   const [showOutcomeDialog, setShowOutcomeDialog] = useState(false);
 
   useEffect(() => {
-    const fetchSignalLocation = async () => {
+    const fetchSignalData = async () => {
       if (!incident.signal_id) return;
       
       try {
         const { data, error } = await supabase
           .from("signals")
-          .select("location")
+          .select("location, normalized_text")
           .eq("id", incident.signal_id)
           .single();
 
         if (error) throw error;
         setSignalLocation(data?.location || null);
+        setSignalText(data?.normalized_text || "");
       } catch (error) {
-        console.error("Error fetching signal location:", error);
+        console.error("Error fetching signal data:", error);
       }
     };
 
     if (open) {
-      fetchSignalLocation();
+      fetchSignalData();
     }
   }, [incident.signal_id, open]);
 
@@ -307,11 +310,32 @@ export const IncidentActionDialog = ({
           )}
 
           {incident.status === "resolved" && (
-            <div className="flex items-center gap-2 p-3 bg-status-success/10 rounded-lg border border-status-success/20">
-              <CheckCircle className="w-5 h-5 text-status-success" />
-              <span className="text-sm font-medium text-status-success">
-                This incident has been resolved
-              </span>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 p-3 bg-status-success/10 rounded-lg border border-status-success/20">
+                <CheckCircle className="w-5 h-5 text-status-success" />
+                <span className="text-sm font-medium text-status-success">
+                  This incident has been resolved
+                </span>
+              </div>
+              <IncidentFeedbackDialog 
+                incidentId={incident.id}
+                signalText={signalText}
+              />
+            </div>
+          )}
+
+          {/* Feedback button available at any time */}
+          {incident.status !== "resolved" && (
+            <div className="pt-2">
+              <IncidentFeedbackDialog 
+                incidentId={incident.id}
+                signalText={signalText}
+                trigger={
+                  <Button variant="outline" size="sm" className="w-full">
+                    Provide AI Feedback
+                  </Button>
+                }
+              />
             </div>
           )}
         </div>
