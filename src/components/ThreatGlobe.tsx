@@ -253,12 +253,19 @@ export const ThreatGlobe = () => {
     // Comprehensive geocoding map for common locations
     const geoMap: Record<string, { lat: number; lng: number }> = {
       // North America
+      "fort st john": { lat: 56.2463, lng: -120.8533 },
+      "fort saint john": { lat: 56.2463, lng: -120.8533 },
       "calgary": { lat: 51.0447, lng: -114.0719 },
       "alberta": { lat: 53.9333, lng: -116.5765 },
       "vancouver": { lat: 49.2827, lng: -123.1207 },
       "toronto": { lat: 43.6532, lng: -79.3832 },
       "montreal": { lat: 45.5017, lng: -73.5673 },
       "ottawa": { lat: 45.4215, lng: -75.6972 },
+      "edmonton": { lat: 53.5461, lng: -113.4938 },
+      "winnipeg": { lat: 49.8951, lng: -97.1384 },
+      "quebec": { lat: 46.8139, lng: -71.2080 },
+      "halifax": { lat: 44.6488, lng: -63.5752 },
+      "victoria": { lat: 48.4284, lng: -123.3656 },
       "san francisco": { lat: 37.7749, lng: -122.4194 },
       "los angeles": { lat: 34.0522, lng: -118.2437 },
       "new york": { lat: 40.7128, lng: -74.0060 },
@@ -268,10 +275,15 @@ export const ThreatGlobe = () => {
       "boston": { lat: 42.3601, lng: -71.0589 },
       "miami": { lat: 25.7617, lng: -80.1918 },
       "dallas": { lat: 32.7767, lng: -96.7970 },
+      "houston": { lat: 29.7604, lng: -95.3698 },
+      "denver": { lat: 39.7392, lng: -104.9903 },
+      "phoenix": { lat: 33.4484, lng: -112.0740 },
       "texas": { lat: 31.9686, lng: -99.9018 },
       "california": { lat: 36.7783, lng: -119.4179 },
       "canada": { lat: 56.1304, lng: -106.3468 },
       "usa": { lat: 37.0902, lng: -95.7129 },
+      "british columbia": { lat: 53.7267, lng: -127.6476 },
+      "bc": { lat: 53.7267, lng: -127.6476 },
       
       // Asia Pacific
       "kuala lumpur": { lat: 3.1390, lng: 101.6869 },
@@ -308,7 +320,7 @@ export const ThreatGlobe = () => {
 
     const normalized = location.toLowerCase().trim();
     
-    // Check for exact matches or partial matches
+    // Check for exact matches or partial matches (handles full addresses)
     for (const [key, coords] of Object.entries(geoMap)) {
       if (normalized.includes(key)) {
         return coords;
