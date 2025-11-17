@@ -991,6 +991,45 @@ export type Database = {
           },
         ]
       }
+      monitoring_history: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          id: string
+          items_scanned: number | null
+          scan_completed_at: string | null
+          scan_metadata: Json | null
+          scan_started_at: string
+          signals_created: number | null
+          source_name: string
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          items_scanned?: number | null
+          scan_completed_at?: string | null
+          scan_metadata?: Json | null
+          scan_started_at?: string
+          signals_created?: number | null
+          source_name: string
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          items_scanned?: number | null
+          scan_completed_at?: string | null
+          scan_metadata?: Json | null
+          scan_started_at?: string
+          signals_created?: number | null
+          source_name?: string
+          status?: string
+        }
+        Relationships: []
+      }
       notification_preferences: {
         Row: {
           alert_frequency: string | null

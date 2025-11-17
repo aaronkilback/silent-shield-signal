@@ -33,13 +33,28 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const supabaseClient = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  );
+
+  // Create monitoring history entry
+  const { data: historyEntry, error: historyError } = await supabaseClient
+    .from('monitoring_history')
+    .insert({
+      source_name: 'Canadian Sources Enhanced',
+      status: 'running',
+      scan_metadata: { sources: ['RCMP Gazette', 'BC Energy Regulator'] }
+    })
+    .select()
+    .single();
+
+  if (historyError) {
+    console.error('Failed to create monitoring history:', historyError);
+  }
+
   try {
     console.log('Starting Canadian sources monitoring scan with enhanced relevance scoring');
-
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
 
     // Fetch all clients with monitoring config
     const { data: clients, error: clientsError } = await supabaseClient
@@ -123,18 +138,46 @@ serve(async (req) => {
 
     console.log(`Canadian sources monitoring complete. Created ${signalsCreated} signals from sources: ${sources.join(', ')}`);
 
+    // Update monitoring history with success
+    if (historyEntry) {
+      await supabaseClient
+        .from('monitoring_history')
+        .update({
+          status: 'completed',
+          scan_completed_at: new Date().toISOString(),
+          items_scanned: sources.length,
+          signals_created: signalsCreated,
+          scan_metadata: { sources, details: `Scanned ${sources.length} sources` }
+        })
+        .eq('id', historyEntry.id);
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
         message: `Scanned ${sources.length} Canadian sources with enhanced relevance scoring`,
         signalsCreated,
-        sources
+        sources,
+        historyId: historyEntry?.id
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
     console.error('Canadian sources monitoring error:', error);
+    
+    // Update monitoring history with failure
+    if (historyEntry) {
+      await supabaseClient
+        .from('monitoring_history')
+        .update({
+          status: 'failed',
+          scan_completed_at: new Date().toISOString(),
+          error_message: error instanceof Error ? error.message : 'Unknown error'
+        })
+        .eq('id', historyEntry.id);
+    }
+
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
