@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
-import { Loader2, AlertTriangle, Search, Filter } from "lucide-react";
+import { Loader2, AlertTriangle, Search, Filter, ClipboardList } from "lucide-react";
 import { IncidentActionDialog } from "@/components/IncidentActionDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useClientSelection } from "@/hooks/useClientSelection";
@@ -45,6 +45,7 @@ const Incidents = () => {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [reloadTrigger, setReloadTrigger] = useState(0);
+  const [creatingInvestigation, setCreatingInvestigation] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -141,6 +142,89 @@ const Incidents = () => {
         return "text-muted-foreground";
       default:
         return "";
+    }
+  };
+
+  const createInvestigationFromIncident = async (incident: Incident, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!user) return;
+
+    setCreatingInvestigation(incident.id);
+    try {
+      // Generate file number
+      const year = new Date().getFullYear();
+      const { count } = await supabase
+        .from('investigations')
+        .select('*', { count: 'exact', head: true });
+      
+      const fileNumber = `INV-${year}-${String((count || 0) + 1).padStart(4, '0')}`;
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('name')
+        .eq('id', user.id)
+        .single();
+
+      // Get signal details if exists
+      let signalDetails = '';
+      if (incident.signal_id) {
+        const { data: signal } = await supabase
+          .from('signals')
+          .select('normalized_text, category, severity, location')
+          .eq('id', incident.signal_id)
+          .single();
+        
+        if (signal) {
+          signalDetails = `Signal: ${signal.normalized_text || 'N/A'}\nCategory: ${signal.category || 'N/A'}\nSeverity: ${signal.severity || 'N/A'}\nLocation: ${signal.location || 'N/A'}`;
+        }
+      }
+
+      // Build initial information from incident
+      const incidentInfo = `Incident Details:
+Priority: ${incident.priority?.toUpperCase()}
+Status: ${incident.status?.toUpperCase()}
+Opened: ${new Date(incident.opened_at).toLocaleString()}
+${incident.acknowledged_at ? `Acknowledged: ${new Date(incident.acknowledged_at).toLocaleString()}` : ''}
+${incident.contained_at ? `Contained: ${new Date(incident.contained_at).toLocaleString()}` : ''}
+${incident.resolved_at ? `Resolved: ${new Date(incident.resolved_at).toLocaleString()}` : ''}
+
+${signalDetails ? `\n${signalDetails}\n` : ''}
+${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${incident.timeline_json.map((t: any) => `- ${new Date(t.timestamp).toLocaleString()}: ${t.details}`).join('\n')}` : ''}`;
+
+      const synopsis = `Investigation opened for ${incident.priority?.toUpperCase()} priority incident involving ${incident.clients?.name || 'unknown client'}.`;
+
+      const { data, error } = await supabase
+        .from('investigations')
+        .insert({
+          file_number: fileNumber,
+          prepared_by: user.id,
+          created_by_name: profile?.name || user.email || 'Unknown',
+          incident_id: incident.id,
+          client_id: incident.client_id,
+          synopsis,
+          information: incidentInfo,
+          file_status: 'open'
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      toast({
+        title: "Investigation Created",
+        description: `Investigation file ${fileNumber} created from incident`,
+      });
+      
+      navigate(`/investigation/${data.id}`);
+    } catch (error: any) {
+      console.error('Error creating investigation:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create investigation",
+        variant: "destructive",
+      });
+    } finally {
+      setCreatingInvestigation(null);
     }
   };
 
@@ -301,9 +385,29 @@ const Incidents = () => {
                           </p>
                         )}
                       </div>
-                      <Button variant="outline" size="sm">
-                        View Details
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={(e) => createInvestigationFromIncident(incident, e)}
+                          disabled={creatingInvestigation === incident.id}
+                        >
+                          {creatingInvestigation === incident.id ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Creating...
+                            </>
+                          ) : (
+                            <>
+                              <ClipboardList className="w-4 h-4 mr-2" />
+                              Create Investigation
+                            </>
+                          )}
+                        </Button>
+                        <Button variant="outline" size="sm">
+                          View Details
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 ))}

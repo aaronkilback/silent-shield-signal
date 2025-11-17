@@ -798,6 +798,7 @@ export type Database = {
           file_number: string
           file_status: string | null
           id: string
+          incident_id: string | null
           information: string | null
           maximo_number: string | null
           prepared_by: string | null
@@ -812,6 +813,7 @@ export type Database = {
           file_number: string
           file_status?: string | null
           id?: string
+          incident_id?: string | null
           information?: string | null
           maximo_number?: string | null
           prepared_by?: string | null
@@ -826,6 +828,7 @@ export type Database = {
           file_number?: string
           file_status?: string | null
           id?: string
+          incident_id?: string | null
           information?: string | null
           maximo_number?: string | null
           prepared_by?: string | null
@@ -839,6 +842,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investigations_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
             referencedColumns: ["id"]
           },
         ]

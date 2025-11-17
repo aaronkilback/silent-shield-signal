@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import { 
   ArrowLeft, Save, Plus, Trash2, Upload, Download, 
   FileText, Image as ImageIcon, Video, Music, File,
-  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown
+  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle
 } from "lucide-react";
 import { format } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
@@ -579,6 +579,29 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                 <CardTitle>File Information</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div>
+                  <Label>Linked to Incident</Label>
+                  {investigation.incident_id ? (
+                    <div className="flex items-center gap-2 p-3 border rounded-lg bg-muted/50">
+                      <AlertTriangle className="w-4 h-4 text-destructive" />
+                      <span className="text-sm">
+                        This investigation was created from an incident
+                      </span>
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => navigate('/incidents')}
+                      >
+                        View Incident
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground p-3 border rounded-lg">
+                      Not linked to any incident
+                    </p>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label>File Number</Label>
