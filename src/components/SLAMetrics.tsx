@@ -4,6 +4,7 @@ import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { Clock, Target } from "lucide-react";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { formatMinutesToDHM, formatMinutesToDHMFull } from "@/lib/timeUtils";
 
 interface SLAData {
   avgMTTD: number; // in minutes
@@ -97,12 +98,12 @@ export const SLAMetrics = () => {
               <span className="font-medium">MTTD (Mean Time To Detect)</span>
             </div>
             <span className={`font-bold ${getStatusColor(getMTTDPercentage())}`}>
-              {slaData.avgMTTD.toFixed(1)}m / {slaData.mttdTarget}m target
+              {formatMinutesToDHM(slaData.avgMTTD)} / {formatMinutesToDHM(slaData.mttdTarget)} target
             </span>
           </div>
           <Progress value={getMTTDPercentage()} className="h-2" />
           <p className="text-xs text-muted-foreground">
-            Target: Under {slaData.mttdTarget} minutes
+            Target: Under {formatMinutesToDHMFull(slaData.mttdTarget)}
           </p>
         </div>
 
@@ -113,12 +114,12 @@ export const SLAMetrics = () => {
               <span className="font-medium">MTTR (Mean Time To Resolve)</span>
             </div>
             <span className={`font-bold ${getStatusColor(getMTTRPercentage())}`}>
-              {slaData.avgMTTR.toFixed(1)}m / {slaData.mttrTarget}m target
+              {formatMinutesToDHM(slaData.avgMTTR)} / {formatMinutesToDHM(slaData.mttrTarget)} target
             </span>
           </div>
           <Progress value={getMTTRPercentage()} className="h-2" />
           <p className="text-xs text-muted-foreground">
-            Target: Under {slaData.mttrTarget} minutes
+            Target: Under {formatMinutesToDHMFull(slaData.mttrTarget)}
           </p>
         </div>
       </CardContent>

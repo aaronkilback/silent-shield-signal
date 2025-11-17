@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users } from "lucide-react";
+import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -59,6 +59,14 @@ export const Header = () => {
               >
                 <Users className="w-4 h-4 mr-2" />
                 Entities
+              </Button>
+              <Button
+                onClick={() => navigate("/reports")}
+                variant={location.pathname === "/reports" ? "default" : "ghost"}
+                size="sm"
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                Reports
               </Button>
             </nav>
             <EntityNotifications />

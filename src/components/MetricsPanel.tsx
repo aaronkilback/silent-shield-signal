@@ -3,6 +3,7 @@ import { Card } from "@/components/ui/card";
 import { Clock, Target, TrendingDown, TrendingUp, AlertTriangle, Activity } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { formatMinutesToDHM } from "@/lib/timeUtils";
 
 interface MetricProps {
   label: string;
@@ -170,8 +171,8 @@ export const MetricsPanel = () => {
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
       <Metric
         label="MTTD"
-        value={metrics.mttd > 0 ? metrics.mttd.toFixed(1) : "0.0"}
-        unit="min"
+        value={metrics.mttd > 0 ? formatMinutesToDHM(metrics.mttd) : "0m"}
+        unit=""
         trend={metrics.mttdTrend > 1 ? "down" : metrics.mttdTrend < -1 ? "up" : "neutral"}
         trendValue={formatTrend(metrics.mttdTrend)}
         icon={<Target className="w-6 h-6" />}
@@ -179,8 +180,8 @@ export const MetricsPanel = () => {
       />
       <Metric
         label="MTTR"
-        value={metrics.mttr > 0 ? metrics.mttr.toFixed(1) : "0.0"}
-        unit="min"
+        value={metrics.mttr > 0 ? formatMinutesToDHM(metrics.mttr) : "0m"}
+        unit=""
         trend={metrics.mttrTrend > 1 ? "down" : metrics.mttrTrend < -1 ? "up" : "neutral"}
         trendValue={formatTrend(metrics.mttrTrend)}
         icon={<Clock className="w-6 h-6" />}
