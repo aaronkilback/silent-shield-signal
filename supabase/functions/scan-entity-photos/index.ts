@@ -32,13 +32,23 @@ serve(async (req) => {
 
     console.log(`Scanning for photos of: ${entity.name} (${entity.type})`);
 
-    // Check for existing reference photo
+    // Check for existing photos with feedback data
     const { data: existingPhotos } = await supabaseClient
       .from('entity_photos')
-      .select('storage_path')
+      .select('storage_path, feedback_rating, source')
       .eq('entity_id', entityId)
       .order('created_at', { ascending: false })
       .limit(1);
+    
+    // Get all photos with feedback for learning patterns
+    const { data: allPhotosWithFeedback } = await supabaseClient
+      .from('entity_photos')
+      .select('feedback_rating, source')
+      .eq('entity_id', entityId)
+      .not('feedback_rating', 'is', null);
+    
+    const approvedPhotos = allPhotosWithFeedback?.filter(p => p.feedback_rating === 1) || [];
+    const rejectedPhotos = allPhotosWithFeedback?.filter(p => p.feedback_rating === -1) || [];
 
     let referenceImage: { base64: string; mimeType: string } | null = null;
     
@@ -247,11 +257,26 @@ serve(async (req) => {
             const aiContent = [];
             let verificationPrompt = '';
             
+            // Add user feedback context to improve AI decisions
+            let feedbackContext = '';
+            if (approvedPhotos.length > 0 || rejectedPhotos.length > 0) {
+              feedbackContext = '\n\nUser feedback from previous scans:';
+              if (approvedPhotos.length > 0) {
+                const approvedSources = [...new Set(approvedPhotos.map(p => p.source).filter(Boolean))];
+                feedbackContext += `\n- User has approved ${approvedPhotos.length} photo(s) from sources like: ${approvedSources.join(', ')}`;
+              }
+              if (rejectedPhotos.length > 0) {
+                const rejectedSources = [...new Set(rejectedPhotos.map(p => p.source).filter(Boolean))];
+                feedbackContext += `\n- User has rejected ${rejectedPhotos.length} photo(s) from sources like: ${rejectedSources.join(', ')}`;
+              }
+              feedbackContext += '\n\nPlease use this feedback pattern to make better decisions.';
+            }
+            
             if (referenceImage) {
               // Compare with reference photo
               verificationPrompt = entity.type === 'person'
-                ? `Look at these two images. The first image is a reference photo. Does the second image show the SAME PERSON as the first image? Answer YES only if they are clearly the same person. Answer NO if they are different people, or if the second image is a logo, illustration, or unrelated content.`
-                : `Look at these two images. The first image is a reference. Does the second image show the SAME organization/entity as the first image? Answer YES only if they match. Answer NO if different or unrelated.`;
+                ? `Look at these two images. The first image is a reference photo. Does the second image show the SAME PERSON as the first image? Answer YES only if they are clearly the same person. Answer NO if they are different people, or if the second image is a logo, illustration, or unrelated content.${feedbackContext}`
+                : `Look at these two images. The first image is a reference. Does the second image show the SAME organization/entity as the first image? Answer YES only if they match. Answer NO if different or unrelated.${feedbackContext}`;
               
               aiContent.push(
                 { type: 'text', text: verificationPrompt },
@@ -266,10 +291,10 @@ serve(async (req) => {
                 }
               );
             } else {
-              // No reference - use generic check
+              // No reference - use generic check with feedback context
               verificationPrompt = entity.type === 'person' 
-                ? `Is this a professional photo of a real person (headshot, portrait, or profile photo)? Answer YES if it shows a clear photo of a person's face. Answer NO if it's a logo, illustration, group photo, stock image, or unrelated content.`
-                : `Is this a professional photo or logo of an organization/company? Answer YES if it's a clear organizational image. Answer NO if it's unrelated, stock, or illustration.`;
+                ? `Is this a professional photo of a real person (headshot, portrait, or profile photo)? Answer YES if it shows a clear photo of a person's face. Answer NO if it's a logo, illustration, group photo, stock image, or unrelated content.${feedbackContext}`
+                : `Is this a professional photo or logo of an organization/company? Answer YES if it's a clear organizational image. Answer NO if it's unrelated, stock, or illustration.${feedbackContext}`;
               
               aiContent.push(
                 { type: 'text', text: verificationPrompt },
