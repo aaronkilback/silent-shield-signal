@@ -564,7 +564,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                             {rel.description && ` - ${rel.description}`}
                           </p>
                           <div className="flex gap-4 mt-2 text-xs text-muted-foreground">
-                            <span>Strength: {rel.strength || 'Unknown'}</span>
+                            <span>Strength: {rel.strength ? `${(rel.strength * 100).toFixed(0)}%` : 'Unknown'}</span>
                             <span>Occurrences: {rel.occurrence_count || 1}</span>
                           </div>
                         </div>

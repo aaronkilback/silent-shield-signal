@@ -37,11 +37,11 @@ const RELATIONSHIP_TYPES = [
 ];
 
 const STRENGTH_LEVELS = [
-  { value: '1', label: 'Weak' },
-  { value: '3', label: 'Moderate' },
-  { value: '5', label: 'Strong' },
-  { value: '7', label: 'Very Strong' },
-  { value: '10', label: 'Critical' }
+  { value: '0.2', label: 'Weak' },
+  { value: '0.4', label: 'Moderate' },
+  { value: '0.6', label: 'Strong' },
+  { value: '0.8', label: 'Very Strong' },
+  { value: '1.0', label: 'Critical' }
 ];
 
 export const CreateRelationshipDialog = ({ 
@@ -56,7 +56,7 @@ export const CreateRelationshipDialog = ({
     targetEntityId: '',
     relationshipType: 'associated_with',
     description: '',
-    strength: '5'
+    strength: '0.6'
   });
 
   const { data: entities = [] } = useQuery({
@@ -97,7 +97,7 @@ export const CreateRelationshipDialog = ({
         targetEntityId: '',
         relationshipType: 'associated_with',
         description: '',
-        strength: '5'
+        strength: '0.6'
       });
     },
     onError: (error: any) => {
