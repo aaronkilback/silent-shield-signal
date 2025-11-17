@@ -32,201 +32,158 @@ serve(async (req) => {
 
     console.log(`Scanning for photos of: ${entity.name} (${entity.type})`);
 
-    // Build more specific search query based on entity type and attributes
+    // Build search query
     let searchQuery = `"${entity.name}"`;
     
     if (entity.type === 'person') {
-      // For people, add professional/official context
-      searchQuery += ' professional photo OR headshot OR portrait';
-      
-      // Add company/organization if available in attributes
+      searchQuery += ' professional photo OR headshot OR portrait OR board director';
       if (entity.attributes && entity.attributes.company) {
         searchQuery += ` "${entity.attributes.company}"`;
       }
-      
-      // Add title/position if available
-      if (entity.attributes && entity.attributes.title) {
-        searchQuery += ` "${entity.attributes.title}"`;
-      }
     } else if (entity.type === 'organization') {
-      searchQuery += ' official logo OR headquarters OR building';
-    } else if (entity.type === 'location') {
-      searchQuery += ' official photo OR landmark';
-    } else if (entity.type === 'infrastructure') {
-      searchQuery += ' facility photo';
+      searchQuery += ' official logo OR headquarters';
     }
 
-    // Add most relevant alias if available (only first one for precision)
     if (entity.aliases && entity.aliases.length > 0) {
       searchQuery += ` OR "${entity.aliases[0]}"`;
     }
     
-    // Exclude common wrong results
-    searchQuery += ' -stock -clipart -illustration -cartoon -drawing';
+    searchQuery += ' -stock -clipart -illustration';
 
-    console.log(`Enhanced search query: ${searchQuery}`);
+    console.log(`Search query: ${searchQuery}`);
 
-    // Use Google Custom Search API to find images
     const GOOGLE_API_KEY = Deno.env.get('GOOGLE_SEARCH_API_KEY');
     const GOOGLE_CX = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
-    
-    console.log('API Key exists:', !!GOOGLE_API_KEY);
-    console.log('Search Engine ID:', GOOGLE_CX);
     
     if (!GOOGLE_API_KEY || !GOOGLE_CX) {
       throw new Error('Google Search API credentials not configured');
     }
+
+    // Collect all image URLs
+    const imageUrls: Array<{url: string, source: string, title: string}> = [];
+
+    // STEP 1: Search web pages and extract images
+    const webSearchUrl = new URL('https://www.googleapis.com/customsearch/v1');
+    webSearchUrl.searchParams.set('key', GOOGLE_API_KEY);
+    webSearchUrl.searchParams.set('cx', GOOGLE_CX);
+    webSearchUrl.searchParams.set('q', searchQuery);
+    webSearchUrl.searchParams.set('num', '10');
+
+    console.log('Searching web pages...');
+    const webResponse = await fetch(webSearchUrl.toString());
     
-    // Verify credentials format
-    if (GOOGLE_CX.length < 10) {
-      throw new Error(`Invalid Search Engine ID format: ${GOOGLE_CX}`);
-    }
-
-    const searchUrl = new URL('https://www.googleapis.com/customsearch/v1');
-    searchUrl.searchParams.set('key', GOOGLE_API_KEY);
-    searchUrl.searchParams.set('cx', GOOGLE_CX);
-    searchUrl.searchParams.set('q', searchQuery);
-    searchUrl.searchParams.set('searchType', 'image');
-    searchUrl.searchParams.set('num', '10'); // Increased from 3 to 10
-    searchUrl.searchParams.set('safe', 'off'); // Turn off safe search for more results
-    searchUrl.searchParams.set('imgType', 'photo'); // Focus on actual photos
-    searchUrl.searchParams.set('imgSize', 'large'); // Prefer larger, higher quality images
-
-    console.log(`Searching Google Images for: ${searchQuery}`);
-    console.log(`Search parameters:`, {
-      cx: GOOGLE_CX,
-      q: searchQuery,
-      searchType: 'image',
-      num: 3
-    });
-
-    const searchResponse = await fetch(searchUrl.toString());
-
-    console.log('Response status:', searchResponse.status);
-    console.log('Response headers:', Object.fromEntries(searchResponse.headers.entries()));
-
-    if (!searchResponse.ok) {
-      const errorText = await searchResponse.text();
-      console.error('Google Search API full error:', errorText);
+    if (webResponse.ok) {
+      const webData = await webResponse.json();
+      console.log(`Found ${webData.items?.length || 0} web pages`);
       
-      let errorDetail = errorText;
-      try {
-        const errorJson = JSON.parse(errorText);
-        errorDetail = JSON.stringify(errorJson, null, 2);
-        console.error('Parsed error:', errorJson);
-      } catch (e) {
-        console.error('Could not parse error as JSON');
+      for (const page of webData.items || []) {
+        if (page.pagemap?.cse_image) {
+          for (const img of page.pagemap.cse_image) {
+            if (img.src) {
+              imageUrls.push({
+                url: img.src,
+                source: page.displayLink,
+                title: page.title
+              });
+            }
+          }
+        }
+        if (page.pagemap?.metatags) {
+          for (const meta of page.pagemap.metatags) {
+            if (meta['og:image']) {
+              imageUrls.push({
+                url: meta['og:image'],
+                source: page.displayLink,
+                title: page.title
+              });
+            }
+          }
+        }
       }
-      
-      throw new Error(`Google Search API returned ${searchResponse.status}: ${errorDetail}`);
     }
 
-    const searchData = await searchResponse.json();
-    console.log('Search response keys:', Object.keys(searchData));
-    console.log(`Found ${searchData.items?.length || 0} potential images`);
+    // STEP 2: Direct image search
+    const imgSearchUrl = new URL('https://www.googleapis.com/customsearch/v1');
+    imgSearchUrl.searchParams.set('key', GOOGLE_API_KEY);
+    imgSearchUrl.searchParams.set('cx', GOOGLE_CX);
+    imgSearchUrl.searchParams.set('q', searchQuery);
+    imgSearchUrl.searchParams.set('searchType', 'image');
+    imgSearchUrl.searchParams.set('num', '10');
+    imgSearchUrl.searchParams.set('safe', 'off');
+    imgSearchUrl.searchParams.set('imgType', 'photo');
+
+    console.log('Searching direct images...');
+    const imgResponse = await fetch(imgSearchUrl.toString());
     
-    if (searchData.error) {
-      console.error('API returned error in response:', searchData.error);
-      throw new Error(`Google Search API error: ${JSON.stringify(searchData.error)}`);
+    if (imgResponse.ok) {
+      const imgData = await imgResponse.json();
+      console.log(`Found ${imgData.items?.length || 0} direct images`);
+      
+      for (const item of imgData.items || []) {
+        imageUrls.push({
+          url: item.link,
+          source: new URL(item.link).hostname,
+          title: item.title || ''
+        });
+      }
     }
+
+    console.log(`Total images to process: ${imageUrls.length}`);
+
+    // Blocked domains
+    const blockedDomains = [
+      'linkedin.com', 'facebook.com', 'instagram.com', 'twitter.com',
+      'pinterest.com', 'gettyimages.com', 'shutterstock.com', 'istockphoto.com'
+    ];
 
     let photosAdded = 0;
     const errors = [];
-    
-    // Skip images from problematic domains that require authentication or block downloads
-    const blockedDomains = [
-      'linkedin.com',
-      'facebook.com', 
-      'fb.com',
-      'instagram.com',
-      'twitter.com',
-      'x.com',
-      'resourceworks.com',
-      'pinterest.com',
-      'gettyimages.com',
-      'shutterstock.com',
-      'istockphoto.com',
-      'dreamstime.com',
-      'alamy.com',
-      '123rf.com' // Block stock photo sites
-    ];
-    
-    // Prefer these reliable sources
-    const preferredDomains = [
-      'wikipedia.org',
-      'wikimedia.org',
-      'linkedin.com', // Paradox: blocked from download but good for verification
-      'news',
-      'gov',
-      'edu',
-      'org'
-    ];
 
-    // Download and store each image
-    for (const item of searchData.items || []) {
+    // Process each image
+    for (const item of imageUrls) {
       try {
-        // Check if image is from a blocked domain
-        const imageUrl = new URL(item.link);
-        const isBlocked = blockedDomains.some(domain => 
-          imageUrl.hostname.includes(domain)
-        );
+        const imageUrl = new URL(item.url);
+        const isBlocked = blockedDomains.some(d => imageUrl.hostname.includes(d));
         
         if (isBlocked) {
-          console.log(`Skipping blocked domain: ${imageUrl.hostname}`);
-          errors.push(`Skipped ${item.link}: Source requires authentication or is stock photo`);
+          console.log(`Skipped blocked domain: ${imageUrl.hostname}`);
           continue;
         }
         
-        // Check if image URL or title contains entity name for relevance
-        const titleLower = (item.title || '').toLowerCase();
-        const nameLower = entity.name.toLowerCase();
-        const isRelevant = titleLower.includes(nameLower) || item.link.toLowerCase().includes(nameLower);
+        console.log(`Processing: ${item.url}`);
         
-        if (!isRelevant) {
-          console.log(`Skipping irrelevant image: ${item.title}`);
-          errors.push(`Skipped ${item.link}: Not relevant to entity`);
-          continue;
-        }
-        
-        console.log(`Downloading image from: ${item.link}`);
-        
-        // Download the image
-        const imageResponse = await fetch(item.link, {
+        const imageResponse = await fetch(item.url, {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; FortressAI/1.0; +https://fortressai.com)'
+            'User-Agent': 'Mozilla/5.0 (compatible; FortressAI/1.0)'
           },
           redirect: 'follow'
         });
 
         if (!imageResponse.ok) {
-          throw new Error(`Failed to download image: ${imageResponse.statusText}`);
+          console.log(`Failed to download: ${imageResponse.statusText}`);
+          continue;
         }
 
         const imageBlob = await imageResponse.blob();
         const imageBuffer = await imageBlob.arrayBuffer();
         
-        // Skip images that are too small (likely blank/placeholder)
         if (imageBuffer.byteLength < 1000) {
-          console.log(`Skipping tiny image (${imageBuffer.byteLength} bytes): ${item.link}`);
-          errors.push(`Skipped ${item.link}: Image too small (likely blank)`);
+          console.log(`Image too small: ${imageBuffer.byteLength} bytes`);
           continue;
         }
         
-        console.log(`Downloaded image: ${imageBuffer.byteLength} bytes`);
+        console.log(`Downloaded: ${imageBuffer.byteLength} bytes`);
         
-        // Use AI to verify the image actually shows the entity
+        // AI verification
         const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
         if (LOVABLE_API_KEY) {
           try {
-            // Convert image to base64
             const base64Image = btoa(
               new Uint8Array(imageBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
             );
             
-            // Get the image content type
             const mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
             
-            // Ask AI to verify if this image shows the entity
             const verifyResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
               method: 'POST',
               headers: {
@@ -241,7 +198,7 @@ serve(async (req) => {
                     content: [
                       {
                         type: 'text',
-                        text: `Does this image show "${entity.name}" (${entity.type})? Answer with just YES or NO. Only say YES if you can clearly identify ${entity.name} in the image. If it's a generic stock photo, logo, or unrelated image, say NO.`
+                        text: `Does this image clearly show "${entity.name}"? Answer only YES or NO. Only say YES if you can identify ${entity.name}. If it's generic, stock photo, or wrong person, say NO.`
                       },
                       {
                         type: 'image_url',
@@ -260,30 +217,24 @@ serve(async (req) => {
               const verifyData = await verifyResponse.json();
               const aiAnswer = verifyData.choices[0]?.message?.content?.trim().toUpperCase();
               
-              console.log(`AI verification for ${item.link}: ${aiAnswer}`);
+              console.log(`AI verification: ${aiAnswer}`);
               
               if (aiAnswer !== 'YES') {
-                console.log(`AI rejected image: ${item.link}`);
-                errors.push(`Skipped ${item.link}: AI verification failed - image doesn't show ${entity.name}`);
+                console.log(`AI rejected - not ${entity.name}`);
+                errors.push(`AI rejected ${item.url}`);
                 continue;
               }
-            } else {
-              console.log(`AI verification failed (status ${verifyResponse.status}), proceeding without verification`);
             }
           } catch (aiError) {
             console.error('AI verification error:', aiError);
-            // Continue without AI verification if it fails
           }
         }
         
-        // Determine file extension from content type
+        // Save image
         const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
         const ext = contentType.split('/')[1]?.split(';')[0] || 'jpg';
-        
-        // Generate unique filename
         const fileName = `${entityId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
 
-        // Upload to storage
         const { error: uploadError } = await supabaseClient.storage
           .from('entity-photos')
           .upload(fileName, imageBuffer, {
@@ -292,37 +243,33 @@ serve(async (req) => {
           });
 
         if (uploadError) {
-          console.error('Storage upload error:', uploadError);
-          errors.push(`Upload failed for ${item.link}: ${uploadError.message}`);
+          console.error('Upload error:', uploadError);
           continue;
         }
 
-        // Create database record
         const { error: dbError } = await supabaseClient
           .from('entity_photos')
           .insert({
             entity_id: entityId,
             storage_path: fileName,
             caption: item.title || null,
-            source: item.displayLink || 'Google Image Search',
-            created_by: null // System-generated
+            source: item.source,
+            created_by: null
           });
 
         if (dbError) {
-          console.error('Database insert error:', dbError);
-          errors.push(`Database insert failed: ${dbError.message}`);
-          // Clean up uploaded file
+          console.error('DB error:', dbError);
           await supabaseClient.storage.from('entity-photos').remove([fileName]);
           continue;
         }
 
         photosAdded++;
-        console.log(`Successfully added photo: ${fileName}`);
+        console.log(`Successfully added photo ${photosAdded}`);
 
       } catch (error) {
-        console.error(`Error processing image ${item.link}:`, error);
+        console.error(`Error processing ${item.url}:`, error);
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        errors.push(`Failed to process ${item.link}: ${errorMsg}`);
+        errors.push(`Failed: ${errorMsg}`);
       }
     }
 
@@ -332,8 +279,8 @@ serve(async (req) => {
       JSON.stringify({
         success: true,
         photosAdded,
-        errors: errors.length > 0 ? errors : undefined,
-        message: `Successfully added ${photosAdded} photos to ${entity.name}`
+        errors: errors.length > 0 ? errors.slice(0, 5) : undefined,
+        message: `Successfully added ${photosAdded} photos for ${entity.name}`
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
