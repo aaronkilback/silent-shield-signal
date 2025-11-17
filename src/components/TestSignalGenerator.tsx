@@ -107,55 +107,54 @@ export const TestSignalGenerator = () => {
 
       const signalsToCreate = parseInt(count);
       const scenarios = TEST_SCENARIOS[severity as keyof typeof TEST_SCENARIOS];
-      const signals = [];
+      let successCount = 0;
+      let errorCount = 0;
 
+      // Process signals one at a time through the proper ingestion pipeline
       for (let i = 0; i < signalsToCreate; i++) {
         const scenario = scenarios[Math.floor(Math.random() * scenarios.length)];
         const client = clients[Math.floor(Math.random() * clients.length)];
         
-        const confidenceMap = {
-          critical: 0.9 + Math.random() * 0.1,
-          high: 0.75 + Math.random() * 0.15,
-          medium: 0.55 + Math.random() * 0.2,
-          low: 0.3 + Math.random() * 0.3
-        };
+        try {
+          // Call ingest-signal function which handles:
+          // - Rule-based incident creation for critical/high signals
+          // - Adding to processing queue
+          // - Entity detection
+          const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
+            body: {
+              text: scenario.text,
+              location: scenario.location,
+              raw_json: {
+                scenario: scenario,
+                test_signal: true,
+                generated_at: new Date().toISOString(),
+                client_id: client.id,
+                severity: severity,
+                category: scenario.category
+              }
+            }
+          });
 
-        signals.push({
-          client_id: client.id,
-          category: scenario.category,
-          severity: severity,
-          normalized_text: scenario.text,
-          location: scenario.location,
-          confidence: confidenceMap[severity as keyof typeof confidenceMap],
-          entity_tags: [client.name, client.industry, severity],
-          status: 'new',
-          raw_json: {
-            source: 'test-generator',
-            timestamp: new Date().toISOString(),
-            scenario_type: scenario.category,
-            test_data: true
+          if (ingestError) {
+            console.error('Error ingesting signal:', ingestError);
+            errorCount++;
+          } else {
+            successCount++;
           }
-        });
+        } catch (error) {
+          console.error('Error creating test signal:', error);
+          errorCount++;
+        }
       }
 
-      const { error: insertError } = await supabase
-        .from("signals")
-        .insert(signals);
-
-      if (insertError) throw insertError;
-
-      toast({
-        title: "Test signals created",
-        description: `Generated ${signalsToCreate} ${severity} severity signal(s) for testing.`,
-      });
-
-      // Optionally trigger processing
-      setTimeout(() => {
+      if (successCount > 0) {
         toast({
-          title: "Tip",
-          description: "Click 'Trigger Manual Scan' to process these signals now.",
+          title: "Test signals created",
+          description: `Successfully generated ${successCount} ${severity} severity signal(s). ${errorCount > 0 ? `${errorCount} failed.` : 'Processing automatically...'}`,
         });
-      }, 2000);
+      } else {
+        throw new Error('All signals failed to create');
+      }
 
     } catch (error) {
       console.error('Error generating test signals:', error);
@@ -240,6 +239,12 @@ export const TestSignalGenerator = () => {
             </>
           )}
         </Button>
+
+        <div className="text-xs text-muted-foreground space-y-1">
+          <p>• Critical/High signals may auto-create incidents based on keywords</p>
+          <p>• Signals are automatically added to the processing queue</p>
+          <p>• The auto-orchestrator will process them in batches</p>
+        </div>
       </CardContent>
     </Card>
   );
