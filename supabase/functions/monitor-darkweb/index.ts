@@ -17,12 +17,21 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  );
 
+  const { data: historyEntry } = await supabase
+    .from('monitoring_history')
+    .insert({
+      source_name: 'Dark Web Monitoring',
+      status: 'running'
+    })
+    .select()
+    .single();
+
+  try {
     console.log('Starting dark web monitoring scan...');
 
     const { data: clients, error: clientsError } = await supabase
@@ -104,6 +113,18 @@ serve(async (req) => {
 
     console.log(`Dark web monitoring complete. Created ${signalsCreated} signals.`);
 
+    if (historyEntry) {
+      await supabase
+        .from('monitoring_history')
+        .update({
+          status: 'completed',
+          scan_completed_at: new Date().toISOString(),
+          items_scanned: clients?.length || 0,
+          signals_created: signalsCreated
+        })
+        .eq('id', historyEntry.id);
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -116,6 +137,18 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('Error in dark web monitoring:', error);
+    
+    if (historyEntry) {
+      await supabase
+        .from('monitoring_history')
+        .update({
+          status: 'failed',
+          scan_completed_at: new Date().toISOString(),
+          error_message: error instanceof Error ? error.message : 'Unknown error'
+        })
+        .eq('id', historyEntry.id);
+    }
+
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
