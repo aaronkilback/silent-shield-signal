@@ -38,8 +38,22 @@ export default function Entities() {
   // Note: Entities are global - not filtered by client as they can be referenced across multiple clients
 
   const { data: entities = [], refetch } = useQuery({
-    queryKey: ['entities', searchTerm, selectedType],
+    queryKey: ['entities', searchTerm, selectedType, selectedClientId],
     queryFn: async () => {
+      if (!selectedClientId) return [];
+
+      // Get entity IDs that have mentions in signals for this client
+      const { data: mentionedEntityIds } = await supabase
+        .from('entity_mentions')
+        .select('entity_id, signals!inner(client_id)')
+        .eq('signals.client_id', selectedClientId);
+
+      if (!mentionedEntityIds || mentionedEntityIds.length === 0) {
+        return [];
+      }
+
+      const entityIds = [...new Set(mentionedEntityIds.map(m => m.entity_id))];
+
       let query = supabase
         .from('entities')
         .select(`
@@ -47,6 +61,7 @@ export default function Entities() {
           entity_mentions(count),
           created_by_profile:profiles!entities_created_by_fkey(name)
         `)
+        .in('id', entityIds)
         .eq('is_active', true)
         .order('created_at', { ascending: false });
 
@@ -233,7 +248,7 @@ export default function Entities() {
           <div>
             <h1 className="text-3xl font-bold">Entity Tracking</h1>
             <p className="text-muted-foreground">
-              Track persons, organizations, and indicators across signals (global across all clients)
+              Entities mentioned in {selectedClientId ? 'selected client' : 'all'} signals
             </p>
           </div>
           <div className="flex gap-2">
