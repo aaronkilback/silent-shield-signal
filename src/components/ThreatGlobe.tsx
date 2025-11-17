@@ -193,18 +193,60 @@ export const ThreatGlobe = () => {
   };
 
   const parseLocationCoords = (location: string): { lat: number; lng: number } | null => {
-    // Simple geocoding fallback for common locations
+    // Comprehensive geocoding map for common locations
     const geoMap: Record<string, { lat: number; lng: number }> = {
+      // North America
+      "calgary": { lat: 51.0447, lng: -114.0719 },
+      "alberta": { lat: 53.9333, lng: -116.5765 },
+      "vancouver": { lat: 49.2827, lng: -123.1207 },
+      "toronto": { lat: 43.6532, lng: -79.3832 },
+      "montreal": { lat: 45.5017, lng: -73.5673 },
+      "ottawa": { lat: 45.4215, lng: -75.6972 },
+      "san francisco": { lat: 37.7749, lng: -122.4194 },
+      "los angeles": { lat: 34.0522, lng: -118.2437 },
+      "new york": { lat: 40.7128, lng: -74.0060 },
+      "chicago": { lat: 41.8781, lng: -87.6298 },
+      "austin": { lat: 30.2672, lng: -97.7431 },
+      "seattle": { lat: 47.6062, lng: -122.3321 },
+      "boston": { lat: 42.3601, lng: -71.0589 },
+      "miami": { lat: 25.7617, lng: -80.1918 },
+      "dallas": { lat: 32.7767, lng: -96.7970 },
+      "texas": { lat: 31.9686, lng: -99.9018 },
+      "california": { lat: 36.7783, lng: -119.4179 },
+      "canada": { lat: 56.1304, lng: -106.3468 },
+      "usa": { lat: 37.0902, lng: -95.7129 },
+      
+      // Asia Pacific
       "kuala lumpur": { lat: 3.1390, lng: 101.6869 },
       "malaysia": { lat: 4.2105, lng: 101.9758 },
       "singapore": { lat: 1.3521, lng: 103.8198 },
       "petaling jaya": { lat: 3.1073, lng: 101.6067 },
-      "austin": { lat: 30.2672, lng: -97.7431 },
-      "texas": { lat: 31.9686, lng: -99.9018 },
-      "usa": { lat: 37.0902, lng: -95.7129 },
-      "new york": { lat: 40.7128, lng: -74.0060 },
-      "london": { lat: 51.5074, lng: -0.1278 },
       "tokyo": { lat: 35.6762, lng: 139.6503 },
+      "hong kong": { lat: 22.3193, lng: 114.1694 },
+      "shanghai": { lat: 31.2304, lng: 121.4737 },
+      "beijing": { lat: 39.9042, lng: 116.4074 },
+      "sydney": { lat: -33.8688, lng: 151.2093 },
+      "melbourne": { lat: -37.8136, lng: 144.9631 },
+      "bangkok": { lat: 13.7563, lng: 100.5018 },
+      "manila": { lat: 14.5995, lng: 120.9842 },
+      
+      // Europe
+      "london": { lat: 51.5074, lng: -0.1278 },
+      "paris": { lat: 48.8566, lng: 2.3522 },
+      "berlin": { lat: 52.5200, lng: 13.4050 },
+      "amsterdam": { lat: 52.3676, lng: 4.9041 },
+      "dublin": { lat: 53.3498, lng: -6.2603 },
+      "madrid": { lat: 40.4168, lng: -3.7038 },
+      "rome": { lat: 41.9028, lng: 12.4964 },
+      "zurich": { lat: 47.3769, lng: 8.5417 },
+      
+      // Middle East
+      "dubai": { lat: 25.2048, lng: 55.2708 },
+      "abu dhabi": { lat: 24.4539, lng: 54.3773 },
+      
+      // South America
+      "sao paulo": { lat: -23.5505, lng: -46.6333 },
+      "buenos aires": { lat: -34.6037, lng: -58.3816 },
     };
 
     const normalized = location.toLowerCase().trim();
@@ -216,6 +258,8 @@ export const ThreatGlobe = () => {
       }
     }
 
+    // If no match found, log for debugging
+    console.log(`No coordinates found for location: "${location}"`);
     return null;
   };
 
