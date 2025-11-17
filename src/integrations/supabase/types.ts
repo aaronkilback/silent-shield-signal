@@ -252,6 +252,9 @@ export type Database = {
           created_by: string | null
           entity_id: string
           excerpt: string | null
+          feedback_at: string | null
+          feedback_by: string | null
+          feedback_rating: number | null
           id: string
           metadata: Json | null
           published_date: string | null
@@ -270,6 +273,9 @@ export type Database = {
           created_by?: string | null
           entity_id: string
           excerpt?: string | null
+          feedback_at?: string | null
+          feedback_by?: string | null
+          feedback_rating?: number | null
           id?: string
           metadata?: Json | null
           published_date?: string | null
@@ -288,6 +294,9 @@ export type Database = {
           created_by?: string | null
           entity_id?: string
           excerpt?: string | null
+          feedback_at?: string | null
+          feedback_by?: string | null
+          feedback_rating?: number | null
           id?: string
           metadata?: Json | null
           published_date?: string | null
@@ -311,6 +320,13 @@ export type Database = {
             columns: ["entity_id"]
             isOneToOne: false
             referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entity_content_feedback_by_fkey"
+            columns: ["feedback_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -425,6 +441,9 @@ export type Database = {
           created_at: string
           created_by: string | null
           entity_id: string
+          feedback_at: string | null
+          feedback_by: string | null
+          feedback_rating: number | null
           id: string
           source: string | null
           storage_path: string
@@ -435,6 +454,9 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           entity_id: string
+          feedback_at?: string | null
+          feedback_by?: string | null
+          feedback_rating?: number | null
           id?: string
           source?: string | null
           storage_path: string
@@ -445,6 +467,9 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           entity_id?: string
+          feedback_at?: string | null
+          feedback_by?: string | null
+          feedback_rating?: number | null
           id?: string
           source?: string | null
           storage_path?: string
@@ -458,6 +483,13 @@ export type Database = {
             referencedRelation: "entities"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "entity_photos_feedback_by_fkey"
+            columns: ["feedback_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       entity_relationships: {
@@ -466,6 +498,9 @@ export type Database = {
           description: string | null
           entity_a_id: string
           entity_b_id: string
+          feedback_at: string | null
+          feedback_by: string | null
+          feedback_rating: number | null
           first_observed: string
           id: string
           last_observed: string
@@ -479,6 +514,9 @@ export type Database = {
           description?: string | null
           entity_a_id: string
           entity_b_id: string
+          feedback_at?: string | null
+          feedback_by?: string | null
+          feedback_rating?: number | null
           first_observed?: string
           id?: string
           last_observed?: string
@@ -492,6 +530,9 @@ export type Database = {
           description?: string | null
           entity_a_id?: string
           entity_b_id?: string
+          feedback_at?: string | null
+          feedback_by?: string | null
+          feedback_rating?: number | null
           first_observed?: string
           id?: string
           last_observed?: string
@@ -513,6 +554,13 @@ export type Database = {
             columns: ["entity_b_id"]
             isOneToOne: false
             referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entity_relationships_feedback_by_fkey"
+            columns: ["feedback_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]

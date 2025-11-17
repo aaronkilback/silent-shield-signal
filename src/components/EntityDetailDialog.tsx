@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus, Brain, Search, Trash2 } from "lucide-react";
+import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus, Brain, Search, Trash2, ThumbsUp, ThumbsDown } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
 import { CreateRelationshipDialog } from "./CreateRelationshipDialog";
@@ -462,6 +462,99 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     }
   };
 
+  const handlePhotoFeedback = async (photoId: string, rating: number) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { error } = await supabase
+        .from('entity_photos')
+        .update({
+          feedback_rating: rating,
+          feedback_at: new Date().toISOString(),
+          feedback_by: user.id
+        })
+        .eq('id', photoId);
+
+      if (error) throw error;
+
+      toast({ 
+        title: "Feedback Recorded",
+        description: rating === 1 ? "Photo marked as good" : "Photo marked for review"
+      });
+      queryClient.invalidateQueries({ queryKey: ['entity-photos', entityId] });
+    } catch (error: any) {
+      console.error('Error recording feedback:', error);
+      toast({ 
+        title: "Feedback Failed", 
+        description: error.message,
+        variant: "destructive" 
+      });
+    }
+  };
+
+  const handleContentFeedback = async (contentId: string, rating: number) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { error } = await supabase
+        .from('entity_content')
+        .update({
+          feedback_rating: rating,
+          feedback_at: new Date().toISOString(),
+          feedback_by: user.id
+        })
+        .eq('id', contentId);
+
+      if (error) throw error;
+
+      toast({ 
+        title: "Feedback Recorded",
+        description: rating === 1 ? "Content marked as relevant" : "Content marked as not relevant"
+      });
+      queryClient.invalidateQueries({ queryKey: ['entity-content', entityId] });
+    } catch (error: any) {
+      console.error('Error recording feedback:', error);
+      toast({ 
+        title: "Feedback Failed", 
+        description: error.message,
+        variant: "destructive" 
+      });
+    }
+  };
+
+  const handleRelationshipFeedback = async (relationshipId: string, rating: number) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      const { error } = await supabase
+        .from('entity_relationships')
+        .update({
+          feedback_rating: rating,
+          feedback_at: new Date().toISOString(),
+          feedback_by: user.id
+        })
+        .eq('id', relationshipId);
+
+      if (error) throw error;
+
+      toast({ 
+        title: "Feedback Recorded",
+        description: rating === 1 ? "Relationship confirmed" : "Relationship marked for review"
+      });
+      queryClient.invalidateQueries({ queryKey: ['entity-relationships', entityId] });
+    } catch (error: any) {
+      console.error('Error recording feedback:', error);
+      toast({ 
+        title: "Feedback Failed", 
+        description: error.message,
+        variant: "destructive" 
+      });
+    }
+  };
+
   if (!entity) return null;
 
   return (
@@ -904,17 +997,41 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                         alt={photo.caption || 'Entity photo'}
                         className="w-full h-40 object-cover"
                       />
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeletePhoto(photo.id, photo.storage_path);
-                        }}
-                      >
-                        <X className="w-4 h-4" />
-                      </Button>
+                      <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button
+                          variant={photo.feedback_rating === 1 ? "default" : "secondary"}
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePhotoFeedback(photo.id, 1);
+                          }}
+                        >
+                          <ThumbsUp className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant={photo.feedback_rating === -1 ? "destructive" : "secondary"}
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePhotoFeedback(photo.id, -1);
+                          }}
+                        >
+                          <ThumbsDown className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeletePhoto(photo.id, photo.storage_path);
+                          }}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
                       {photo.source && (
                         <Badge className="absolute bottom-2 left-2" variant="secondary">
                           {photo.source}
@@ -1001,6 +1118,20 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                       </div>
                       <div className="flex gap-1">
                         <Button
+                          variant={item.feedback_rating === 1 ? "default" : "ghost"}
+                          size="icon"
+                          onClick={() => handleContentFeedback(item.id, 1)}
+                        >
+                          <ThumbsUp className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant={item.feedback_rating === -1 ? "destructive" : "ghost"}
+                          size="icon"
+                          onClick={() => handleContentFeedback(item.id, -1)}
+                        >
+                          <ThumbsDown className="w-4 h-4" />
+                        </Button>
+                        <Button
                           variant="ghost"
                           size="icon"
                           onClick={() => window.open(item.url, '_blank')}
@@ -1081,17 +1212,33 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                           </p>
                           <div className="flex gap-4 mt-2 text-xs text-muted-foreground">
                             <span>Strength: {rel.strength ? `${(rel.strength * 100).toFixed(0)}%` : 'Unknown'}</span>
-                            <span>Occurrences: {rel.occurrence_count || 1}</span>
+                          <span>Occurrences: {rel.occurrence_count || 1}</span>
                           </div>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleDeleteRelationship(rel.id)}
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        <div className="flex gap-1">
+                          <Button
+                            variant={rel.feedback_rating === 1 ? "default" : "ghost"}
+                            size="icon"
+                            onClick={() => handleRelationshipFeedback(rel.id, 1)}
+                          >
+                            <ThumbsUp className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant={rel.feedback_rating === -1 ? "destructive" : "ghost"}
+                            size="icon"
+                            onClick={() => handleRelationshipFeedback(rel.id, -1)}
+                          >
+                            <ThumbsDown className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDeleteRelationship(rel.id)}
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </div>
                     </Card>
                   );
