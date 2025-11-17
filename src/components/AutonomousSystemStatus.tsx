@@ -15,14 +15,33 @@ export default function AutonomousSystemStatus() {
   const [loading, setLoading] = useState(true);
   const [autoMode, setAutoMode] = useState(true);
   const [osintDialogOpen, setOsintDialogOpen] = useState(false);
+  const [sources, setSources] = useState<any[]>([]);
 
   useEffect(() => {
     loadMetrics();
+    loadSources();
     
     // Refresh metrics every 30 seconds
-    const interval = setInterval(loadMetrics, 30000);
+    const interval = setInterval(() => {
+      loadMetrics();
+      loadSources();
+    }, 30000);
     return () => clearInterval(interval);
   }, [selectedClientId]);
+
+  const loadSources = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('sources')
+        .select('id');
+      
+      if (!error && data) {
+        setSources(data);
+      }
+    } catch (error) {
+      console.error('Error loading sources:', error);
+    }
+  };
 
   const loadMetrics = async () => {
     try {
@@ -294,7 +313,7 @@ export default function AutonomousSystemStatus() {
             <div className="flex items-center justify-between">
               <span className="text-2xl font-bold">{metrics?.osint_scans_completed || 0}</span>
               <Badge variant="default" className="bg-purple-500">
-                30+ sources
+                {sources?.length || 0} sources
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
