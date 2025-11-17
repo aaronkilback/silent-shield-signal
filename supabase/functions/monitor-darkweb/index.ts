@@ -120,7 +120,12 @@ serve(async (req) => {
           status: 'completed',
           scan_completed_at: new Date().toISOString(),
           items_scanned: clients?.length || 0,
-          signals_created: signalsCreated
+          signals_created: signalsCreated,
+          scan_metadata: {
+            sources: ['Have I Been Pwned', 'Breach Databases'],
+            check_types: ['Data Breaches', 'Credential Leaks', 'Dark Web Mentions'],
+            clients_monitored: clients?.map(c => c.name) || []
+          }
         })
         .eq('id', historyEntry.id);
     }

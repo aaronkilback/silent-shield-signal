@@ -175,11 +175,34 @@ export function MonitoringHistory() {
                               </span>
                             )}
                           </p>
-                          {scan.scan_metadata && (
-                            <p className="text-xs">
-                              Sources: {(scan.scan_metadata as any).sources?.join(', ')}
-                            </p>
-                          )}
+                {scan.scan_metadata && (
+                  <div className="text-xs space-y-1">
+                    {(scan.scan_metadata as any).sources && (
+                      <p>
+                        <span className="font-medium">Sources:</span>{' '}
+                        {(scan.scan_metadata as any).sources.join(', ')}
+                      </p>
+                    )}
+                    {(scan.scan_metadata as any).platforms && (
+                      <p>
+                        <span className="font-medium">Platforms:</span>{' '}
+                        {(scan.scan_metadata as any).platforms.join(', ')}
+                      </p>
+                    )}
+                    {(scan.scan_metadata as any).check_types && (
+                      <p>
+                        <span className="font-medium">Checks:</span>{' '}
+                        {(scan.scan_metadata as any).check_types.join(', ')}
+                      </p>
+                    )}
+                    {(scan.scan_metadata as any).source_type && (
+                      <p>
+                        <span className="font-medium">Type:</span>{' '}
+                        {(scan.scan_metadata as any).source_type}
+                      </p>
+                    )}
+                  </div>
+                )}
                         </>
                       )}
                       {scan.status === 'failed' && scan.error_message && (
