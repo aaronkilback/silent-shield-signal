@@ -32,16 +32,22 @@ serve(async (req) => {
 
     console.log(`Scanning for photos of: ${entity.name} (${entity.type})`);
 
-    // Build search query based on entity type
+    // Build search query based on entity type with better context
+    let searchContext = '';
     let searchQuery = entity.name;
+    
     if (entity.type === 'person') {
-      searchQuery += ' person photo';
+      searchContext = 'official profile photos, press photos, or professional headshots from news sources, company websites, or official social media profiles';
+      searchQuery += ' official photo press headshot';
     } else if (entity.type === 'location') {
-      searchQuery += ' location place photo';
+      searchContext = 'landmark photos, official tourism photos, or geographic images from Wikimedia Commons or official sources';
+      searchQuery += ' official landmark photo';
     } else if (entity.type === 'organization') {
-      searchQuery += ' business location building photo';
+      searchContext = 'company logos, office buildings, or official corporate photos from press releases or company websites';
+      searchQuery += ' official logo building';
     } else if (entity.type === 'infrastructure') {
-      searchQuery += ' infrastructure facility photo';
+      searchContext = 'infrastructure photos from official government or company sources';
+      searchQuery += ' official facility photo';
     }
 
     // Use Perplexica or web search to find images
@@ -50,7 +56,9 @@ serve(async (req) => {
       throw new Error('LOVABLE_API_KEY not configured');
     }
 
-    // Search for images using AI
+    console.log(`Searching for ${searchContext}`);
+
+    // Search for images using AI with improved prompt
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -62,24 +70,40 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: `You are an OSINT photo research assistant. Search for publicly available, copyright-free images related to the given entity. Return a JSON array of image URLs with descriptions and sources. Only include images from reputable sources like Wikimedia Commons, government websites, or Creative Commons licensed sources.`
+            content: `You are an OSINT research assistant specializing in finding publicly available images for security analysis. 
+Focus ONLY on images that are:
+1. From official sources (company websites, press releases, government sites, news articles)
+2. Publicly accessible and intended for public distribution
+3. From reputable image repositories like Wikimedia Commons, Flickr Commons, or official media
+4. Professional or official in nature (no personal social media)
+
+For persons: Only search official professional profiles, press photos, company headshots, or public figure images from news sources.
+For organizations: Focus on logos, office buildings, official corporate imagery.
+For locations: Use official tourism photos, landmarks, geographic features.
+
+Return ONLY publicly distributed official images. Do not search personal social media or private photos.`
           },
           {
             role: 'user',
-            content: `Find 3-5 publicly available photos for: ${entity.name} (${entity.type}). 
+            content: `Find 3-5 ${searchContext} for: ${entity.name}
+Type: ${entity.type}
 Description: ${entity.description || 'No description available'}
 Aliases: ${entity.aliases?.join(', ') || 'None'}
+
+Search specifically for: ${searchQuery}
 
 Return JSON format:
 {
   "images": [
     {
-      "url": "https://...",
-      "description": "Brief description",
-      "source": "Source website"
+      "url": "https://example.com/image.jpg",
+      "description": "Official photo from [source]",
+      "source": "Source name (e.g., Company Website, Wikipedia, Reuters)"
     }
   ]
-}`
+}
+
+If you cannot find appropriate official/public images, return an empty array.`
           }
         ],
         temperature: 0.3,
