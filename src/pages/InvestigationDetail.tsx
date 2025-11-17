@@ -419,6 +419,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
     <div>
       <div class="header-item"><span class="header-label">PECL FSC File:</span> ${investigation.file_number}</div>
       <div class="header-item"><span class="header-label">Maximo #:</span> ${investigation.maximo_number || 'N/A'}</div>
+      <div class="header-item"><span class="header-label">Police File #:</span> ${investigation.police_file_number || 'N/A'}</div>
     </div>
     <div>
       <div class="header-item"><span class="header-label">Date:</span> ${currentDate}</div>
@@ -602,7 +603,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                   )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <div>
                     <Label>File Number</Label>
                     <Input 
@@ -615,6 +616,14 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     <Input 
                       value={investigation.maximo_number || ''}
                       onChange={(e) => updateInvestigation('maximo_number', e.target.value)}
+                      placeholder="Optional"
+                    />
+                  </div>
+                  <div>
+                    <Label>Police File Number</Label>
+                    <Input 
+                      value={investigation.police_file_number || ''}
+                      onChange={(e) => updateInvestigation('police_file_number', e.target.value)}
                       placeholder="Optional"
                     />
                   </div>
