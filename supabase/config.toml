@@ -92,3 +92,6 @@ verify_jwt = false
 
 [functions.monitor-entity-proximity]
 verify_jwt = false
+
+[functions.correlate-signals]
+verify_jwt = false

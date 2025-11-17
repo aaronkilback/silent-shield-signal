@@ -530,6 +530,23 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
       }
     }
 
+    // Trigger signal correlation (async, don't wait for it)
+    try {
+      console.log('Triggering signal correlation...');
+      supabase.functions.invoke('correlate-signals', {
+        body: { signal_id: signal.id }
+      }).then(({ data, error }) => {
+        if (error) {
+          console.error('Correlation error:', error);
+        } else {
+          console.log('Correlation result:', data);
+        }
+      });
+    } catch (error) {
+      console.error('Failed to trigger correlation:', error);
+      // Don't fail the main request if correlation fails
+    }
+
     // Enqueue signal for batch processing instead of immediate processing
     // This is more scalable and prevents memory issues
     try {

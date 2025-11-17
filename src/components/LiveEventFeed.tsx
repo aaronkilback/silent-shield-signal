@@ -1,6 +1,6 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { AlertTriangle, Shield, Activity, Zap } from "lucide-react";
+import { AlertTriangle, Shield, Activity, Zap, Link as LinkIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
@@ -18,6 +18,10 @@ interface Signal {
   entity_tags: string[] | null;
   raw_json: any;
   client_id: string | null;
+  correlation_group_id: string | null;
+  correlated_count: number | null;
+  correlation_confidence: number | null;
+  is_primary_signal: boolean | null;
 }
 
 const getSeverityColor = (severity: string | null) => {
@@ -172,6 +176,12 @@ export const LiveEventFeed = () => {
                     {signal.confidence !== null && (
                       <Badge variant="secondary" className="text-xs">
                         {Math.round(signal.confidence * 100)}% confidence
+                      </Badge>
+                    )}
+                    {signal.correlated_count > 1 && (
+                      <Badge variant="outline" className="text-xs bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800">
+                        <LinkIcon className="w-3 h-3 mr-1" />
+                        {signal.correlated_count} correlated
                       </Badge>
                     )}
                     <span className="text-xs text-muted-foreground font-mono ml-auto">

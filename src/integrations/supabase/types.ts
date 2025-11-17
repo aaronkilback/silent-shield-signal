@@ -1243,14 +1243,68 @@ export type Database = {
         }
         Relationships: []
       }
+      signal_correlation_groups: {
+        Row: {
+          avg_confidence: number | null
+          category: string | null
+          created_at: string
+          id: string
+          location: string | null
+          normalized_text: string | null
+          primary_signal_id: string
+          severity: string | null
+          signal_count: number | null
+          sources_json: Json | null
+          updated_at: string
+        }
+        Insert: {
+          avg_confidence?: number | null
+          category?: string | null
+          created_at?: string
+          id?: string
+          location?: string | null
+          normalized_text?: string | null
+          primary_signal_id: string
+          severity?: string | null
+          signal_count?: number | null
+          sources_json?: Json | null
+          updated_at?: string
+        }
+        Update: {
+          avg_confidence?: number | null
+          category?: string | null
+          created_at?: string
+          id?: string
+          location?: string | null
+          normalized_text?: string | null
+          primary_signal_id?: string
+          severity?: string | null
+          signal_count?: number | null
+          sources_json?: Json | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_correlation_groups_primary_signal_id_fkey"
+            columns: ["primary_signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       signals: {
         Row: {
           category: string | null
           client_id: string | null
           confidence: number | null
+          correlated_count: number | null
+          correlation_confidence: number | null
+          correlation_group_id: string | null
           created_at: string
           entity_tags: string[] | null
           id: string
+          is_primary_signal: boolean | null
           is_read: boolean | null
           is_test: boolean | null
           location: string | null
@@ -1268,9 +1322,13 @@ export type Database = {
           category?: string | null
           client_id?: string | null
           confidence?: number | null
+          correlated_count?: number | null
+          correlation_confidence?: number | null
+          correlation_group_id?: string | null
           created_at?: string
           entity_tags?: string[] | null
           id?: string
+          is_primary_signal?: boolean | null
           is_read?: boolean | null
           is_test?: boolean | null
           location?: string | null
@@ -1288,9 +1346,13 @@ export type Database = {
           category?: string | null
           client_id?: string | null
           confidence?: number | null
+          correlated_count?: number | null
+          correlation_confidence?: number | null
+          correlation_group_id?: string | null
           created_at?: string
           entity_tags?: string[] | null
           id?: string
+          is_primary_signal?: boolean | null
           is_read?: boolean | null
           is_test?: boolean | null
           location?: string | null
@@ -1313,9 +1375,60 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "signals_correlation_group_id_fkey"
+            columns: ["correlation_group_id"]
+            isOneToOne: false
+            referencedRelation: "signal_correlation_groups"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "signals_source_id_fkey"
             columns: ["source_id"]
             isOneToOne: false
+            referencedRelation: "sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      source_reliability_metrics: {
+        Row: {
+          accurate_signals: number | null
+          created_at: string
+          false_positives: number | null
+          id: string
+          last_updated: string
+          reliability_score: number | null
+          source_id: string | null
+          source_name: string
+          total_signals: number | null
+        }
+        Insert: {
+          accurate_signals?: number | null
+          created_at?: string
+          false_positives?: number | null
+          id?: string
+          last_updated?: string
+          reliability_score?: number | null
+          source_id?: string | null
+          source_name: string
+          total_signals?: number | null
+        }
+        Update: {
+          accurate_signals?: number | null
+          created_at?: string
+          false_positives?: number | null
+          id?: string
+          last_updated?: string
+          reliability_score?: number | null
+          source_id?: string | null
+          source_name?: string
+          total_signals?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "source_reliability_metrics_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: true
             referencedRelation: "sources"
             referencedColumns: ["id"]
           },
