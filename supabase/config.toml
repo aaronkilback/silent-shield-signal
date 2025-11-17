@@ -89,3 +89,6 @@ verify_jwt = false
 
 [functions.monitor-canadian-sources-enhanced]
 verify_jwt = false
+
+[functions.monitor-entity-proximity]
+verify_jwt = false
