@@ -277,6 +277,7 @@ Think like 3Si Security: provide intelligence that explains WHY this matters and
             client_id: signal.client_id,
             priority: decision.incident_priority || 'p3',
             status: 'open',
+            is_test: signal.is_test || false,
             timeline_json: [{
               timestamp: new Date().toISOString(),
               event: 'Incident automatically created by AI',
