@@ -198,14 +198,17 @@ export type Database = {
       }
       entities: {
         Row: {
+          active_monitoring_enabled: boolean | null
           aliases: string[] | null
           associations: string[] | null
           attributes: Json | null
           created_at: string
           created_by: string | null
+          current_location: string | null
           description: string | null
           id: string
           is_active: boolean | null
+          monitoring_radius_km: number | null
           name: string
           risk_level: string | null
           threat_indicators: string[] | null
@@ -214,14 +217,17 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          active_monitoring_enabled?: boolean | null
           aliases?: string[] | null
           associations?: string[] | null
           attributes?: Json | null
           created_at?: string
           created_by?: string | null
+          current_location?: string | null
           description?: string | null
           id?: string
           is_active?: boolean | null
+          monitoring_radius_km?: number | null
           name: string
           risk_level?: string | null
           threat_indicators?: string[] | null
@@ -230,14 +236,17 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          active_monitoring_enabled?: boolean | null
           aliases?: string[] | null
           associations?: string[] | null
           attributes?: Json | null
           created_at?: string
           created_by?: string | null
+          current_location?: string | null
           description?: string | null
           id?: string
           is_active?: boolean | null
+          monitoring_radius_km?: number | null
           name?: string
           risk_level?: string | null
           threat_indicators?: string[] | null

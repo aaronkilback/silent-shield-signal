@@ -133,7 +133,10 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     contact_address: '',
     contact_linkedin: '',
     contact_twitter: '',
-    contact_facebook: ''
+    contact_facebook: '',
+    active_monitoring_enabled: false,
+    current_location: '',
+    monitoring_radius_km: 10
   });
 
   const updateMutation = useMutation({
@@ -193,7 +196,10 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
       attributes: {
         ...currentAttributes,
         contact_info: contactInfo
-      }
+      },
+      active_monitoring_enabled: formData.active_monitoring_enabled,
+      current_location: formData.current_location || null,
+      monitoring_radius_km: formData.monitoring_radius_km
     });
   };
 
@@ -317,7 +323,10 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
         contact_address: contactInfo.address || '',
         contact_linkedin: contactInfo.social_media?.linkedin || '',
         contact_twitter: contactInfo.social_media?.twitter || '',
-        contact_facebook: contactInfo.social_media?.facebook || ''
+        contact_facebook: contactInfo.social_media?.facebook || '',
+        active_monitoring_enabled: (entity as any).active_monitoring_enabled || false,
+        current_location: (entity as any).current_location || '',
+        monitoring_radius_km: (entity as any).monitoring_radius_km || 10
       });
     }
     setIsEditing(true);
@@ -774,6 +783,49 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                   </div>
                 </div>
 
+                <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="active_monitoring"
+                        checked={formData.active_monitoring_enabled}
+                        onChange={(e) => setFormData({ ...formData, active_monitoring_enabled: e.target.checked })}
+                        className="h-4 w-4"
+                      />
+                      <Label htmlFor="active_monitoring" className="font-semibold">Enable Active Proximity Monitoring</Label>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      System actively searches for threats near this entity's location
+                    </p>
+                  </div>
+
+                  {formData.active_monitoring_enabled && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Current Location *</Label>
+                        <Input
+                          value={formData.current_location}
+                          onChange={(e) => setFormData({ ...formData, current_location: e.target.value })}
+                          placeholder="e.g., Vancouver, BC"
+                          required={formData.active_monitoring_enabled}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Monitoring Radius (km)</Label>
+                        <Input
+                          type="number"
+                          value={formData.monitoring_radius_km}
+                          onChange={(e) => setFormData({ ...formData, monitoring_radius_km: parseInt(e.target.value) || 10 })}
+                          min="1"
+                          max="100"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex gap-2 justify-end">
                   <Button variant="outline" onClick={() => setIsEditing(false)}>
                     Cancel
@@ -841,6 +893,28 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                         <Badge key={idx} variant="outline">{assoc}</Badge>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {(entity as any).active_monitoring_enabled && (
+                  <div className="border-t pt-4 space-y-2">
+                    <Label className="text-base font-semibold flex items-center gap-2">
+                      🎯 Active Proximity Monitoring
+                      <Badge variant="default" className="ml-2">Enabled</Badge>
+                    </Label>
+                    <div className="grid grid-cols-2 gap-4 mt-2">
+                      <div>
+                        <Label className="text-muted-foreground text-sm">Current Location</Label>
+                        <p className="font-medium">{(entity as any).current_location || 'Not set'}</p>
+                      </div>
+                      <div>
+                        <Label className="text-muted-foreground text-sm">Monitoring Radius</Label>
+                        <p className="font-medium">{(entity as any).monitoring_radius_km || 10} km</p>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      System actively searches for threats near this entity's location and creates alerts when detected.
+                    </p>
                   </div>
                 )}
 

@@ -75,7 +75,10 @@ export const CreateEntityDialog = ({
     aliases: '',
     threat_score: 5,
     threat_indicators: '',
-    associations: ''
+    associations: '',
+    active_monitoring_enabled: false,
+    current_location: '',
+    monitoring_radius_km: 10
   });
 
   // Auto-enrich when dialog opens with a prefilled name
@@ -190,7 +193,10 @@ export const CreateEntityDialog = ({
           threat_indicators: threatIndicatorsArray.length > 0 ? threatIndicatorsArray : null,
           associations: associationsArray.length > 0 ? associationsArray : null,
           created_by: user.id,
-          attributes: enrichedContactInfo ? { contact_info: enrichedContactInfo } : null
+          attributes: enrichedContactInfo ? { contact_info: enrichedContactInfo } : null,
+          active_monitoring_enabled: formData.active_monitoring_enabled,
+          current_location: formData.current_location || null,
+          monitoring_radius_km: formData.monitoring_radius_km
         }])
         .select()
         .single();
@@ -226,7 +232,10 @@ export const CreateEntityDialog = ({
         aliases: '',
         threat_score: 5,
         threat_indicators: '',
-        associations: ''
+        associations: '',
+        active_monitoring_enabled: false,
+        current_location: '',
+        monitoring_radius_km: 10
       });
       setEnrichedContactInfo(null);
     } catch (error: any) {
@@ -356,6 +365,51 @@ export const CreateEntityDialog = ({
               placeholder="e.g., linked organizations, locations, other entities"
               rows={2}
             />
+          </div>
+
+          <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="active_monitoring"
+                  checked={formData.active_monitoring_enabled}
+                  onChange={(e) => setFormData({ ...formData, active_monitoring_enabled: e.target.checked })}
+                  className="h-4 w-4"
+                />
+                <Label htmlFor="active_monitoring" className="font-semibold">Enable Active Proximity Monitoring</Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                When enabled, system actively searches for threats near this entity's location
+              </p>
+            </div>
+
+            {formData.active_monitoring_enabled && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="current_location">Current Location *</Label>
+                  <Input
+                    id="current_location"
+                    value={formData.current_location}
+                    onChange={(e) => setFormData({ ...formData, current_location: e.target.value })}
+                    placeholder="e.g., Vancouver, BC"
+                    required={formData.active_monitoring_enabled}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="monitoring_radius">Monitoring Radius (km)</Label>
+                  <Input
+                    id="monitoring_radius"
+                    type="number"
+                    value={formData.monitoring_radius_km}
+                    onChange={(e) => setFormData({ ...formData, monitoring_radius_km: parseInt(e.target.value) || 10 })}
+                    min="1"
+                    max="100"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-2 justify-end">
