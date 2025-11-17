@@ -25,6 +25,16 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
   const [name, setName] = useState("");
   const [type, setType] = useState("");
   const [configJson, setConfigJson] = useState("");
+
+  const sourceTypes = [
+    { value: "api", label: "API", example: '{"url": "https://api.example.com", "api_key": "your-key"}' },
+    { value: "rss", label: "RSS Feed", example: '{"feed_url": "https://example.com/feed.xml"}' },
+    { value: "drivebc", label: "DriveBC Alerts", example: '{"regions": ["Fort St John", "Pink Mountain"], "event_types": ["closure", "delay", "advisory"]}' },
+    { value: "webhook", label: "Webhook", example: '{"endpoint": "/webhook/source-name"}' },
+    { value: "manual", label: "Manual Entry", example: '{}' },
+  ];
+
+  const selectedSourceType = sourceTypes.find(st => st.value === type);
   const queryClient = useQueryClient();
 
   const addSourceMutation = useMutation({
@@ -98,33 +108,42 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
 
           <div className="space-y-2">
             <Label htmlFor="type">Source Type</Label>
-            <Select value={type} onValueChange={setType} required>
+            <Select value={type} onValueChange={(value) => {
+              setType(value);
+              const selected = sourceTypes.find(st => st.value === value);
+              if (selected && !configJson) {
+                setConfigJson(selected.example);
+              }
+            }} required>
               <SelectTrigger>
                 <SelectValue placeholder="Select source type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="social_media">Social Media</SelectItem>
-                <SelectItem value="news">News</SelectItem>
-                <SelectItem value="threat_intel">Threat Intelligence</SelectItem>
-                <SelectItem value="darkweb">Dark Web</SelectItem>
-                <SelectItem value="domain">Domain Monitoring</SelectItem>
-                <SelectItem value="public_records">Public Records</SelectItem>
-                <SelectItem value="api">API</SelectItem>
-                <SelectItem value="rss">RSS Feed</SelectItem>
-                <SelectItem value="other">Other</SelectItem>
+                {sourceTypes.map(st => (
+                  <SelectItem key={st.value} value={st.value}>{st.label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
 
+          {selectedSourceType && (
+            <div className="p-3 bg-muted rounded-md text-sm space-y-1">
+              <p className="font-medium">Example configuration:</p>
+              <code className="text-xs block whitespace-pre-wrap break-all font-mono">
+                {selectedSourceType.example}
+              </code>
+            </div>
+          )}
+
           <div className="space-y-2">
-            <Label htmlFor="config">Configuration (Optional JSON)</Label>
+            <Label htmlFor="config">Configuration (JSON)</Label>
             <Textarea
               id="config"
-              placeholder='{"api_key": "...", "endpoint": "..."}'
+              placeholder='{"key": "value"}'
               value={configJson}
               onChange={(e) => setConfigJson(e.target.value)}
-              rows={4}
-              className="font-mono text-sm"
+              rows={8}
+              className="font-mono text-xs"
             />
             <p className="text-xs text-muted-foreground">
               Optional: Add source-specific configuration in JSON format
