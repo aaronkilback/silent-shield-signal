@@ -661,6 +661,188 @@ export type Database = {
           },
         ]
       }
+      investigation_attachments: {
+        Row: {
+          description: string | null
+          file_size: number | null
+          file_type: string
+          filename: string
+          id: string
+          investigation_id: string | null
+          storage_path: string
+          uploaded_at: string | null
+          uploaded_by: string | null
+        }
+        Insert: {
+          description?: string | null
+          file_size?: number | null
+          file_type: string
+          filename: string
+          id?: string
+          investigation_id?: string | null
+          storage_path: string
+          uploaded_at?: string | null
+          uploaded_by?: string | null
+        }
+        Update: {
+          description?: string | null
+          file_size?: number | null
+          file_type?: string
+          filename?: string
+          id?: string
+          investigation_id?: string | null
+          storage_path?: string
+          uploaded_at?: string | null
+          uploaded_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investigation_attachments_investigation_id_fkey"
+            columns: ["investigation_id"]
+            isOneToOne: false
+            referencedRelation: "investigations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      investigation_entries: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          created_by_name: string | null
+          entry_text: string
+          entry_timestamp: string | null
+          id: string
+          investigation_id: string | null
+          is_ai_generated: boolean | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          created_by_name?: string | null
+          entry_text: string
+          entry_timestamp?: string | null
+          id?: string
+          investigation_id?: string | null
+          is_ai_generated?: boolean | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          created_by_name?: string | null
+          entry_text?: string
+          entry_timestamp?: string | null
+          id?: string
+          investigation_id?: string | null
+          is_ai_generated?: boolean | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investigation_entries_investigation_id_fkey"
+            columns: ["investigation_id"]
+            isOneToOne: false
+            referencedRelation: "investigations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      investigation_persons: {
+        Row: {
+          company: string | null
+          created_at: string | null
+          id: string
+          investigation_id: string | null
+          name: string
+          phone: string | null
+          position: string | null
+          status: string
+        }
+        Insert: {
+          company?: string | null
+          created_at?: string | null
+          id?: string
+          investigation_id?: string | null
+          name: string
+          phone?: string | null
+          position?: string | null
+          status: string
+        }
+        Update: {
+          company?: string | null
+          created_at?: string | null
+          id?: string
+          investigation_id?: string | null
+          name?: string
+          phone?: string | null
+          position?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investigation_persons_investigation_id_fkey"
+            columns: ["investigation_id"]
+            isOneToOne: false
+            referencedRelation: "investigations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      investigations: {
+        Row: {
+          client_id: string | null
+          created_at: string | null
+          created_by_name: string | null
+          file_number: string
+          file_status: string | null
+          id: string
+          information: string | null
+          maximo_number: string | null
+          prepared_by: string | null
+          recommendations: string | null
+          synopsis: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          created_at?: string | null
+          created_by_name?: string | null
+          file_number: string
+          file_status?: string | null
+          id?: string
+          information?: string | null
+          maximo_number?: string | null
+          prepared_by?: string | null
+          recommendations?: string | null
+          synopsis?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          created_at?: string | null
+          created_by_name?: string | null
+          file_number?: string
+          file_status?: string | null
+          id?: string
+          information?: string | null
+          maximo_number?: string | null
+          prepared_by?: string | null
+          recommendations?: string | null
+          synopsis?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investigations_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notification_preferences: {
         Row: {
           alert_frequency: string | null
