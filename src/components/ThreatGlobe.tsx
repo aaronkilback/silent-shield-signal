@@ -203,24 +203,9 @@ export const ThreatGlobe = () => {
 
       if (entitiesError) throw entitiesError;
 
-      // If client is selected, filter to entities mentioned in that client's signals
+      // Show all entities with locations regardless of client selection
+      // The globe is a global view of entity locations
       let filteredEntities = entities;
-      
-      if (selectedClientId) {
-        const { data: mentions, error: mentionsError } = await supabase
-          .from("entity_mentions")
-          .select("entity_id, signals!inner(client_id)")
-          .eq("signals.client_id", selectedClientId);
-
-        if (mentionsError) throw mentionsError;
-
-        const mentionedEntityIds = new Set(mentions?.map(m => m.entity_id) || []);
-        
-        // Show entities mentioned in selected client's signals, or all if none mentioned
-        if (mentionedEntityIds.size > 0) {
-          filteredEntities = entities?.filter(e => mentionedEntityIds.has(e.id)) || [];
-        }
-      }
 
       // Parse entity locations and create pins
       const locationPins: EntityLocation[] = [];
