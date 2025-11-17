@@ -68,42 +68,70 @@ function Globe() {
 
   return (
     <group>
-      {/* Ocean base - deep blue */}
+      {/* Ocean base - realistic ocean blue */}
       <Sphere ref={meshRef} args={[2, 64, 64]}>
         <meshStandardMaterial
-          color="#0a2540"
-          roughness={0.7}
-          metalness={0.3}
+          color="#1a4d7a"
+          roughness={0.6}
+          metalness={0.4}
         />
       </Sphere>
       
-      {/* Simplified land masses - using multiple spheres with cutouts effect */}
+      {/* Land masses - creating continents with overlapping spheres */}
       {/* North America */}
-      <Sphere args={[2.005, 32, 32]} position={[-0.3, 0.5, 0.8]}>
+      <Sphere args={[0.5, 32, 32]} position={[-0.8, 0.6, 1.7]}>
         <meshStandardMaterial
-          color="#2d5a3f"
-          roughness={0.95}
-          transparent
-          opacity={0.0}
+          color="#3a7d44"
+          roughness={0.9}
         />
       </Sphere>
       
-      {/* Grid lines for latitude/longitude */}
-      <Sphere args={[2.01, 24, 24]}>
-        <meshBasicMaterial
-          color="#1e90ff"
-          wireframe
-          transparent
-          opacity={0.1}
+      {/* South America */}
+      <Sphere args={[0.4, 32, 32]} position={[-0.5, -0.8, 1.8]}>
+        <meshStandardMaterial
+          color="#3a7d44"
+          roughness={0.9}
         />
       </Sphere>
       
-      {/* Atmospheric haze */}
+      {/* Europe/Africa */}
+      <Sphere args={[0.6, 32, 32]} position={[0.3, 0.3, 1.8]}>
+        <meshStandardMaterial
+          color="#4a8d54"
+          roughness={0.9}
+        />
+      </Sphere>
+      
+      {/* Africa lower */}
+      <Sphere args={[0.5, 32, 32]} position={[0.4, -0.5, 1.8]}>
+        <meshStandardMaterial
+          color="#4a8d54"
+          roughness={0.9}
+        />
+      </Sphere>
+      
+      {/* Asia */}
+      <Sphere args={[0.7, 32, 32]} position={[1.2, 0.5, 1.2]}>
+        <meshStandardMaterial
+          color="#3a7d44"
+          roughness={0.9}
+        />
+      </Sphere>
+      
+      {/* Australia */}
+      <Sphere args={[0.3, 32, 32]} position={[1.3, -0.8, 1.0]}>
+        <meshStandardMaterial
+          color="#4a8d54"
+          roughness={0.9}
+        />
+      </Sphere>
+      
+      {/* Atmospheric glow */}
       <Sphere args={[2.15, 32, 32]}>
         <meshBasicMaterial
           color="#4a9eff"
           transparent
-          opacity={0.05}
+          opacity={0.08}
           side={THREE.BackSide}
         />
       </Sphere>
