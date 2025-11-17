@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ClientSelectionProvider } from "@/hooks/useClientSelection";
 import SupportChatWidget from "@/components/SupportChatWidget";
+import { RealtimeNotifications } from "@/components/RealtimeNotifications";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import Clients from "./pages/Clients";
@@ -25,6 +26,7 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <ClientSelectionProvider>
+          <RealtimeNotifications />
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
