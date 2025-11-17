@@ -40,12 +40,21 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  );
 
+  const { data: historyEntry } = await supabase
+    .from('monitoring_history')
+    .insert({
+      source_name: 'Domain Monitoring',
+      status: 'running'
+    })
+    .select()
+    .single();
+
+  try {
     console.log('Starting domain monitoring scan...');
 
     const { data: clients, error: clientsError } = await supabase

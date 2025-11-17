@@ -3,9 +3,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, CheckCircle, XCircle, Clock, Play } from "lucide-react";
+import { RefreshCw, CheckCircle, XCircle, Clock, Play, Activity } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
+import { useEffect } from "react";
 
 interface MonitoringHistoryRecord {
   id: string;
@@ -28,13 +29,35 @@ export function MonitoringHistory() {
         .from('monitoring_history')
         .select('*')
         .order('scan_started_at', { ascending: false })
-        .limit(20);
+        .limit(50);
       
       if (error) throw error;
       return data as MonitoringHistoryRecord[];
     },
-    refetchInterval: 30000, // Refresh every 30 seconds
+    refetchInterval: 10000, // Refresh every 10 seconds for real-time updates
   });
+
+  // Subscribe to real-time updates
+  useEffect(() => {
+    const channel = supabase
+      .channel('monitoring-history-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'monitoring_history'
+        },
+        () => {
+          refetch();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [refetch]);
 
   const handleManualRun = async () => {
     try {
@@ -82,9 +105,12 @@ export function MonitoringHistory() {
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle>Monitoring Scan History</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="h-5 w-5 text-primary" />
+              Monitoring Scan History
+            </CardTitle>
             <CardDescription>
-              Track all OSINT source scans and verify coverage
+              Real-time tracking of all OSINT source scans • Auto-scheduled hourly
             </CardDescription>
           </div>
           <div className="flex gap-2">
