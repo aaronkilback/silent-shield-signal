@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus, Brain } from "lucide-react";
+import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus, Brain, Search } from "lucide-react";
 import { z } from "zod";
 import { CreateRelationshipDialog } from "./CreateRelationshipDialog";
 
@@ -46,6 +46,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [scanningPhotos, setScanningPhotos] = useState(false);
   const [createRelationshipOpen, setCreateRelationshipOpen] = useState(false);
   const [scanningRelationships, setScanningRelationships] = useState(false);
 
@@ -255,6 +256,37 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     }
   };
 
+  const handlePhotoScan = async () => {
+    if (!entityId) return;
+    
+    setScanningPhotos(true);
+    try {
+      toast({ title: "Starting AI Photo Scan", description: "Searching for relevant images..." });
+      
+      const { data, error } = await supabase.functions.invoke('scan-entity-photos', {
+        body: { entityId }
+      });
+
+      if (error) throw error;
+
+      const photosAdded = data?.photosAdded || 0;
+      toast({ 
+        title: "Scan Complete", 
+        description: `Successfully added ${photosAdded} photos` 
+      });
+      queryClient.invalidateQueries({ queryKey: ['entity-photos', entityId] });
+    } catch (error: any) {
+      console.error('Error scanning photos:', error);
+      toast({ 
+        title: "Photo Scan Failed", 
+        description: error.message || "Failed to scan for photos",
+        variant: "destructive" 
+      });
+    } finally {
+      setScanningPhotos(false);
+    }
+  };
+
   if (!entity) return null;
 
   return (
@@ -447,7 +479,16 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
           <TabsContent value="photos" className="space-y-4 mt-4">
             <div className="flex items-center justify-between">
               <Label>Entity Photos</Label>
-              <div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handlePhotoScan}
+                  disabled={scanningPhotos}
+                >
+                  <Search className="w-4 h-4 mr-2" />
+                  {scanningPhotos ? 'Scanning...' : 'AI Photo Scan'}
+                </Button>
                 <input
                   type="file"
                   id="photo-upload"
