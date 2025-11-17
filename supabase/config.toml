@@ -50,3 +50,9 @@ verify_jwt = false
 
 [functions.send-notification-email]
 verify_jwt = false
+
+[functions.parse-document]
+verify_jwt = true
+
+[functions.parse-entities-document]
+verify_jwt = true
