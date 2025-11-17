@@ -108,8 +108,7 @@ Format your response as a JSON array of relationship suggestions with this struc
     "target_entity_type": "person|organization|location|infrastructure|domain|ip_address|email|phone|vehicle|other",
     "relationship_type": "associated_with|works_for|reports_to|owns|located_at|communicates_with|etc",
     "description": "brief description of the relationship",
-    "confidence": 0.0-1.0,
-    "strength": 1-10
+    "confidence": 0.0-1.0
   }
 ]`
               }
@@ -132,8 +131,7 @@ Format your response as a JSON array of relationship suggestions with this struc
                             target_entity_type: { type: 'string' },
                             relationship_type: { type: 'string' },
                             description: { type: 'string' },
-                            confidence: { type: 'number' },
-                            strength: { type: 'number' }
+                            confidence: { type: 'number' }
                           },
                           required: ['target_entity_name', 'target_entity_type', 'relationship_type', 'confidence']
                         }
@@ -227,7 +225,7 @@ Format your response as a JSON array of relationship suggestions with this struc
                 entity_b_id: targetEntity.id,
                 relationship_type: rel.relationship_type,
                 description: `${rel.description} (OSINT confidence: ${(rel.confidence * 100).toFixed(0)}%)`,
-                strength: rel.strength || 5,
+                strength: rel.confidence || 0.5,
                 occurrence_count: 1
               });
 
