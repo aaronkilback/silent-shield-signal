@@ -25,18 +25,39 @@ serve(async (req) => {
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey);
+    
+    // Check if a specific entity_id was provided
+    const body = await req.json().catch(() => ({}));
+    const specificEntityId = body.entity_id;
 
-    // Fetch active entities
-    const { data: entities, error: entitiesError } = await supabase
-      .from('entities')
-      .select('*')
-      .eq('is_active', true)
-      .order('updated_at', { ascending: true })
-      .limit(10); // Process 10 entities per run
+    let entities;
+    if (specificEntityId) {
+      // Fetch specific entity
+      const { data, error } = await supabase
+        .from('entities')
+        .select('*')
+        .eq('id', specificEntityId)
+        .single();
+      
+      if (error) {
+        console.error('Error fetching entity:', error);
+        throw error;
+      }
+      entities = data ? [data] : [];
+    } else {
+      // Fetch active entities for batch processing
+      const { data, error: entitiesError } = await supabase
+        .from('entities')
+        .select('*')
+        .eq('is_active', true)
+        .order('updated_at', { ascending: true })
+        .limit(10); // Process 10 entities per run
 
-    if (entitiesError) {
-      console.error('Error fetching entities:', entitiesError);
-      throw entitiesError;
+      if (entitiesError) {
+        console.error('Error fetching entities:', entitiesError);
+        throw entitiesError;
+      }
+      entities = data || [];
     }
 
     console.log(`Processing ${entities?.length || 0} entities for OSINT scan`);

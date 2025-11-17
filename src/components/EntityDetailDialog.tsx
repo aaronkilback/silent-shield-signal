@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus } from "lucide-react";
+import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus, Brain } from "lucide-react";
 import { z } from "zod";
 import { CreateRelationshipDialog } from "./CreateRelationshipDialog";
 
@@ -47,6 +47,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
   const [isEditing, setIsEditing] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [createRelationshipOpen, setCreateRelationshipOpen] = useState(false);
+  const [scanningRelationships, setScanningRelationships] = useState(false);
 
   const { data: entity, isLoading } = useQuery({
     queryKey: ['entity-detail', entityId],
@@ -223,6 +224,35 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
       });
     }
     setIsEditing(true);
+  };
+
+  const handleScanRelationships = async () => {
+    if (!entityId) return;
+    
+    setScanningRelationships(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('osint-entity-scan', {
+        body: { entity_id: entityId }
+      });
+
+      if (error) throw error;
+
+      const relationshipsFound = data?.relationships_created || 0;
+      toast({ 
+        title: "Scan Complete", 
+        description: `Found and created ${relationshipsFound} potential relationships`
+      });
+      queryClient.invalidateQueries({ queryKey: ['entity-relationships', entityId] });
+    } catch (error: any) {
+      console.error('Error scanning relationships:', error);
+      toast({ 
+        title: "Scan Failed", 
+        description: error.message,
+        variant: "destructive" 
+      });
+    } finally {
+      setScanningRelationships(false);
+    }
   };
 
   if (!entity) return null;
@@ -478,16 +508,36 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
           </TabsContent>
 
           <TabsContent value="relationships" className="space-y-4 mt-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <Label>Related Entities</Label>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCreateRelationshipOpen(true)}
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Add Relationship
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleScanRelationships}
+                  disabled={scanningRelationships}
+                >
+                  {scanningRelationships ? (
+                    <>
+                      <span className="animate-spin mr-2">🔄</span>
+                      Scanning...
+                    </>
+                  ) : (
+                    <>
+                      <Brain className="w-4 h-4 mr-2" />
+                      AI Scan
+                    </>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCreateRelationshipOpen(true)}
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Manually
+                </Button>
+              </div>
             </div>
             
             {relationships.length === 0 ? (
