@@ -8,10 +8,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { FileText, Download, Eye, Loader2, FileDown } from "lucide-react";
+import { FileText, Download, Eye, Loader2, FileDown, Upload, Image as ImageIcon, X } from "lucide-react";
 import { format } from "date-fns";
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface SecurityBulletinGeneratorProps {
   preselectedEntityId?: string;
@@ -23,6 +24,8 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
   const [offenceDate, setOffenceDate] = useState("");
   const [generatedBulletin, setGeneratedBulletin] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [uploadedImages, setUploadedImages] = useState<{ file: File; preview: string }[]>([]);
+  const [selectedEntityPhotoIds, setSelectedEntityPhotoIds] = useState<Set<string>>(new Set());
 
   const { data: entities = [] } = useQuery({
     queryKey: ['entities-for-bulletin'],
@@ -38,12 +41,64 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
     }
   });
 
-  const generateBulletin = async () => {
-    if (!selectedEntity) {
-      toast.error("Please select an entity");
-      return;
-    }
+  const { data: entityPhotos = [] } = useQuery({
+    queryKey: ['entity-photos-for-bulletin', selectedEntity],
+    queryFn: async () => {
+      if (!selectedEntity || selectedEntity === "none") return [];
+      
+      const { data, error } = await supabase
+        .from('entity_photos')
+        .select('id, storage_path, caption')
+        .eq('entity_id', selectedEntity);
+      
+      if (error) throw error;
+      
+      // Get public URLs for the photos
+      const photosWithUrls = await Promise.all(
+        data.map(async (photo) => {
+          const { data: urlData } = supabase.storage
+            .from('entity-photos')
+            .getPublicUrl(photo.storage_path);
+          
+          return {
+            ...photo,
+            url: urlData.publicUrl
+          };
+        })
+      );
+      
+      return photosWithUrls;
+    },
+    enabled: !!selectedEntity && selectedEntity !== "none"
+  });
 
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    const newImages = files.map(file => ({
+      file,
+      preview: URL.createObjectURL(file)
+    }));
+    setUploadedImages([...uploadedImages, ...newImages]);
+  };
+
+  const removeUploadedImage = (index: number) => {
+    const newImages = [...uploadedImages];
+    URL.revokeObjectURL(newImages[index].preview);
+    newImages.splice(index, 1);
+    setUploadedImages(newImages);
+  };
+
+  const toggleEntityPhoto = (photoId: string) => {
+    const newSelected = new Set(selectedEntityPhotoIds);
+    if (newSelected.has(photoId)) {
+      newSelected.delete(photoId);
+    } else {
+      newSelected.add(photoId);
+    }
+    setSelectedEntityPhotoIds(newSelected);
+  };
+
+  const generateBulletin = async () => {
     if (!details) {
       toast.error("Please provide incident details");
       return;
@@ -51,9 +106,27 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
 
     setIsGenerating(true);
     try {
-      const entity = entities.find(e => e.id === selectedEntity);
+      const entity = selectedEntity && selectedEntity !== "none" 
+        ? entities.find(e => e.id === selectedEntity)
+        : null;
       const currentDate = format(new Date(), "MMMM dd, yyyy");
       const incidentDate = offenceDate ? format(new Date(offenceDate), "MMMM dd, yyyy") : "Not specified";
+
+      // Prepare images HTML
+      const selectedPhotos = entityPhotos.filter(photo => selectedEntityPhotoIds.has(photo.id));
+      const allPhotos = [
+        ...selectedPhotos.map(p => ({ url: p.url, caption: p.caption || '' })),
+        ...uploadedImages.map(img => ({ url: img.preview, caption: '' }))
+      ];
+
+      const photosHtml = allPhotos.length > 0 
+        ? allPhotos.map(photo => `
+            <div style="margin: 15px 0; page-break-inside: avoid;">
+              <img src="${photo.url}" style="max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 4px;" />
+              ${photo.caption ? `<p style="margin: 5px 0 0 0; font-size: 12px; color: #666; font-style: italic;">${photo.caption}</p>` : ''}
+            </div>
+          `).join('')
+        : '<p style="color: #999;">No photos attached</p>';
 
       // Generate HTML bulletin
       const bulletin = `
@@ -179,7 +252,7 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
   <div class="section">
     <div class="section-title">Photos</div>
     <div class="section-content">
-      [Attach relevant photos or evidence here]
+      ${photosHtml}
     </div>
   </div>
 
@@ -339,6 +412,95 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
               onChange={(e) => setDetails(e.target.value)}
               className="min-h-[150px]"
             />
+          </div>
+
+          <div className="space-y-3">
+            <Label>Photos</Label>
+            
+            {/* Upload Images Section */}
+            <div className="space-y-2">
+              <Label htmlFor="image-upload" className="text-sm text-muted-foreground">
+                Upload Images
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="image-upload"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImageUpload}
+                  className="flex-1"
+                />
+                <Button variant="outline" size="icon" asChild>
+                  <label htmlFor="image-upload" className="cursor-pointer">
+                    <Upload className="w-4 h-4" />
+                  </label>
+                </Button>
+              </div>
+              
+              {uploadedImages.length > 0 && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+                  {uploadedImages.map((img, index) => (
+                    <div key={index} className="relative group">
+                      <img
+                        src={img.preview}
+                        alt={`Upload ${index + 1}`}
+                        className="w-full h-24 object-cover rounded-md border"
+                      />
+                      <Button
+                        variant="destructive"
+                        size="icon"
+                        className="absolute top-1 right-1 w-6 h-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => removeUploadedImage(index)}
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Entity Photos Section */}
+            {selectedEntity && selectedEntity !== "none" && entityPhotos.length > 0 && (
+              <div className="space-y-2 pt-3 border-t">
+                <Label className="text-sm text-muted-foreground">
+                  Select from Entity Photos
+                </Label>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {entityPhotos.map((photo) => {
+                    const isSelected = selectedEntityPhotoIds.has(photo.id);
+                    return (
+                      <div 
+                        key={photo.id}
+                        className={`relative cursor-pointer border-2 rounded-md overflow-hidden transition-all ${
+                          isSelected ? 'border-primary ring-2 ring-primary/20' : 'border-border hover:border-primary/50'
+                        }`}
+                        onClick={() => toggleEntityPhoto(photo.id)}
+                      >
+                        <img
+                          src={photo.url}
+                          alt={photo.caption || 'Entity photo'}
+                          className="w-full h-24 object-cover"
+                        />
+                        <div className="absolute top-1 right-1">
+                          <Checkbox
+                            checked={isSelected}
+                            className="bg-background"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                        {photo.caption && (
+                          <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1 truncate">
+                            {photo.caption}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           <Button 
