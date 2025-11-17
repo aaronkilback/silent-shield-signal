@@ -67,16 +67,22 @@ export default function AutonomousSystemStatus() {
         i.priority === 'p1' || i.priority === 'p2'
       ).length || 0;
       
-      // Calculate accuracy rate based on resolved vs false positive
-      const resolvedSignals = signalsResult.data?.filter(s => 
-        s.status === 'resolved'
-      ).length || 0;
-      const falsePositives = signalsResult.data?.filter(s => 
-        s.status === 'false_positive'
-      ).length || 0;
-      const totalProcessed = resolvedSignals + falsePositives;
-      const accuracyRate = totalProcessed > 0 
-        ? ((resolvedSignals / totalProcessed) * 100).toFixed(1)
+      // Calculate accuracy rate from incident outcomes
+      let outcomesQuery = supabase
+        .from('incident_outcomes')
+        .select('was_accurate, false_positive, incidents!inner(client_id)')
+        .gte('created_at', thirtyDaysAgo.toISOString());
+
+      if (selectedClientId) {
+        outcomesQuery = outcomesQuery.eq('incidents.client_id', selectedClientId);
+      }
+
+      const { data: outcomesData } = await outcomesQuery;
+      
+      const accurateCount = outcomesData?.filter(o => o.was_accurate === true).length || 0;
+      const totalOutcomes = outcomesData?.length || 0;
+      const accuracyRate = totalOutcomes > 0 
+        ? ((accurateCount / totalOutcomes) * 100).toFixed(1)
         : '0.0';
 
       // Sum up OSINT scans from all days in the period

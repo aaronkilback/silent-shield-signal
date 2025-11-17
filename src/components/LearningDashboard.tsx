@@ -46,6 +46,13 @@ export default function LearningDashboard() {
         .eq('client_id', selectedClientId)
         .gte('created_at', thirtyDaysAgo.toISOString());
 
+      // Get incident outcomes for accuracy calculations
+      const { data: dailyOutcomesData } = await supabase
+        .from('incident_outcomes')
+        .select('*, incidents!inner(client_id, created_at)')
+        .eq('incidents.client_id', selectedClientId)
+        .gte('incidents.created_at', thirtyDaysAgo.toISOString());
+
       // Group by date and calculate daily metrics
       const metricsMap = new Map();
       
@@ -57,15 +64,13 @@ export default function LearningDashboard() {
             signals_processed: 0,
             incidents_created: 0,
             incidents_auto_escalated: 0,
-            accuracy_rate: 0,
-            false_positive_rate: 0,
+            accurate_count: 0,
+            false_positive_count: 0,
+            total_outcomes: 0,
           });
         }
         const metrics = metricsMap.get(date);
         metrics.signals_processed++;
-        
-        if (signal.status === 'resolved') metrics.accuracy_rate++;
-        if (signal.status === 'false_positive') metrics.false_positive_rate++;
       });
 
       incidentsData?.forEach(incident => {
@@ -76,8 +81,9 @@ export default function LearningDashboard() {
             signals_processed: 0,
             incidents_created: 0,
             incidents_auto_escalated: 0,
-            accuracy_rate: 0,
-            false_positive_rate: 0,
+            accurate_count: 0,
+            false_positive_count: 0,
+            total_outcomes: 0,
           });
         }
         const metrics = metricsMap.get(date);
@@ -88,15 +94,32 @@ export default function LearningDashboard() {
         }
       });
 
-      // Convert to array and calculate percentages
-      const metricsArray = Array.from(metricsMap.values()).map(m => {
-        const total = m.accuracy_rate + m.false_positive_rate;
-        return {
-          ...m,
-          accuracy_rate: total > 0 ? (m.accuracy_rate / total) * 100 : 0,
-          false_positive_rate: total > 0 ? (m.false_positive_rate / total) * 100 : 0,
-        };
+      // Add outcome data to metrics
+      dailyOutcomesData?.forEach(outcome => {
+        const date = (outcome as any).incidents.created_at.split('T')[0];
+        if (!metricsMap.has(date)) {
+          metricsMap.set(date, {
+            metric_date: date,
+            signals_processed: 0,
+            incidents_created: 0,
+            incidents_auto_escalated: 0,
+            accurate_count: 0,
+            false_positive_count: 0,
+            total_outcomes: 0,
+          });
+        }
+        const metrics = metricsMap.get(date);
+        metrics.total_outcomes++;
+        if (outcome.was_accurate) metrics.accurate_count++;
+        if (outcome.false_positive) metrics.false_positive_count++;
       });
+
+      // Convert to array and calculate percentages
+      const metricsArray = Array.from(metricsMap.values()).map(m => ({
+        ...m,
+        accuracy_rate: m.total_outcomes > 0 ? (m.accurate_count / m.total_outcomes) * 100 : 0,
+        false_positive_rate: m.total_outcomes > 0 ? (m.false_positive_count / m.total_outcomes) * 100 : 0,
+      }));
 
       setMetrics(metricsArray);
 
