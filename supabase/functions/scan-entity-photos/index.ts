@@ -81,7 +81,7 @@ serve(async (req) => {
     let searchQuery = `"${entity.name}"`;
     
     if (entity.type === 'person') {
-      searchQuery += ' professional photo OR headshot OR portrait OR board director';
+      searchQuery += ' professional photo OR headshot OR portrait OR board director OR LinkedIn profile';
       if (entity.attributes && entity.attributes.company) {
         searchQuery += ` "${entity.attributes.company}"`;
       }
@@ -173,11 +173,38 @@ serve(async (req) => {
       }
     }
 
+    // STEP 3: LinkedIn-specific search for persons
+    if (entity.type === 'person') {
+      const linkedinSearchUrl = new URL('https://www.googleapis.com/customsearch/v1');
+      linkedinSearchUrl.searchParams.set('key', GOOGLE_API_KEY);
+      linkedinSearchUrl.searchParams.set('cx', GOOGLE_CX);
+      linkedinSearchUrl.searchParams.set('q', `site:linkedin.com "${entity.name}" profile photo`);
+      linkedinSearchUrl.searchParams.set('searchType', 'image');
+      linkedinSearchUrl.searchParams.set('num', '10');
+      linkedinSearchUrl.searchParams.set('imgType', 'photo');
+
+      console.log('Searching LinkedIn profiles...');
+      const linkedinResponse = await fetch(linkedinSearchUrl.toString());
+      
+      if (linkedinResponse.ok) {
+        const linkedinData = await linkedinResponse.json();
+        console.log(`Found ${linkedinData.items?.length || 0} LinkedIn images`);
+        
+        for (const item of linkedinData.items || []) {
+          imageUrls.push({
+            url: item.link,
+            source: 'linkedin.com',
+            title: item.title || 'LinkedIn Profile'
+          });
+        }
+      }
+    }
+
     console.log(`Total images to process: ${imageUrls.length}`);
 
-    // Blocked domains
+    // Blocked domains - removed LinkedIn to allow professional profile photos
     const blockedDomains = [
-      'linkedin.com', 'facebook.com', 'instagram.com', 'twitter.com',
+      'facebook.com', 'instagram.com', 'twitter.com',
       'pinterest.com', 'gettyimages.com', 'shutterstock.com', 'istockphoto.com'
     ];
 
@@ -185,7 +212,7 @@ serve(async (req) => {
     const errors = [];
     const startTime = Date.now();
     const MAX_PROCESSING_TIME = 25000; // 25 seconds to leave buffer before timeout
-    const MAX_IMAGES_TO_PROCESS = 8; // Process max 8 images per scan
+    const MAX_IMAGES_TO_PROCESS = 12; // Increased to process more diverse results
     const MAX_IMAGE_SIZE = 500000; // 500KB max per image
 
     // Limit images to process
@@ -201,7 +228,7 @@ serve(async (req) => {
       }
       
       // Stop if we have enough photos
-      if (photosAdded >= 5) {
+      if (photosAdded >= 6) {
         console.log('Found enough photos, stopping');
         break;
       }
