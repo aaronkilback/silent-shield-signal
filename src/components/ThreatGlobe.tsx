@@ -25,49 +25,86 @@ function latLngToVector3(lat: number, lng: number, radius: number) {
   );
 }
 
+function Starfield() {
+  const starsRef = useRef<THREE.Points>(null);
+  
+  const starsGeometry = new THREE.BufferGeometry();
+  const starCount = 2000;
+  const positions = new Float32Array(starCount * 3);
+  
+  for (let i = 0; i < starCount * 3; i += 3) {
+    const radius = 50 + Math.random() * 50;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.random() * Math.PI;
+    
+    positions[i] = radius * Math.sin(phi) * Math.cos(theta);
+    positions[i + 1] = radius * Math.sin(phi) * Math.sin(theta);
+    positions[i + 2] = radius * Math.cos(phi);
+  }
+  
+  starsGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  
+  return (
+    <points ref={starsRef} geometry={starsGeometry}>
+      <pointsMaterial
+        size={0.1}
+        color="#ffffff"
+        transparent
+        opacity={0.8}
+        sizeAttenuation={true}
+      />
+    </points>
+  );
+}
+
 function Globe() {
   const meshRef = useRef<THREE.Mesh>(null);
-  const wireframeRef = useRef<THREE.LineSegments>(null);
   
   useFrame(() => {
     if (meshRef.current) {
       meshRef.current.rotation.y += 0.001;
     }
-    if (wireframeRef.current) {
-      wireframeRef.current.rotation.y += 0.001;
-    }
   });
 
   return (
     <group>
-      {/* Main globe with oceanic blue color */}
+      {/* Ocean base - deep blue */}
       <Sphere ref={meshRef} args={[2, 64, 64]}>
         <meshStandardMaterial
-          color="#1e3a5f"
-          emissive="#0d2847"
-          emissiveIntensity={0.2}
-          roughness={0.9}
-          metalness={0.1}
+          color="#0a2540"
+          roughness={0.7}
+          metalness={0.3}
         />
       </Sphere>
       
-      {/* Wireframe grid for latitude/longitude lines */}
-      <Sphere args={[2.01, 32, 32]}>
-        <meshBasicMaterial
-          color="#00d9ff"
-          wireframe
-          transparent
-          opacity={0.15}
-        />
-      </Sphere>
-      
-      {/* Land masses approximation with brighter color */}
-      <Sphere args={[2.005, 64, 64]}>
+      {/* Simplified land masses - using multiple spheres with cutouts effect */}
+      {/* North America */}
+      <Sphere args={[2.005, 32, 32]} position={[-0.3, 0.5, 0.8]}>
         <meshStandardMaterial
           color="#2d5a3f"
-          transparent
-          opacity={0.6}
           roughness={0.95}
+          transparent
+          opacity={0.0}
+        />
+      </Sphere>
+      
+      {/* Grid lines for latitude/longitude */}
+      <Sphere args={[2.01, 24, 24]}>
+        <meshBasicMaterial
+          color="#1e90ff"
+          wireframe
+          transparent
+          opacity={0.1}
+        />
+      </Sphere>
+      
+      {/* Atmospheric haze */}
+      <Sphere args={[2.15, 32, 32]}>
+        <meshBasicMaterial
+          color="#4a9eff"
+          transparent
+          opacity={0.05}
+          side={THREE.BackSide}
         />
       </Sphere>
     </group>
@@ -93,30 +130,33 @@ function LocationPin({ location }: { location: ClientLocation }) {
 
   return (
     <group position={position}>
-      <Sphere args={[0.03, 16, 16]}>
+      {/* Larger, brighter pin */}
+      <Sphere args={[0.04, 16, 16]}>
         <meshStandardMaterial
-          color={location.incidentCount > 0 ? "#ef4444" : "#00d9ff"}
-          emissive={location.incidentCount > 0 ? "#ef4444" : "#00d9ff"}
-          emissiveIntensity={location.incidentCount > 0 ? 1.5 : 0.8}
+          color={location.incidentCount > 0 ? "#ff3333" : "#00ffff"}
+          emissive={location.incidentCount > 0 ? "#ff3333" : "#00ffff"}
+          emissiveIntensity={2}
         />
       </Sphere>
       
       {location.incidentCount > 0 && <PulsingRing />}
       
-      {/* Always show labels */}
-      <Html distanceFactor={8} center>
-        <div className={`bg-card/95 backdrop-blur-sm border border-border rounded-lg px-3 py-2 shadow-xl pointer-events-none whitespace-nowrap transition-opacity ${hovered ? 'opacity-100' : 'opacity-80'}`}>
-          <div className="text-sm font-semibold text-foreground">{location.name}</div>
-          {location.incidentCount > 0 && (
-            <div className="text-xs text-destructive font-medium">
-              {location.incidentCount} active incident{location.incidentCount !== 1 ? 's' : ''}
-            </div>
-          )}
-        </div>
-      </Html>
+      {/* Only show label on hover */}
+      {hovered && (
+        <Html distanceFactor={8} center>
+          <div className="bg-card/95 backdrop-blur-sm border border-border rounded-lg px-3 py-2 shadow-xl pointer-events-none whitespace-nowrap">
+            <div className="text-sm font-semibold text-foreground">{location.name}</div>
+            {location.incidentCount > 0 && (
+              <div className="text-xs text-destructive font-medium">
+                {location.incidentCount} active incident{location.incidentCount !== 1 ? 's' : ''}
+              </div>
+            )}
+          </div>
+        </Html>
+      )}
       
       <Sphere
-        args={[0.06, 16, 16]}
+        args={[0.08, 16, 16]}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
       >
@@ -300,10 +340,12 @@ export const ThreatGlobe = () => {
   return (
     <div className="w-full h-[500px] bg-gradient-to-b from-background to-card rounded-lg border border-border overflow-hidden">
       <Canvas camera={{ position: [0, 0, 5], fov: 45 }}>
-        <ambientLight intensity={0.3} />
-        <directionalLight position={[5, 5, 5]} intensity={0.8} />
-        <pointLight position={[-5, -5, -5]} intensity={0.3} color="#00d9ff" />
+        <color attach="background" args={['#000000']} />
+        <ambientLight intensity={0.4} />
+        <directionalLight position={[5, 3, 5]} intensity={1.2} />
+        <pointLight position={[-5, -5, -5]} intensity={0.3} color="#4a9eff" />
         
+        <Starfield />
         <Globe />
         <Atmosphere />
         
@@ -317,7 +359,7 @@ export const ThreatGlobe = () => {
           minDistance={3}
           maxDistance={10}
           autoRotate
-          autoRotateSpeed={0.5}
+          autoRotateSpeed={0.3}
         />
       </Canvas>
       
