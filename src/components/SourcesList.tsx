@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Trash2, Settings } from "lucide-react";
+import { Trash2, Settings, Pencil } from "lucide-react";
 import { Tables } from "@/integrations/supabase/types";
 import { formatDistanceToNow } from "date-fns";
 
@@ -9,9 +9,10 @@ interface SourcesListProps {
   sources: Tables<"sources">[];
   onToggleActive: (id: string, isActive: boolean) => void;
   onDelete: (id: string) => void;
+  onEdit: (source: any) => void;
 }
 
-export const SourcesList = ({ sources, onToggleActive, onDelete }: SourcesListProps) => {
+export const SourcesList = ({ sources, onToggleActive, onDelete, onEdit }: SourcesListProps) => {
   const getSourceTypeColor = (type: string) => {
     const colors: Record<string, string> = {
       social_media: "bg-blue-500/10 text-blue-500",
@@ -68,7 +69,7 @@ export const SourcesList = ({ sources, onToggleActive, onDelete }: SourcesListPr
             </p>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">Enable</span>
               <Switch
@@ -76,6 +77,14 @@ export const SourcesList = ({ sources, onToggleActive, onDelete }: SourcesListPr
                 onCheckedChange={() => onToggleActive(source.id, source.is_active)}
               />
             </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onEdit(source)}
+              className="hover:bg-accent"
+            >
+              <Pencil className="w-4 h-4" />
+            </Button>
             <Button
               variant="ghost"
               size="icon"

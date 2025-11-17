@@ -2,19 +2,22 @@ import { Header } from "@/components/Header";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { Loader2, Plus, Play } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { AddSourceDialog } from "@/components/AddSourceDialog";
+import { EditSourceDialog } from "@/components/EditSourceDialog";
 import { SourcesList } from "@/components/SourcesList";
 
 const Sources = () => {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [editingSource, setEditingSource] = useState<any>(null);
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -74,21 +77,6 @@ const Sources = () => {
     },
   });
 
-  const runScansMutation = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke('manual-scan-trigger');
-      if (error) throw error;
-      return data;
-    },
-    onSuccess: (data) => {
-      toast.success(`Scans triggered: ${data.summary.successful} successful, ${data.summary.failed} failed`);
-    },
-    onError: (error) => {
-      console.error("Error running scans:", error);
-      toast.error("Failed to trigger scans");
-    },
-  });
-
   if (loading || isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -112,24 +100,10 @@ const Sources = () => {
               Manage your intelligence sources and monitoring configurations
             </p>
           </div>
-          <div className="flex gap-2">
-            <Button 
-              onClick={() => runScansMutation.mutate()}
-              disabled={runScansMutation.isPending}
-              variant="outline"
-            >
-              {runScansMutation.isPending ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <Play className="w-4 h-4 mr-2" />
-              )}
-              Run All Scans
-            </Button>
-            <Button onClick={() => setIsAddDialogOpen(true)}>
-              <Plus className="w-4 h-4 mr-2" />
-              Add Source
-            </Button>
-          </div>
+          <Button onClick={() => setIsAddDialogOpen(true)}>
+            <Plus className="w-4 h-4 mr-2" />
+            Add Source
+          </Button>
         </div>
 
         <Card>
@@ -147,6 +121,10 @@ const Sources = () => {
                   toggleActiveMutation.mutate({ id, isActive })
                 }
                 onDelete={(id) => deleteMutation.mutate(id)}
+                onEdit={(source) => {
+                  setEditingSource(source);
+                  setIsEditDialogOpen(true);
+                }}
               />
             ) : (
               <div className="text-center py-8 text-muted-foreground">
@@ -160,6 +138,12 @@ const Sources = () => {
       <AddSourceDialog
         open={isAddDialogOpen}
         onOpenChange={setIsAddDialogOpen}
+      />
+
+      <EditSourceDialog
+        open={isEditDialogOpen}
+        onOpenChange={setIsEditDialogOpen}
+        source={editingSource}
       />
     </div>
   );
