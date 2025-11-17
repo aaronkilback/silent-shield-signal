@@ -11,7 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus, Brain, Search } from "lucide-react";
+import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus, Brain, Search, Trash2 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
 import { CreateRelationshipDialog } from "./CreateRelationshipDialog";
 
@@ -49,6 +50,8 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
   const [scanningPhotos, setScanningPhotos] = useState(false);
   const [createRelationshipOpen, setCreateRelationshipOpen] = useState(false);
   const [scanningRelationships, setScanningRelationships] = useState(false);
+  const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
+  const [isDeletingPhotos, setIsDeletingPhotos] = useState(false);
 
   const { data: entity, isLoading } = useQuery({
     queryKey: ['entity-detail', entityId],
@@ -208,6 +211,50 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
         description: error.message,
         variant: "destructive" 
       });
+    }
+  };
+
+  const handleBulkDeletePhotos = async () => {
+    if (selectedPhotos.length === 0) return;
+    
+    setIsDeletingPhotos(true);
+    try {
+      const photosToDelete = photos.filter(p => selectedPhotos.includes(p.id));
+      const storagePaths = photosToDelete.map(p => p.storage_path);
+      
+      await supabase.storage.from('entity-photos').remove(storagePaths);
+      await supabase.from('entity_photos').delete().in('id', selectedPhotos);
+      
+      toast({ 
+        title: "Photos Deleted", 
+        description: `Successfully deleted ${selectedPhotos.length} photo(s)` 
+      });
+      setSelectedPhotos([]);
+      queryClient.invalidateQueries({ queryKey: ['entity-photos', entityId] });
+    } catch (error: any) {
+      toast({ 
+        title: "Delete Failed", 
+        description: error.message,
+        variant: "destructive" 
+      });
+    } finally {
+      setIsDeletingPhotos(false);
+    }
+  };
+
+  const togglePhotoSelection = (photoId: string) => {
+    setSelectedPhotos(prev => 
+      prev.includes(photoId) 
+        ? prev.filter(id => id !== photoId)
+        : [...prev, photoId]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedPhotos.length === photos.length) {
+      setSelectedPhotos([]);
+    } else {
+      setSelectedPhotos(photos.map(p => p.id));
     }
   };
 
@@ -478,8 +525,36 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
 
           <TabsContent value="photos" className="space-y-4 mt-4">
             <div className="flex items-center justify-between">
-              <Label>Entity Photos</Label>
+              <div className="flex items-center gap-3">
+                <Label>Entity Photos</Label>
+                {photos.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={selectedPhotos.length === photos.length}
+                      onCheckedChange={toggleSelectAll}
+                      id="select-all-photos"
+                    />
+                    <label 
+                      htmlFor="select-all-photos" 
+                      className="text-sm text-muted-foreground cursor-pointer"
+                    >
+                      Select All
+                    </label>
+                  </div>
+                )}
+              </div>
               <div className="flex gap-2">
+                {selectedPhotos.length > 0 && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleBulkDeletePhotos}
+                    disabled={isDeletingPhotos}
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete {selectedPhotos.length} Photo{selectedPhotos.length > 1 ? 's' : ''}
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
@@ -520,9 +595,23 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                   const { data } = supabase.storage
                     .from('entity-photos')
                     .getPublicUrl(photo.storage_path);
+                  const isSelected = selectedPhotos.includes(photo.id);
                   
                   return (
-                    <Card key={photo.id} className="relative group overflow-hidden">
+                    <Card 
+                      key={photo.id} 
+                      className={`relative group overflow-hidden cursor-pointer transition-all ${
+                        isSelected ? 'ring-2 ring-primary' : ''
+                      }`}
+                      onClick={() => togglePhotoSelection(photo.id)}
+                    >
+                      <div className="absolute top-2 left-2 z-10">
+                        <Checkbox
+                          checked={isSelected}
+                          onCheckedChange={() => togglePhotoSelection(photo.id)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </div>
                       <img
                         src={data.publicUrl}
                         alt={photo.caption || 'Entity photo'}
@@ -532,7 +621,10 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                         variant="destructive"
                         size="sm"
                         className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={() => handleDeletePhoto(photo.id, photo.storage_path)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeletePhoto(photo.id, photo.storage_path);
+                        }}
                       >
                         <X className="w-4 h-4" />
                       </Button>
