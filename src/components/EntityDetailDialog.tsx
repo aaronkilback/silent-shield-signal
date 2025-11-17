@@ -11,8 +11,9 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon } from "lucide-react";
+import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus } from "lucide-react";
 import { z } from "zod";
+import { CreateRelationshipDialog } from "./CreateRelationshipDialog";
 
 interface EntityDetailDialogProps {
   entityId: string | null;
@@ -45,6 +46,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [createRelationshipOpen, setCreateRelationshipOpen] = useState(false);
 
   const { data: entity, isLoading } = useQuery({
     queryKey: ['entity-detail', entityId],
@@ -476,7 +478,17 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
           </TabsContent>
 
           <TabsContent value="relationships" className="space-y-4 mt-4">
-            <Label>Related Entities</Label>
+            <div className="flex items-center justify-between">
+              <Label>Related Entities</Label>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCreateRelationshipOpen(true)}
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Add Relationship
+              </Button>
+            </div>
             
             {relationships.length === 0 ? (
               <Card className="p-8 text-center">
@@ -515,6 +527,13 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
           </TabsContent>
         </Tabs>
       </DialogContent>
+
+      <CreateRelationshipDialog
+        entityId={entityId}
+        entityName={entity.name}
+        open={createRelationshipOpen}
+        onOpenChange={setCreateRelationshipOpen}
+      />
     </Dialog>
   );
 };
