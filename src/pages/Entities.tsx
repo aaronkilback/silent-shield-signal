@@ -10,7 +10,9 @@ import { CreateEntityDialog } from "@/components/CreateEntityDialog";
 import { EntityDetailDialog } from "@/components/EntityDetailDialog";
 import { SecurityBulletinGenerator } from "@/components/SecurityBulletinGenerator";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Search, Users, MapPin, Building2, Globe, Upload, LayoutGrid, List, FileText } from "lucide-react";
+import { Plus, Search, Users, MapPin, Building2, Globe, Upload, LayoutGrid, List, FileText, Trash2 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 
@@ -24,6 +26,9 @@ export default function Entities() {
   const [bulletinEntityId, setBulletinEntityId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [selectedEntityIds, setSelectedEntityIds] = useState<Set<string>>(new Set());
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const { data: entities = [], refetch } = useQuery({
     queryKey: ['entities', searchTerm, selectedType],
@@ -125,6 +130,84 @@ export default function Entities() {
     return '🔥'.repeat(flames);
   };
 
+  const toggleEntitySelection = (entityId: string) => {
+    const newSelected = new Set(selectedEntityIds);
+    if (newSelected.has(entityId)) {
+      newSelected.delete(entityId);
+    } else {
+      newSelected.add(entityId);
+    }
+    setSelectedEntityIds(newSelected);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedEntityIds.size === entities.length) {
+      setSelectedEntityIds(new Set());
+    } else {
+      setSelectedEntityIds(new Set(entities.map((e: any) => e.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    setIsDeleting(true);
+    try {
+      const idsToDelete = Array.from(selectedEntityIds);
+      
+      // Delete entity photos
+      const { data: photos } = await supabase
+        .from('entity_photos')
+        .select('storage_path')
+        .in('entity_id', idsToDelete);
+      
+      if (photos && photos.length > 0) {
+        const paths = photos.map(p => p.storage_path);
+        await supabase.storage.from('entity-photos').remove(paths);
+      }
+
+      // Delete photos metadata
+      await supabase
+        .from('entity_photos')
+        .delete()
+        .in('entity_id', idsToDelete);
+
+      // Delete entity mentions
+      await supabase
+        .from('entity_mentions')
+        .delete()
+        .in('entity_id', idsToDelete);
+
+      // Delete entity relationships
+      await supabase
+        .from('entity_relationships')
+        .delete()
+        .or(`entity_a_id.in.(${idsToDelete.join(',')}),entity_b_id.in.(${idsToDelete.join(',')})`);
+
+      // Delete entity notifications
+      await supabase
+        .from('entity_notifications')
+        .delete()
+        .in('entity_id', idsToDelete);
+
+      // Delete entities
+      const { error } = await supabase
+        .from('entities')
+        .delete()
+        .in('id', idsToDelete);
+
+      if (error) throw error;
+
+      toast.success(`Successfully deleted ${idsToDelete.length} ${idsToDelete.length === 1 ? 'entity' : 'entities'}`);
+      setSelectedEntityIds(new Set());
+      setDeleteDialogOpen(false);
+      refetch();
+    } catch (error: any) {
+      console.error('Error deleting entities:', error);
+      toast.error(`Failed to delete entities: ${error.message}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const entityTypes = [
     { value: 'person', label: 'People' },
     { value: 'organization', label: 'Organizations' },
@@ -218,31 +301,64 @@ export default function Entities() {
           </div>
         </div>
 
+        {/* Bulk Actions Bar */}
+        {selectedEntityIds.size > 0 && (
+          <Card className="mb-4 p-4 bg-muted/50">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <Checkbox
+                  checked={selectedEntityIds.size === entities.length}
+                  onCheckedChange={toggleSelectAll}
+                />
+                <span className="font-medium">
+                  {selectedEntityIds.size} {selectedEntityIds.size === 1 ? 'entity' : 'entities'} selected
+                </span>
+              </div>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setDeleteDialogOpen(true)}
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete Selected
+              </Button>
+            </div>
+          </Card>
+        )}
+
         {viewMode === 'grid' ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {entities.map((entity: any) => {
               const Icon = getTypeIcon(entity.type);
+              const isSelected = selectedEntityIds.has(entity.id);
               return (
                 <Card 
                   key={entity.id} 
-                  className="p-4 hover:shadow-lg transition-shadow"
+                  className={`p-4 hover:shadow-lg transition-shadow ${isSelected ? 'ring-2 ring-primary' : ''}`}
                 >
                   <div className="space-y-3">
-                    <div className="flex items-start justify-between">
-                      <div 
-                        className="flex items-center gap-2 cursor-pointer flex-1"
-                        onClick={() => {
-                          setSelectedEntityId(entity.id);
-                          setDetailDialogOpen(true);
-                        }}
-                      >
-                        <Icon className="w-5 h-5 text-primary" />
-                        <h3 className="font-semibold">{entity.name}</h3>
-                        {entity.threat_score !== null && entity.threat_score !== undefined && (
-                          <span className="text-lg" title={`Threat Score: ${entity.threat_score}/10 (Recency + Confidence + Relevancy)`}>
-                            {getThreatFlames(entity.threat_score)}
-                          </span>
-                        )}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          checked={isSelected}
+                          onCheckedChange={() => toggleEntitySelection(entity.id)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <div 
+                          className="flex items-center gap-2 cursor-pointer flex-1"
+                          onClick={() => {
+                            setSelectedEntityId(entity.id);
+                            setDetailDialogOpen(true);
+                          }}
+                        >
+                          <Icon className="w-5 h-5 text-primary" />
+                          <h3 className="font-semibold">{entity.name}</h3>
+                          {entity.threat_score !== null && entity.threat_score !== undefined && (
+                            <span className="text-lg" title={`Threat Score: ${entity.threat_score}/10 (Recency + Confidence + Relevancy)`}>
+                              {getThreatFlames(entity.threat_score)}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <Badge variant={getRiskColor(entity.risk_level) as any}>
                         {entity.risk_level || 'unknown'}
@@ -309,12 +425,18 @@ export default function Entities() {
           <div className="space-y-2">
             {entities.map((entity: any) => {
               const Icon = getTypeIcon(entity.type);
+              const isSelected = selectedEntityIds.has(entity.id);
               return (
                 <Card 
                   key={entity.id} 
-                  className="p-4 hover:shadow-lg transition-shadow"
+                  className={`p-4 hover:shadow-lg transition-shadow ${isSelected ? 'ring-2 ring-primary' : ''}`}
                 >
                   <div className="flex items-center gap-4">
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={() => toggleEntitySelection(entity.id)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
                     <Icon 
                       className="w-5 h-5 text-primary flex-shrink-0 cursor-pointer" 
                       onClick={() => {
@@ -409,6 +531,28 @@ export default function Entities() {
           <SecurityBulletinGenerator preselectedEntityId={bulletinEntityId || undefined} />
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Entities</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete {selectedEntityIds.size} {selectedEntityIds.size === 1 ? 'entity' : 'entities'}? 
+              This will also delete all associated photos, mentions, relationships, and notifications. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleBulkDelete}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
