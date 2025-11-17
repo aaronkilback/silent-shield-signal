@@ -4,8 +4,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { FileText, Download, Loader2, Calendar } from "lucide-react";
+import { FileText, Download, Loader2, Calendar, FileDown, Eye } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 export const ExecutiveReportGenerator = () => {
   const { toast } = useToast();
@@ -70,7 +72,7 @@ export const ExecutiveReportGenerator = () => {
     }
   };
 
-  const downloadReport = () => {
+  const downloadReportHTML = () => {
     if (!reportHtml) return;
 
     const blob = new Blob([reportHtml], { type: 'text/html' });
@@ -85,8 +87,68 @@ export const ExecutiveReportGenerator = () => {
 
     toast({
       title: "Report Downloaded",
-      description: "The report has been saved to your device.",
+      description: "The HTML report has been saved to your device.",
     });
+  };
+
+  const downloadReportPDF = async () => {
+    if (!reportHtml) return;
+
+    const container = document.createElement('div');
+    container.style.position = 'absolute';
+    container.style.left = '-9999px';
+    container.style.width = '210mm';
+    container.innerHTML = reportHtml;
+    document.body.appendChild(container);
+
+    try {
+      toast({
+        title: "Generating PDF",
+        description: "Please wait...",
+      });
+
+      const canvas = await html2canvas(container, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+      });
+
+      const imgWidth = 210;
+      const pageHeight = 297;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+
+      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      pdf.save(`executive-report-${new Date().toISOString().split('T')[0]}.pdf`);
+
+      toast({
+        title: "PDF Downloaded",
+        description: "The PDF report has been saved to your device.",
+      });
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      toast({
+        title: "PDF Generation Failed",
+        description: "Failed to generate PDF",
+        variant: "destructive",
+      });
+    } finally {
+      document.body.removeChild(container);
+    }
   };
 
   const openInNewTab = () => {
@@ -170,23 +232,33 @@ export const ExecutiveReportGenerator = () => {
           </div>
 
           {reportHtml && (
-            <div className="flex gap-2 pt-4 border-t">
+            <div className="space-y-2 pt-4 border-t">
               <Button 
                 onClick={openInNewTab} 
                 variant="outline"
-                className="flex-1"
+                className="w-full"
               >
-                <FileText className="w-4 h-4 mr-2" />
+                <Eye className="w-4 h-4 mr-2" />
                 Preview Report
               </Button>
-              <Button 
-                onClick={downloadReport} 
-                variant="outline"
-                className="flex-1"
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Download HTML
-              </Button>
+              <div className="flex gap-2">
+                <Button 
+                  onClick={downloadReportHTML} 
+                  variant="outline"
+                  className="flex-1"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  HTML
+                </Button>
+                <Button 
+                  onClick={downloadReportPDF} 
+                  variant="outline"
+                  className="flex-1"
+                >
+                  <FileDown className="w-4 h-4 mr-2" />
+                  PDF
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>
