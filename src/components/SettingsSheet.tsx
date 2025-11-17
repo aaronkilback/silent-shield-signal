@@ -2,11 +2,12 @@ import { useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, Shield, Bell, Zap, Database } from "lucide-react";
+import { Settings, Shield, Bell, Zap, Database, TestTube } from "lucide-react";
 import EscalationRulesManager from "./EscalationRulesManager";
 import { AutomationSettings } from "./AutomationSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { DatabaseSettings } from "./DatabaseSettings";
+import { TestSignalGenerator } from "./TestSignalGenerator";
 
 export const SettingsSheet = () => {
   const [open, setOpen] = useState(false);
@@ -24,7 +25,7 @@ export const SettingsSheet = () => {
         </SheetHeader>
 
         <Tabs defaultValue="escalation" className="mt-6">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="escalation">
               <Shield className="w-4 h-4 mr-2" />
               Escalation
@@ -36,6 +37,10 @@ export const SettingsSheet = () => {
             <TabsTrigger value="notifications">
               <Bell className="w-4 h-4 mr-2" />
               Notifications
+            </TabsTrigger>
+            <TabsTrigger value="testing">
+              <TestTube className="w-4 h-4 mr-2" />
+              Testing
             </TabsTrigger>
             <TabsTrigger value="database">
               <Database className="w-4 h-4 mr-2" />
@@ -53,6 +58,10 @@ export const SettingsSheet = () => {
 
           <TabsContent value="notifications" className="mt-4">
             <NotificationSettings />
+          </TabsContent>
+
+          <TabsContent value="testing" className="mt-4">
+            <TestSignalGenerator />
           </TabsContent>
 
           <TabsContent value="database" className="mt-4">
