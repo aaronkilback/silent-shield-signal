@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { History, Clock, AlertCircle, Eye } from "lucide-react";
+import { History, Clock, AlertCircle, Eye, Sparkles } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { SignalDetailDialog } from "./SignalDetailDialog";
@@ -20,6 +20,13 @@ interface Signal {
   created_at: string;
   client_id: string;
   raw_json: any;
+  is_read: boolean;
+  is_test: boolean;
+  source_id: string | null;
+  sources?: {
+    name: string;
+    type: string;
+  };
   clients: {
     name: string;
   };
@@ -76,6 +83,13 @@ export const SignalHistory = () => {
           created_at,
           client_id,
           raw_json,
+          is_read,
+          is_test,
+          source_id,
+          sources (
+            name,
+            type
+          ),
           clients (
             name
           )
@@ -90,6 +104,25 @@ export const SignalHistory = () => {
       console.error('Error loading signals:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const markAsRead = async (signalId: string) => {
+    try {
+      await supabase
+        .from('signals')
+        .update({ is_read: true })
+        .eq('id', signalId);
+    } catch (error) {
+      console.error('Error marking signal as read:', error);
+    }
+  };
+
+  const handleSignalClick = (signal: Signal) => {
+    setSelectedSignal(signal);
+    setDialogOpen(true);
+    if (!signal.is_read) {
+      markAsRead(signal.id);
     }
   };
 
@@ -166,11 +199,24 @@ export const SignalHistory = () => {
               {signals.map((signal) => (
                 <div
                   key={signal.id}
-                  className="p-4 border rounded-lg space-y-2 hover:bg-muted/50 transition-colors"
+                  className={`p-4 border rounded-lg space-y-2 hover:bg-muted/50 transition-colors cursor-pointer ${!signal.is_read ? 'bg-primary/5 border-primary/20' : ''}`}
+                  onClick={() => handleSignalClick(signal)}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        {!signal.is_read && (
+                          <Badge variant="default" className="gap-1">
+                            <Eye className="w-3 h-3" />
+                            Unread
+                          </Badge>
+                        )}
+                        {signal.is_test && (
+                          <Badge variant="outline" className="gap-1">
+                            <Sparkles className="w-3 h-3" />
+                            Test
+                          </Badge>
+                        )}
                         <Badge variant={getSeverityColor(signal.severity)}>
                           {signal.severity}
                         </Badge>
@@ -197,6 +243,9 @@ export const SignalHistory = () => {
                         <Clock className="w-3 h-3" />
                         {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
                       </span>
+                      {signal.sources && (
+                        <span>Source: {signal.sources.name}</span>
+                      )}
                       {signal.clients && (
                         <span>Client: {signal.clients.name}</span>
                       )}
@@ -214,7 +263,8 @@ export const SignalHistory = () => {
                         size="sm"
                         variant="ghost"
                         className="h-7 gap-1"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           console.log('Viewing analysis for signal:', {
                             id: signal.id,
                             text: signal.normalized_text?.substring(0, 30),
@@ -230,8 +280,7 @@ export const SignalHistory = () => {
                           }, 50);
                         }}
                       >
-                        <Eye className="w-3 h-3" />
-                        View Analysis
+                        <Eye className="w-4 h-4" />
                       </Button>
                     </div>
                   </div>

@@ -589,6 +589,8 @@ export type Database = {
           contained_at: string | null
           created_at: string
           id: string
+          is_read: boolean | null
+          is_test: boolean | null
           opened_at: string
           owner_user_id: string | null
           priority: Database["public"]["Enums"]["incident_priority"]
@@ -605,6 +607,8 @@ export type Database = {
           contained_at?: string | null
           created_at?: string
           id?: string
+          is_read?: boolean | null
+          is_test?: boolean | null
           opened_at?: string
           owner_user_id?: string | null
           priority?: Database["public"]["Enums"]["incident_priority"]
@@ -621,6 +625,8 @@ export type Database = {
           contained_at?: string | null
           created_at?: string
           id?: string
+          is_read?: boolean | null
+          is_test?: boolean | null
           opened_at?: string
           owner_user_id?: string | null
           priority?: Database["public"]["Enums"]["incident_priority"]
@@ -867,6 +873,8 @@ export type Database = {
           created_at: string
           entity_tags: string[] | null
           id: string
+          is_read: boolean | null
+          is_test: boolean | null
           location: string | null
           momentum: number | null
           normalized_text: string | null
@@ -885,6 +893,8 @@ export type Database = {
           created_at?: string
           entity_tags?: string[] | null
           id?: string
+          is_read?: boolean | null
+          is_test?: boolean | null
           location?: string | null
           momentum?: number | null
           normalized_text?: string | null
@@ -903,6 +913,8 @@ export type Database = {
           created_at?: string
           entity_tags?: string[] | null
           id?: string
+          is_read?: boolean | null
+          is_test?: boolean | null
           location?: string | null
           momentum?: number | null
           normalized_text?: string | null

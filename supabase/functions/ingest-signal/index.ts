@@ -14,7 +14,8 @@ const SignalInputSchema = z.object({
   text: z.string().min(1).max(10000).optional(),
   url: z.string().url().optional(),
   location: z.string().max(500).optional(),
-  raw_json: z.any().optional()
+  raw_json: z.any().optional(),
+  is_test: z.boolean().optional()
 }).refine(data => data.text || data.event || data.url, {
   message: "Either 'text', 'event', or 'url' must be provided"
 });
@@ -99,7 +100,7 @@ serve(async (req) => {
       );
     }
 
-    const { source_key, event, text, url, location, raw_json } = validationResult.data;
+    const { source_key, event, text, url, location, raw_json, is_test } = validationResult.data;
     
     let signalText = text || JSON.stringify(event);
     let signalLocation = location || null;
@@ -423,7 +424,8 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
         category: classification.category,
         severity: classification.severity,
         confidence: classification.confidence,
-        status: 'new'
+        status: 'new',
+        is_test: is_test || false
       })
       .select()
       .single();
