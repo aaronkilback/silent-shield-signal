@@ -71,7 +71,10 @@ serve(async (req) => {
     searchUrl.searchParams.set('cx', GOOGLE_CX);
     searchUrl.searchParams.set('q', searchQuery);
     searchUrl.searchParams.set('searchType', 'image');
-    searchUrl.searchParams.set('num', '3');
+    searchUrl.searchParams.set('num', '10'); // Increased from 3 to 10
+    searchUrl.searchParams.set('safe', 'off'); // Turn off safe search for more results
+    searchUrl.searchParams.set('imgType', 'photo'); // Focus on actual photos
+    searchUrl.searchParams.set('imgSize', 'large'); // Prefer larger, higher quality images
 
     console.log(`Searching Google Images for: ${searchQuery}`);
     console.log(`Search parameters:`, {

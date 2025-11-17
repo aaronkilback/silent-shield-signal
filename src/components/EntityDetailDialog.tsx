@@ -50,6 +50,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
   const [scanningPhotos, setScanningPhotos] = useState(false);
   const [createRelationshipOpen, setCreateRelationshipOpen] = useState(false);
   const [scanningRelationships, setScanningRelationships] = useState(false);
+  const [scanningContent, setScanningContent] = useState(false);
   const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
   const [isDeletingPhotos, setIsDeletingPhotos] = useState(false);
 
@@ -96,6 +97,21 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
         `)
         .or(`entity_a_id.eq.${entityId},entity_b_id.eq.${entityId}`)
         .order('last_observed', { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!entityId
+  });
+
+  const { data: content = [] } = useQuery({
+    queryKey: ['entity-content', entityId],
+    queryFn: async () => {
+      if (!entityId) return [];
+      const { data, error } = await supabase
+        .from('entity_content')
+        .select('*')
+        .eq('entity_id', entityId)
+        .order('published_date', { ascending: false, nullsFirst: false });
       if (error) throw error;
       return data;
     },
@@ -334,6 +350,37 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     }
   };
 
+  const handleContentScan = async () => {
+    if (!entityId) return;
+    
+    setScanningContent(true);
+    try {
+      toast({ title: "Scanning for Content", description: "Searching for news articles and online mentions..." });
+      
+      const { data, error } = await supabase.functions.invoke('scan-entity-content', {
+        body: { entityId }
+      });
+
+      if (error) throw error;
+
+      const contentAdded = data?.contentAdded || 0;
+      toast({ 
+        title: "Content Scan Complete", 
+        description: `Found ${contentAdded} articles/mentions for ${entity?.name}`
+      });
+      queryClient.invalidateQueries({ queryKey: ['entity-content', entityId] });
+    } catch (error: any) {
+      console.error('Error scanning content:', error);
+      toast({ 
+        title: "Scan Failed", 
+        description: error.message,
+        variant: "destructive" 
+      });
+    } finally {
+      setScanningContent(false);
+    }
+  };
+
   if (!entity) return null;
 
   return (
@@ -352,9 +399,10 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
         </DialogHeader>
 
         <Tabs defaultValue="details" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="details">Details</TabsTrigger>
             <TabsTrigger value="photos">Photos</TabsTrigger>
+            <TabsTrigger value="content">Content</TabsTrigger>
             <TabsTrigger value="relationships">Relationships</TabsTrigger>
           </TabsList>
 
@@ -636,6 +684,92 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                     </Card>
                   );
                 })}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="content" className="space-y-4 mt-4">
+            <div className="flex items-center justify-between">
+              <Label>Articles & Online Mentions</Label>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleContentScan}
+                disabled={scanningContent}
+              >
+                {scanningContent ? (
+                  <>
+                    <span className="animate-spin mr-2">🔄</span>
+                    Scanning...
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-4 h-4 mr-2" />
+                    Scan for Content
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {content.length === 0 ? (
+              <Card className="p-8 text-center">
+                <Search className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
+                <p className="text-muted-foreground">No content found yet</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Click "Scan for Content" to search for articles and mentions
+                </p>
+              </Card>
+            ) : (
+              <div className="space-y-3">
+                {content.map((item) => (
+                  <Card key={item.id} className="p-4 hover:bg-accent/50 transition-colors">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="capitalize">
+                            {item.content_type.replace('_', ' ')}
+                          </Badge>
+                          {item.relevance_score && (
+                            <Badge variant="secondary">
+                              {item.relevance_score}% relevant
+                            </Badge>
+                          )}
+                        </div>
+                        <h4 className="font-medium line-clamp-2">
+                          <a 
+                            href={item.url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="hover:underline"
+                          >
+                            {item.title || 'Untitled'}
+                          </a>
+                        </h4>
+                        {item.excerpt && (
+                          <p className="text-sm text-muted-foreground line-clamp-2">
+                            {item.excerpt}
+                          </p>
+                        )}
+                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                          {item.source && <span>📰 {item.source}</span>}
+                          {item.published_date && (
+                            <span>
+                              📅 {new Date(item.published_date).toLocaleDateString()}
+                            </span>
+                          )}
+                          {item.author && <span>✍️ {item.author}</span>}
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => window.open(item.url, '_blank')}
+                      >
+                        <LinkIcon className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </Card>
+                ))}
               </div>
             )}
           </TabsContent>
