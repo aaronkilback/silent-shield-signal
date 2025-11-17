@@ -214,6 +214,68 @@ serve(async (req) => {
         
         console.log(`Downloaded image: ${imageBuffer.byteLength} bytes`);
         
+        // Use AI to verify the image actually shows the entity
+        const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+        if (LOVABLE_API_KEY) {
+          try {
+            // Convert image to base64
+            const base64Image = btoa(
+              new Uint8Array(imageBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+            );
+            
+            // Get the image content type
+            const mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
+            
+            // Ask AI to verify if this image shows the entity
+            const verifyResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'google/gemini-2.5-flash',
+                messages: [
+                  {
+                    role: 'user',
+                    content: [
+                      {
+                        type: 'text',
+                        text: `Does this image show "${entity.name}" (${entity.type})? Answer with just YES or NO. Only say YES if you can clearly identify ${entity.name} in the image. If it's a generic stock photo, logo, or unrelated image, say NO.`
+                      },
+                      {
+                        type: 'image_url',
+                        image_url: {
+                          url: `data:${mimeType};base64,${base64Image}`
+                        }
+                      }
+                    ]
+                  }
+                ],
+                max_tokens: 10
+              })
+            });
+
+            if (verifyResponse.ok) {
+              const verifyData = await verifyResponse.json();
+              const aiAnswer = verifyData.choices[0]?.message?.content?.trim().toUpperCase();
+              
+              console.log(`AI verification for ${item.link}: ${aiAnswer}`);
+              
+              if (aiAnswer !== 'YES') {
+                console.log(`AI rejected image: ${item.link}`);
+                errors.push(`Skipped ${item.link}: AI verification failed - image doesn't show ${entity.name}`);
+                continue;
+              }
+            } else {
+              console.log(`AI verification failed (status ${verifyResponse.status}), proceeding without verification`);
+            }
+          } catch (aiError) {
+            console.error('AI verification error:', aiError);
+            // Continue without AI verification if it fails
+          }
+        }
+        
         // Determine file extension from content type
         const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
         const ext = contentType.split('/')[1]?.split(';')[0] || 'jpg';
