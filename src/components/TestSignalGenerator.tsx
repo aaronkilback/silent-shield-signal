@@ -124,6 +124,7 @@ export const TestSignalGenerator = () => {
             body: {
               text: scenario.text,
               location: scenario.location,
+              is_test: true,
               raw_json: {
                 scenario: scenario,
                 test_signal: true,

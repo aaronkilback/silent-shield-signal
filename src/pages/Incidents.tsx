@@ -25,6 +25,8 @@ interface Incident {
   contained_at: string | null;
   resolved_at: string | null;
   timeline_json: any[];
+  is_read: boolean;
+  is_test: boolean;
   clients?: {
     name: string;
   };
