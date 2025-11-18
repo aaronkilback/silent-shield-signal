@@ -38,6 +38,21 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
+    // Create monitoring history entry
+    const { data: historyEntry, error: historyError } = await supabase
+      .from('monitoring_history')
+      .insert({
+        source_name: 'News Monitor',
+        status: 'running',
+        scan_metadata: { sources: ['News API', 'Google News'] }
+      })
+      .select()
+      .single();
+
+    if (historyError) {
+      console.error('Failed to create monitoring history:', historyError);
+    }
+
     console.log('Starting security news monitoring scan...');
 
     // Get all clients
@@ -167,6 +182,22 @@ serve(async (req) => {
 
     console.log(`News monitoring complete. Created ${signalsCreated} signals.`);
 
+    // Update monitoring history on success
+    if (historyEntry) {
+      await supabase
+        .from('monitoring_history')
+        .update({
+          status: 'completed',
+          scan_completed_at: new Date().toISOString(),
+          signals_created: signalsCreated,
+          scan_metadata: { 
+            sources: ['News API', 'Google News'],
+            clients_scanned: clients?.length || 0
+          }
+        })
+        .eq('id', historyEntry.id);
+    }
+
     return new Response(
       JSON.stringify({ 
         success: true, 
@@ -178,6 +209,37 @@ serve(async (req) => {
     );
   } catch (error) {
     console.error('Error in news monitoring:', error);
+    
+    // Update monitoring history on error
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    );
+    
+    try {
+      const { data: failedEntry } = await supabase
+        .from('monitoring_history')
+        .select('id')
+        .eq('source_name', 'News Monitor')
+        .eq('status', 'running')
+        .order('scan_started_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (failedEntry) {
+        await supabase
+          .from('monitoring_history')
+          .update({
+            status: 'failed',
+            scan_completed_at: new Date().toISOString(),
+            error_message: error instanceof Error ? error.message : 'Unknown error'
+          })
+          .eq('id', failedEntry.id);
+      }
+    } catch (updateError) {
+      console.error('Failed to update monitoring history:', updateError);
+    }
+    
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
