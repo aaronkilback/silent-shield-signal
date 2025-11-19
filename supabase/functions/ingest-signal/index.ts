@@ -11,7 +11,7 @@ const corsHeaders = {
 const SignalInputSchema = z.object({
   source_key: z.string().optional(),
   event: z.any().optional(),
-  text: z.string().min(1).max(10000).optional(),
+  text: z.string().min(1).max(5000000).optional(), // Increased to 5MB for large documents
   url: z.string().url().optional(),
   location: z.string().max(500).optional(),
   raw_json: z.any().optional(),
