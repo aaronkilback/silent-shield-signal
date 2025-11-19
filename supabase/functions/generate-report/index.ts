@@ -62,6 +62,16 @@ serve(async (req) => {
 
     if (incidentsError) throw incidentsError;
 
+    // Fetch investigations in time window (using user auth)
+    const { data: investigations, error: investigationsError } = await supabaseClient
+      .from('investigations')
+      .select('*')
+      .gte('created_at', periodStart.toISOString())
+      .lte('created_at', periodEnd.toISOString())
+      .order('created_at', { ascending: false });
+
+    if (investigationsError) throw investigationsError;
+
     // Calculate metrics
     const criticalSignals = signals?.filter(s => s.severity === 'critical').length || 0;
     const highSignals = signals?.filter(s => s.severity === 'high').length || 0;
@@ -196,124 +206,181 @@ Keep it executive-friendly and action-oriented.`;
         }, 0) / incidents.filter(i => i.resolved_at).length / 1000 / 60 / 60
       : 0;
 
-    // Generate HTML report with enhanced visualizations
+    // Format dates for header
+    const coverageStart = new Date(periodStart);
+    const coverageEnd = new Date(periodEnd);
+    const generatedDate = new Date();
+    
+    const formatDate = (date: Date) => {
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    };
+    
+    const formatDateTime = (date: Date) => {
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + 
+        ' – ' + date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    };
+
+    // Generate HTML report with tactical executive briefing format
     const html = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>72-Hour Risk Snapshot - ArachnNet™</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <title>72-Hour Intelligence Snapshot</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    @page {
+      size: A4;
+      margin: 0;
+    }
+    
+    * { 
+      margin: 0; 
+      padding: 0; 
+      box-sizing: border-box; 
+    }
     
     body { 
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-      color: #e2e8f0;
-      padding: 40px 20px;
-      line-height: 1.6;
+      background: #0a0a0a;
+      color: #e5e7eb;
+      line-height: 1.5;
+      padding: 0;
     }
     
-    .container {
-      max-width: 1400px;
+    .page {
+      width: 210mm;
+      min-height: 297mm;
       margin: 0 auto;
-      background: #1e293b;
-      border-radius: 16px;
-      overflow: hidden;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
+      position: relative;
     }
     
     .header {
-      background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
-      padding: 40px;
-      border-bottom: 4px solid #9333ea;
+      background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+      border-bottom: 3px solid #00d9ff;
+      padding: 32px 40px;
+      position: relative;
     }
     
-    .header h1 {
-      font-size: 2.5rem;
+    .header::after {
+      content: '';
+      position: absolute;
+      bottom: -3px;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, #00d9ff, transparent);
+    }
+    
+    .header-title {
+      font-size: 2rem;
       font-weight: 800;
-      color: white;
-      margin-bottom: 8px;
+      color: #ffffff;
+      margin-bottom: 20px;
       letter-spacing: -0.5px;
-    }
-    
-    .header .subtitle {
-      font-size: 1rem;
-      color: rgba(255, 255, 255, 0.9);
-      font-weight: 500;
-    }
-    
-    .meta-info {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 16px;
-      padding: 24px 40px;
-      background: #0f172a;
-      border-bottom: 1px solid #334155;
-    }
-    
-    .meta-item {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    
-    .meta-label {
-      font-size: 0.75rem;
       text-transform: uppercase;
-      color: #94a3b8;
-      font-weight: 600;
-      letter-spacing: 0.5px;
     }
     
-    .meta-value {
-      font-size: 0.95rem;
-      color: #e2e8f0;
+    .header-meta {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px 32px;
+      font-size: 0.875rem;
+    }
+    
+    .header-meta-item {
+      display: flex;
+      gap: 8px;
+    }
+    
+    .header-meta-label {
+      color: #9ca3af;
+      font-weight: 600;
+      min-width: 100px;
+    }
+    
+    .header-meta-value {
+      color: #e5e7eb;
       font-weight: 500;
+    }
+    
+    .classification {
+      margin-top: 16px;
+      padding: 8px 16px;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid #ef4444;
+      border-radius: 4px;
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #fca5a5;
     }
     
     .content {
-      padding: 40px;
+      padding: 32px 40px;
     }
     
     .section {
-      margin-bottom: 48px;
+      margin-bottom: 32px;
+      background: #1a1a1a;
+      border-radius: 8px;
+      padding: 24px;
+      border: 1px solid #2a2a2a;
     }
     
     .section-title {
-      font-size: 1.75rem;
+      font-size: 1.25rem;
       font-weight: 700;
-      color: white;
-      margin-bottom: 24px;
-      padding-bottom: 12px;
-      border-bottom: 2px solid #334155;
+      color: #00d9ff;
+      margin-bottom: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    
+    .section-title::before {
+      content: '';
+      width: 4px;
+      height: 24px;
+      background: linear-gradient(180deg, #00d9ff, #0ea5e9);
+      border-radius: 2px;
     }
     
     .metrics-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 20px;
-      margin-bottom: 32px;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
     }
     
     .metric-card {
-      background: linear-gradient(135deg, #334155 0%, #1e293b 100%);
-      border-radius: 12px;
-      padding: 24px;
-      border: 1px solid #475569;
-      transition: transform 0.2s, box-shadow 0.2s;
+      background: #0a0a0a;
+      border-radius: 6px;
+      padding: 20px;
+      border: 1px solid #2a2a2a;
+      position: relative;
+      overflow: hidden;
     }
     
-    .metric-card:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    .metric-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, currentColor, transparent);
+      opacity: 0.5;
     }
     
     .metric-label {
-      font-size: 0.875rem;
-      color: #94a3b8;
+      font-size: 0.75rem;
+      color: #6b7280;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.5px;
@@ -321,25 +388,34 @@ Keep it executive-friendly and action-oriented.`;
     }
     
     .metric-value {
-      font-size: 2.5rem;
+      font-size: 2rem;
       font-weight: 800;
-      color: white;
+      color: #ffffff;
+      line-height: 1;
     }
     
+    .metric-card.critical { color: #ef4444; }
     .metric-card.critical .metric-value { color: #ef4444; }
+    .metric-card.high { color: #f97316; }
     .metric-card.high .metric-value { color: #f97316; }
+    .metric-card.medium { color: #eab308; }
     .metric-card.medium .metric-value { color: #eab308; }
+    .metric-card.success { color: #22c55e; }
     .metric-card.success .metric-value { color: #22c55e; }
+    .metric-card.info { color: #00d9ff; }
+    .metric-card.info .metric-value { color: #00d9ff; }
     
     .executive-summary {
-      background: linear-gradient(135deg, #7c3aed15 0%, #a855f715 100%);
-      border: 2px solid #7c3aed;
-      border-radius: 12px;
-      padding: 32px;
-      margin-bottom: 32px;
+      background: #0a0a0a;
+      border: 1px solid #2a2a2a;
+      border-left: 3px solid #00d9ff;
+      border-radius: 6px;
+      padding: 20px 24px;
+      margin-bottom: 16px;
       white-space: pre-wrap;
-      line-height: 1.8;
-      font-size: 1.05rem;
+      line-height: 1.7;
+      font-size: 0.95rem;
+      color: #d1d5db;
     }
 
     .chart-container {
@@ -504,55 +580,152 @@ Keep it executive-friendly and action-oriented.`;
     .badge {
       display: inline-block;
       padding: 4px 12px;
-      border-radius: 20px;
+      border-radius: 12px;
       font-size: 0.75rem;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
     
-    .badge.critical {
-      background: #ef444420;
-      color: #ef4444;
+    .badge-critical {
+      background: rgba(239, 68, 68, 0.2);
+      color: #fca5a5;
       border: 1px solid #ef4444;
     }
     
-    .badge.high {
-      background: #f9731620;
-      color: #f97316;
+    .badge-high {
+      background: rgba(249, 115, 22, 0.2);
+      color: #fdba74;
       border: 1px solid #f97316;
     }
     
-    .badge.medium {
-      background: #eab30820;
-      color: #eab308;
+    .badge-medium {
+      background: rgba(234, 179, 8, 0.2);
+      color: #fde047;
       border: 1px solid #eab308;
     }
     
-    .badge.low {
-      background: #22c55e20;
-      color: #22c55e;
+    .badge-low {
+      background: rgba(34, 197, 94, 0.2);
+      color: #86efac;
       border: 1px solid #22c55e;
     }
     
-    .badge.open { background: #3b82f620; color: #3b82f6; border: 1px solid #3b82f6; }
-    .badge.resolved { background: #22c55e20; color: #22c55e; border: 1px solid #22c55e; }
-    .badge.contained { background: #eab30820; color: #eab308; border: 1px solid #eab308; }
+    .signal-item {
+      background: #0a0a0a;
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 12px;
+      border: 1px solid #2a2a2a;
+      border-left: 3px solid #3b82f6;
+    }
+    
+    .signal-item.critical { border-left-color: #ef4444; }
+    .signal-item.high { border-left-color: #f97316; }
+    .signal-item.medium { border-left-color: #eab308; }
+    
+    .signal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 8px;
+      gap: 16px;
+    }
+    
+    .signal-text {
+      flex: 1;
+      font-weight: 500;
+      color: #e5e7eb;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+    
+    .signal-meta {
+      display: flex;
+      gap: 16px;
+      font-size: 0.8rem;
+      color: #6b7280;
+      margin-top: 8px;
+    }
+    
+    .trend-item {
+      background: #0a0a0a;
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 12px;
+      border: 1px solid #2a2a2a;
+      display: flex;
+      justify-space-between;
+      align-items: center;
+    }
+    
+    .trend-text {
+      color: #e5e7eb;
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+    
+    .action-item {
+      background: #0a0a0a;
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 12px;
+      border: 1px solid #2a2a2a;
+      border-left: 3px solid #00d9ff;
+    }
+    
+    .action-text {
+      color: #e5e7eb;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+    
+    .investigation-item {
+      background: #0a0a0a;
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 12px;
+      border: 1px solid #2a2a2a;
+      border-left: 3px solid #8b5cf6;
+    }
+    
+    .investigation-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 8px;
+    }
+    
+    .investigation-number {
+      font-weight: 700;
+      color: #8b5cf6;
+      font-size: 0.9rem;
+    }
+    
+    .investigation-info {
+      color: #9ca3af;
+      font-size: 0.85rem;
+    }
+    
+    .investigation-synopsis {
+      color: #d1d5db;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      margin-top: 8px;
+    }
     
     .footer {
+      background: #0a0a0a;
+      padding: 20px 40px;
       text-align: center;
-      padding: 32px;
-      background: #0f172a;
-      border-top: 1px solid #334155;
-      color: #64748b;
-      font-size: 0.875rem;
+      font-size: 0.75rem;
+      color: #6b7280;
+      border-top: 1px solid #2a2a2a;
     }
     
     @media print {
-      body { background: white; color: black; }
-      .container { box-shadow: none; }
-      .header { background: #7c3aed; }
-      .metric-card:hover { transform: none; }
+      body { background: white; }
+      .page { box-shadow: none; }
     }
   </style>
 </head>
