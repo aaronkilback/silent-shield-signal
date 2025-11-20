@@ -1,10 +1,13 @@
 import { Header } from "@/components/Header";
 import { SignalHistory } from "@/components/SignalHistory";
 import { SignalIngestForm } from "@/components/SignalIngestForm";
+import { ArchivalDocumentUpload } from "@/components/ArchivalDocumentUpload";
+import { ArchivalDocumentsList } from "@/components/ArchivalDocumentsList";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 import { Loader2 } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const Signals = () => {
   const { user, loading } = useAuth();
@@ -33,13 +36,28 @@ const Signals = () => {
       <Header />
       <main className="container mx-auto px-6 py-8 space-y-6">
         <div className="mb-6">
-          <h1 className="text-3xl font-bold">Signals</h1>
+          <h1 className="text-3xl font-bold">Signals & Archives</h1>
           <p className="text-muted-foreground mt-2">
-            All intelligence signals detected across OSINT sources
+            Intelligence signals and archival document management
           </p>
         </div>
-        <SignalHistory />
-        <SignalIngestForm />
+
+        <Tabs defaultValue="signals" className="space-y-6">
+          <TabsList>
+            <TabsTrigger value="signals">Current Signals</TabsTrigger>
+            <TabsTrigger value="archival">Archival Documents</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="signals" className="space-y-6">
+            <SignalHistory />
+            <SignalIngestForm />
+          </TabsContent>
+
+          <TabsContent value="archival" className="space-y-6">
+            <ArchivalDocumentUpload />
+            <ArchivalDocumentsList />
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );

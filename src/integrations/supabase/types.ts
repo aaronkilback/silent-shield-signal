@@ -58,6 +58,84 @@ export type Database = {
           },
         ]
       }
+      archival_documents: {
+        Row: {
+          client_id: string | null
+          content_text: string | null
+          created_at: string
+          date_of_document: string | null
+          entity_mentions: string[] | null
+          file_size: number
+          file_type: string
+          filename: string
+          id: string
+          is_archival: boolean | null
+          keywords: string[] | null
+          metadata: Json | null
+          storage_path: string
+          summary: string | null
+          tags: string[] | null
+          updated_at: string
+          upload_date: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          content_text?: string | null
+          created_at?: string
+          date_of_document?: string | null
+          entity_mentions?: string[] | null
+          file_size: number
+          file_type: string
+          filename: string
+          id?: string
+          is_archival?: boolean | null
+          keywords?: string[] | null
+          metadata?: Json | null
+          storage_path: string
+          summary?: string | null
+          tags?: string[] | null
+          updated_at?: string
+          upload_date?: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          content_text?: string | null
+          created_at?: string
+          date_of_document?: string | null
+          entity_mentions?: string[] | null
+          file_size?: number
+          file_type?: string
+          filename?: string
+          id?: string
+          is_archival?: boolean | null
+          keywords?: string[] | null
+          metadata?: Json | null
+          storage_path?: string
+          summary?: string | null
+          tags?: string[] | null
+          updated_at?: string
+          upload_date?: string
+          uploaded_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "archival_documents_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "archival_documents_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       attachments: {
         Row: {
           created_at: string
