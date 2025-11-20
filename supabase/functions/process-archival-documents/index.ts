@@ -64,6 +64,31 @@ serve(async (req) => {
           text = text.substring(0, MAX_TEXT_LENGTH) + '\n\n[Content truncated - exceeds 1MB limit]';
         }
 
+        // Check for duplicates before processing
+        const { data: dupCheck } = await supabase.functions.invoke('detect-duplicates', {
+          body: {
+            type: 'document',
+            content: text,
+            autoCheck: false
+          }
+        });
+
+        if (dupCheck?.isDuplicate && dupCheck?.exactMatch) {
+          errors.push({
+            filename: fileData.filename,
+            error: `Duplicate: ${dupCheck.message}`
+          });
+          console.log(`Skipping duplicate: ${filename}`);
+          continue;
+        }
+
+        // Calculate content hash
+        const encoder = new TextEncoder();
+        const data = encoder.encode(text);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const contentHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
         // Upload file to storage
         const timestamp = Date.now();
         const storagePath = `${clientId || 'unassigned'}/${timestamp}_${filename}`;
@@ -123,6 +148,7 @@ serve(async (req) => {
             file_size: binaryData.length,
             storage_path: storagePath,
             content_text: text,
+            content_hash: contentHash,
             tags: tags || ['archival', 'historical'],
             client_id: clientId || null,
             uploaded_by: userId || null,
@@ -143,6 +169,14 @@ serve(async (req) => {
           console.error(`Database insert error for ${filename}:`, insertError);
           throw insertError;
         }
+
+        // Record document hash for future duplicate detection
+        await supabase.from('document_hashes').insert({
+          content_hash: contentHash,
+          filename: filename,
+          file_size: binaryData.length,
+          archival_document_id: document.id
+        });
 
         // Skip AI correlation for archival uploads to save resources
         // Entity correlation will be done separately if needed

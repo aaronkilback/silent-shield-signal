@@ -61,6 +61,7 @@ export type Database = {
       archival_documents: {
         Row: {
           client_id: string | null
+          content_hash: string | null
           content_text: string | null
           correlated_entity_ids: string[] | null
           created_at: string
@@ -82,6 +83,7 @@ export type Database = {
         }
         Insert: {
           client_id?: string | null
+          content_hash?: string | null
           content_text?: string | null
           correlated_entity_ids?: string[] | null
           created_at?: string
@@ -103,6 +105,7 @@ export type Database = {
         }
         Update: {
           client_id?: string | null
+          content_hash?: string | null
           content_text?: string | null
           correlated_entity_ids?: string[] | null
           created_at?: string
@@ -276,6 +279,104 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      document_hashes: {
+        Row: {
+          archival_document_id: string | null
+          content_hash: string
+          created_at: string
+          file_size: number
+          filename: string
+          first_uploaded_at: string
+          id: string
+          signal_id: string | null
+          upload_count: number | null
+        }
+        Insert: {
+          archival_document_id?: string | null
+          content_hash: string
+          created_at?: string
+          file_size: number
+          filename: string
+          first_uploaded_at?: string
+          id?: string
+          signal_id?: string | null
+          upload_count?: number | null
+        }
+        Update: {
+          archival_document_id?: string | null
+          content_hash?: string
+          created_at?: string
+          file_size?: number
+          filename?: string
+          first_uploaded_at?: string
+          id?: string
+          signal_id?: string | null
+          upload_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_hashes_archival_document_id_fkey"
+            columns: ["archival_document_id"]
+            isOneToOne: false
+            referencedRelation: "archival_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_hashes_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      duplicate_detections: {
+        Row: {
+          created_at: string
+          detection_method: string
+          detection_type: string
+          duplicate_id: string
+          id: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          similarity_score: number
+          source_id: string
+          status: string | null
+        }
+        Insert: {
+          created_at?: string
+          detection_method: string
+          detection_type: string
+          duplicate_id: string
+          id?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          similarity_score: number
+          source_id: string
+          status?: string | null
+        }
+        Update: {
+          created_at?: string
+          detection_method?: string
+          detection_type?: string
+          duplicate_id?: string
+          id?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          similarity_score?: number
+          source_id?: string
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "duplicate_detections_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       entities: {
         Row: {
@@ -1452,6 +1553,7 @@ export type Database = {
           category: string | null
           client_id: string | null
           confidence: number | null
+          content_hash: string | null
           correlated_count: number | null
           correlation_confidence: number | null
           correlation_group_id: string | null
@@ -1477,6 +1579,7 @@ export type Database = {
           category?: string | null
           client_id?: string | null
           confidence?: number | null
+          content_hash?: string | null
           correlated_count?: number | null
           correlation_confidence?: number | null
           correlation_group_id?: string | null
@@ -1502,6 +1605,7 @@ export type Database = {
           category?: string | null
           client_id?: string | null
           confidence?: number | null
+          content_hash?: string | null
           correlated_count?: number | null
           correlation_confidence?: number | null
           correlation_group_id?: string | null

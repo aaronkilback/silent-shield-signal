@@ -437,6 +437,29 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
 
     console.log('Signal ingested:', signal.id);
     
+    // Calculate and store content hash for duplicate detection
+    const encoder = new TextEncoder();
+    const data = encoder.encode(signalText);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const contentHash = hashArray.map((b: number) => b.toString(16).padStart(2, '0')).join('');
+    
+    await supabase.from('signals').update({ content_hash: contentHash }).eq('id', signal.id);
+    
+    // Check for duplicates
+    const dupCheck = await supabase.functions.invoke('detect-duplicates', {
+      body: {
+        type: 'signal',
+        content: signalText,
+        id: signal.id,
+        autoCheck: true
+      }
+    });
+    
+    if (dupCheck?.data?.isDuplicate) {
+      console.log(`Potential duplicate detected: ${dupCheck.data.count} similar signals`);
+    }
+    
     // Use intelligent entity correlation system
     await supabase.functions.invoke('correlate-entities', {
       body: {

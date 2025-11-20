@@ -1,6 +1,7 @@
 import { Header } from "@/components/Header";
 import { EntitySuggestionsPanel } from "@/components/EntitySuggestionsPanel";
 import { EntityUnifiedProfile } from "@/components/EntityUnifiedProfile";
+import { DuplicateDetectionPanel } from "@/components/DuplicateDetectionPanel";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
@@ -54,36 +55,40 @@ const EntityManagement = () => {
         <div className="mb-6">
           <h1 className="text-3xl font-bold">Entity Management</h1>
           <p className="text-muted-foreground mt-2">
-            Review suggestions and view unified entity profiles
+            Review suggestions, duplicates, and view unified entity profiles
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <EntitySuggestionsPanel />
+        <div className="grid grid-cols-1 gap-6">
+          <DuplicateDetectionPanel />
           
-          <div className="space-y-6">
-            <div className="space-y-2">
-              <Label>View Entity Profile</Label>
-              <Select value={selectedEntityId} onValueChange={setSelectedEntityId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select an entity" />
-                </SelectTrigger>
-                <SelectContent>
-                  {entities?.map((entity) => (
-                    <SelectItem key={entity.id} value={entity.id}>
-                      {entity.name} ({entity.type})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <EntitySuggestionsPanel />
+            
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <Label>View Entity Profile</Label>
+                <Select value={selectedEntityId} onValueChange={setSelectedEntityId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select an entity" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {entities?.map((entity) => (
+                      <SelectItem key={entity.id} value={entity.id}>
+                        {entity.name} ({entity.type})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-            {selectedEntityId && (
-              <EntityUnifiedProfile
-                entityId={selectedEntityId}
-                entityName={entities?.find(e => e.id === selectedEntityId)?.name || ''}
-              />
-            )}
+              {selectedEntityId && (
+                <EntityUnifiedProfile
+                  entityId={selectedEntityId}
+                  entityName={entities?.find(e => e.id === selectedEntityId)?.name || ''}
+                />
+              )}
+            </div>
           </div>
         </div>
       </main>
