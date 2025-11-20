@@ -1,15 +1,32 @@
-import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss } from "lucide-react";
+import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss, GitMerge } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate, useLocation } from "react-router-dom";
 import { EntityNotifications } from "@/components/EntityNotifications";
 import { SettingsSheet } from "@/components/SettingsSheet";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Header = () => {
   const { signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Get pending entity suggestions count
+  const { data: pendingSuggestions } = useQuery({
+    queryKey: ['pending-entity-suggestions-count'],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from('entity_suggestions')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pending');
+      
+      if (error) throw error;
+      return count || 0;
+    },
+    refetchInterval: 30000 // Refetch every 30 seconds
+  });
 
   return (
     <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
@@ -76,6 +93,23 @@ export const Header = () => {
               >
                 <Users className="w-4 h-4 mr-2" />
                 Entities
+              </Button>
+              <Button
+                onClick={() => navigate("/entity-management")}
+                variant={location.pathname === "/entity-management" ? "default" : "ghost"}
+                size="sm"
+                className="relative"
+              >
+                <GitMerge className="w-4 h-4 mr-2" />
+                Entity Management
+                {pendingSuggestions && pendingSuggestions > 0 && (
+                  <Badge 
+                    variant="destructive" 
+                    className="absolute -top-1 -right-1 h-5 w-5 p-0 flex items-center justify-center text-xs"
+                  >
+                    {pendingSuggestions}
+                  </Badge>
+                )}
               </Button>
               <Button
                 onClick={() => navigate("/reports")}
