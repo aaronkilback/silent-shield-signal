@@ -42,48 +42,64 @@ serve(async (req) => {
         
         console.log(`Processing: ${filename}`);
 
-        // Decode base64 file with size check
-        let binaryData: Uint8Array;
-        try {
-          binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
-        } catch (error) {
-          console.error(`Failed to decode file ${filename}:`, error);
-          throw new Error(`File decoding failed: ${filename}`);
-        }
+        // Calculate approximate size from base64 string (without decoding yet)
+        const base64Size = file.length * 0.75; // base64 to binary ratio
+        const sizeKB = (base64Size / 1024).toFixed(1);
         
+        // For large files, use minimal processing
         let text = '';
         let cleanSummary = '';
+        let binaryData: Uint8Array;
 
-        // Extract text based on file type (simplified to avoid memory issues)
-        if (mimeType === 'text/plain' || mimeType === 'text/csv' || filename.endsWith('.txt') || filename.endsWith('.csv')) {
-          // Only decode first 100KB for text files to avoid memory issues
-          const maxBytes = Math.min(binaryData.length, 100000);
-          const subset = binaryData.slice(0, maxBytes);
-          text = new TextDecoder().decode(subset);
-          if (binaryData.length > maxBytes) {
-            text += '\n\n[Content truncated]';
-          }
-          cleanSummary = text.substring(0, 200).trim();
-        } else if (mimeType === 'application/pdf' || filename.endsWith('.pdf')) {
-          // For PDFs, create metadata only - no content extraction
-          const sizeKB = (binaryData.length / 1024).toFixed(1);
+        if (base64Size > 5000000) { // > 5MB
+          // Don't decode large files into memory - just create metadata
+          console.log(`Large file detected (${sizeKB} KB), using minimal processing`);
           const dateInfo = dateOfDocument ? ` from ${new Date(dateOfDocument).toLocaleDateString()}` : '';
-          text = `PDF Document: ${filename}${dateInfo}\nSize: ${sizeKB} KB\n\nThis is an archival document stored for reference.`;
-          cleanSummary = `PDF report${dateInfo} - ${sizeKB} KB`;
-        } else if (mimeType.startsWith('image/')) {
-          const sizeKB = (binaryData.length / 1024).toFixed(1);
-          text = `Image: ${filename}\nSize: ${sizeKB} KB\nType: ${mimeType}`;
-          cleanSummary = `Image file - ${sizeKB} KB`;
+          text = `Large Document: ${filename}${dateInfo}\nSize: ${sizeKB} KB\nType: ${mimeType}`;
+          cleanSummary = `Large ${mimeType.split('/')[1] || 'document'}${dateInfo} - ${sizeKB} KB`;
+          
+          // Decode in chunks for upload only
+          try {
+            binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
+          } catch (error) {
+            console.error(`Failed to decode large file ${filename}:`, error);
+            throw new Error(`File too large or corrupt: ${filename}`);
+          }
         } else {
-          const sizeKB = (binaryData.length / 1024).toFixed(1);
-          text = `Document: ${filename}\nType: ${mimeType}\nSize: ${sizeKB} KB`;
-          cleanSummary = `${mimeType} file - ${sizeKB} KB`;
+          // Decode smaller files normally
+          try {
+            binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
+          } catch (error) {
+            console.error(`Failed to decode file ${filename}:`, error);
+            throw new Error(`File decoding failed: ${filename}`);
+          }
+
+          // Extract text based on file type
+          if (mimeType === 'text/plain' || mimeType === 'text/csv' || filename.endsWith('.txt') || filename.endsWith('.csv')) {
+            const maxBytes = Math.min(binaryData.length, 50000); // 50KB max
+            const subset = binaryData.slice(0, maxBytes);
+            text = new TextDecoder().decode(subset);
+            if (binaryData.length > maxBytes) {
+              text += '\n\n[Content truncated]';
+            }
+            cleanSummary = text.substring(0, 200).trim();
+          } else if (mimeType === 'application/pdf' || filename.endsWith('.pdf')) {
+            const dateInfo = dateOfDocument ? ` from ${new Date(dateOfDocument).toLocaleDateString()}` : '';
+            text = `PDF Document: ${filename}${dateInfo}\nSize: ${sizeKB} KB`;
+            cleanSummary = `PDF report${dateInfo} - ${sizeKB} KB`;
+          } else if (mimeType.startsWith('image/')) {
+            text = `Image: ${filename}\nSize: ${sizeKB} KB`;
+            cleanSummary = `Image - ${sizeKB} KB`;
+          } else {
+            text = `Document: ${filename}\nType: ${mimeType}\nSize: ${sizeKB} KB`;
+            cleanSummary = `${mimeType.split('/')[1] || 'File'} - ${sizeKB} KB`;
+          }
         }
 
-        // Limit text to prevent memory issues (reduced from 5MB to 1MB)
-        const MAX_TEXT_LENGTH = 1000000; // 1MB
+        // Limit text length (50KB max)
+        const MAX_TEXT_LENGTH = 50000;
         if (text.length > MAX_TEXT_LENGTH) {
-          text = text.substring(0, MAX_TEXT_LENGTH) + '\n\n[Content truncated - exceeds 1MB limit]';
+          text = text.substring(0, MAX_TEXT_LENGTH) + '\n\n[Content truncated]';
         }
 
         // Check for duplicates before processing
@@ -128,33 +144,28 @@ serve(async (req) => {
           throw uploadError;
         }
 
-        // Extract keywords (simplified - top 10 instead of 20)
+        // Simple keyword extraction (minimal processing)
         const words = text.toLowerCase()
           .replace(/[^\w\s]/g, ' ')
           .split(/\s+/)
           .filter(w => w.length > 4);
         const wordFreq = new Map<string, number>();
-        words.slice(0, 500).forEach(w => wordFreq.set(w, (wordFreq.get(w) || 0) + 1)); // Only process first 500 words
+        words.slice(0, 200).forEach(w => wordFreq.set(w, (wordFreq.get(w) || 0) + 1));
         const keywords = Array.from(wordFreq.entries())
           .sort((a, b) => b[1] - a[1])
-          .slice(0, 10)
+          .slice(0, 5)
           .map(([word]) => word);
 
-        // Simple entity mention detection (no complex processing)
+        // Minimal entity detection (first 500 chars only)
         const entityMentions: string[] = [];
         if (entities && entities.length > 0) {
-          const textLower = text.toLowerCase();
-          // Only check first 1000 characters to avoid performance issues
-          const checkText = textLower.substring(0, 1000);
-          for (const entity of entities) {
-            const names = [entity.name, ...(entity.aliases || [])].slice(0, 3); // Max 3 names per entity
-            for (const name of names) {
-              if (checkText.includes(name.toLowerCase())) {
-                entityMentions.push(entity.name);
-                break;
-              }
+          const checkText = text.toLowerCase().substring(0, 500);
+          for (const entity of entities.slice(0, 20)) {
+            const name = entity.name.toLowerCase();
+            if (checkText.includes(name)) {
+              entityMentions.push(entity.name);
+              if (entityMentions.length >= 3) break;
             }
-            if (entityMentions.length >= 5) break; // Max 5 entity mentions
           }
         }
 

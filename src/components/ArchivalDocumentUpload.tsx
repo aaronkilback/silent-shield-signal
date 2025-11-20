@@ -70,126 +70,140 @@ export const ArchivalDocumentUpload = () => {
   };
 
   const handleBulkUpload = async () => {
-    if (files.length === 0) {
-      toast.error("Please select at least one file");
+    if (!files.length || !tags.trim()) {
+      toast.error("Please select files and add at least one tag");
       return;
     }
 
     setUploading(true);
-    setProgress(0);
-
-    try {
-      const tagsArray = tags.split(',').map(t => t.trim()).filter(Boolean);
+    const tagArray = tags.split(',').map(t => t.trim()).filter(t => t);
+    
+    // Ultra-conservative: Process 1 file at a time with 3 second delays
+    const BATCH_SIZE = 1;
+    const DELAY_MS = 3000;
+    
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      const batch = files.slice(i, i + BATCH_SIZE);
+      const batchFiles = batch.map(f => f.file);
       
-      // Process files in smaller batches to avoid memory/CPU limits
-      const batchSize = 2; // Reduced from 5 to 2
-      const totalFiles = files.length;
-      let processedCount = 0;
+      console.log(`Processing file ${i + 1}/${files.length}...`);
+      setProgress(((i + 1) / files.length) * 100);
+      
+      // Update status to uploading
+      setFiles(prev => prev.map(file => 
+        batch.find(b => b.id === file.id) 
+          ? { ...file, status: 'uploading' as const }
+          : file
+      ));
 
-      for (let i = 0; i < totalFiles; i += batchSize) {
-        const batch = files.slice(i, i + batchSize);
-        
-        // Add delay between batches to avoid CPU limits
-        if (i > 0) {
-          await new Promise(r => setTimeout(r, 2000)); // 2 second delay between batches
-        }
-        
+      try {
         // Convert files to base64
         const filesData = await Promise.all(
-          batch.map(async (f) => {
-            try {
-              setFiles(prev => prev.map(file => 
-                file.id === f.id ? { ...file, status: 'uploading' as const } : file
-              ));
-
-              const base64 = await processFileToBase64(f.file);
-              return {
-                file: base64,
-                filename: f.file.name,
-                mimeType: f.file.type || 'application/octet-stream',
-                dateOfDocument: null
-              };
-            } catch (error) {
-              console.error(`Error processing ${f.file.name}:`, error);
-              return null;
-            }
-          })
+          batchFiles.map(async (file) => ({
+            file: await processFileToBase64(file),
+            filename: file.name,
+            mimeType: file.type,
+            dateOfDocument: null
+          }))
         );
 
-        const validFiles = filesData.filter(f => f !== null);
-
-        if (validFiles.length > 0) {
-          const { data, error } = await supabase.functions.invoke("process-archival-documents", {
+        const { data, error } = await supabase.functions.invoke(
+          'process-archival-documents',
+          {
             body: {
-              files: validFiles,
-              tags: tagsArray,
+              files: filesData,
+              tags: tagArray,
               clientId: clientId || null,
               userId: user?.id || null
             }
-          });
-
-          if (error) {
-            console.error("Batch upload error:", error);
-            const errorMsg = error.message || 'Upload failed';
-            
-            // Provide specific error messages
-            let userMessage = errorMsg;
-            if (errorMsg.includes('Memory')) {
-              userMessage = 'Files too large. Try uploading fewer files at once or reduce file sizes.';
-            } else if (errorMsg.includes('CPU')) {
-              userMessage = 'Processing timeout. Please wait a moment and try uploading fewer files.';
-            } else if (errorMsg.includes('timeout')) {
-              userMessage = 'Upload timed out. Try uploading fewer files at once.';
-            }
-            
-            toast.error(userMessage);
-            
-            batch.forEach(f => {
-              setFiles(prev => prev.map(file => 
-                file.id === f.id ? { ...file, status: 'error' as const, error: userMessage } : file
-              ));
-            });
-          } else {
-            // Mark batch as successful
-            const results = data.results || [];
-            batch.forEach((f, idx) => {
-              const result = results[idx];
-              setFiles(prev => prev.map(file => 
-                file.id === f.id ? { 
-                  ...file, 
-                  status: result?.success ? 'success' as const : 'error' as const,
-                  error: result?.success ? undefined : 'Upload failed'
-                } : file
-              ));
-            });
           }
+        );
+
+        if (error) {
+          console.error('Edge function error:', error);
+          const errorMessage = error.message?.includes('timeout') 
+            ? 'Upload timed out - file may be too large'
+            : error.message?.includes('Memory')
+            ? 'File too large - try smaller files'
+            : error.message || 'Upload failed';
+          
+          batch.forEach(file => {
+            setFiles(prev => prev.map(f => 
+              f.id === file.id 
+                ? { ...f, status: 'error' as const, error: errorMessage }
+                : f
+            ));
+          });
+          continue;
         }
 
-        processedCount += batch.length;
-        setProgress((processedCount / totalFiles) * 100);
+        // Handle results
+        if (data?.results) {
+          data.results.forEach((result: any) => {
+            const matchingFile = batch.find(f => f.file.name === result.filename);
+            if (matchingFile) {
+              setFiles(prev => prev.map(f => 
+                f.id === matchingFile.id 
+                  ? { ...f, status: 'success' as const }
+                  : f
+              ));
+            }
+          });
+        }
+
+        // Handle errors
+        if (data?.errors) {
+          data.errors.forEach((err: any) => {
+            const matchingFile = batch.find(f => f.file.name === err.filename);
+            if (matchingFile) {
+              setFiles(prev => prev.map(f => 
+                f.id === matchingFile.id 
+                  ? { ...f, status: 'error' as const, error: err.error }
+                  : f
+              ));
+            }
+          });
+        }
+
+        console.log(`File processed successfully`);
+        
+      } catch (error: any) {
+        console.error('Upload error:', error);
+        const errorMsg = error.message?.includes('timeout')
+          ? 'Upload timed out'
+          : 'Upload failed';
+        
+        batch.forEach(file => {
+          setFiles(prev => prev.map(f => 
+            f.id === file.id 
+              ? { ...f, status: 'error' as const, error: errorMsg }
+              : f
+          ));
+        });
       }
 
-      const successCount = files.filter(f => f.status === 'success').length;
-      const errorCount = files.filter(f => f.status === 'error').length;
-
-      if (successCount > 0) {
-        toast.success(`Successfully uploaded ${successCount} archival document(s)`);
+      // Wait before next file
+      if (i + BATCH_SIZE < files.length) {
+        console.log(`Waiting ${DELAY_MS/1000} seconds before next file...`);
+        await new Promise(resolve => setTimeout(resolve, DELAY_MS));
       }
-      if (errorCount > 0) {
-        toast.error(`Failed to upload ${errorCount} document(s)`);
-      }
+    }
 
+    setUploading(false);
+    setProgress(100);
+    
+    const finalSuccessCount = files.filter(f => f.status === 'success').length;
+    const finalErrorCount = files.filter(f => f.status === 'error').length;
+    
+    if (finalSuccessCount > 0) {
+      toast.success(`${finalSuccessCount} files uploaded successfully${finalErrorCount > 0 ? `, ${finalErrorCount} failed` : ''}`);
       // Clear successful uploads after a delay
       setTimeout(() => {
         setFiles(prev => prev.filter(f => f.status !== 'success'));
+        setProgress(0);
       }, 3000);
-
-    } catch (error) {
-      console.error("Bulk upload error:", error);
-      toast.error("Failed to upload documents");
-    } finally {
-      setUploading(false);
-      setProgress(0);
+    } else {
+      toast.error(`All uploads failed`);
     }
   };
 
