@@ -104,6 +104,35 @@ serve(async (req) => {
 
     console.log(`Successfully created record for: ${filename}`);
 
+    // Trigger entity processing in background (don't await)
+    const processEntities = async () => {
+      try {
+        console.log(`Starting background entity processing for: ${document.id}`);
+        
+        const response = await fetch(`${supabaseUrl}/functions/v1/process-stored-document`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseKey}`,
+          },
+          body: JSON.stringify({ documentId: document.id })
+        });
+
+        if (!response.ok) {
+          const error = await response.text();
+          console.error(`Entity processing failed for ${document.id}:`, error);
+        } else {
+          const result = await response.json();
+          console.log(`Entity processing complete for ${document.id}:`, result);
+        }
+      } catch (error) {
+        console.error(`Error in background entity processing for ${document.id}:`, error);
+      }
+    };
+
+    // Start background task (fire and forget)
+    processEntities();
+
     return new Response(
       JSON.stringify({ 
         success: true,

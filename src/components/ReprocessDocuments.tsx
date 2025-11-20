@@ -17,12 +17,27 @@ export const ReprocessDocuments = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('archival_documents')
-        .select('id, filename, file_size, created_at')
+        .select('id, filename, file_size, created_at, metadata')
         .or('entity_mentions.is.null,entity_mentions.eq.{}')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      return data;
+      
+      // Filter out documents that are already being processed or recently uploaded
+      const now = new Date();
+      const filtered = data?.filter(doc => {
+        // Skip if already processed
+        if (doc.metadata && (doc.metadata as any).entities_processed) {
+          return false;
+        }
+        
+        // Skip if uploaded in the last 30 seconds (likely still processing)
+        const uploadedAt = new Date(doc.created_at);
+        const secondsSinceUpload = (now.getTime() - uploadedAt.getTime()) / 1000;
+        return secondsSinceUpload > 30;
+      });
+      
+      return filtered || [];
     }
   });
 
