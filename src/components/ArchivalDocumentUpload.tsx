@@ -228,7 +228,10 @@ export const ArchivalDocumentUpload = () => {
             ));
             
             if (data.entitySuggestions && data.entitySuggestions.length > 0) {
-              toast.success(`${data.entitySuggestions.length} entity suggestions created`);
+              toast.success(
+                `${data.entitySuggestions.length} entity suggestions created - review them in Entity Management`,
+                { duration: 7000 }
+              );
             }
           }
 
@@ -266,9 +269,10 @@ export const ArchivalDocumentUpload = () => {
     const finalErrorCount = files.filter(f => f.status === 'error').length;
     
     if (finalSuccessCount > 0) {
+      const totalEntities = finalSuccessCount * 5; // Rough estimate
       toast.success(
-        `✅ Successfully uploaded ${finalSuccessCount} document${finalSuccessCount > 1 ? 's' : ''}!${finalErrorCount > 0 ? ` (${finalErrorCount} failed)` : ''}`,
-        { duration: 5000 }
+        `✅ Successfully uploaded ${finalSuccessCount} document${finalSuccessCount > 1 ? 's' : ''}!${finalErrorCount > 0 ? ` (${finalErrorCount} failed)` : ''}\n\n📋 Entity suggestions created - go to Entity Management to review and approve them.`,
+        { duration: 8000 }
       );
       
       // Clear successful uploads after a delay

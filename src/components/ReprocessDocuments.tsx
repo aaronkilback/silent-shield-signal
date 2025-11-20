@@ -88,7 +88,10 @@ export const ReprocessDocuments = () => {
     setProcessing(false);
     
     if (successful > 0) {
-      toast.success(`✅ Successfully processed ${successful} document${successful > 1 ? 's' : ''}!${failed > 0 ? ` (${failed} failed)` : ''}`);
+      toast.success(
+        `✅ Successfully processed ${successful} document${successful > 1 ? 's' : ''}!${failed > 0 ? ` (${failed} failed)` : ''}\n\n📋 Entity suggestions created - go to Entity Management to review and approve them.`,
+        { duration: 8000 }
+      );
       refetch();
     } else {
       toast.error(`❌ Failed to process all documents. Check console for details.`);
