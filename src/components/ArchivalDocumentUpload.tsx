@@ -81,13 +81,18 @@ export const ArchivalDocumentUpload = () => {
     try {
       const tagsArray = tags.split(',').map(t => t.trim()).filter(Boolean);
       
-      // Process files in batches of 5 to avoid memory issues
-      const batchSize = 5;
+      // Process files in smaller batches to avoid memory/CPU limits
+      const batchSize = 2; // Reduced from 5 to 2
       const totalFiles = files.length;
       let processedCount = 0;
 
       for (let i = 0; i < totalFiles; i += batchSize) {
         const batch = files.slice(i, i + batchSize);
+        
+        // Add delay between batches to avoid CPU limits
+        if (i > 0) {
+          await new Promise(r => setTimeout(r, 2000)); // 2 second delay between batches
+        }
         
         // Convert files to base64
         const filesData = await Promise.all(
@@ -125,9 +130,23 @@ export const ArchivalDocumentUpload = () => {
 
           if (error) {
             console.error("Batch upload error:", error);
+            const errorMsg = error.message || 'Upload failed';
+            
+            // Provide specific error messages
+            let userMessage = errorMsg;
+            if (errorMsg.includes('Memory')) {
+              userMessage = 'Files too large. Try uploading fewer files at once or reduce file sizes.';
+            } else if (errorMsg.includes('CPU')) {
+              userMessage = 'Processing timeout. Please wait a moment and try uploading fewer files.';
+            } else if (errorMsg.includes('timeout')) {
+              userMessage = 'Upload timed out. Try uploading fewer files at once.';
+            }
+            
+            toast.error(userMessage);
+            
             batch.forEach(f => {
               setFiles(prev => prev.map(file => 
-                file.id === f.id ? { ...file, status: 'error' as const, error: error.message } : file
+                file.id === f.id ? { ...file, status: 'error' as const, error: userMessage } : file
               ));
             });
           } else {
