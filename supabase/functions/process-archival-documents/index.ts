@@ -29,12 +29,7 @@ serve(async (req) => {
 
     const results = [];
     const errors = [];
-
-    // Get all entities for cross-referencing
-    const { data: entities } = await supabase
-      .from('entities')
-      .select('id, name, aliases')
-      .eq('is_active', true);
+    const entitySuggestions = [];
 
     for (const fileData of files) {
       try {
@@ -42,92 +37,93 @@ serve(async (req) => {
         
         console.log(`Processing: ${filename}`);
 
-        // Calculate approximate size from base64 string (without decoding yet)
-        const base64Size = file.length * 0.75; // base64 to binary ratio
-        const sizeKB = (base64Size / 1024).toFixed(1);
+        // CRITICAL: Check size before ANY processing to avoid memory issues
+        const estimatedSize = file.length * 0.75; // base64 to bytes
+        const sizeKB = (estimatedSize / 1024).toFixed(1);
+        const sizeMB = (estimatedSize / (1024 * 1024)).toFixed(2);
         
-        // For large files, use minimal processing
+        console.log(`File size: ${sizeKB} KB (${sizeMB} MB)`);
+
+        // For files > 2MB, skip ALL content processing
+        const SAFE_SIZE_LIMIT = 2 * 1024 * 1024; // 2MB
+        let shouldProcessContent = estimatedSize <= SAFE_SIZE_LIMIT;
+        
         let text = '';
         let cleanSummary = '';
         let binaryData: Uint8Array;
+        let keywords: string[] = [];
+        let entityMentions: string[] = [];
 
-        if (base64Size > 5000000) { // > 5MB
-          // Don't decode large files into memory - just create metadata
-          console.log(`Large file detected (${sizeKB} KB), using minimal processing`);
+        if (!shouldProcessContent) {
+          // Large file - metadata only, NO decoding yet
+          console.log(`Large file (${sizeMB} MB) - using metadata-only mode`);
           const dateInfo = dateOfDocument ? ` from ${new Date(dateOfDocument).toLocaleDateString()}` : '';
-          text = `Large Document: ${filename}${dateInfo}\nSize: ${sizeKB} KB\nType: ${mimeType}`;
-          cleanSummary = `Large ${mimeType.split('/')[1] || 'document'}${dateInfo} - ${sizeKB} KB`;
+          const fileType = mimeType.split('/')[1]?.toUpperCase() || 'Document';
+          text = `${fileType}: ${filename}${dateInfo}\nSize: ${sizeKB} KB`;
+          cleanSummary = `${fileType}${dateInfo} - ${sizeKB} KB`;
           
-          // Decode in chunks for upload only
-          try {
-            binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
-          } catch (error) {
-            console.error(`Failed to decode large file ${filename}:`, error);
-            throw new Error(`File too large or corrupt: ${filename}`);
-          }
+          // Decode ONLY for storage upload (unavoidable)
+          console.log(`Decoding ${filename} for storage upload only...`);
+          binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
+          console.log(`Decoded ${filename} successfully`);
         } else {
-          // Decode smaller files normally
-          try {
-            binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
-          } catch (error) {
-            console.error(`Failed to decode file ${filename}:`, error);
-            throw new Error(`File decoding failed: ${filename}`);
-          }
+          // Small file - safe to process
+          console.log(`Small file - processing content`);
+          binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
 
-          // Extract text based on file type
-          if (mimeType === 'text/plain' || mimeType === 'text/csv' || filename.endsWith('.txt') || filename.endsWith('.csv')) {
-            const maxBytes = Math.min(binaryData.length, 50000); // 50KB max
-            const subset = binaryData.slice(0, maxBytes);
-            text = new TextDecoder().decode(subset);
-            if (binaryData.length > maxBytes) {
-              text += '\n\n[Content truncated]';
-            }
-            cleanSummary = text.substring(0, 200).trim();
+          if (mimeType === 'text/plain' || filename.endsWith('.txt')) {
+            // Only first 20KB for text files
+            const maxBytes = Math.min(binaryData.length, 20000);
+            text = new TextDecoder().decode(binaryData.slice(0, maxBytes));
+            cleanSummary = text.substring(0, 150).trim();
+            
+            // Extract keywords from small text
+            const words = text.toLowerCase()
+              .replace(/[^\w\s]/g, ' ')
+              .split(/\s+/)
+              .filter(w => w.length > 4);
+            const wordFreq = new Map<string, number>();
+            words.slice(0, 100).forEach(w => wordFreq.set(w, (wordFreq.get(w) || 0) + 1));
+            keywords = Array.from(wordFreq.entries())
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 5)
+              .map(([word]) => word);
           } else if (mimeType === 'application/pdf' || filename.endsWith('.pdf')) {
             const dateInfo = dateOfDocument ? ` from ${new Date(dateOfDocument).toLocaleDateString()}` : '';
-            text = `PDF Document: ${filename}${dateInfo}\nSize: ${sizeKB} KB`;
-            cleanSummary = `PDF report${dateInfo} - ${sizeKB} KB`;
-          } else if (mimeType.startsWith('image/')) {
-            text = `Image: ${filename}\nSize: ${sizeKB} KB`;
-            cleanSummary = `Image - ${sizeKB} KB`;
+            text = `PDF: ${filename}${dateInfo}\nSize: ${sizeKB} KB`;
+            cleanSummary = `PDF${dateInfo} - ${sizeKB} KB`;
           } else {
-            text = `Document: ${filename}\nType: ${mimeType}\nSize: ${sizeKB} KB`;
-            cleanSummary = `${mimeType.split('/')[1] || 'File'} - ${sizeKB} KB`;
+            const fileType = mimeType.split('/')[1] || 'File';
+            text = `${fileType}: ${filename}\nSize: ${sizeKB} KB`;
+            cleanSummary = `${fileType} - ${sizeKB} KB`;
           }
         }
 
-        // Limit text length (50KB max)
-        const MAX_TEXT_LENGTH = 50000;
-        if (text.length > MAX_TEXT_LENGTH) {
-          text = text.substring(0, MAX_TEXT_LENGTH) + '\n\n[Content truncated]';
-        }
+        // Generate simple content hash from metadata (not full content)
+        const hashInput = `${filename}-${sizeKB}-${mimeType}`;
+        const encoder = new TextEncoder();
+        const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(hashInput));
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const contentHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
-        // Check for duplicates before processing
-        const { data: dupCheck } = await supabase.functions.invoke('detect-duplicates', {
-          body: {
-            type: 'document',
-            content: text,
-            autoCheck: false
-          }
-        });
+        // Check for existing file with same hash
+        const { data: existingHash } = await supabase
+          .from('document_hashes')
+          .select('filename')
+          .eq('content_hash', contentHash)
+          .maybeSingle();
 
-        if (dupCheck?.isDuplicate && dupCheck?.exactMatch) {
+        if (existingHash) {
           errors.push({
-            filename: fileData.filename,
-            error: `Duplicate: ${dupCheck.message}`
+            filename: filename,
+            error: `Duplicate of ${existingHash.filename} (already uploaded)`
           });
           console.log(`Skipping duplicate: ${filename}`);
           continue;
         }
 
-        // Calculate content hash
-        const encoder = new TextEncoder();
-        const data = encoder.encode(text);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        const contentHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
         // Upload file to storage
+        console.log(`Uploading ${filename} to storage...`);
         const timestamp = Date.now();
         const storagePath = `${clientId || 'unassigned'}/${timestamp}_${filename}`;
         
@@ -141,36 +137,10 @@ serve(async (req) => {
 
         if (uploadError) {
           console.error(`Storage upload error for ${filename}:`, uploadError);
-          throw uploadError;
+          throw new Error(`Storage upload failed: ${uploadError.message}`);
         }
 
-        // Simple keyword extraction (minimal processing)
-        const words = text.toLowerCase()
-          .replace(/[^\w\s]/g, ' ')
-          .split(/\s+/)
-          .filter(w => w.length > 4);
-        const wordFreq = new Map<string, number>();
-        words.slice(0, 200).forEach(w => wordFreq.set(w, (wordFreq.get(w) || 0) + 1));
-        const keywords = Array.from(wordFreq.entries())
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 5)
-          .map(([word]) => word);
-
-        // Minimal entity detection (first 500 chars only)
-        const entityMentions: string[] = [];
-        if (entities && entities.length > 0) {
-          const checkText = text.toLowerCase().substring(0, 500);
-          for (const entity of entities.slice(0, 20)) {
-            const name = entity.name.toLowerCase();
-            if (checkText.includes(name)) {
-              entityMentions.push(entity.name);
-              if (entityMentions.length >= 3) break;
-            }
-          }
-        }
-
-        // Use the clean summary generated earlier (or fallback)
-        const summary = cleanSummary || text.substring(0, 200).trim();
+        console.log(`Uploaded ${filename} to storage successfully`);
 
         // Insert into archival_documents table
         const { data: document, error: insertError } = await supabase
@@ -182,17 +152,19 @@ serve(async (req) => {
             storage_path: storagePath,
             content_text: text,
             content_hash: contentHash,
-            tags: tags || ['archival', 'historical'],
+            tags: tags || ['archival'],
             client_id: clientId || null,
             uploaded_by: userId || null,
             date_of_document: dateOfDocument || null,
             is_archival: true,
             entity_mentions: entityMentions,
             keywords: keywords,
-            summary: summary,
+            summary: cleanSummary,
             metadata: {
               original_filename: filename,
               upload_timestamp: new Date().toISOString(),
+              processed: shouldProcessContent,
+              size_mb: sizeMB
             }
           })
           .select()
@@ -200,10 +172,12 @@ serve(async (req) => {
 
         if (insertError) {
           console.error(`Database insert error for ${filename}:`, insertError);
-          throw insertError;
+          throw new Error(`Database insert failed: ${insertError.message}`);
         }
 
-        // Record document hash for future duplicate detection
+        console.log(`Saved ${filename} to database successfully`);
+
+        // Record document hash
         await supabase.from('document_hashes').insert({
           content_hash: contentHash,
           filename: filename,
@@ -211,13 +185,60 @@ serve(async (req) => {
           archival_document_id: document.id
         });
 
-        // Skip AI correlation for archival uploads to save resources
-        // Entity correlation will be done separately if needed
+        // Create entity suggestions for text files only
+        if (shouldProcessContent && text.length > 50) {
+          console.log(`Checking for entity suggestions in ${filename}...`);
+          
+          // Extract potential entity names (simple pattern matching)
+          const potentialEntities = new Set<string>();
+          
+          // Look for capitalized phrases (potential names/organizations)
+          const capitalizedPattern = /\b[A-Z][a-z]+(?: [A-Z][a-z]+){0,3}\b/g;
+          const matches = text.match(capitalizedPattern) || [];
+          matches.slice(0, 10).forEach(match => {
+            if (match.length > 3 && match.length < 50) {
+              potentialEntities.add(match);
+            }
+          });
+
+          // Create entity suggestions
+          for (const entityName of potentialEntities) {
+            const { data: existing } = await supabase
+              .from('entities')
+              .select('id, name')
+              .ilike('name', entityName)
+              .maybeSingle();
+
+            if (!existing) {
+              const { data: suggestion, error: suggestionError } = await supabase
+                .from('entity_suggestions')
+                .insert({
+                  source_id: document.id,
+                  source_type: 'archival_document',
+                  suggested_name: entityName,
+                  suggested_type: 'person',
+                  confidence: 0.6,
+                  context: `Found in archival document: ${filename}`,
+                  status: 'pending'
+                })
+                .select()
+                .single();
+
+              if (suggestion) {
+                entitySuggestions.push({
+                  name: entityName,
+                  documentId: document.id,
+                  suggestionId: suggestion.id
+                });
+              }
+            }
+          }
+        }
         
         results.push({
           filename: filename,
           documentId: document.id,
-          entityMentions: entityMentions.length,
+          entitySuggestions: entitySuggestions.length,
           success: true
         });
 
@@ -231,7 +252,7 @@ serve(async (req) => {
       }
     }
 
-    console.log(`Batch complete: ${results.length} succeeded, ${errors.length} failed`);
+    console.log(`Batch complete: ${results.length} succeeded, ${errors.length} failed, ${entitySuggestions.length} entity suggestions created`);
 
     return new Response(
       JSON.stringify({ 
@@ -239,7 +260,8 @@ serve(async (req) => {
         processed: results.length,
         failed: errors.length,
         results: results,
-        errors: errors
+        errors: errors,
+        entitySuggestions: entitySuggestions
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

@@ -138,7 +138,7 @@ export const ArchivalDocumentUpload = () => {
         }
 
         // Handle results
-        if (data?.results) {
+        if (data?.results && data.results.length > 0) {
           data.results.forEach((result: any) => {
             const matchingFile = batch.find(f => f.file.name === result.filename);
             if (matchingFile) {
@@ -149,10 +149,15 @@ export const ArchivalDocumentUpload = () => {
               ));
             }
           });
+          
+          // Show entity suggestions if any
+          if (data.entitySuggestions && data.entitySuggestions.length > 0) {
+            toast.success(`${data.entitySuggestions.length} new entity suggestions created for review`);
+          }
         }
 
         // Handle errors
-        if (data?.errors) {
+        if (data?.errors && data.errors.length > 0) {
           data.errors.forEach((err: any) => {
             const matchingFile = batch.find(f => f.file.name === err.filename);
             if (matchingFile) {
@@ -196,14 +201,19 @@ export const ArchivalDocumentUpload = () => {
     const finalErrorCount = files.filter(f => f.status === 'error').length;
     
     if (finalSuccessCount > 0) {
-      toast.success(`${finalSuccessCount} files uploaded successfully${finalErrorCount > 0 ? `, ${finalErrorCount} failed` : ''}`);
+      toast.success(
+        `✅ Successfully uploaded ${finalSuccessCount} document${finalSuccessCount > 1 ? 's' : ''}!${finalErrorCount > 0 ? ` (${finalErrorCount} failed)` : ''}`,
+        { duration: 5000 }
+      );
+      
       // Clear successful uploads after a delay
       setTimeout(() => {
         setFiles(prev => prev.filter(f => f.status !== 'success'));
         setProgress(0);
+        window.location.reload(); // Refresh to show new documents
       }, 3000);
-    } else {
-      toast.error(`All uploads failed`);
+    } else if (finalErrorCount > 0) {
+      toast.error(`❌ All ${finalErrorCount} upload${finalErrorCount > 1 ? 's' : ''} failed. Please check file sizes and try again.`);
     }
   };
 
