@@ -437,70 +437,15 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
 
     console.log('Signal ingested:', signal.id);
     
-    // Check for entity matches
-    const { data: entities } = await supabase
-      .from('entities')
-      .select('id, name, aliases, type, risk_level')
-      .eq('is_active', true);
-    
-    if (entities && entities.length > 0) {
-      const textToCheck = signalText.toLowerCase();
-      
-      for (const entity of entities) {
-        const namesToCheck = [entity.name, ...(entity.aliases || [])];
-        let matched = false;
-        let matchedName = '';
-        
-        for (const name of namesToCheck) {
-          if (textToCheck.includes(name.toLowerCase())) {
-            matched = true;
-            matchedName = name;
-            break;
-          }
-        }
-        
-        if (matched) {
-          console.log(`Entity match found: ${entity.name} (matched: ${matchedName})`);
-          
-          // Create entity mention
-          const { data: mention, error: mentionError } = await supabase
-            .from('entity_mentions')
-            .insert({
-              entity_id: entity.id,
-              signal_id: signal.id,
-              context: signalText.substring(0, 500),
-              confidence: 0.8,
-              detected_at: new Date().toISOString()
-            })
-            .select()
-            .single();
-          
-          if (!mentionError && mention) {
-            // Get all analysts/admins to notify
-            const { data: userRoles } = await supabase
-              .from('user_roles')
-              .select('user_id')
-              .in('role', ['analyst', 'admin']);
-            
-            if (userRoles && userRoles.length > 0) {
-              // Create notifications for all analysts/admins
-              const notifications = userRoles.map(ur => ({
-                entity_id: entity.id,
-                mention_id: mention.id,
-                user_id: ur.user_id,
-                is_read: false
-              }));
-              
-              await supabase
-                .from('entity_notifications')
-                .insert(notifications);
-              
-              console.log(`Created ${notifications.length} notifications for entity match`);
-            }
-          }
-        }
+    // Use intelligent entity correlation system
+    await supabase.functions.invoke('correlate-entities', {
+      body: {
+        text: signalText,
+        sourceType: 'signal',
+        sourceId: signal.id,
+        autoApprove: false
       }
-    }
+    });
     
     // Auto-open incident based on rules
     if (rulesResult.shouldOpenIncident) {

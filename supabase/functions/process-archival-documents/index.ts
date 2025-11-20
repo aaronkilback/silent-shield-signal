@@ -97,7 +97,7 @@ serve(async (req) => {
           .slice(0, 20)
           .map(([word]) => word);
 
-        // Detect entity mentions
+        // Simple entity mention detection (will be enhanced by correlation)
         const entityMentions: string[] = [];
         if (entities && entities.length > 0) {
           const textLower = text.toLowerCase();
@@ -144,6 +144,16 @@ serve(async (req) => {
           console.error(`Database insert error for ${filename}:`, insertError);
           throw insertError;
         }
+
+        // Use intelligent entity correlation
+        await supabase.functions.invoke('correlate-entities', {
+          body: {
+            text: text,
+            sourceType: 'archival_document',
+            sourceId: document.id,
+            autoApprove: false
+          }
+        });
 
         results.push({
           filename: filename,

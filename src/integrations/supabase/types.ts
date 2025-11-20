@@ -62,6 +62,7 @@ export type Database = {
         Row: {
           client_id: string | null
           content_text: string | null
+          correlated_entity_ids: string[] | null
           created_at: string
           date_of_document: string | null
           entity_mentions: string[] | null
@@ -82,6 +83,7 @@ export type Database = {
         Insert: {
           client_id?: string | null
           content_text?: string | null
+          correlated_entity_ids?: string[] | null
           created_at?: string
           date_of_document?: string | null
           entity_mentions?: string[] | null
@@ -102,6 +104,7 @@ export type Database = {
         Update: {
           client_id?: string | null
           content_text?: string | null
+          correlated_entity_ids?: string[] | null
           created_at?: string
           date_of_document?: string | null
           entity_mentions?: string[] | null
@@ -664,6 +667,75 @@ export type Database = {
           },
         ]
       }
+      entity_suggestions: {
+        Row: {
+          confidence: number | null
+          context: string | null
+          created_at: string
+          id: string
+          matched_entity_id: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          source_id: string
+          source_type: string
+          status: string | null
+          suggested_aliases: string[] | null
+          suggested_attributes: Json | null
+          suggested_name: string
+          suggested_type: string
+          updated_at: string
+        }
+        Insert: {
+          confidence?: number | null
+          context?: string | null
+          created_at?: string
+          id?: string
+          matched_entity_id?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          source_id: string
+          source_type: string
+          status?: string | null
+          suggested_aliases?: string[] | null
+          suggested_attributes?: Json | null
+          suggested_name: string
+          suggested_type: string
+          updated_at?: string
+        }
+        Update: {
+          confidence?: number | null
+          context?: string | null
+          created_at?: string
+          id?: string
+          matched_entity_id?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          source_id?: string
+          source_type?: string
+          status?: string | null
+          suggested_aliases?: string[] | null
+          suggested_attributes?: Json | null
+          suggested_name?: string
+          suggested_type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entity_suggestions_matched_entity_id_fkey"
+            columns: ["matched_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entity_suggestions_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       escalation_rules: {
         Row: {
           actions: Json
@@ -1012,6 +1084,7 @@ export type Database = {
       investigations: {
         Row: {
           client_id: string | null
+          correlated_entity_ids: string[] | null
           created_at: string | null
           created_by_name: string | null
           cross_references: string[] | null
@@ -1029,6 +1102,7 @@ export type Database = {
         }
         Insert: {
           client_id?: string | null
+          correlated_entity_ids?: string[] | null
           created_at?: string | null
           created_by_name?: string | null
           cross_references?: string[] | null
@@ -1046,6 +1120,7 @@ export type Database = {
         }
         Update: {
           client_id?: string | null
+          correlated_entity_ids?: string[] | null
           created_at?: string | null
           created_by_name?: string | null
           cross_references?: string[] | null
@@ -1373,6 +1448,7 @@ export type Database = {
       }
       signals: {
         Row: {
+          auto_correlated_entities: string[] | null
           category: string | null
           client_id: string | null
           confidence: number | null
@@ -1397,6 +1473,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          auto_correlated_entities?: string[] | null
           category?: string | null
           client_id?: string | null
           confidence?: number | null
@@ -1421,6 +1498,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          auto_correlated_entities?: string[] | null
           category?: string | null
           client_id?: string | null
           confidence?: number | null
