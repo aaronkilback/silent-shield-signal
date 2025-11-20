@@ -88,9 +88,9 @@ export const SignalIngestForm = () => {
     if (!file) return;
 
     setLoading(true);
+    const toastId = toast.loading("Processing document...");
+    
     try {
-      toast.loading("Processing document...");
-      
       // Convert file to base64 for sending to edge function
       const reader = new FileReader();
       reader.readAsDataURL(file);
@@ -109,9 +109,12 @@ export const SignalIngestForm = () => {
               },
             });
 
-            if (error) throw error;
+            if (error) {
+              console.error("Edge function error:", error);
+              throw new Error(error.message || "Failed to process document");
+            }
             
-            toast.success("Document processed and signals created");
+            toast.success("Document processed and signal created", { id: toastId });
             setText("");
             setLocation("");
             resolve(data);
@@ -119,11 +122,12 @@ export const SignalIngestForm = () => {
             reject(err);
           }
         };
-        reader.onerror = reject;
+        reader.onerror = () => reject(new Error("Failed to read file"));
       });
     } catch (error) {
       console.error("Error uploading document:", error);
-      toast.error("Failed to process document");
+      const errorMessage = error instanceof Error ? error.message : "Failed to process document";
+      toast.error(errorMessage, { id: toastId });
     } finally {
       setLoading(false);
       e.target.value = "";

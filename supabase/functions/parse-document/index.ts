@@ -102,6 +102,13 @@ serve(async (req) => {
 
     console.log('Extracted text length:', text.length);
 
+    // Limit text to prevent memory issues (500KB max)
+    const MAX_TEXT_LENGTH = 500000;
+    if (text.length > MAX_TEXT_LENGTH) {
+      console.log(`Text too large (${text.length} chars), truncating to ${MAX_TEXT_LENGTH}`);
+      text = text.substring(0, MAX_TEXT_LENGTH) + '\n\n[Document truncated due to size - full content exceeds processing limits]';
+    }
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
