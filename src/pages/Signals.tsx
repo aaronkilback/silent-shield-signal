@@ -3,6 +3,7 @@ import { SignalHistory } from "@/components/SignalHistory";
 import { SignalIngestForm } from "@/components/SignalIngestForm";
 import { ArchivalDocumentUpload } from "@/components/ArchivalDocumentUpload";
 import { ArchivalDocumentsList } from "@/components/ArchivalDocumentsList";
+import { ReprocessDocuments } from "@/components/ReprocessDocuments";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
@@ -55,6 +56,7 @@ const Signals = () => {
 
           <TabsContent value="archival" className="space-y-6">
             <ArchivalDocumentUpload />
+            <ReprocessDocuments />
             <ArchivalDocumentsList />
           </TabsContent>
         </Tabs>
