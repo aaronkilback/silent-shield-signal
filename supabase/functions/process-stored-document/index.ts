@@ -46,6 +46,31 @@ serve(async (req) => {
       .download(document.storage_path);
 
     if (downloadError) {
+      console.error(`Storage download error for ${document.filename}:`, downloadError);
+      
+      // If file doesn't exist in storage, mark as processed to avoid retry loops
+      if (downloadError.message?.includes('not found') || downloadError.message?.includes('does not exist')) {
+        await supabase
+          .from('archival_documents')
+          .update({
+            metadata: {
+              ...document.metadata,
+              entities_processed: true,
+              processing_error: 'File not found in storage',
+              processed_at: new Date().toISOString()
+            }
+          })
+          .eq('id', documentId);
+        
+        return new Response(
+          JSON.stringify({ 
+            error: 'File not found in storage',
+            documentId 
+          }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      
       throw new Error(`Failed to download file: ${downloadError.message}`);
     }
 
@@ -176,8 +201,14 @@ serve(async (req) => {
     );
   } catch (error) {
     console.error('Error in process-stored-document function:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Error details:', errorMessage);
+    
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ 
+        error: errorMessage,
+        details: error instanceof Error ? error.stack : undefined
+      }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
