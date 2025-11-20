@@ -17,24 +17,20 @@ export const ReprocessDocuments = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('archival_documents')
-        .select('id, filename, file_size, created_at, metadata')
-        .or('entity_mentions.is.null,entity_mentions.eq.{}')
+        .select('id, filename, file_size, created_at, metadata, entity_mentions')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       
-      // Filter out documents that are already being processed or recently uploaded
-      const now = new Date();
+      // Only filter out documents that have been successfully processed
       const filtered = data?.filter(doc => {
-        // Skip if already processed
-        if (doc.metadata && (doc.metadata as any).entities_processed) {
-          return false;
-        }
+        // Include if no entity_mentions OR empty array (needs processing)
+        const hasNoEntities = !doc.entity_mentions || doc.entity_mentions.length === 0;
         
-        // Skip if uploaded in the last 30 seconds (likely still processing)
-        const uploadedAt = new Date(doc.created_at);
-        const secondsSinceUpload = (now.getTime() - uploadedAt.getTime()) / 1000;
-        return secondsSinceUpload > 30;
+        // Exclude if explicitly marked as processed
+        const isProcessed = doc.metadata && (doc.metadata as any).entities_processed;
+        
+        return hasNoEntities && !isProcessed;
       });
       
       return filtered || [];
@@ -60,12 +56,20 @@ export const ReprocessDocuments = () => {
       try {
         console.log(`Processing document: ${doc.filename}`);
         
-        const { error } = await supabase.functions.invoke('process-stored-document', {
+        const { data, error } = await supabase.functions.invoke('process-stored-document', {
           body: { documentId: doc.id }
         });
 
         if (error) {
           console.error(`Failed to process ${doc.filename}:`, error);
+          toast.error(`Failed: ${doc.filename} - ${error.message}`);
+          failed++;
+        } else if (data?.error) {
+          console.error(`Processing error for ${doc.filename}:`, data.error);
+          // Don't show toast for "file not found" errors as they're auto-marked
+          if (!data.error.includes('not found')) {
+            toast.error(`Error: ${doc.filename} - ${data.error}`);
+          }
           failed++;
         } else {
           successful++;
@@ -74,8 +78,9 @@ export const ReprocessDocuments = () => {
 
         // Small delay between requests
         await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (error) {
+      } catch (error: any) {
         console.error(`Error processing ${doc.filename}:`, error);
+        toast.error(`Error: ${doc.filename} - ${error.message || 'Unknown error'}`);
         failed++;
       }
     }
