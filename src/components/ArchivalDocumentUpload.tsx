@@ -29,12 +29,15 @@ export const ArchivalDocumentUpload = () => {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []);
     
-    // Validate file sizes (50MB per file limit)
-    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+    // Strict file size limits for edge function processing
+    const MAX_FILE_SIZE = 3 * 1024 * 1024; // 3MB limit for edge function
     const oversizedFiles = selectedFiles.filter(f => f.size > MAX_FILE_SIZE);
     
     if (oversizedFiles.length > 0) {
-      toast.error(`${oversizedFiles.length} file(s) exceed 50MB limit and were skipped: ${oversizedFiles.map(f => f.name).join(', ')}`);
+      toast.error(
+        `${oversizedFiles.length} file(s) exceed 3MB limit: ${oversizedFiles.map(f => `${f.name} (${(f.size / (1024 * 1024)).toFixed(1)}MB)`).join(', ')}. Edge functions cannot process files larger than 3MB.`,
+        { duration: 8000 }
+      );
     }
     
     const validFiles = selectedFiles.filter(f => f.size <= MAX_FILE_SIZE);
@@ -50,6 +53,11 @@ export const ArchivalDocumentUpload = () => {
       status: 'pending' as const
     }));
     setFiles(prev => [...prev, ...newFiles]);
+    
+    if (oversizedFiles.length > 0 && validFiles.length > 0) {
+      toast.info(`Added ${validFiles.length} valid file(s). ${oversizedFiles.length} oversized file(s) were skipped.`);
+    }
+    
     e.target.value = "";
   };
 
@@ -229,8 +237,8 @@ export const ArchivalDocumentUpload = () => {
           <CardTitle>Archival Document Upload</CardTitle>
         </div>
         <CardDescription>
-          Bulk upload historical documents (PDFs, images, emails, reports) for contextual reference. 
-          These will be tagged as archival data and won't trigger new signals.
+          Bulk upload historical documents (PDFs, images, text files) for contextual reference. 
+          <strong className="text-destructive"> Maximum file size: 3MB per file.</strong> These will be tagged as archival data and won't trigger new signals.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
