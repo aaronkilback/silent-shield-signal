@@ -29,18 +29,29 @@ export const ArchivalDocumentUpload = () => {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []);
     
-    // Strict file size limits for edge function processing
-    const MAX_FILE_SIZE = 3 * 1024 * 1024; // 3MB limit for edge function
-    const oversizedFiles = selectedFiles.filter(f => f.size > MAX_FILE_SIZE);
+    // Strict file size limits for edge function processing  
+    const MAX_FILE_SIZE = 3 * 1024 * 1024; // 3MB limit
+    const oversizedFiles: Array<{name: string, size: number}> = [];
+    const validFiles: File[] = [];
+    
+    selectedFiles.forEach(file => {
+      if (file.size > MAX_FILE_SIZE) {
+        oversizedFiles.push({ name: file.name, size: file.size });
+      } else {
+        validFiles.push(file);
+      }
+    });
     
     if (oversizedFiles.length > 0) {
+      const fileList = oversizedFiles
+        .map(f => `${f.name} (${(f.size / (1024 * 1024)).toFixed(1)}MB)`)
+        .join(', ');
+      
       toast.error(
-        `${oversizedFiles.length} file(s) exceed 3MB limit: ${oversizedFiles.map(f => `${f.name} (${(f.size / (1024 * 1024)).toFixed(1)}MB)`).join(', ')}. Edge functions cannot process files larger than 3MB.`,
-        { duration: 8000 }
+        `Cannot upload ${oversizedFiles.length} file(s) - they exceed the 3MB limit: ${fileList}`,
+        { duration: 10000 }
       );
     }
-    
-    const validFiles = selectedFiles.filter(f => f.size <= MAX_FILE_SIZE);
     
     if (validFiles.length === 0) {
       e.target.value = "";
@@ -52,10 +63,11 @@ export const ArchivalDocumentUpload = () => {
       id: `${Date.now()}-${Math.random()}`,
       status: 'pending' as const
     }));
+    
     setFiles(prev => [...prev, ...newFiles]);
     
     if (oversizedFiles.length > 0 && validFiles.length > 0) {
-      toast.info(`Added ${validFiles.length} valid file(s). ${oversizedFiles.length} oversized file(s) were skipped.`);
+      toast.success(`Added ${validFiles.length} valid file(s)`);
     }
     
     e.target.value = "";
@@ -129,10 +141,12 @@ export const ArchivalDocumentUpload = () => {
 
         if (error) {
           console.error('Edge function error:', error);
-          const errorMessage = error.message?.includes('timeout') 
+          const errorMessage = error.message?.includes('too large') || error.message?.includes('Maximum')
+            ? `File too large: ${error.message}`
+            : error.message?.includes('timeout') 
             ? 'Upload timed out - file may be too large'
             : error.message?.includes('Memory')
-            ? 'File too large - try smaller files'
+            ? 'File too large - exceeds memory limit'
             : error.message || 'Upload failed';
           
           batch.forEach(file => {
@@ -142,6 +156,8 @@ export const ArchivalDocumentUpload = () => {
                 : f
             ));
           });
+          
+          toast.error(errorMessage, { duration: 5000 });
           continue;
         }
 
@@ -237,8 +253,8 @@ export const ArchivalDocumentUpload = () => {
           <CardTitle>Archival Document Upload</CardTitle>
         </div>
         <CardDescription>
-          Bulk upload historical documents (PDFs, images, text files) for contextual reference. 
-          <strong className="text-destructive"> Maximum file size: 3MB per file.</strong> These will be tagged as archival data and won't trigger new signals.
+          Upload historical documents for reference. <strong className="text-destructive">Maximum: 3MB per file.</strong>
+          <br />Supported: PDF, TXT, CSV, Images. Files are tagged as archival and won't trigger new signals.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -282,6 +298,13 @@ export const ArchivalDocumentUpload = () => {
                 <Badge variant="destructive">Errors: {errorCount}</Badge>
               </div>
             )}
+            <div className="bg-muted/50 border border-primary/20 rounded-lg p-3 mb-2">
+              <p className="text-sm text-muted-foreground">
+                ⚠️ <strong>File Size Limit: 3MB maximum per file</strong>
+                <br />
+                Files larger than 3MB cannot be processed and will be rejected.
+              </p>
+            </div>
             <ScrollArea className="h-[200px] border rounded-md p-2">
               {files.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -290,26 +313,37 @@ export const ArchivalDocumentUpload = () => {
               ) : (
                 <div className="space-y-2">
                   {files.map((f) => (
-                    <div key={f.id} className="flex items-center justify-between p-2 bg-muted rounded-md">
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
-                        {f.status === 'success' && <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />}
-                        {f.status === 'error' && <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0" />}
-                        <span className="text-sm truncate">{f.file.name}</span>
-                        <span className="text-xs text-muted-foreground flex-shrink-0">
-                          ({(f.file.size / 1024).toFixed(1)} KB)
-                        </span>
-                      </div>
-                      {f.status === 'pending' && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeFile(f.id)}
-                          disabled={uploading}
-                        >
-                          <X className="w-4 h-4" />
-                        </Button>
+                  <div key={f.id} className="flex items-center justify-between p-2 bg-muted rounded-md">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      {f.status === 'success' && <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />}
+                      {f.status === 'error' && <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0" />}
+                      {f.status === 'uploading' && (
+                        <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin flex-shrink-0" />
                       )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm truncate font-medium">{f.file.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {(f.file.size / 1024).toFixed(1)} KB
+                          {f.file.size > 3 * 1024 * 1024 && (
+                            <span className="text-destructive font-semibold ml-1">- TOO LARGE!</span>
+                          )}
+                        </div>
+                        {f.error && (
+                          <div className="text-xs text-destructive mt-1">{f.error}</div>
+                        )}
+                      </div>
                     </div>
+                    {f.status === 'pending' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeFile(f.id)}
+                        disabled={uploading}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
                   ))}
                 </div>
               )}
