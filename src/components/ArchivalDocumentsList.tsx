@@ -83,7 +83,7 @@ export const ArchivalDocumentsList = () => {
                         <h4 className="font-medium truncate">{doc.filename}</h4>
                       </div>
                       
-                      {doc.summary && (
+                      {doc.summary && !doc.summary.startsWith('%PDF') && !doc.summary.includes('<</Type/') && (
                         <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
                           {doc.summary}
                         </p>

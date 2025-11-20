@@ -42,20 +42,42 @@ serve(async (req) => {
         
         console.log(`Processing: ${filename}`);
 
-        // Decode base64 file
-        const binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
+        // Decode base64 file with size check
+        let binaryData: Uint8Array;
+        try {
+          binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
+        } catch (error) {
+          console.error(`Failed to decode file ${filename}:`, error);
+          throw new Error(`File decoding failed: ${filename}`);
+        }
+        
         let text = '';
+        let cleanSummary = '';
 
         // Extract text based on file type (simplified to avoid memory issues)
         if (mimeType === 'text/plain' || mimeType === 'text/csv' || filename.endsWith('.txt') || filename.endsWith('.csv')) {
-          text = new TextDecoder().decode(binaryData);
+          // Only decode first 100KB for text files to avoid memory issues
+          const maxBytes = Math.min(binaryData.length, 100000);
+          const subset = binaryData.slice(0, maxBytes);
+          text = new TextDecoder().decode(subset);
+          if (binaryData.length > maxBytes) {
+            text += '\n\n[Content truncated]';
+          }
+          cleanSummary = text.substring(0, 200).trim();
         } else if (mimeType === 'application/pdf' || filename.endsWith('.pdf')) {
-          // For PDFs, create a placeholder - full text extraction causes memory issues
-          text = `PDF Document: ${filename}\nSize: ${(binaryData.length / 1024).toFixed(1)} KB\nType: ${mimeType}\n\nThis is an archival document. Full text extraction is available upon request.`;
+          // For PDFs, create metadata only - no content extraction
+          const sizeKB = (binaryData.length / 1024).toFixed(1);
+          const dateInfo = dateOfDocument ? ` from ${new Date(dateOfDocument).toLocaleDateString()}` : '';
+          text = `PDF Document: ${filename}${dateInfo}\nSize: ${sizeKB} KB\n\nThis is an archival document stored for reference.`;
+          cleanSummary = `PDF report${dateInfo} - ${sizeKB} KB`;
         } else if (mimeType.startsWith('image/')) {
-          text = `Image file: ${filename}. Size: ${binaryData.length} bytes. Type: ${mimeType}`;
+          const sizeKB = (binaryData.length / 1024).toFixed(1);
+          text = `Image: ${filename}\nSize: ${sizeKB} KB\nType: ${mimeType}`;
+          cleanSummary = `Image file - ${sizeKB} KB`;
         } else {
-          text = `Document: ${filename} (${mimeType}). Size: ${binaryData.length} bytes.`;
+          const sizeKB = (binaryData.length / 1024).toFixed(1);
+          text = `Document: ${filename}\nType: ${mimeType}\nSize: ${sizeKB} KB`;
+          cleanSummary = `${mimeType} file - ${sizeKB} KB`;
         }
 
         // Limit text to prevent memory issues (reduced from 5MB to 1MB)
@@ -136,8 +158,8 @@ serve(async (req) => {
           }
         }
 
-        // Generate summary (reduced from 500 to 200 chars)
-        const summary = text.substring(0, 200).trim() + (text.length > 200 ? '...' : '');
+        // Use the clean summary generated earlier (or fallback)
+        const summary = cleanSummary || text.substring(0, 200).trim();
 
         // Insert into archival_documents table
         const { data: document, error: insertError } = await supabase
