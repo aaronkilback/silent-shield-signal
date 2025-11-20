@@ -181,6 +181,14 @@ export const ArchivalDocumentUpload = () => {
             throw new Error(data.error || 'Duplicate file');
           }
 
+          // Trigger background entity processing for large files
+          if (data?.documentId) {
+            console.log(`Triggering entity processing for document: ${data.documentId}`);
+            supabase.functions.invoke('process-stored-document', {
+              body: { documentId: data.documentId }
+            }).catch(err => console.error('Background entity processing error:', err));
+          }
+
           setFiles(prev => prev.map(f => 
             f.id === file.id ? { ...f, status: 'success' as const } : f
           ));
