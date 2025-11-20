@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
 import { Upload, Send } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -13,6 +14,8 @@ export const SignalIngestForm = () => {
   const [location, setLocation] = useState("");
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [processingStatus, setProcessingStatus] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,6 +91,8 @@ export const SignalIngestForm = () => {
     if (!file) return;
 
     setLoading(true);
+    setUploadProgress(0);
+    setProcessingStatus("Reading file...");
     const toastId = toast.loading("Processing document...");
     
     try {
@@ -95,10 +100,28 @@ export const SignalIngestForm = () => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
       
+      // Simulate reading progress
+      const readInterval = setInterval(() => {
+        setUploadProgress((prev) => {
+          if (prev >= 30) {
+            clearInterval(readInterval);
+            return 30;
+          }
+          return prev + 5;
+        });
+      }, 100);
+      
       await new Promise((resolve, reject) => {
         reader.onload = async () => {
           try {
+            clearInterval(readInterval);
+            setUploadProgress(40);
+            setProcessingStatus("Uploading document...");
+            
             const base64 = (reader.result as string).split(',')[1];
+            
+            setUploadProgress(60);
+            setProcessingStatus("Processing content...");
             
             const { data, error } = await supabase.functions.invoke("parse-document", {
               body: {
@@ -114,22 +137,40 @@ export const SignalIngestForm = () => {
               throw new Error(error.message || "Failed to process document");
             }
             
+            setUploadProgress(90);
+            setProcessingStatus("Creating signal...");
+            
+            await new Promise(r => setTimeout(r, 500));
+            
+            setUploadProgress(100);
+            setProcessingStatus("Complete!");
+            
             toast.success("Document processed and signal created", { id: toastId });
             setText("");
             setLocation("");
             resolve(data);
           } catch (err) {
+            clearInterval(readInterval);
             reject(err);
           }
         };
-        reader.onerror = () => reject(new Error("Failed to read file"));
+        reader.onerror = () => {
+          clearInterval(readInterval);
+          reject(new Error("Failed to read file"));
+        };
       });
     } catch (error) {
       console.error("Error uploading document:", error);
       const errorMessage = error instanceof Error ? error.message : "Failed to process document";
       toast.error(errorMessage, { id: toastId });
+      setUploadProgress(0);
+      setProcessingStatus("");
     } finally {
-      setLoading(false);
+      setTimeout(() => {
+        setLoading(false);
+        setUploadProgress(0);
+        setProcessingStatus("");
+      }, 1000);
       e.target.value = "";
     }
   };
@@ -143,6 +184,16 @@ export const SignalIngestForm = () => {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {loading && uploadProgress > 0 && (
+          <div className="space-y-2 p-4 bg-muted rounded-lg">
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">{processingStatus}</span>
+              <span className="font-medium">{uploadProgress}%</span>
+            </div>
+            <Progress value={uploadProgress} className="h-2" />
+          </div>
+        )}
+        
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="url">Website URL (Optional)</Label>
