@@ -28,7 +28,23 @@ export const ArchivalDocumentUpload = () => {
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []);
-    const newFiles: FileWithPreview[] = selectedFiles.map(file => ({
+    
+    // Validate file sizes (50MB per file limit)
+    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+    const oversizedFiles = selectedFiles.filter(f => f.size > MAX_FILE_SIZE);
+    
+    if (oversizedFiles.length > 0) {
+      toast.error(`${oversizedFiles.length} file(s) exceed 50MB limit and were skipped: ${oversizedFiles.map(f => f.name).join(', ')}`);
+    }
+    
+    const validFiles = selectedFiles.filter(f => f.size <= MAX_FILE_SIZE);
+    
+    if (validFiles.length === 0) {
+      e.target.value = "";
+      return;
+    }
+    
+    const newFiles: FileWithPreview[] = validFiles.map(file => ({
       file,
       id: `${Date.now()}-${Math.random()}`,
       status: 'pending' as const

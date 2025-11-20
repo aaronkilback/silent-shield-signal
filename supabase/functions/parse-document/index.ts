@@ -75,8 +75,31 @@ serve(async (req) => {
 
     console.log('Processing document:', filename, mimeType);
 
+    // Check file size before processing (10MB limit)
+    const estimatedSize = (file.length * 3) / 4; // Base64 to bytes approximation
+    const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+    
+    if (estimatedSize > MAX_SIZE) {
+      console.error(`File too large: ${(estimatedSize / 1024 / 1024).toFixed(2)}MB`);
+      return new Response(
+        JSON.stringify({ 
+          error: `File too large (${(estimatedSize / 1024 / 1024).toFixed(1)}MB). Maximum size is 10MB. Please use the Archival Upload feature for larger documents.` 
+        }),
+        { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Decode base64 file
-    const binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
+    let binaryData: Uint8Array;
+    try {
+      binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
+    } catch (decodeError) {
+      console.error('Base64 decode error:', decodeError);
+      return new Response(
+        JSON.stringify({ error: 'Invalid file encoding' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
     let text = '';
 
     // Handle different file types
@@ -244,9 +267,22 @@ serve(async (req) => {
     );
   } catch (error) {
     console.error('Error in parse-document function:', error);
+    
+    // Check if it's a memory error
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const isMemoryError = errorMessage.toLowerCase().includes('memory') || 
+                          errorMessage.toLowerCase().includes('out of range');
+    
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ 
+        error: isMemoryError 
+          ? 'File too large to process. Please use the Archival Upload feature for large documents or reduce file size.' 
+          : errorMessage 
+      }),
+      { 
+        status: isMemoryError ? 413 : 500, 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      }
     );
   }
 });
