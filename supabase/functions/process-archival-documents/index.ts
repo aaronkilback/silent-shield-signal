@@ -37,66 +37,51 @@ serve(async (req) => {
         
         console.log(`Processing: ${filename}`);
 
-        // CRITICAL: Check size before ANY processing to avoid memory issues
+        // CRITICAL: Absolute size check - reject files over 1.5MB before ANY processing
         const estimatedSize = file.length * 0.75; // base64 to bytes
-        const sizeKB = (estimatedSize / 1024).toFixed(1);
         const sizeMB = (estimatedSize / (1024 * 1024)).toFixed(2);
         
-        console.log(`File size: ${sizeKB} KB (${sizeMB} MB)`);
-
-        // For files > 2MB, skip ALL content processing
-        const SAFE_SIZE_LIMIT = 2 * 1024 * 1024; // 2MB
-        let shouldProcessContent = estimatedSize <= SAFE_SIZE_LIMIT;
+        if (estimatedSize > 1.5 * 1024 * 1024) {
+          console.error(`File ${filename} is ${sizeMB}MB - exceeds 1.5MB limit`);
+          throw new Error(`File too large (${sizeMB}MB). Maximum 1.5MB per file.`);
+        }
         
+        const sizeKB = (estimatedSize / 1024).toFixed(1);
+        console.log(`File size: ${sizeKB} KB - proceeding with upload`);
+
+        // Process all files regardless of size (under the limit)
+        console.log(`Processing content for ${filename}`);
+        const binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
+
         let text = '';
         let cleanSummary = '';
-        let binaryData: Uint8Array;
         let keywords: string[] = [];
-        let entityMentions: string[] = [];
 
-        if (!shouldProcessContent) {
-          // Large file - metadata only, NO decoding yet
-          console.log(`Large file (${sizeMB} MB) - using metadata-only mode`);
-          const dateInfo = dateOfDocument ? ` from ${new Date(dateOfDocument).toLocaleDateString()}` : '';
-          const fileType = mimeType.split('/')[1]?.toUpperCase() || 'Document';
-          text = `${fileType}: ${filename}${dateInfo}\nSize: ${sizeKB} KB`;
-          cleanSummary = `${fileType}${dateInfo} - ${sizeKB} KB`;
+        if (mimeType === 'text/plain' || filename.endsWith('.txt')) {
+          // Only first 20KB for text files
+          const maxBytes = Math.min(binaryData.length, 20000);
+          text = new TextDecoder().decode(binaryData.slice(0, maxBytes));
+          cleanSummary = text.substring(0, 150).trim();
           
-          // Decode ONLY for storage upload (unavoidable)
-          console.log(`Decoding ${filename} for storage upload only...`);
-          binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
-          console.log(`Decoded ${filename} successfully`);
+          // Extract keywords from small text
+          const words = text.toLowerCase()
+            .replace(/[^\w\s]/g, ' ')
+            .split(/\s+/)
+            .filter(w => w.length > 4);
+          const wordFreq = new Map<string, number>();
+          words.slice(0, 100).forEach(w => wordFreq.set(w, (wordFreq.get(w) || 0) + 1));
+          keywords = Array.from(wordFreq.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([word]) => word);
+        } else if (mimeType === 'application/pdf' || filename.endsWith('.pdf')) {
+          const dateInfo = dateOfDocument ? ` from ${new Date(dateOfDocument).toLocaleDateString()}` : '';
+          text = `PDF: ${filename}${dateInfo}\nSize: ${sizeKB} KB`;
+          cleanSummary = `PDF${dateInfo} - ${sizeKB} KB`;
         } else {
-          // Small file - safe to process
-          console.log(`Small file - processing content`);
-          binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
-
-          if (mimeType === 'text/plain' || filename.endsWith('.txt')) {
-            // Only first 20KB for text files
-            const maxBytes = Math.min(binaryData.length, 20000);
-            text = new TextDecoder().decode(binaryData.slice(0, maxBytes));
-            cleanSummary = text.substring(0, 150).trim();
-            
-            // Extract keywords from small text
-            const words = text.toLowerCase()
-              .replace(/[^\w\s]/g, ' ')
-              .split(/\s+/)
-              .filter(w => w.length > 4);
-            const wordFreq = new Map<string, number>();
-            words.slice(0, 100).forEach(w => wordFreq.set(w, (wordFreq.get(w) || 0) + 1));
-            keywords = Array.from(wordFreq.entries())
-              .sort((a, b) => b[1] - a[1])
-              .slice(0, 5)
-              .map(([word]) => word);
-          } else if (mimeType === 'application/pdf' || filename.endsWith('.pdf')) {
-            const dateInfo = dateOfDocument ? ` from ${new Date(dateOfDocument).toLocaleDateString()}` : '';
-            text = `PDF: ${filename}${dateInfo}\nSize: ${sizeKB} KB`;
-            cleanSummary = `PDF${dateInfo} - ${sizeKB} KB`;
-          } else {
-            const fileType = mimeType.split('/')[1] || 'File';
-            text = `${fileType}: ${filename}\nSize: ${sizeKB} KB`;
-            cleanSummary = `${fileType} - ${sizeKB} KB`;
-          }
+          const fileType = mimeType.split('/')[1] || 'File';
+          text = `${fileType}: ${filename}\nSize: ${sizeKB} KB`;
+          cleanSummary = `${fileType} - ${sizeKB} KB`;
         }
 
         // Generate simple content hash from metadata (not full content)
@@ -157,14 +142,13 @@ serve(async (req) => {
             uploaded_by: userId || null,
             date_of_document: dateOfDocument || null,
             is_archival: true,
-            entity_mentions: entityMentions,
+            entity_mentions: [],
             keywords: keywords,
             summary: cleanSummary,
             metadata: {
               original_filename: filename,
               upload_timestamp: new Date().toISOString(),
-              processed: shouldProcessContent,
-              size_mb: sizeMB
+              size_kb: sizeKB
             }
           })
           .select()
@@ -186,7 +170,7 @@ serve(async (req) => {
         });
 
         // Create entity suggestions for text files only
-        if (shouldProcessContent && text.length > 50) {
+        if ((mimeType === 'text/plain' || filename.endsWith('.txt')) && text.length > 50) {
           console.log(`Checking for entity suggestions in ${filename}...`);
           
           // Extract potential entity names (simple pattern matching)
