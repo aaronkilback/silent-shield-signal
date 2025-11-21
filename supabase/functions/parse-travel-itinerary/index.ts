@@ -1,5 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
+import { getDocument, GlobalWorkerOptions } from "https://esm.sh/pdfjs-dist@3.11.174";
+
+// Set worker source
+GlobalWorkerOptions.workerSrc = "https://esm.sh/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,25 +47,31 @@ serve(async (req) => {
 
     console.log("File downloaded, size:", fileData.size);
 
-    // Convert file to base64 (chunk to avoid stack overflow)
+    // Parse PDF to extract text
     const arrayBuffer = await fileData.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    let binary = '';
-    const chunkSize = 8192;
-    for (let i = 0; i < uint8Array.length; i += chunkSize) {
-      const chunk = uint8Array.subarray(i, Math.min(i + chunkSize, uint8Array.length));
-      binary += String.fromCharCode.apply(null, Array.from(chunk));
+    
+    console.log("Parsing PDF...");
+    const pdf = await getDocument({ data: arrayBuffer }).promise;
+    let fullText = "";
+    
+    // Extract text from all pages
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map((item: any) => item.str).join(" ");
+      fullText += pageText + "\n\n";
     }
-    const base64 = btoa(binary);
+
+    console.log("Extracted text length:", fullText.length);
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY not configured");
     }
 
-    console.log("Calling AI to parse itinerary");
+    console.log("Calling AI to parse itinerary text");
 
-    // Call AI to extract structured data
+    // Call AI to extract structured data from text
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -73,22 +83,11 @@ serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: "You are a travel document parser. Extract structured travel information from flight itineraries and e-tickets.",
+            content: "You are a travel document parser. Extract structured travel information from flight itineraries and e-tickets text.",
           },
           {
             role: "user",
-            content: [
-              {
-                type: "text",
-                text: "Extract all travel details from this document including: traveler name, trip dates, flight numbers, origin/destination cities and countries, hotel information if present.",
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:application/pdf;base64,${base64}`,
-                },
-              },
-            ],
+            content: `Extract all travel details from this itinerary text including: traveler name, trip dates, flight numbers, origin/destination cities and countries, hotel information if present.\n\nText:\n${fullText}`,
           },
         ],
         tools: [
