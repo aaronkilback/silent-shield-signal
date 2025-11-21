@@ -207,7 +207,7 @@ export const SignalHistory = () => {
             <p>No signals found. Use the Test Signal Generator to create demo signals.</p>
           </div>
         ) : (
-          <ScrollArea className="h-[60vh] max-h-[600px] pr-4">
+          <ScrollArea className="h-[calc(100vh-28rem)] min-h-[300px] pr-4">
             <div className="space-y-3">
               {signals.map((signal) => (
                 <div
