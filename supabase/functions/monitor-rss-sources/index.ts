@@ -124,84 +124,44 @@ serve(async (req) => {
 
         console.log(`Found ${items.length} items in ${source.name}`);
 
-        // Process each RSS item
-        for (const item of items.slice(0, 20)) { // Limit to 20 most recent items
-          for (const client of clients) {
-            // Check if content matches client keywords or locations
-            const content = `${item.title} ${item.description}`.toLowerCase();
-            let isRelevant = false;
+        // Process each RSS item - ingest for AI analysis
+        for (const item of items.slice(0, 10)) {
+          try {
+            const content = `${item.title}\n\n${item.description}`;
+            
+            // Ingest document for AI to analyze relevance
+            const { error: ingestError } = await supabaseClient
+              .from('ingested_documents')
+              .insert({
+                title: item.title,
+                raw_text: content,
+                source_id: source.id,
+                metadata: {
+                  url: item.link,
+                  source_type: 'rss',
+                  source_name: source.name,
+                  published_date: item.pubDate
+                },
+                processing_status: 'pending'
+              });
 
-            // Check monitoring keywords
-            if (client.monitoring_keywords) {
-              for (const keyword of client.monitoring_keywords) {
-                if (content.includes(keyword.toLowerCase())) {
-                  isRelevant = true;
-                  break;
-                }
-              }
-            }
-
-            // Check locations
-            if (!isRelevant && client.locations) {
-              for (const location of client.locations) {
-                if (content.includes(location.toLowerCase())) {
-                  isRelevant = true;
-                  break;
-                }
-              }
-            }
-
-            // If no keywords/locations, make it relevant for all clients
-            if (!client.monitoring_keywords && !client.locations) {
-              isRelevant = true;
-            }
-
-            if (isRelevant) {
-              // Determine category and severity based on content
-              let category = 'threat-intelligence';
-              let severity = 'medium';
-
-              if (content.includes('fire') || content.includes('wildfire')) {
-                category = 'threat-intelligence';
-                severity = 'high';
-              } else if (content.includes('alert') || content.includes('warning')) {
-                category = 'threat-intelligence';
-                severity = 'high';
-              } else if (content.includes('closure') || content.includes('emergency')) {
-                category = 'threat-intelligence';
-                severity = 'critical';
-              }
-
-              const { error: signalError } = await supabaseClient
-                .from('signals')
-                .insert({
-                  source_id: source.id,
-                  client_id: client.id,
-                  category,
-                  severity,
-                  normalized_text: `${item.title}\n\n${item.description}`,
-                  status: 'new',
-                  raw_json: {
-                    source_name: source.name,
-                    title: item.title,
-                    link: item.link,
-                    published_date: item.pubDate
+            if (!ingestError) {
+              totalSignals++;
+              
+              // Trigger AI processing in background
+              supabaseClient.functions.invoke('process-intelligence-document', {
+                body: { 
+                  content: content,
+                  metadata: {
+                    url: item.link,
+                    source_type: 'rss',
+                    source_name: source.name
                   }
-                });
-
-              if (signalError) {
-                console.error('Error creating signal:', signalError);
-              } else {
-                totalSignals++;
-                
-                await correlateSignalEntities({
-                  supabase: supabaseClient,
-                  signalText: `${item.title}\n\n${item.description}`,
-                  clientId: client.id,
-                  additionalContext: `Source: ${source.name}`
-                });
-              }
+                }
+              }).catch(err => console.error('Failed to trigger processing:', err));
             }
+          } catch (error) {
+            console.error(`Error ingesting RSS item:`, error);
           }
         }
       } catch (error) {

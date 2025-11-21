@@ -59,137 +59,81 @@ serve(async (req) => {
     // Get all clients
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, industry');
+      .select('id, name, industry, monitoring_keywords');
 
     if (clientsError) throw clientsError;
 
     console.log(`Found ${clients?.length || 0} clients to monitor`);
 
+    let documentsIngested = 0;
     let signalsCreated = 0;
 
-    // Use Google News RSS feed for multiple categories
-    const rssFeeds = [
-      'https://news.google.com/rss/search?q=cybersecurity+breach+OR+hack+when:1d&hl=en-US&gl=US&ceid=US:en',
-      'https://news.google.com/rss/search?q=ransomware+attack+when:1d&hl=en-US&gl=US&ceid=US:en',
-      'https://news.google.com/rss/search?q=energy+deal+OR+LNG+OR+pipeline+when:1d&hl=en-US&gl=US&ceid=US:en',
-      'https://news.google.com/rss/search?q=oil+gas+protest+OR+lawsuit+when:1d&hl=en-US&gl=US&ceid=US:en',
-      'https://news.google.com/rss/search?q=petrochemical+acquisition+OR+merger+when:1d&hl=en-US&gl=US&ceid=US:en'
-    ];
+    // Get client keywords for targeted searches
+    const searchQueries: string[] = [];
+    for (const client of clients || []) {
+      if (client.monitoring_keywords && client.monitoring_keywords.length > 0) {
+        searchQueries.push(...client.monitoring_keywords.slice(0, 3));
+      }
+    }
 
-    for (const feedUrl of rssFeeds) {
+    // Add general security topics
+    searchQueries.push('security breach', 'cyber attack', 'ransomware', 'data leak');
+
+    // Use Google News RSS feed with client-specific queries
+    for (const query of searchQueries.slice(0, 10)) {
       try {
+        const feedUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}+when:1d&hl=en-US&gl=US&ceid=US:en`;
         const response = await fetch(feedUrl);
         if (!response.ok) continue;
 
         const xmlText = await response.text();
-        
-        // Simple XML parsing for RSS items
         const items = xmlText.match(/<item>(.*?)<\/item>/gs) || [];
         
-        for (const item of items.slice(0, 5)) {
+        for (const item of items.slice(0, 3)) {
           const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/);
           const descMatch = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/);
           const linkMatch = item.match(/<link>(.*?)<\/link>/);
-          const pubDateMatch = item.match(/<pubDate>(.*?)<\/pubDate>/);
 
           if (!titleMatch || !descMatch) continue;
 
           const title = titleMatch[1];
           const description = descMatch[1];
           const link = linkMatch ? linkMatch[1] : '';
-          const pubDate = pubDateMatch ? pubDateMatch[1] : new Date().toISOString();
 
-          // Check if news is security, deal, or reputational-related
-          const text = `${title} ${description}`.toLowerCase();
-          const isSecurityRelated = SECURITY_KEYWORDS.some(keyword => text.includes(keyword));
-          const isDealRelated = DEAL_KEYWORDS.some(keyword => text.includes(keyword));
-          const isReputationalRisk = REPUTATIONAL_KEYWORDS.some(keyword => text.includes(keyword));
+          try {
+            // Ingest document for AI analysis
+            const { error: ingestError } = await supabase
+              .from('ingested_documents')
+              .insert({
+                title: title,
+                raw_text: `${title}\n\n${description}`,
+                metadata: {
+                  url: link,
+                  source_type: 'news',
+                  source_name: 'Google News',
+                  search_query: query
+                },
+                processing_status: 'pending'
+              });
 
-          if (!isSecurityRelated && !isDealRelated && !isReputationalRisk) continue;
-
-          // Determine category and severity
-          let category = 'news';
-          let severity = 'low';
-          
-          if (isSecurityRelated) {
-            category = 'threat-intelligence';
-            severity = text.includes('breach') || text.includes('ransomware') ? 'critical' :
-                       text.includes('vulnerability') || text.includes('exploit') ? 'high' : 'medium';
-          } else if (isDealRelated && isReputationalRisk) {
-            // Deal + controversy = high reputational risk
-            category = 'reputational-risk';
-            severity = 'high';
-          } else if (isReputationalRisk) {
-            category = 'reputational-risk';
-            severity = text.includes('lawsuit') || text.includes('investigation') ? 'high' : 'medium';
-          } else if (isDealRelated) {
-            category = 'business-intelligence';
-            severity = 'medium';
-          }
-
-          // Create signal for relevant clients
-          for (const client of clients || []) {
-            try {
-              // Enhanced relevance checking - name, industry, or deal mentions
-              const clientNameLower = client.name.toLowerCase();
-              const clientNameWords = clientNameLower.split(' ').filter((w: string) => w.length > 3);
+            if (!ingestError) {
+              documentsIngested++;
               
-              const hasNameMatch = clientNameWords.some((word: string) => text.includes(word)) || text.includes(clientNameLower);
-              const hasIndustryMatch = client.industry && text.includes(client.industry.toLowerCase());
-              
-              if (hasNameMatch || hasIndustryMatch) {
-                // Boost confidence if client name is directly mentioned
-                const confidence = hasNameMatch ? 0.90 : 0.75;
-                
-                const { error: signalError } = await supabase
-                  .from('signals')
-                  .insert({
-                    source_id: null,
-                    normalized_text: title,
-                    category: category,
-                    severity: severity,
-                    location: 'Global',
-                    confidence: confidence,
-                    entity_tags: hasNameMatch ? ['news', category, 'client-mentioned'] : ['news', category, 'industry-relevant'],
-                    raw_json: {
-                      title,
-                      description,
-                      link,
-                      published: pubDate,
-                      source: 'Google News',
-                      matched_keywords: [
-                        ...(isSecurityRelated ? ['security'] : []),
-                        ...(isDealRelated ? ['deal'] : []),
-                        ...(isReputationalRisk ? ['reputational-risk'] : [])
-                      ]
-                    },
-                    client_id: client.id
-                  });
-
-                if (!signalError) {
-                  signalsCreated++;
-                  console.log(`Created news signal for ${client.name}: ${title.substring(0, 50)}`);
-                  
-                  // Correlate entities using shared helper
-                  await correlateSignalEntities({
-                    supabase,
-                    signalText: title,
-                    clientId: client.id,
-                    additionalContext: description
-                  });
-                }
-              }
-            } catch (error) {
-              console.error(`Error processing news for ${client.name}:`, error);
+              // Trigger AI processing in background
+              supabase.functions.invoke('process-intelligence-document', {
+                body: { document_id: null, content: `${title}\n\n${description}`, metadata: { url: link } }
+              }).catch(err => console.error('Failed to trigger processing:', err));
             }
+          } catch (error) {
+            console.error(`Error ingesting news item:`, error);
           }
         }
       } catch (error) {
-        console.error(`Error fetching RSS feed ${feedUrl}:`, error);
+        console.error(`Error fetching news for query "${query}":`, error);
       }
     }
 
-    console.log(`News monitoring complete. Created ${signalsCreated} signals.`);
+    console.log(`News monitoring complete. Ingested ${documentsIngested} documents for AI analysis.`);
 
     // Update monitoring history on success
     if (historyEntry) {
@@ -198,7 +142,7 @@ serve(async (req) => {
         .update({
           status: 'completed',
           scan_completed_at: new Date().toISOString(),
-          signals_created: signalsCreated,
+          signals_created: documentsIngested,
           scan_metadata: { 
             sources: ['News API', 'Google News'],
             clients_scanned: clients?.length || 0
@@ -211,7 +155,7 @@ serve(async (req) => {
       JSON.stringify({ 
         success: true, 
         clients_scanned: clients?.length || 0,
-        signals_created: signalsCreated,
+          signals_created: documentsIngested,
         source: 'security-news'
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
