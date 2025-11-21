@@ -1,6 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
-import * as pdfjs from "https://esm.sh/pdfjs-dist@4.0.379/legacy/build/pdf.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -31,7 +30,7 @@ serve(async (req) => {
 
     console.log("Processing itinerary:", filePath);
 
-    // Download the file from storage
+    // Download the file from storage and convert to base64
     const { data: fileData, error: downloadError } = await supabaseClient
       .storage
       .from("travel-documents")
@@ -42,42 +41,26 @@ serve(async (req) => {
       throw new Error(`Failed to download file: ${downloadError?.message}`);
     }
 
-    console.log("File downloaded successfully");
+    console.log("File downloaded, converting to base64...");
 
-    // Parse PDF using pdfjs-dist
+    // Convert blob to base64
     const arrayBuffer = await fileData.arrayBuffer();
-    
-    console.log("Parsing PDF with pdfjs-dist...");
-    
-    const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
-    const pdf = await loadingTask.promise;
-    
-    let textContent = '';
-    
-    // Extract text from all pages
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      const pageText = content.items.map((item: any) => item.str).join(' ');
-      textContent += pageText + ' ';
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
     }
-    
-    textContent = textContent.trim();
-    
-    console.log(`Extracted ${textContent.length} characters from ${pdf.numPages} pages`);
+    const base64 = btoa(binary);
+    const dataUrl = `data:application/pdf;base64,${base64}`;
 
-    if (!textContent || textContent.length < 20) {
-      throw new Error("Could not extract meaningful text from PDF. The PDF may be empty or image-based.");
-    }
+    console.log("Sending PDF to AI for analysis...");
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY not configured");
     }
 
-    console.log("Calling AI to extract travel details from text");
-
-    // Use AI to extract structured data from text
+    // Use AI to extract structured data from PDF
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -89,16 +72,16 @@ serve(async (req) => {
         messages: [
           {
             role: "user",
-            content: `Extract ALL travel details from this itinerary text. Be thorough and extract everything you can find:
-
-ITINERARY TEXT:
-${textContent}
+            content: [
+              {
+                type: "text",
+                text: `Extract ALL travel details from this travel itinerary PDF. Be thorough and extract everything you can find:
 
 Extract:
-- Traveler name (look for passenger name, traveler, guest name)
+- Traveler name (passenger name, traveler, guest name)
 - Trip name or purpose
-- Departure date and time
-- Return date and time  
+- Departure date and time (convert to ISO format)
+- Return date and time (convert to ISO format)
 - Origin city and country
 - Destination city and country
 - ALL flight numbers mentioned
@@ -106,7 +89,15 @@ Extract:
 - Hotel full address
 - Any other relevant details
 
-Be very thorough - extract all information present.`,
+Be very thorough - extract all information present.`
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: dataUrl
+                }
+              }
+            ]
           },
         ],
         tools: [
@@ -128,12 +119,12 @@ Be very thorough - extract all information present.`,
                   departure_date: { 
                     type: "string", 
                     format: "date-time",
-                    description: "Departure date and time in ISO format"
+                    description: "Departure date and time in ISO format (YYYY-MM-DDTHH:mm:ss)"
                   },
                   return_date: { 
                     type: "string", 
                     format: "date-time",
-                    description: "Return date and time in ISO format"
+                    description: "Return date and time in ISO format (YYYY-MM-DDTHH:mm:ss)"
                   },
                   origin_city: { type: "string" },
                   origin_country: { type: "string" },
@@ -177,10 +168,12 @@ Be very thorough - extract all information present.`,
     }
 
     const aiData = await aiResponse.json();
+    console.log("AI response:", JSON.stringify(aiData, null, 2));
+
     const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
 
     if (!toolCall) {
-      throw new Error("Could not extract travel data from text");
+      throw new Error("Could not extract travel data from PDF");
     }
 
     const travelData = JSON.parse(toolCall.function.arguments);
