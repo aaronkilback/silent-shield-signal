@@ -100,31 +100,39 @@ serve(async (req) => {
       // Extract text between BT (Begin Text) and ET (End Text) markers
       const textMatches = pdfString.match(/BT(.*?)ET/gs);
       if (textMatches && textMatches.length > 0) {
-        // Extract actual text content (strings in parentheses or angle brackets)
         let extractedText = '';
         for (const match of textMatches) {
           // Extract strings in parentheses: (text)
-          const parenStrings = match.match(/\((.*?)\)/g);
+          const parenStrings = match.match(/\(([^)]*)\)/g);
           if (parenStrings) {
-            extractedText += parenStrings.map(s => s.slice(1, -1)).join(' ') + ' ';
-          }
-          // Extract strings in angle brackets: <hex>
-          const hexStrings = match.match(/<([0-9A-Fa-f]+)>/g);
-          if (hexStrings) {
-            for (const hex of hexStrings) {
-              const hexContent = hex.slice(1, -1);
-              try {
-                const bytes = hexContent.match(/.{2}/g)?.map(h => parseInt(h, 16)) || [];
-                extractedText += new TextDecoder().decode(new Uint8Array(bytes)) + ' ';
-              } catch {}
+            for (const str of parenStrings) {
+              const text = str.slice(1, -1);
+              // Decode PDF escape sequences
+              const decoded = text
+                .replace(/\\n/g, ' ')
+                .replace(/\\r/g, ' ')
+                .replace(/\\t/g, ' ')
+                .replace(/\\\(/g, '(')
+                .replace(/\\\)/g, ')')
+                .replace(/\\\\/g, '\\');
+              extractedText += decoded + ' ';
             }
           }
         }
-        textContent = extractedText.replace(/\\r|\\n|\\t/g, ' ').replace(/\s+/g, ' ').trim();
+        
+        // Clean up the extracted text
+        textContent = extractedText
+          .replace(/\s+/g, ' ') // Collapse multiple spaces
+          .replace(/[^\x20-\x7E\s]/g, '') // Remove non-printable characters
+          .trim();
+        
         console.log(`Extracted ${textContent.length} characters from PDF text streams`);
       } else {
         // Fallback: basic text extraction
-        textContent = pdfString.replace(/[\x00-\x1F\x7F-\xFF]/g, ' ').replace(/\s+/g, ' ').trim();
+        textContent = pdfString
+          .replace(/[\x00-\x1F\x7F-\xFF]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
         console.log(`Fallback: extracted ${textContent.length} characters`);
       }
     }
