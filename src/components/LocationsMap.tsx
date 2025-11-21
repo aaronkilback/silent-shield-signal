@@ -1,7 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { MapPin } from 'lucide-react';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
 
 interface Location {
   id: string;
@@ -17,7 +19,15 @@ interface LocationsMapProps {
 export const LocationsMap = ({ locations }: LocationsMapProps) => {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
-  const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN;
+  const [mapboxToken, setMapboxToken] = useState<string | null>(() => {
+    const token = import.meta.env.VITE_MAPBOX_TOKEN;
+    // Check if it's a placeholder or invalid token
+    if (!token || token === 'your_mapbox_token_here') {
+      return localStorage.getItem('mapbox_token');
+    }
+    return token;
+  });
+  const [tokenInput, setTokenInput] = useState('');
 
   useEffect(() => {
     if (!locations.length || !mapContainer.current || !mapboxToken) return;
@@ -129,11 +139,37 @@ export const LocationsMap = ({ locations }: LocationsMapProps) => {
     }
   };
 
+  const handleSaveToken = () => {
+    if (tokenInput.trim()) {
+      localStorage.setItem('mapbox_token', tokenInput.trim());
+      setMapboxToken(tokenInput.trim());
+    }
+  };
+
   if (!mapboxToken) {
     return (
-      <div className="bg-muted/50 border border-border rounded-lg p-4 text-center text-sm text-muted-foreground">
-        <MapPin className="w-8 h-8 mx-auto mb-2 opacity-50" />
-        <p>Map unavailable - Mapbox token not configured</p>
+      <div className="bg-muted/50 border border-border rounded-lg p-6 text-center">
+        <MapPin className="w-8 h-8 mx-auto mb-3 opacity-50" />
+        <h3 className="font-semibold mb-2">Mapbox Token Required</h3>
+        <p className="text-sm text-muted-foreground mb-4">
+          Enter your Mapbox public token to display the map.
+        </p>
+        <div className="flex gap-2 max-w-md mx-auto">
+          <Input
+            type="text"
+            placeholder="pk.eyJ1Ijo..."
+            value={tokenInput}
+            onChange={(e) => setTokenInput(e.target.value)}
+            className="flex-1"
+          />
+          <Button onClick={handleSaveToken}>Save</Button>
+        </div>
+        <p className="text-xs text-muted-foreground mt-2">
+          Get your token at{' '}
+          <a href="https://mapbox.com" target="_blank" rel="noopener noreferrer" className="underline">
+            mapbox.com
+          </a>
+        </p>
       </div>
     );
   }
