@@ -18,10 +18,10 @@ serve(async (req) => {
 
     console.log('Analyzing feedback to adjust confidence thresholds...');
 
-    // Get entity suggestions with outcomes
+    // Get entity suggestions with detailed information for learning
     const { data: suggestions, error: suggestionsError } = await supabase
       .from('entity_suggestions')
-      .select('confidence, status')
+      .select('confidence, status, suggested_name, suggested_type, context, suggested_attributes')
       .in('status', ['approved', 'rejected'])
       .order('created_at', { ascending: false })
       .limit(500);
@@ -36,6 +36,66 @@ serve(async (req) => {
       .limit(200);
 
     if (outcomesError) throw outcomesError;
+
+    // Analyze rejected entities to extract patterns
+    const rejectedEntities = suggestions?.filter(s => s.status === 'rejected') || [];
+    const falsePositivePatterns = {
+      commonNames: {} as Record<string, number>,
+      commonTypes: {} as Record<string, number>,
+      commonContextPhrases: {} as Record<string, number>,
+      examples: [] as Array<{ name: string; type: string; context: string; confidence: number }>
+    };
+
+    rejectedEntities.forEach(entity => {
+      // Count common entity names
+      if (entity.suggested_name) {
+        falsePositivePatterns.commonNames[entity.suggested_name.toLowerCase()] = 
+          (falsePositivePatterns.commonNames[entity.suggested_name.toLowerCase()] || 0) + 1;
+      }
+
+      // Count common entity types
+      if (entity.suggested_type) {
+        falsePositivePatterns.commonTypes[entity.suggested_type] = 
+          (falsePositivePatterns.commonTypes[entity.suggested_type] || 0) + 1;
+      }
+
+      // Extract common phrases from context
+      if (entity.context) {
+        const words = entity.context.toLowerCase().split(/\s+/);
+        words.forEach((word: string) => {
+          if (word.length > 4) { // Only meaningful words
+            falsePositivePatterns.commonContextPhrases[word] = 
+              (falsePositivePatterns.commonContextPhrases[word] || 0) + 1;
+          }
+        });
+      }
+
+      // Keep examples of false positives
+      if (falsePositivePatterns.examples.length < 20) {
+        falsePositivePatterns.examples.push({
+          name: entity.suggested_name || 'Unknown',
+          type: entity.suggested_type || 'Unknown',
+          context: entity.context?.substring(0, 200) || 'No context',
+          confidence: entity.confidence || 0
+        });
+      }
+    });
+
+    // Sort patterns by frequency
+    const topFalsePositiveNames = Object.entries(falsePositivePatterns.commonNames)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20)
+      .map(([name, count]) => ({ name, count }));
+
+    const topFalsePositiveTypes = Object.entries(falsePositivePatterns.commonTypes)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([type, count]) => ({ type, count }));
+
+    const topFalsePositivePhrases = Object.entries(falsePositivePatterns.commonContextPhrases)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 30)
+      .map(([phrase, count]) => ({ phrase, count }));
 
     // Calculate accuracy by confidence bucket
     const confidenceBuckets: Record<string, { approved: number; rejected: number }> = {
@@ -113,7 +173,7 @@ serve(async (req) => {
     }
 
     const recommendations = {
-      current_threshold: 0.6, // Current hardcoded value
+      current_threshold: 0.6,
       recommended_threshold: recommendedThreshold,
       reason,
       confidence_analysis: accuracyByBucket.reverse(),
@@ -128,8 +188,69 @@ serve(async (req) => {
         total: totalSuggestions,
         approved: suggestions?.filter(s => s.status === 'approved').length || 0,
         rejected: suggestions?.filter(s => s.status === 'rejected').length || 0
-      }
+      },
+      false_positive_patterns: {
+        top_names: topFalsePositiveNames,
+        top_types: topFalsePositiveTypes,
+        top_context_phrases: topFalsePositivePhrases,
+        examples: falsePositivePatterns.examples
+      },
+      learning_guidance: generateLearningGuidance(
+        topFalsePositiveNames,
+        topFalsePositiveTypes,
+        topFalsePositivePhrases,
+        falsePositivePatterns.examples,
+        falsePositiveRate
+      )
     };
+
+    function generateLearningGuidance(
+      names: Array<{ name: string; count: number }>,
+      types: Array<{ type: string; count: number }>,
+      phrases: Array<{ phrase: string; count: number }>,
+      examples: Array<{ name: string; type: string; context: string; confidence: number }>,
+      fpRate: number
+    ): string {
+      let guidance = '';
+
+      if (names.length > 0) {
+        guidance += `\n⚠️ FREQUENTLY REJECTED ENTITY NAMES (avoid extracting these):\n`;
+        names.slice(0, 10).forEach(({ name, count }) => {
+          guidance += `  - "${name}" (rejected ${count} times)\n`;
+        });
+      }
+
+      if (types.length > 0) {
+        guidance += `\n⚠️ ENTITY TYPES WITH HIGH FALSE POSITIVE RATES:\n`;
+        types.forEach(({ type, count }) => {
+          guidance += `  - ${type} (${count} false positives) - Be more conservative\n`;
+        });
+      }
+
+      if (phrases.length > 0) {
+        guidance += `\n⚠️ CONTEXT PHRASES ASSOCIATED WITH FALSE POSITIVES (be cautious when these appear):\n`;
+        phrases.slice(0, 15).forEach(({ phrase, count }) => {
+          guidance += `  - "${phrase}" (appeared in ${count} false positives)\n`;
+        });
+      }
+
+      if (examples.length > 0) {
+        guidance += `\n❌ EXAMPLES OF REJECTED ENTITIES TO AVOID:\n`;
+        examples.slice(0, 5).forEach(({ name, type, context, confidence }) => {
+          guidance += `  - Name: "${name}", Type: ${type}, Confidence: ${confidence.toFixed(2)}\n`;
+          guidance += `    Context: "${context}"\n`;
+        });
+      }
+
+      if (fpRate > 0.2) {
+        guidance += `\n🔴 HIGH FALSE POSITIVE RATE (${(fpRate * 100).toFixed(1)}%):\n`;
+        guidance += `  - Increase confidence thresholds significantly\n`;
+        guidance += `  - Be extremely selective about entity extraction\n`;
+        guidance += `  - Focus on explicit mentions with strong evidence\n`;
+      }
+
+      return guidance;
+    }
 
     console.log(`Recommended threshold: ${recommendedThreshold} (${reason})`);
 
