@@ -43,12 +43,20 @@ serve(async (req) => {
 
     console.log("File downloaded, converting to base64...");
 
-    // Convert PDF to base64 for AI processing
+    // Convert PDF to base64 for AI processing (avoid spread operator for large files)
     const arrayBuffer = await fileData.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
-    const base64Pdf = btoa(String.fromCharCode(...bytes));
     
-    console.log(`PDF converted to base64, length: ${base64Pdf.length}`);
+    // Convert to base64 in chunks to avoid stack overflow
+    let binary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+      binary += String.fromCharCode.apply(null, Array.from(chunk));
+    }
+    const base64Pdf = btoa(binary);
+    
+    console.log(`PDF converted to base64, size: ${fileData.size} bytes, base64 length: ${base64Pdf.length}`);
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
