@@ -44,8 +44,7 @@ export function TravelersMap() {
           travelers:traveler_id (*)
         `)
         .lte("departure_date", now)
-        .gte("return_date", now)
-        .eq("status", "active");
+        .gte("return_date", now);
       if (error) throw error;
       return data;
     },
@@ -186,7 +185,11 @@ export function TravelersMap() {
     if (coordMatch) {
       return [parseFloat(coordMatch[2]), parseFloat(coordMatch[1])];
     }
-    return null;
+    
+    // Try to parse as city name
+    const cityKey = location.toLowerCase().split(',')[0].trim();
+    const cityCoords = getCityCoordinates(cityKey, "");
+    return cityCoords;
   };
 
   const getCityCoordinates = (city: string, country: string): [number, number] | null => {
@@ -198,7 +201,15 @@ export function TravelersMap() {
       "chicago": [-87.6298, 41.8781],
       "toronto": [-79.3832, 43.6532],
       "vancouver": [-123.1207, 49.2827],
+      "montreal": [-73.5673, 45.5017],
+      "ottawa": [-75.6972, 45.4215],
+      "calgary": [-114.0719, 51.0447],
       "mexico city": [-99.1332, 19.4326],
+      "washington": [-77.0369, 38.9072],
+      "san francisco": [-122.4194, 37.7749],
+      "miami": [-80.1918, 25.7617],
+      "boston": [-71.0589, 42.3601],
+      "seattle": [-122.3321, 47.6062],
       
       // Europe
       "london": [-0.1276, 51.5074],
@@ -210,6 +221,17 @@ export function TravelersMap() {
       "barcelona": [2.1734, 41.3851],
       "vienna": [16.3738, 48.2082],
       "zurich": [8.5417, 47.3769],
+      "brussels": [4.3517, 50.8503],
+      "prague": [14.4378, 50.0755],
+      "dublin": [-6.2603, 53.3498],
+      "lisbon": [-9.1393, 38.7223],
+      "athens": [23.7275, 37.9838],
+      "stockholm": [18.0686, 59.3293],
+      "copenhagen": [12.5683, 55.6761],
+      "oslo": [10.7522, 59.9139],
+      "helsinki": [24.9384, 60.1695],
+      "warsaw": [21.0122, 52.2297],
+      "budapest": [19.0402, 47.4979],
       
       // Asia
       "tokyo": [139.6917, 35.6895],
@@ -220,25 +242,39 @@ export function TravelersMap() {
       "dubai": [55.2708, 25.2048],
       "mumbai": [72.8777, 19.0760],
       "delhi": [77.1025, 28.7041],
+      "bangalore": [77.5946, 12.9716],
       "bangkok": [100.5018, 13.7563],
       "seoul": [126.9780, 37.5665],
+      "taipei": [121.5654, 25.0330],
+      "kuala lumpur": [101.6869, 3.1390],
+      "jakarta": [106.8456, -6.2088],
+      "manila": [120.9842, 14.5995],
+      "hanoi": [105.8342, 21.0285],
+      "ho chi minh": [106.6297, 10.8231],
       
       // Australia/Oceania
       "sydney": [151.2093, -33.8688],
       "melbourne": [144.9631, -37.8136],
+      "brisbane": [153.0251, -27.4698],
+      "perth": [115.8605, -31.9505],
       "auckland": [174.7633, -36.8485],
+      "wellington": [174.7787, -41.2865],
       
       // South America
       "são paulo": [-46.6333, -23.5505],
       "rio de janeiro": [-43.1729, -22.9068],
       "buenos aires": [-58.3816, -34.6037],
       "lima": [-77.0428, -12.0464],
+      "santiago": [-70.6693, -33.4489],
+      "bogota": [-74.0721, 4.7110],
       
       // Africa
       "cairo": [31.2357, 30.0444],
       "johannesburg": [28.0473, -26.2041],
       "lagos": [3.3792, 6.5244],
       "nairobi": [36.8219, -1.2921],
+      "casablanca": [-7.5898, 33.5731],
+      "accra": [-0.1870, 5.6037],
     };
 
     const cityKey = city.toLowerCase();
