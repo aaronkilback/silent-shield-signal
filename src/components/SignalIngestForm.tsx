@@ -90,10 +90,13 @@ export const SignalIngestForm = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // File size validation (15MB limit due to edge function memory constraints)
-    const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15MB
+    // File size validation (different limits for PDFs vs other files)
+    const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const MAX_FILE_SIZE = isPDF ? 5 * 1024 * 1024 : 10 * 1024 * 1024; // 5MB for PDFs, 10MB for others
+    const limit = isPDF ? '5MB' : '10MB';
+    
     if (file.size > MAX_FILE_SIZE) {
-      toast.error(`File too large. Maximum size is 15MB. Your file is ${(file.size / 1024 / 1024).toFixed(1)}MB. Please use the Archival Upload feature for larger files.`);
+      toast.error(`File too large. Maximum size for ${isPDF ? 'PDFs' : 'this file type'} is ${limit}. Your file is ${(file.size / 1024 / 1024).toFixed(1)}MB. Please use the Archival Upload feature for larger files.`);
       e.target.value = "";
       return;
     }

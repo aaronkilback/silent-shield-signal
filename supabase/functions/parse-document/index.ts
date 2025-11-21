@@ -75,29 +75,42 @@ serve(async (req) => {
 
     console.log('Processing document:', filename, mimeType);
 
-    // Check file size before processing (15MB limit due to memory constraints)
+    // Check file size BEFORE decoding (5MB limit for PDFs, 10MB for others)
     const estimatedSize = (file.length * 3) / 4; // Base64 to bytes approximation
-    const MAX_SIZE = 15 * 1024 * 1024; // 15MB
+    const isPDF = mimeType === 'application/pdf' || filename.toLowerCase().endsWith('.pdf');
+    const MAX_SIZE = isPDF ? 5 * 1024 * 1024 : 10 * 1024 * 1024; // 5MB for PDFs, 10MB for others
     
     if (estimatedSize > MAX_SIZE) {
+      const limit = isPDF ? '5MB' : '10MB';
       console.error(`File too large: ${(estimatedSize / 1024 / 1024).toFixed(2)}MB`);
       return new Response(
         JSON.stringify({ 
-          error: `File too large (${(estimatedSize / 1024 / 1024).toFixed(1)}MB). Maximum size is 15MB due to processing memory limits. Please use the Archival Upload feature for larger documents.`
+          error: `File too large (${(estimatedSize / 1024 / 1024).toFixed(1)}MB). Maximum size is ${limit} due to processing memory limits. Please use the Archival Upload feature for larger documents.`
         }),
         { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Decode base64 file
+    // Decode base64 file with memory-safe handling
     let binaryData: Uint8Array;
     try {
-      binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
+      const decoded = atob(file);
+      binaryData = new Uint8Array(decoded.length);
+      for (let i = 0; i < decoded.length; i++) {
+        binaryData[i] = decoded.charCodeAt(i);
+      }
     } catch (decodeError) {
       console.error('Base64 decode error:', decodeError);
+      const errorMsg = decodeError instanceof Error ? decodeError.message : 'Unknown error';
+      const isMemoryError = errorMsg.toLowerCase().includes('memory') || 
+                           errorMsg.toLowerCase().includes('out of');
       return new Response(
-        JSON.stringify({ error: 'Invalid file encoding' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ 
+          error: isMemoryError 
+            ? 'File too large to decode. Please use the Archival Upload feature for large documents.' 
+            : 'Invalid file encoding'
+        }),
+        { status: isMemoryError ? 413 : 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
     let text = '';
