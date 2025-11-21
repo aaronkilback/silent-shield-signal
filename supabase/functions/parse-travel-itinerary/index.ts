@@ -43,29 +43,54 @@ serve(async (req) => {
 
     console.log("File downloaded successfully");
 
-    // Convert to base64
+    // Extract text from PDF
     const arrayBuffer = await fileData.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
+    const pdfString = new TextDecoder('latin1').decode(uint8Array);
     
-    // Convert to base64 in chunks to avoid stack overflow
-    const chunkSize = 32768;
-    let base64 = '';
-    for (let i = 0; i < uint8Array.length; i += chunkSize) {
-      const chunk = uint8Array.slice(i, i + chunkSize);
-      base64 += String.fromCharCode(...chunk);
+    console.log("Extracting text from PDF...");
+    
+    // Extract text between BT (Begin Text) and ET (End Text) markers
+    const textMatches = pdfString.match(/BT(.*?)ET/gs);
+    let textContent = '';
+    
+    if (textMatches && textMatches.length > 0) {
+      for (const match of textMatches) {
+        const parenStrings = match.match(/\(([^)]*)\)/g);
+        if (parenStrings) {
+          for (const str of parenStrings) {
+            const text = str.slice(1, -1);
+            const decoded = text
+              .replace(/\\n/g, ' ')
+              .replace(/\\r/g, ' ')
+              .replace(/\\t/g, ' ')
+              .replace(/\\\(/g, '(')
+              .replace(/\\\)/g, ')')
+              .replace(/\\\\/g, '\\');
+            textContent += decoded + ' ';
+          }
+        }
+      }
+      
+      textContent = textContent
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      console.log(`Extracted ${textContent.length} characters from PDF`);
     }
-    const base64Pdf = btoa(base64);
 
-    console.log(`Converted to base64 (${base64Pdf.length} chars)`);
+    if (!textContent || textContent.length < 20) {
+      throw new Error("Could not extract meaningful text from PDF");
+    }
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY not configured");
     }
 
-    console.log("Calling AI with base64 PDF");
+    console.log("Calling AI to extract travel details from text");
 
-    // Use AI vision to read the PDF
+    // Use AI to extract structured data from text
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -77,18 +102,24 @@ serve(async (req) => {
         messages: [
           {
             role: "user",
-            content: [
-              {
-                type: "text",
-                text: "Extract ALL travel details from this itinerary PDF. Look carefully for: traveler name, trip name, departure and return dates (with times if available), ALL flight numbers mentioned, origin city and country, destination city and country, hotel name and full address. Extract everything you can see.",
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:application/pdf;base64,${base64Pdf}`,
-                },
-              },
-            ],
+            content: `Extract ALL travel details from this itinerary text. Be thorough and extract everything you can find:
+
+ITINERARY TEXT:
+${textContent}
+
+Extract:
+- Traveler name (look for passenger name, traveler, guest name)
+- Trip name or purpose
+- Departure date and time
+- Return date and time  
+- Origin city and country
+- Destination city and country
+- ALL flight numbers mentioned
+- Hotel name
+- Hotel full address
+- Any other relevant details
+
+Be very thorough - extract all information present.`,
           },
         ],
         tools: [
@@ -96,23 +127,39 @@ serve(async (req) => {
             type: "function",
             function: {
               name: "extract_travel_details",
-              description: "Extract structured travel information",
+              description: "Extract structured travel information from itinerary",
               parameters: {
                 type: "object",
                 properties: {
-                  traveler_name: { type: "string" },
-                  trip_name: { type: "string" },
-                  trip_type: { type: "string", enum: ["domestic", "international"] },
-                  departure_date: { type: "string", format: "date-time" },
-                  return_date: { type: "string", format: "date-time" },
+                  traveler_name: { type: "string", description: "Full name of traveler" },
+                  trip_name: { type: "string", description: "Trip name or destination description" },
+                  trip_type: { 
+                    type: "string", 
+                    enum: ["domestic", "international"],
+                    description: "Domestic or international travel"
+                  },
+                  departure_date: { 
+                    type: "string", 
+                    format: "date-time",
+                    description: "Departure date and time in ISO format"
+                  },
+                  return_date: { 
+                    type: "string", 
+                    format: "date-time",
+                    description: "Return date and time in ISO format"
+                  },
                   origin_city: { type: "string" },
                   origin_country: { type: "string" },
                   destination_city: { type: "string" },
                   destination_country: { type: "string" },
-                  flight_numbers: { type: "array", items: { type: "string" } },
+                  flight_numbers: { 
+                    type: "array", 
+                    items: { type: "string" },
+                    description: "All flight numbers mentioned"
+                  },
                   hotel_name: { type: "string" },
                   hotel_address: { type: "string" },
-                  notes: { type: "string" },
+                  notes: { type: "string", description: "Any additional relevant details" },
                 },
                 required: [
                   "traveler_name",
@@ -146,11 +193,11 @@ serve(async (req) => {
     const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
 
     if (!toolCall) {
-      throw new Error("Could not extract travel data");
+      throw new Error("Could not extract travel data from text");
     }
 
     const travelData = JSON.parse(toolCall.function.arguments);
-    console.log("Extracted:", travelData.traveler_name, "to", travelData.destination_city);
+    console.log("Successfully extracted:", travelData.traveler_name, "to", travelData.destination_city);
 
     return new Response(
       JSON.stringify({ success: true, data: travelData }),
