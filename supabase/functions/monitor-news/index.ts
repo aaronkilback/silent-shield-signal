@@ -168,6 +168,28 @@ serve(async (req) => {
                 if (!signalError) {
                   signalsCreated++;
                   console.log(`Created news signal for ${client.name}: ${title.substring(0, 50)}`);
+                  
+                  // Correlate entities from the news content
+                  const { data: signalData } = await supabase
+                    .from('signals')
+                    .select('id')
+                    .eq('normalized_text', title)
+                    .eq('client_id', client.id)
+                    .order('created_at', { ascending: false })
+                    .limit(1)
+                    .single();
+                  
+                  if (signalData) {
+                    // Extract and correlate entities from news text
+                    await supabase.functions.invoke('correlate-entities', {
+                      body: {
+                        text: `${title}. ${description}`,
+                        sourceType: 'signal',
+                        sourceId: signalData.id,
+                        autoApprove: false
+                      }
+                    });
+                  }
                 }
               }
             } catch (error) {
