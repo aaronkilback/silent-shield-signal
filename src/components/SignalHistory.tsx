@@ -44,20 +44,33 @@ export const SignalHistory = () => {
       loadSignals();
     }
     
-    // Subscribe to real-time updates
+    // Subscribe to real-time updates for selected client only
     const channel = supabase
-      .channel('signal-history')
+      .channel(`signal-history-${selectedClientId}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
-          table: 'signals'
+          table: 'signals',
+          filter: `client_id=eq.${selectedClientId}`
         },
-        () => {
-          if (selectedClientId) {
+        (payload) => {
+          // Deduplicate by updating existing signal or adding new one
+          setSignals((current) => {
+            if (payload.eventType === 'DELETE') {
+              return current.filter(s => s.id !== payload.old.id);
+            }
+            
+            const exists = current.find(s => s.id === payload.new.id);
+            if (exists) {
+              return current.map(s => s.id === payload.new.id ? { ...s, ...payload.new } : s);
+            }
+            
+            // For new signals, refetch to get complete data with joins
             loadSignals();
-          }
+            return current;
+          });
         }
       )
       .subscribe();
@@ -194,7 +207,7 @@ export const SignalHistory = () => {
             <p>No signals found. Use the Test Signal Generator to create demo signals.</p>
           </div>
         ) : (
-          <ScrollArea className="h-[500px] pr-4">
+          <ScrollArea className="h-[60vh] max-h-[600px] pr-4">
             <div className="space-y-3">
               {signals.map((signal) => (
                 <div
