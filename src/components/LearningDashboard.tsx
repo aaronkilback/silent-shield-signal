@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -7,33 +6,19 @@ import { Brain, TrendingUp, Target, AlertTriangle, CheckCircle2, XCircle } from 
 import { supabase } from '@/integrations/supabase/client';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { useClientSelection } from '@/hooks/useClientSelection';
+import { useQuery } from '@tanstack/react-query';
 
 export default function LearningDashboard() {
   const { selectedClientId } = useClientSelection();
-  const [metrics, setMetrics] = useState<any[]>([]);
-  const [outcomes, setOutcomes] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  
+  const { data, isLoading: loading } = useQuery({
+    queryKey: ['learning-dashboard', selectedClientId],
+    queryFn: async () => {
+      if (!selectedClientId) return { metrics: [], outcomes: [] };
 
-  useEffect(() => {
-    if (selectedClientId) {
-      loadData();
-    }
-    
-    const interval = setInterval(() => {
-      if (selectedClientId) loadData();
-    }, 60000);
-    return () => clearInterval(interval);
-  }, [selectedClientId]);
-
-  const loadData = async () => {
-    if (!selectedClientId) return;
-
-    try {
-      // Calculate client-specific metrics from signals and incidents
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-      // Get signals and incidents for the client
       const { data: signalsData } = await supabase
         .from('signals')
         .select('id, status, created_at')
@@ -46,14 +31,12 @@ export default function LearningDashboard() {
         .eq('client_id', selectedClientId)
         .gte('created_at', thirtyDaysAgo.toISOString());
 
-      // Get incident outcomes for accuracy calculations
       const { data: dailyOutcomesData } = await supabase
         .from('incident_outcomes')
         .select('*, incidents!inner(client_id, created_at)')
         .eq('incidents.client_id', selectedClientId)
         .gte('incidents.created_at', thirtyDaysAgo.toISOString());
 
-      // Group by date and calculate daily metrics
       const metricsMap = new Map();
       
       signalsData?.forEach(signal => {
@@ -69,8 +52,7 @@ export default function LearningDashboard() {
             total_outcomes: 0,
           });
         }
-        const metrics = metricsMap.get(date);
-        metrics.signals_processed++;
+        metricsMap.get(date).signals_processed++;
       });
 
       incidentsData?.forEach(incident => {
@@ -88,13 +70,11 @@ export default function LearningDashboard() {
         }
         const metrics = metricsMap.get(date);
         metrics.incidents_created++;
-        
         if (incident.priority === 'p1' || incident.priority === 'p2') {
           metrics.incidents_auto_escalated++;
         }
       });
 
-      // Add outcome data to metrics
       dailyOutcomesData?.forEach(outcome => {
         const date = (outcome as any).incidents.created_at.split('T')[0];
         if (!metricsMap.has(date)) {
@@ -114,32 +94,28 @@ export default function LearningDashboard() {
         if (outcome.false_positive) metrics.false_positive_count++;
       });
 
-      // Convert to array and calculate percentages
       const metricsArray = Array.from(metricsMap.values()).map(m => ({
         ...m,
         accuracy_rate: m.total_outcomes > 0 ? (m.accurate_count / m.total_outcomes) * 100 : 0,
         false_positive_rate: m.total_outcomes > 0 ? (m.false_positive_count / m.total_outcomes) * 100 : 0,
       }));
 
-      setMetrics(metricsArray);
-
-      // Load incident outcomes for the client
-      const { data: outcomesData, error: outcomesError } = await supabase
+      const { data: outcomesData } = await supabase
         .from('incident_outcomes')
         .select('*, incidents!inner(client_id)')
         .eq('incidents.client_id', selectedClientId)
         .order('created_at', { ascending: false })
         .limit(100);
 
-      if (outcomesError) throw outcomesError;
-      setOutcomes(outcomesData || []);
+      return { metrics: metricsArray, outcomes: outcomesData || [] };
+    },
+    enabled: !!selectedClientId,
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
 
-    } catch (error) {
-      console.error('Error loading learning data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const metrics = data?.metrics || [];
+  const outcomes = data?.outcomes || [];
 
   // Calculate statistics
   const stats = {
