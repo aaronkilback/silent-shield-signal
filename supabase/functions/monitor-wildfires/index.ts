@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -93,6 +94,13 @@ serve(async (req) => {
           if (!signalError) {
             signalsCreated++;
             console.log(`Created wildfire signal for ${client.name}`);
+            
+            await correlateSignalEntities({
+              supabase,
+              signalText,
+              clientId: client.id,
+              additionalContext: `Location: Lat ${lat}, Lon ${lon}. Brightness: ${brightness}K, FRP: ${frp} MW`
+            });
           }
           
           // Only create one signal per client per scan

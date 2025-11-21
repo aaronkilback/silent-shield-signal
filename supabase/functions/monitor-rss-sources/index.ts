@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -192,6 +193,13 @@ serve(async (req) => {
                 console.error('Error creating signal:', signalError);
               } else {
                 totalSignals++;
+                
+                await correlateSignalEntities({
+                  supabase: supabaseClient,
+                  signalText: `${item.title}\n\n${item.description}`,
+                  clientId: client.id,
+                  additionalContext: `Source: ${source.name}`
+                });
               }
             }
           }

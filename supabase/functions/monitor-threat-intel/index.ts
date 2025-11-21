@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -75,26 +76,13 @@ serve(async (req) => {
                 signalsCreated++;
                 console.log(`Created KEV signal for ${client.name}: ${vuln.cveID}`);
                 
-                // Correlate entities from vulnerability data
-                const { data: signalData } = await supabase
-                  .from('signals')
-                  .select('id')
-                  .eq('normalized_text', `${vuln.cveID}: ${vuln.vulnerabilityName}`)
-                  .eq('client_id', client.id)
-                  .order('created_at', { ascending: false })
-                  .limit(1)
-                  .single();
-                
-                if (signalData) {
-                  await supabase.functions.invoke('correlate-entities', {
-                    body: {
-                      text: `${vuln.vulnerabilityName}. ${vuln.shortDescription}. Vendor: ${vuln.vendorProject}. Product: ${vuln.product}`,
-                      sourceType: 'signal',
-                      sourceId: signalData.id,
-                      autoApprove: false
-                    }
-                  });
-                }
+                // Correlate entities using shared helper
+                await correlateSignalEntities({
+                  supabase,
+                  signalText: `${vuln.cveID}: ${vuln.vulnerabilityName}`,
+                  clientId: client.id,
+                  additionalContext: `${vuln.shortDescription}. Vendor: ${vuln.vendorProject}. Product: ${vuln.product}`
+                });
               }
               
               // Limit signals per client
