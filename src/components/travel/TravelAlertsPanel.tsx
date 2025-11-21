@@ -3,12 +3,28 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, CheckCircle, MapPin, Plane } from "lucide-react";
+import { AlertTriangle, CheckCircle, MapPin, Plane, Scan } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
 export function TravelAlertsPanel() {
   const queryClient = useQueryClient();
+
+  const scanMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke("monitor-travel-risks");
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["travel-alerts"] });
+      queryClient.invalidateQueries({ queryKey: ["itineraries"] });
+      toast.success(`Scanned ${data.monitored} itineraries for risks`);
+    },
+    onError: (error) => {
+      toast.error("Failed to scan for risks: " + (error as Error).message);
+    },
+  });
 
   const { data: alerts, isLoading } = useQuery({
     queryKey: ["travel-alerts"],
@@ -84,7 +100,18 @@ export function TravelAlertsPanel() {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h2 className="text-xl font-semibold">Travel Alerts</h2>
+        <div className="flex items-center gap-4">
+          <h2 className="text-xl font-semibold">Travel Alerts</h2>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => scanMutation.mutate()}
+            disabled={scanMutation.isPending}
+          >
+            <Scan className="h-4 w-4 mr-2" />
+            {scanMutation.isPending ? "Scanning..." : "Scan for Risks"}
+          </Button>
+        </div>
         <Badge variant="outline">
           {alerts?.filter(a => !a.acknowledged).length || 0} Active
         </Badge>
