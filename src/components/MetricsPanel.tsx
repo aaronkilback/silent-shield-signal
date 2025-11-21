@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Clock, Target, TrendingDown, TrendingUp, AlertTriangle, Activity } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { formatMinutesToDHM } from "@/lib/timeUtils";
+import { useQuery } from "@tanstack/react-query";
 
 interface MetricProps {
   label: string;
@@ -55,32 +55,23 @@ const Metric = ({ label, value, unit, trend, trendValue, icon, loading }: Metric
 
 export const MetricsPanel = () => {
   const { selectedClientId } = useClientSelection();
-  const [loading, setLoading] = useState(true);
-  const [metrics, setMetrics] = useState({
+  
+  const { data: metrics = {
     mttd: 0,
     mttr: 0,
     activeTripwires: 0,
     eventsPerHour: 0,
     mttdTrend: 0,
     mttrTrend: 0,
-  });
-
-  useEffect(() => {
-    if (selectedClientId) {
-      loadMetrics();
-    }
-  }, [selectedClientId]);
-
-  const loadMetrics = async () => {
-    if (!selectedClientId) return;
-    
-    setLoading(true);
-    try {
+  }, isLoading: loading } = useQuery({
+    queryKey: ['metrics-panel', selectedClientId],
+    queryFn: async () => {
+      if (!selectedClientId) return null;
+      
       const now = new Date();
       const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       const previous24Hours = new Date(now.getTime() - 48 * 60 * 60 * 1000);
 
-      // Get incidents for MTTD/MTTR calculation
       const { data: recentIncidents } = await supabase
         .from("incidents")
         .select("opened_at, acknowledged_at, resolved_at")
@@ -96,7 +87,6 @@ export const MetricsPanel = () => {
         .lt("opened_at", last24Hours.toISOString())
         .not("acknowledged_at", "is", null);
 
-      // Calculate MTTD
       const calculateMTTD = (incidents: any[]) => {
         if (!incidents?.length) return 0;
         const times = incidents
@@ -109,7 +99,6 @@ export const MetricsPanel = () => {
         return times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : 0;
       };
 
-      // Calculate MTTR
       const calculateMTTR = (incidents: any[]) => {
         if (!incidents?.length) return 0;
         const times = incidents
@@ -127,14 +116,12 @@ export const MetricsPanel = () => {
       const currentMTTR = calculateMTTR(recentIncidents || []);
       const previousMTTR = calculateMTTR(previousIncidents || []);
 
-      // Get active incidents (tripwires)
       const { count: activeTripwires } = await supabase
         .from("incidents")
         .select("*", { count: "exact", head: true })
         .eq("client_id", selectedClientId)
         .in("status", ["open", "acknowledged"]);
 
-      // Get signals in last hour for events/hour
       const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
       const { count: eventsLastHour } = await supabase
         .from("signals")
@@ -142,24 +129,21 @@ export const MetricsPanel = () => {
         .eq("client_id", selectedClientId)
         .gte("received_at", oneHourAgo.toISOString());
 
-      // Calculate trends
       const mttdTrend = previousMTTD > 0 ? ((previousMTTD - currentMTTD) / previousMTTD) * 100 : 0;
       const mttrTrend = previousMTTR > 0 ? ((previousMTTR - currentMTTR) / previousMTTR) * 100 : 0;
 
-      setMetrics({
+      return {
         mttd: currentMTTD,
         mttr: currentMTTR,
         activeTripwires: activeTripwires || 0,
         eventsPerHour: eventsLastHour || 0,
         mttdTrend,
         mttrTrend,
-      });
-    } catch (error) {
-      console.error("Error loading metrics:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+      };
+    },
+    enabled: !!selectedClientId,
+    staleTime: 30000,
+  });
 
   const formatTrend = (trend: number) => {
     if (Math.abs(trend) < 1) return "Stable";
