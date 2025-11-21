@@ -84,16 +84,17 @@ serve(async (req) => {
 
     let textContent = '';
     
-    // Extract text based on file type
+    // Extract text based on file type (LIMIT to first 100KB)
     if (document.file_type.includes('text') || document.file_type.includes('json')) {
-      // Read text files
       const arrayBuffer = await fileData.arrayBuffer();
-      textContent = new TextDecoder().decode(arrayBuffer);
+      const decoder = new TextDecoder();
+      // Limit to 100KB
+      textContent = decoder.decode(arrayBuffer.slice(0, 100 * 1024));
     } else if (document.file_type === 'application/pdf') {
-      // For PDFs, extract text streams (PDF text objects start with "BT" and end with "ET")
       console.log('Extracting text from PDF...');
       
-      const arrayBuffer = await fileData.arrayBuffer();
+      // Limit PDF read to first 200KB to prevent memory issues
+      const arrayBuffer = await fileData.slice(0, 200 * 1024).arrayBuffer();
       const uint8Array = new Uint8Array(arrayBuffer);
       const pdfString = new TextDecoder('latin1').decode(uint8Array);
       
@@ -101,13 +102,11 @@ serve(async (req) => {
       const textMatches = pdfString.match(/BT(.*?)ET/gs);
       if (textMatches && textMatches.length > 0) {
         let extractedText = '';
-        for (const match of textMatches) {
-          // Extract strings in parentheses: (text)
+        for (const match of textMatches.slice(0, 500)) { // Limit to first 500 text blocks
           const parenStrings = match.match(/\(([^)]*)\)/g);
           if (parenStrings) {
             for (const str of parenStrings) {
               const text = str.slice(1, -1);
-              // Decode PDF escape sequences
               const decoded = text
                 .replace(/\\n/g, ' ')
                 .replace(/\\r/g, ' ')
@@ -120,19 +119,19 @@ serve(async (req) => {
           }
         }
         
-        // Clean up the extracted text
         textContent = extractedText
-          .replace(/\s+/g, ' ') // Collapse multiple spaces
-          .replace(/[^\x20-\x7E\s]/g, '') // Remove non-printable characters
-          .trim();
+          .replace(/\s+/g, ' ')
+          .replace(/[^\x20-\x7E\s]/g, '')
+          .trim()
+          .slice(0, 50000); // Hard limit at 50K chars
         
         console.log(`Extracted ${textContent.length} characters from PDF text streams`);
       } else {
-        // Fallback: basic text extraction
         textContent = pdfString
           .replace(/[\x00-\x1F\x7F-\xFF]/g, ' ')
           .replace(/\s+/g, ' ')
-          .trim();
+          .trim()
+          .slice(0, 50000);
         console.log(`Fallback: extracted ${textContent.length} characters`);
       }
     }
@@ -249,10 +248,6 @@ IGNORE:
                         },
                         confidence: { type: "number", minimum: 0, maximum: 1 },
                         context: { type: "string", description: "Where entity appears in incident" },
-                        matched_entity_id: { 
-                          type: "string", 
-                          description: "UUID of existing entity this matches (if any)" 
-                        },
                         aliases: {
                           type: "array",
                           items: { type: "string" },
@@ -337,6 +332,26 @@ IGNORE:
           continue;
         }
         
+        // Match to existing entities by name/alias
+        let matchedId = null;
+        const nameLower = entity.name.toLowerCase();
+        for (const existing of (existingEntities || [])) {
+          if (existing.name.toLowerCase() === nameLower) {
+            matchedId = existing.id;
+            console.log(`Matched ${entity.name} to existing entity ${existing.id}`);
+            break;
+          }
+          if (existing.aliases) {
+            for (const alias of existing.aliases) {
+              if (alias.toLowerCase() === nameLower) {
+                matchedId = existing.id;
+                console.log(`Matched ${entity.name} to existing entity ${existing.id} via alias`);
+                break;
+              }
+            }
+          }
+        }
+        
         entitySuggestions.push({
           suggested_name: entity.name,
           suggested_type: entity.type,
@@ -344,7 +359,7 @@ IGNORE:
           context: entity.context || `Found in ${document.filename}`,
           source_id: documentId,
           source_type: 'archival_document',
-          matched_entity_id: entity.matched_entity_id || null,
+          matched_entity_id: matchedId,
           suggested_aliases: entity.aliases || []
         });
       }
