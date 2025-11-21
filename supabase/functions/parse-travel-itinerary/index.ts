@@ -30,24 +30,42 @@ serve(async (req) => {
 
     console.log("Processing itinerary:", filePath);
 
-    // Get public URL for the file
-    const { data: urlData } = supabaseClient
+    // Download the file from storage
+    const { data: fileData, error: downloadError } = await supabaseClient
       .storage
       .from("travel-documents")
-      .getPublicUrl(filePath);
+      .download(filePath);
 
-    if (!urlData?.publicUrl) {
-      throw new Error("Could not get file URL");
+    if (downloadError || !fileData) {
+      console.error("Download error:", downloadError);
+      throw new Error(`Failed to download file: ${downloadError?.message}`);
     }
+
+    console.log("File downloaded successfully");
+
+    // Convert to base64
+    const arrayBuffer = await fileData.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    // Convert to base64 in chunks to avoid stack overflow
+    const chunkSize = 32768;
+    let base64 = '';
+    for (let i = 0; i < uint8Array.length; i += chunkSize) {
+      const chunk = uint8Array.slice(i, i + chunkSize);
+      base64 += String.fromCharCode(...chunk);
+    }
+    const base64Pdf = btoa(base64);
+
+    console.log(`Converted to base64 (${base64Pdf.length} chars)`);
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY not configured");
     }
 
-    console.log("Calling AI with document URL");
+    console.log("Calling AI with base64 PDF");
 
-    // Use AI vision to read the PDF directly
+    // Use AI vision to read the PDF
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -62,12 +80,12 @@ serve(async (req) => {
             content: [
               {
                 type: "text",
-                text: "Extract travel details from this itinerary PDF: traveler name, trip name, departure and return dates, flight numbers, origin city and country, destination city and country, hotel name and address.",
+                text: "Extract ALL travel details from this itinerary PDF. Look carefully for: traveler name, trip name, departure and return dates (with times if available), ALL flight numbers mentioned, origin city and country, destination city and country, hotel name and full address. Extract everything you can see.",
               },
               {
                 type: "image_url",
                 image_url: {
-                  url: urlData.publicUrl,
+                  url: `data:application/pdf;base64,${base64Pdf}`,
                 },
               },
             ],
