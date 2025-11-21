@@ -90,10 +90,10 @@ export const SignalIngestForm = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // File size validation (20MB limit for edge functions)
-    const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+    // File size validation (15MB limit due to edge function memory constraints)
+    const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15MB
     if (file.size > MAX_FILE_SIZE) {
-      toast.error(`File too large. Maximum size is 20MB. Your file is ${(file.size / 1024 / 1024).toFixed(1)}MB. Please use the Archival Upload feature for larger files.`);
+      toast.error(`File too large. Maximum size is 15MB. Your file is ${(file.size / 1024 / 1024).toFixed(1)}MB. Please use the Archival Upload feature for larger files.`);
       e.target.value = "";
       return;
     }
