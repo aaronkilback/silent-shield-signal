@@ -1,17 +1,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const SECURITY_KEYWORDS = [
-  'data breach', 'security incident', 'cyberattack', 'ransomware',
-  'credential leak', 'insider threat', 'phishing campaign',
-  'vulnerability disclosure', 'security alert', 'compromised'
-];
+const SECURITY_KEYWORDS: string[] = []; // Kept for backward compatibility but no longer used for filtering
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -69,9 +64,8 @@ serve(async (req) => {
 
         const html = await response.text();
         
-        // Parse search results
+        // Parse and ingest for AI processing
         const resultMatches = html.matchAll(/<div class="g"[^>]*>(.*?)<\/div>/gs);
-        const results: string[] = [];
         
         for (const match of Array.from(resultMatches).slice(0, 5)) {
           const text = match[1]
@@ -81,51 +75,34 @@ serve(async (req) => {
             .trim();
           
           if (text.length > 30) {
-            results.push(text);
-          }
-        }
-
-        console.log(`Found ${results.length} LinkedIn mentions for ${client.name}`);
-
-        for (const result of results) {
-          const resultLower = result.toLowerCase();
-          const hasSecurityKeyword = SECURITY_KEYWORDS.some(kw => 
-            resultLower.includes(kw.toLowerCase())
-          );
-
-          if (hasSecurityKeyword) {
-            const signalText = `LinkedIn Security Mention: ${result.substring(0, 200)}`;
-            
-            const { error: signalError } = await supabase
-              .from('signals')
+            // Create ingested document for AI analysis
+            const { data: doc, error: docError } = await supabase
+              .from('ingested_documents')
               .insert({
-                client_id: client.id,
-                normalized_text: signalText,
-                category: 'reputation_risk',
-                severity: 'medium',
-                location: 'LinkedIn',
-                raw_json: {
-                  platform: 'linkedin',
-                  content: result,
+                title: `LinkedIn mention: ${client.name}`,
+                raw_text: text,
+                metadata: {
+                  source: 'linkedin',
+                  client_id: client.id,
+                  client_name: client.name,
                   search_query: searchQuery
-                },
-                status: 'new',
-                confidence: 0.6
-              });
+                }
+              })
+              .select()
+              .single();
 
-            if (!signalError) {
-              signalsCreated++;
-              console.log(`Created LinkedIn signal for ${client.name}`);
-              
-              await correlateSignalEntities({
-                supabase,
-                signalText,
-                clientId: client.id,
-                additionalContext: result
+            if (!docError && doc) {
+              // Invoke intelligence processing
+              await supabase.functions.invoke('process-intelligence-document', {
+                body: { documentId: doc.id }
               });
+              signalsCreated++;
+              console.log(`Ingested LinkedIn content for AI analysis: ${client.name}`);
             }
           }
         }
+
+        console.log(`Processed LinkedIn mentions for ${client.name}`);
 
         // Extended rate limiting removed - delay is at start of loop
 
