@@ -84,14 +84,33 @@ serve(async (req) => {
       const arrayBuffer = await fileData.slice(0, 100 * 1024).arrayBuffer();
       textContent = new TextDecoder().decode(arrayBuffer);
     } else if (document.file_type === 'application/pdf') {
-      // For PDFs, extract first 50KB of content
-      const arrayBuffer = await fileData.slice(0, 50 * 1024).arrayBuffer();
-      const rawText = new TextDecoder('utf-8', { fatal: false }).decode(arrayBuffer);
-      // Clean up PDF binary artifacts
-      textContent = rawText.replace(/[\x00-\x1F\x7F-\x9F]/g, ' ').replace(/\s+/g, ' ').trim();
+      // For PDFs, call parse-document to get proper text content
+      console.log('Calling parse-document function for PDF parsing...');
+      
+      const parseResponse = await fetch(`${supabaseUrl}/functions/v1/parse-document`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bucket: 'archival-documents',
+          path: document.storage_path
+        })
+      });
+
+      if (!parseResponse.ok) {
+        const errorText = await parseResponse.text();
+        console.error('PDF parsing failed:', parseResponse.status, errorText);
+        throw new Error(`PDF parsing failed: ${parseResponse.status}`);
+      }
+
+      const parseData = await parseResponse.json();
+      textContent = parseData.content || '';
+      console.log(`PDF parsed successfully, extracted ${textContent.length} characters`);
     }
 
-    console.log(`Extracted ${textContent.length} characters for AI analysis`);
+    console.log(`Text content ready: ${textContent.length} characters for AI analysis`);
 
     // Use AI to extract entities
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
