@@ -144,44 +144,60 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
             // Origin is where the trip starts
             originCity = firstFlight.origin_city || "";
             
-            // Destination is where they're staying (hotel location or middle flight destination)
-            if (hotelSegments.length > 0 && hotelSegments[0].hotel_address) {
-              // Try to extract city from hotel or use the destination before hotel check-in
-              const hotelSegment = hotelSegments[0];
-              // Find the flight that arrives at the hotel location
-              const arrivalFlight = flightSegments.find((f: any) => 
-                f.end_datetime && hotelSegment.start_datetime &&
-                f.end_datetime <= hotelSegment.start_datetime
-              );
-              if (arrivalFlight) {
-                destinationCity = arrivalFlight.destination_city || "";
-              }
-            }
+            // Determine destination:
+            // For round trips (last flight returns to origin), use first flight's destination
+            // Otherwise use last flight's destination
+            const isRoundTrip = lastFlight.destination_city === firstFlight.origin_city ||
+                               lastFlight.destination_airport_code === firstFlight.origin_airport_code;
             
-            // If still no destination, use last flight's destination
-            if (!destinationCity) {
+            if (isRoundTrip) {
+              // For round trips, destination is where they're going TO (first flight destination)
+              destinationCity = firstFlight.destination_city || "";
+            } else {
+              // For one-way or multi-city, use last flight destination
               destinationCity = lastFlight.destination_city || "";
             }
             
-            // Determine if domestic based on airport codes
+            // Verify with hotel location if available
+            if (hotelSegments.length > 0) {
+              const hotelSegment = hotelSegments[0];
+              // Hotel segment should have the city in origin_city or destination_city
+              if (hotelSegment.origin_city && !destinationCity) {
+                destinationCity = hotelSegment.origin_city;
+              } else if (hotelSegment.destination_city && !destinationCity) {
+                destinationCity = hotelSegment.destination_city;
+              }
+            }
+            
+            
+            // Determine if domestic or international based on airport codes
             const canadianAirports = ["YYC", "YVR", "YYZ", "YUL", "YOW", "YHZ", "YWG", "YEG"];
-            if (canadianAirports.includes(firstFlight.origin_airport_code) && 
-                canadianAirports.includes(lastFlight.destination_airport_code)) {
+            const originIsCanadian = canadianAirports.includes(firstFlight.origin_airport_code);
+            const destIsCanadian = isRoundTrip 
+              ? canadianAirports.includes(firstFlight.destination_airport_code)
+              : canadianAirports.includes(lastFlight.destination_airport_code);
+            
+            if (originIsCanadian && destIsCanadian) {
               tripType = "domestic";
               originCountry = "Canada";
               destinationCountry = "Canada";
             } else {
               tripType = "international";
-              // Try to infer countries from airport codes
-              if (canadianAirports.includes(firstFlight.origin_airport_code)) {
-                originCountry = "Canada";
-              }
-              // For international trips, try to determine destination country
-              if (destinationCity.toLowerCase().includes("hong kong")) {
+              originCountry = originIsCanadian ? "Canada" : "";
+              
+              // Try to infer destination country from city name or airport code
+              if (destIsCanadian) {
+                destinationCountry = "Canada";
+              } else if (destinationCity.toLowerCase().includes("hong kong")) {
                 destinationCountry = "Hong Kong";
               } else if (destinationCity.toLowerCase().includes("kuala lumpur")) {
                 destinationCountry = "Malaysia";
+              } else if (destinationCity.toLowerCase().includes("london")) {
+                destinationCountry = "United Kingdom";
+              } else if (destinationCity.toLowerCase().includes("paris")) {
+                destinationCountry = "France";
               }
+              // Add more as needed
             }
           }
           
