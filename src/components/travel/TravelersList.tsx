@@ -4,12 +4,14 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Plus, MapPin, Phone, Mail } from "lucide-react";
+import { Plus, MapPin, Phone, Mail, Pencil, Trash2 } from "lucide-react";
 import { CreateTravelerDialog } from "./CreateTravelerDialog";
+import { EditTravelerDialog } from "./EditTravelerDialog";
 import { toast } from "sonner";
 
 export function TravelersList() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [editingTraveler, setEditingTraveler] = useState<any>(null);
   const queryClient = useQueryClient();
 
   const { data: travelers, isLoading } = useQuery({
@@ -102,11 +104,33 @@ export function TravelersList() {
               </div>
             )}
 
-            <div
-              className="w-6 h-6 rounded-full border-2 border-border"
-              style={{ backgroundColor: traveler.map_color }}
-              title="Map marker color"
-            />
+            <div className="flex items-center justify-between pt-2">
+              <div
+                className="w-6 h-6 rounded-full border-2 border-border"
+                style={{ backgroundColor: traveler.map_color }}
+                title="Map marker color"
+              />
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setEditingTraveler(traveler)}
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    if (confirm("Are you sure you want to delete this traveler?")) {
+                      deleteMutation.mutate(traveler.id);
+                    }
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
           </Card>
         ))}
       </div>
@@ -115,6 +139,14 @@ export function TravelersList() {
         open={showCreateDialog}
         onOpenChange={setShowCreateDialog}
       />
+      
+      {editingTraveler && (
+        <EditTravelerDialog
+          open={!!editingTraveler}
+          onOpenChange={(open) => !open && setEditingTraveler(null)}
+          traveler={editingTraveler}
+        />
+      )}
     </div>
   );
 }

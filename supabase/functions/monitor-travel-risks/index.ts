@@ -63,7 +63,7 @@ serve(async (req) => {
         },
       };
 
-      const prompt = `Analyze this business travel itinerary for potential risks and disruptions:
+      const prompt = `Analyze this business travel itinerary for potential risks and disruptions based on CURRENT real-world conditions:
 
 Trip Details:
 - Name: ${context.trip.name}
@@ -77,31 +77,55 @@ Trip Details:
 Traveler: ${context.traveler.name}
 Current Location: ${context.traveler.current_location || "Unknown"}
 
-Consider:
-1. Flight disruptions (delays, cancellations, weather)
-2. Security alerts in destination/route
-3. Health advisories
-4. Natural disasters or extreme weather
-5. Political instability
-6. Transportation strikes
-7. Hotel/accommodation issues
+Analyze SPECIFIC risks for THIS travel route and destination:
+
+1. **Flight Risks**: 
+   - Check for known delays/cancellations on these specific flight routes
+   - Weather conditions affecting departure/arrival airports
+   - Airline operational issues
+
+2. **Destination-Specific Risks**:
+   - Security alerts or travel advisories for ${context.trip.destination}
+   - Political stability and civil unrest
+   - Crime rates in destination city
+   - Local health concerns or disease outbreaks
+
+3. **Weather & Natural Disasters**:
+   - Seasonal weather patterns for travel dates
+   - Hurricane/typhoon season risks
+   - Earthquake/volcanic activity in region
+   - Flooding or extreme weather forecasts
+
+4. **Health & Safety**:
+   - Vaccination requirements
+   - Local health advisories
+   - Medical facility accessibility
+   - Food/water safety concerns
+
+5. **Infrastructure & Transportation**:
+   - Airport strikes or disruptions
+   - Local transportation reliability
+   - Hotel area safety
+   - Infrastructure quality
+
+Only create alerts for GENUINE, REALISTIC risks based on the specific destination and travel dates. Do not create generic or hypothetical risks.
 
 Respond with a JSON object containing:
 {
   "risk_level": "low|medium|high|critical",
   "alerts": [
     {
-      "type": "flight_delay|weather|security|health|natural_disaster|other",
+      "type": "flight_delay|flight_cancellation|weather|security|health|natural_disaster|infrastructure|other",
       "severity": "low|medium|high|critical",
       "title": "Brief title",
-      "description": "Detailed description",
+      "description": "Detailed description with specific facts",
       "location": "Affected location",
       "affected_flights": ["flight codes if applicable"],
-      "recommended_actions": ["Action 1", "Action 2"],
+      "recommended_actions": ["Specific actionable steps"],
       "source": "Source of information"
     }
   ],
-  "assessment": "Overall risk assessment summary"
+  "assessment": "Overall risk assessment summary with specific details about this destination and route"
 }`;
 
       // Call AI for risk assessment
@@ -116,7 +140,7 @@ Respond with a JSON object containing:
           messages: [
             {
               role: "system",
-              content: "You are a travel risk analyst. Provide realistic risk assessments based on current world conditions. Only create alerts for genuine risks.",
+              content: "You are a travel risk analyst with access to current world events, weather patterns, and travel advisories. Provide REALISTIC risk assessments based on ACTUAL conditions at the destination. Only create alerts for genuine, verified risks - not hypothetical scenarios. Focus on destination-specific threats, route-specific issues, and time-sensitive concerns. If the destination is generally safe with no current threats, indicate low risk.",
             },
             {
               role: "user",
@@ -143,7 +167,7 @@ Respond with a JSON object containing:
                         properties: {
                           type: {
                             type: "string",
-                            enum: ["flight_delay", "flight_cancellation", "weather", "security", "health", "natural_disaster", "other"],
+                            enum: ["flight_delay", "flight_cancellation", "weather", "security", "health", "natural_disaster", "infrastructure", "other"],
                           },
                           severity: {
                             type: "string",
@@ -193,6 +217,16 @@ Respond with a JSON object containing:
       }
 
       const assessment = JSON.parse(toolCall.function.arguments);
+
+      console.log(`Risk assessment for ${itinerary.trip_name}:`, {
+        risk_level: assessment.risk_level,
+        alert_count: assessment.alerts?.length || 0,
+        alerts: assessment.alerts?.map((a: any) => ({ 
+          type: a.type, 
+          severity: a.severity, 
+          title: a.title 
+        }))
+      });
 
       // Update itinerary with AI risk assessment
       await supabaseClient
