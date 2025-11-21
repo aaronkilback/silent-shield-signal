@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -169,27 +170,13 @@ serve(async (req) => {
                   signalsCreated++;
                   console.log(`Created news signal for ${client.name}: ${title.substring(0, 50)}`);
                   
-                  // Correlate entities from the news content
-                  const { data: signalData } = await supabase
-                    .from('signals')
-                    .select('id')
-                    .eq('normalized_text', title)
-                    .eq('client_id', client.id)
-                    .order('created_at', { ascending: false })
-                    .limit(1)
-                    .single();
-                  
-                  if (signalData) {
-                    // Extract and correlate entities from news text
-                    await supabase.functions.invoke('correlate-entities', {
-                      body: {
-                        text: `${title}. ${description}`,
-                        sourceType: 'signal',
-                        sourceId: signalData.id,
-                        autoApprove: false
-                      }
-                    });
-                  }
+                  // Correlate entities using shared helper
+                  await correlateSignalEntities({
+                    supabase,
+                    signalText: title,
+                    clientId: client.id,
+                    additionalContext: description
+                  });
                 }
               }
             } catch (error) {

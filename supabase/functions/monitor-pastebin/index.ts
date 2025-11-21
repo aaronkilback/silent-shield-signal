@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -116,6 +117,13 @@ serve(async (req) => {
             if (!signalError) {
               signalsCreated++;
               console.log(`Created Pastebin signal for ${client.name}: potential data leak`);
+              
+              await correlateSignalEntities({
+                supabase,
+                signalText,
+                clientId: client.id,
+                additionalContext: `Link: https://pastebin.com${paste.link}`
+              });
             }
           }
         }
