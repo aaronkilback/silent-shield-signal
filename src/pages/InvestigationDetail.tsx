@@ -14,12 +14,13 @@ import { toast } from "sonner";
 import { 
   ArrowLeft, Save, Plus, Trash2, Upload, Download, 
   FileText, Image as ImageIcon, Video, Music, File,
-  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X, MapPin
+  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X, MapPin, Map
 } from "lucide-react";
 import { format } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { LocationsMap } from "@/components/LocationsMap";
 
 const InvestigationDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -263,19 +264,20 @@ const InvestigationDetail = () => {
   const { data: locations = [] } = useQuery({
     queryKey: ['investigation-locations', id],
     queryFn: async () => {
-      // Fetch locations from investigation metadata
+      if (!investigation?.correlated_entity_ids || investigation.correlated_entity_ids.length === 0) {
+        return [];
+      }
+
       const { data, error } = await supabase
-        .from('investigations')
-        .select('id')
-        .eq('id', id)
-        .single();
+        .from('entities')
+        .select('*')
+        .eq('type', 'location')
+        .in('id', investigation.correlated_entity_ids);
       
       if (error) throw error;
-      
-      // For now, return empty array - locations will be stored in a new structure
-      return [];
+      return data || [];
     },
-    enabled: !!id
+    enabled: !!investigation
   });
 
   const updateInvestigation = async (field: string, value: any) => {
@@ -1185,23 +1187,89 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  {investigation?.correlated_entity_ids && investigation.correlated_entity_ids.length > 0 ? (
-                    <div className="text-sm text-muted-foreground">
-                      <p>Locations are tracked as entities. {investigation.correlated_entity_ids.length} entities linked to this investigation.</p>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        className="mt-2"
-                        onClick={() => navigate('/entities')}
-                      >
-                        View All Entities
-                      </Button>
-                    </div>
+                <div className="space-y-4">
+                  {locations.length > 0 ? (
+                    <>
+                      {/* Map showing all locations */}
+                      {locations.some(loc => loc.current_location) && (
+                        <Card>
+                          <CardHeader>
+                            <CardTitle className="text-base flex items-center gap-2">
+                              <Map className="w-4 h-4" />
+                              Locations Map
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <LocationsMap locations={locations} />
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      {/* List of locations */}
+                      <div className="space-y-2">
+                        {locations.map((location) => (
+                          <Card key={location.id}>
+                            <CardContent className="p-4">
+                              <div className="flex items-start justify-between gap-4">
+                                <div className="flex-1 space-y-1">
+                                  <h4 className="font-medium">{location.name}</h4>
+                                  {location.current_location && (
+                                    <p className="text-sm text-muted-foreground flex items-center gap-1">
+                                      <MapPin className="w-3 h-3" />
+                                      {location.current_location}
+                                    </p>
+                                  )}
+                                  {location.description && (
+                                    <p className="text-sm text-muted-foreground">{location.description}</p>
+                                  )}
+                                </div>
+                                <div className="flex gap-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => navigate(`/entities?entity=${location.id}`)}
+                                  >
+                                    View Details
+                                  </Button>
+                                  <Button 
+                                    variant="ghost" 
+                                    size="icon"
+                                    onClick={async () => {
+                                      try {
+                                        const updatedIds = (investigation?.correlated_entity_ids || []).filter(
+                                          (entityId: string) => entityId !== location.id
+                                        );
+                                        
+                                        const { error } = await supabase
+                                          .from('investigations')
+                                          .update({ correlated_entity_ids: updatedIds })
+                                          .eq('id', id);
+
+                                        if (error) throw error;
+
+                                        queryClient.invalidateQueries({ queryKey: ['investigation', id] });
+                                        queryClient.invalidateQueries({ queryKey: ['investigation-locations', id] });
+                                        toast.success("Location removed from investigation");
+                                      } catch (error: any) {
+                                        toast.error(error.message || "Failed to remove location");
+                                      }
+                                    }}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    </>
                   ) : (
-                    <p className="text-sm text-muted-foreground text-center p-4 border rounded-lg">
-                      No locations added yet. Add locations above to track them as entities.
-                    </p>
+                    <div className="text-sm text-muted-foreground text-center p-8 border rounded-lg">
+                      <MapPin className="w-12 h-12 mx-auto mb-3 opacity-20" />
+                      <p className="font-medium">No locations added yet</p>
+                      <p className="text-xs mt-1">Add locations above to track them in this investigation</p>
+                    </div>
                   )}
                 </div>
               </CardContent>
