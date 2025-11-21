@@ -1,7 +1,6 @@
 import { Header } from "@/components/Header";
 import { SignalHistory } from "@/components/SignalHistory";
-import { SignalIngestForm } from "@/components/SignalIngestForm";
-import { ArchivalDocumentUpload } from "@/components/ArchivalDocumentUpload";
+import { UnifiedDocumentUpload } from "@/components/UnifiedDocumentUpload";
 import { ArchivalDocumentsList } from "@/components/ArchivalDocumentsList";
 import { ReprocessDocuments } from "@/components/ReprocessDocuments";
 import { useAuth } from "@/hooks/useAuth";
@@ -43,19 +42,22 @@ const Signals = () => {
           </p>
         </div>
 
-        <Tabs defaultValue="signals" className="space-y-6">
-          <TabsList>
-            <TabsTrigger value="signals">Current Signals</TabsTrigger>
-            <TabsTrigger value="archival">Archival Documents</TabsTrigger>
+        <Tabs defaultValue="upload" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="upload">Upload Documents</TabsTrigger>
+            <TabsTrigger value="signals">Signal Feed</TabsTrigger>
+            <TabsTrigger value="documents">Document Library</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="upload" className="space-y-6">
+            <UnifiedDocumentUpload />
+          </TabsContent>
 
           <TabsContent value="signals" className="space-y-6">
             <SignalHistory />
-            <SignalIngestForm />
           </TabsContent>
 
-          <TabsContent value="archival" className="space-y-6">
-            <ArchivalDocumentUpload />
+          <TabsContent value="documents" className="space-y-6">
             <ReprocessDocuments />
             <ArchivalDocumentsList />
           </TabsContent>
