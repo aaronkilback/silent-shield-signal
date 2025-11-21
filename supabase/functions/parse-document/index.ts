@@ -75,19 +75,20 @@ serve(async (req) => {
 
     console.log('Processing document:', filename, mimeType);
 
-    // Check file size BEFORE decoding (5MB limit for PDFs, 10MB for others)
+    // Check file size BEFORE any processing (3MB limit for PDFs, 8MB for others)
     const estimatedSize = (file.length * 3) / 4; // Base64 to bytes approximation
     const isPDF = mimeType === 'application/pdf' || filename.toLowerCase().endsWith('.pdf');
-    const MAX_SIZE = isPDF ? 5 * 1024 * 1024 : 10 * 1024 * 1024; // 5MB for PDFs, 10MB for others
+    const MAX_SIZE = isPDF ? 3 * 1024 * 1024 : 8 * 1024 * 1024; // 3MB for PDFs, 8MB for others
     
     if (estimatedSize > MAX_SIZE) {
-      const limit = isPDF ? '5MB' : '10MB';
-      console.error(`File too large: ${(estimatedSize / 1024 / 1024).toFixed(2)}MB`);
+      const limit = isPDF ? '3MB' : '8MB';
+      console.error(`File too large: ${(estimatedSize / 1024 / 1024).toFixed(2)}MB, limit: ${limit}`);
       return new Response(
         JSON.stringify({ 
-          error: `File too large (${(estimatedSize / 1024 / 1024).toFixed(1)}MB). Maximum size is ${limit} due to processing memory limits. Please use the Archival Upload feature for larger documents.`
+          error: `File too large (${(estimatedSize / 1024 / 1024).toFixed(1)}MB). Maximum size is ${limit} due to processing memory limits. Please use the Archival Upload feature for larger documents.`,
+          success: false
         }),
-        { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
@@ -108,9 +109,10 @@ serve(async (req) => {
         JSON.stringify({ 
           error: isMemoryError 
             ? 'File too large to decode. Please use the Archival Upload feature for large documents.' 
-            : 'Invalid file encoding'
+            : 'Invalid file encoding',
+          success: false
         }),
-        { status: isMemoryError ? 413 : 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
     let text = '';
@@ -292,10 +294,11 @@ serve(async (req) => {
       JSON.stringify({ 
         error: isMemoryError 
           ? 'Document too large to process in memory. Please use the Archival Upload feature for large documents (supports up to 100MB with advanced processing).' 
-          : errorMessage 
+          : errorMessage,
+        success: false
       }),
       { 
-        status: isMemoryError ? 413 : 500, 
+        status: 200, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
       }
     );
