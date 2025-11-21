@@ -366,7 +366,9 @@ export default function Entities() {
         </Card>
 
         {/* Location Map for Location Entities */}
-        {selectedType === 'location' && entities.length > 0 && (
+        {selectedType === 'location' && 
+         entities.length > 0 && 
+         entities.some((e: any) => e.current_location || e.name) && (
           <Card className="mb-4 p-4">
             <div className="flex items-center gap-2 mb-4">
               <Map className="w-5 h-5 text-primary" />
