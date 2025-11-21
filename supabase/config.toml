@@ -104,3 +104,6 @@ verify_jwt = true
 
 [functions.process-stored-document]
 verify_jwt = true
+
+[functions.monitor-travel-risks]
+verify_jwt = false

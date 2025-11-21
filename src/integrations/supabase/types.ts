@@ -1254,6 +1254,105 @@ export type Database = {
           },
         ]
       }
+      itineraries: {
+        Row: {
+          accommodation_details: Json | null
+          ai_risk_assessment: Json | null
+          created_at: string
+          created_by: string | null
+          departure_date: string
+          destination_city: string
+          destination_country: string
+          file_path: string | null
+          flight_numbers: string[] | null
+          hotel_address: string | null
+          hotel_name: string | null
+          id: string
+          meeting_schedule: Json | null
+          monitoring_enabled: boolean | null
+          notes: string | null
+          origin_city: string
+          origin_country: string
+          return_date: string
+          risk_level: string | null
+          status: string
+          transportation_details: Json | null
+          traveler_id: string
+          trip_name: string
+          trip_type: string
+          updated_at: string
+        }
+        Insert: {
+          accommodation_details?: Json | null
+          ai_risk_assessment?: Json | null
+          created_at?: string
+          created_by?: string | null
+          departure_date: string
+          destination_city: string
+          destination_country: string
+          file_path?: string | null
+          flight_numbers?: string[] | null
+          hotel_address?: string | null
+          hotel_name?: string | null
+          id?: string
+          meeting_schedule?: Json | null
+          monitoring_enabled?: boolean | null
+          notes?: string | null
+          origin_city: string
+          origin_country: string
+          return_date: string
+          risk_level?: string | null
+          status?: string
+          transportation_details?: Json | null
+          traveler_id: string
+          trip_name: string
+          trip_type?: string
+          updated_at?: string
+        }
+        Update: {
+          accommodation_details?: Json | null
+          ai_risk_assessment?: Json | null
+          created_at?: string
+          created_by?: string | null
+          departure_date?: string
+          destination_city?: string
+          destination_country?: string
+          file_path?: string | null
+          flight_numbers?: string[] | null
+          hotel_address?: string | null
+          hotel_name?: string | null
+          id?: string
+          meeting_schedule?: Json | null
+          monitoring_enabled?: boolean | null
+          notes?: string | null
+          origin_city?: string
+          origin_country?: string
+          return_date?: string
+          risk_level?: string | null
+          status?: string
+          transportation_details?: Json | null
+          traveler_id?: string
+          trip_name?: string
+          trip_type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "itineraries_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "itineraries_traveler_id_fkey"
+            columns: ["traveler_id"]
+            isOneToOne: false
+            referencedRelation: "travelers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       monitoring_history: {
         Row: {
           created_at: string
@@ -1726,6 +1825,153 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      travel_alerts: {
+        Row: {
+          acknowledged: boolean | null
+          acknowledged_at: string | null
+          acknowledged_by: string | null
+          affected_flights: string[] | null
+          alert_type: string
+          created_at: string
+          description: string
+          id: string
+          is_active: boolean | null
+          itinerary_id: string | null
+          location: string | null
+          recommended_actions: string[] | null
+          severity: string
+          source: string | null
+          title: string
+          traveler_id: string | null
+        }
+        Insert: {
+          acknowledged?: boolean | null
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          affected_flights?: string[] | null
+          alert_type: string
+          created_at?: string
+          description: string
+          id?: string
+          is_active?: boolean | null
+          itinerary_id?: string | null
+          location?: string | null
+          recommended_actions?: string[] | null
+          severity?: string
+          source?: string | null
+          title: string
+          traveler_id?: string | null
+        }
+        Update: {
+          acknowledged?: boolean | null
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          affected_flights?: string[] | null
+          alert_type?: string
+          created_at?: string
+          description?: string
+          id?: string
+          is_active?: boolean | null
+          itinerary_id?: string | null
+          location?: string | null
+          recommended_actions?: string[] | null
+          severity?: string
+          source?: string | null
+          title?: string
+          traveler_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "travel_alerts_acknowledged_by_fkey"
+            columns: ["acknowledged_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "travel_alerts_itinerary_id_fkey"
+            columns: ["itinerary_id"]
+            isOneToOne: false
+            referencedRelation: "itineraries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "travel_alerts_traveler_id_fkey"
+            columns: ["traveler_id"]
+            isOneToOne: false
+            referencedRelation: "travelers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      travelers: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          current_country: string | null
+          current_location: string | null
+          email: string | null
+          emergency_contact_name: string | null
+          emergency_contact_phone: string | null
+          id: string
+          last_location_update: string | null
+          map_color: string
+          name: string
+          notes: string | null
+          passport_expiry: string | null
+          passport_number: string | null
+          phone: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          current_country?: string | null
+          current_location?: string | null
+          email?: string | null
+          emergency_contact_name?: string | null
+          emergency_contact_phone?: string | null
+          id?: string
+          last_location_update?: string | null
+          map_color?: string
+          name: string
+          notes?: string | null
+          passport_expiry?: string | null
+          passport_number?: string | null
+          phone?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          current_country?: string | null
+          current_location?: string | null
+          email?: string | null
+          emergency_contact_name?: string | null
+          emergency_contact_phone?: string | null
+          id?: string
+          last_location_update?: string | null
+          map_color?: string
+          name?: string
+          notes?: string | null
+          passport_expiry?: string | null
+          passport_number?: string | null
+          phone?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "travelers_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       user_roles: {
         Row: {
