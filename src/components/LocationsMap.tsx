@@ -32,15 +32,25 @@ export const LocationsMap = ({ locations }: LocationsMapProps) => {
   useEffect(() => {
     if (!locations.length || !mapContainer.current || !mapboxToken) return;
 
-    const locationsWithCoords = locations.filter(loc => loc.current_location);
-    if (locationsWithCoords.length === 0) return;
+    const locationsToGeocode = locations.filter(loc => loc.current_location || loc.name);
+    if (locationsToGeocode.length === 0) {
+      console.warn('No locations with valid data to geocode');
+      return;
+    }
 
     // Initialize map
     mapboxgl.accessToken = mapboxToken;
     
+    console.log(`Geocoding ${locationsToGeocode.length} locations...`);
+    
     // Geocode all locations and initialize map once we have coordinates
-    geocodeAllLocations(locationsWithCoords).then((geocodedLocations) => {
-      if (!geocodedLocations.length || !mapContainer.current) return;
+    geocodeAllLocations(locationsToGeocode).then((geocodedLocations) => {
+      if (!geocodedLocations.length || !mapContainer.current) {
+        console.warn('No locations successfully geocoded');
+        return;
+      }
+
+      console.log(`Successfully geocoded ${geocodedLocations.length} locations`);
 
       // Calculate bounds to fit all markers
       const bounds = new mapboxgl.LngLatBounds();
@@ -64,13 +74,15 @@ export const LocationsMap = ({ locations }: LocationsMapProps) => {
       geocodedLocations.forEach((loc) => {
         if (!map.current) return;
 
+        const locationText = loc.current_location || loc.name;
+        
         new mapboxgl.Marker({ color: '#ef4444' })
           .setLngLat([loc.lng, loc.lat])
           .setPopup(
             new mapboxgl.Popup({ offset: 25 }).setHTML(
               `<div style="padding: 8px; color: #000;">
                 <strong>${loc.name}</strong><br/>
-                ${loc.current_location || ''}
+                ${locationText}
                 ${loc.description ? `<br/><span style="font-size: 11px; color: #666;">${loc.description}</span>` : ''}
               </div>`
             )
@@ -94,9 +106,15 @@ export const LocationsMap = ({ locations }: LocationsMapProps) => {
   const geocodeAllLocations = async (locs: Location[]): Promise<Array<Location & { lat: number; lng: number }>> => {
     const results = await Promise.all(
       locs.map(async (loc) => {
-        if (!loc.current_location) return null;
+        // Use current_location if available, otherwise use the entity name
+        const locationString = loc.current_location || loc.name;
         
-        const coords = await fetchCoordinates(loc.current_location);
+        if (!locationString) {
+          console.warn(`No location data for entity: ${loc.id}`);
+          return null;
+        }
+        
+        const coords = await fetchCoordinates(locationString);
         if (!coords) return null;
         
         return { ...loc, ...coords };
@@ -116,25 +134,32 @@ export const LocationsMap = ({ locations }: LocationsMapProps) => {
       // Filter out obviously non-geographic terms
       const nonGeoTerms = ['Provincial Jurisdiction', 'Industry News', 'National', 'Federal'];
       if (nonGeoTerms.some(term => locationStr.includes(term))) {
+        console.log(`Skipping non-geographic location: ${locationStr}`);
         return null;
       }
 
       // Add Canada bias for better Canadian location results
       const searchQuery = locationStr.includes('Canada') ? locationStr : `${locationStr}, Canada`;
       
+      console.log(`Geocoding location: "${locationStr}" -> "${searchQuery}"`);
+      
       const response = await fetch(
         `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(searchQuery)}.json?access_token=${mapboxToken}&country=CA&limit=1`
       );
       const data = await response.json();
       
+      console.log(`Geocoding result for "${locationStr}":`, data.features?.[0]?.place_name);
+      
       if (data.features && data.features.length > 0) {
         const [lng, lat] = data.features[0].center;
+        console.log(`Coordinates for "${locationStr}": [${lat}, ${lng}]`);
         return { lat, lng };
       }
       
+      console.warn(`No geocoding results found for: ${locationStr}`);
       return null;
     } catch (error) {
-      console.error('Error geocoding location:', error);
+      console.error('Error geocoding location:', locationStr, error);
       return null;
     }
   };
@@ -174,7 +199,7 @@ export const LocationsMap = ({ locations }: LocationsMapProps) => {
     );
   }
 
-  if (!locations.some(loc => loc.current_location)) {
+  if (!locations.some(loc => loc.current_location || loc.name)) {
     return (
       <div className="bg-muted/50 border border-border rounded-lg p-4 text-center text-sm text-muted-foreground">
         <MapPin className="w-8 h-8 mx-auto mb-2 opacity-50" />
