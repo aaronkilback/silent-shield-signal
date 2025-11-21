@@ -75,13 +75,13 @@ serve(async (req) => {
 
     console.log('Processing document:', filename, mimeType);
 
-    // Check file size BEFORE any processing (3MB limit for PDFs, 8MB for others)
+    // Check file size BEFORE any processing (10MB limit for PDFs, 8MB for others)
     const estimatedSize = (file.length * 3) / 4; // Base64 to bytes approximation
     const isPDF = mimeType === 'application/pdf' || filename.toLowerCase().endsWith('.pdf');
-    const MAX_SIZE = isPDF ? 3 * 1024 * 1024 : 8 * 1024 * 1024; // 3MB for PDFs, 8MB for others
+    const MAX_SIZE = isPDF ? 10 * 1024 * 1024 : 8 * 1024 * 1024; // 10MB for PDFs, 8MB for others
     
     if (estimatedSize > MAX_SIZE) {
-      const limit = isPDF ? '3MB' : '8MB';
+      const limit = isPDF ? '10MB' : '8MB';
       console.error(`File too large: ${(estimatedSize / 1024 / 1024).toFixed(2)}MB, limit: ${limit}`);
       return new Response(
         JSON.stringify({ 

@@ -92,8 +92,8 @@ export const SignalIngestForm = () => {
 
     // File size validation (different limits for PDFs vs other files)
     const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-    const MAX_FILE_SIZE = isPDF ? 3 * 1024 * 1024 : 8 * 1024 * 1024; // 3MB for PDFs, 8MB for others
-    const limit = isPDF ? '3MB' : '8MB';
+    const MAX_FILE_SIZE = isPDF ? 10 * 1024 * 1024 : 8 * 1024 * 1024; // 10MB for PDFs, 8MB for others
+    const limit = isPDF ? '10MB' : '8MB';
     
     if (file.size > MAX_FILE_SIZE) {
       toast.error(`File too large. Maximum size for ${isPDF ? 'PDFs' : 'this file type'} is ${limit}. Your file is ${(file.size / 1024 / 1024).toFixed(1)}MB. Please use the Archival Upload feature for larger files.`);
