@@ -50,9 +50,6 @@ const InvestigationDetail = () => {
   const [localInformation, setLocalInformation] = useState("");
   const [localRecommendations, setLocalRecommendations] = useState("");
 
-  // Track pending save timers
-  const saveTimersRef = useRef<{ [key: string]: NodeJS.Timeout }>({});
-
   const { data: investigation, isLoading } = useQuery({
     queryKey: ['investigation', id],
     queryFn: async () => {
@@ -63,123 +60,53 @@ const InvestigationDetail = () => {
         .single();
       
       if (error) throw error;
-      
-      // Initialize local state when data is loaded
-      setLocalFileNumber(data.file_number || '');
-      setLocalMaximoNumber(data.maximo_number || '');
-      setLocalPoliceFileNumber(data.police_file_number || '');
-      setLocalSynopsis(data.synopsis || '');
-      setLocalInformation(data.information || '');
-      setLocalRecommendations(data.recommendations || '');
-      
       return data;
     },
     enabled: !!id
   });
 
-  // Debounced save function
-  const debouncedUpdate = useCallback((field: string, value: any) => {
-    // Clear existing timer for this field
-    if (saveTimersRef.current[field]) {
-      clearTimeout(saveTimersRef.current[field]);
-    }
-
-    // Set new timer
-    const timer = setTimeout(() => {
-      updateInvestigation(field, value);
-      delete saveTimersRef.current[field];
-    }, 800); // 800ms debounce
-
-    saveTimersRef.current[field] = timer;
-  }, [id]);
-
-  // Save all pending changes immediately
-  const saveAllPending = useCallback(async () => {
-    if (!investigation || !id) return;
-
-    const updates: any = {};
-    let hasChanges = false;
-
-    // Check each field for unsaved changes
-    if (localFileNumber !== investigation.file_number) {
-      updates.file_number = localFileNumber;
-      hasChanges = true;
-    }
-    if (localMaximoNumber !== investigation.maximo_number) {
-      updates.maximo_number = localMaximoNumber;
-      hasChanges = true;
-    }
-    if (localPoliceFileNumber !== investigation.police_file_number) {
-      updates.police_file_number = localPoliceFileNumber;
-      hasChanges = true;
-    }
-    if (localSynopsis !== investigation.synopsis) {
-      updates.synopsis = localSynopsis;
-      hasChanges = true;
-    }
-    if (localInformation !== investigation.information) {
-      updates.information = localInformation;
-      hasChanges = true;
-    }
-    if (localRecommendations !== investigation.recommendations) {
-      updates.recommendations = localRecommendations;
-      hasChanges = true;
-    }
-
-    if (hasChanges) {
-      try {
-        const { error } = await supabase
-          .from('investigations')
-          .update(updates)
-          .eq('id', id);
-
-        if (error) throw error;
-      } catch (error) {
-        console.error('Failed to save pending changes:', error);
-      }
-    }
-  }, [id, investigation, localFileNumber, localMaximoNumber, localPoliceFileNumber, localSynopsis, localInformation, localRecommendations]);
-
-  // Save on unmount (navigation away)
+  // Initialize local state when investigation data loads
   useEffect(() => {
-    return () => {
-      // Clear all pending timers
-      Object.values(saveTimersRef.current).forEach(clearTimeout);
-      // Save immediately when unmounting
-      saveAllPending();
-    };
-  }, [saveAllPending]);
+    if (investigation) {
+      setLocalFileNumber(investigation.file_number || '');
+      setLocalMaximoNumber(investigation.maximo_number || '');
+      setLocalPoliceFileNumber(investigation.police_file_number || '');
+      setLocalSynopsis(investigation.synopsis || '');
+      setLocalInformation(investigation.information || '');
+      setLocalRecommendations(investigation.recommendations || '');
+    }
+  }, [investigation?.id]); // Only update when investigation ID changes
 
-  // Update handlers with debounce
-  useEffect(() => {
-    if (!investigation) return;
-    debouncedUpdate('file_number', localFileNumber);
-  }, [localFileNumber, debouncedUpdate, investigation]);
+  // Save field on blur
+  const saveField = async (field: string, value: string) => {
+    if (!id || !investigation) return;
+    
+    // Don't save if value hasn't changed
+    if (investigation[field] === value) return;
 
-  useEffect(() => {
-    if (!investigation) return;
-    debouncedUpdate('maximo_number', localMaximoNumber);
-  }, [localMaximoNumber, debouncedUpdate, investigation]);
+    setIsSaving(true);
+    try {
+      const { error } = await supabase
+        .from('investigations')
+        .update({ [field]: value })
+        .eq('id', id);
 
-  useEffect(() => {
-    if (!investigation) return;
-    debouncedUpdate('police_file_number', localPoliceFileNumber);
-  }, [localPoliceFileNumber, debouncedUpdate, investigation]);
+      if (error) throw error;
 
-  useEffect(() => {
-    if (!investigation) return;
-    debouncedUpdate('synopsis', localSynopsis);
-  }, [localSynopsis, debouncedUpdate, investigation]);
-
-  useEffect(() => {
-    if (!investigation) return;
-    debouncedUpdate('information', localInformation);
-  }, [localInformation, debouncedUpdate, investigation]);
-
-  useEffect(() => {
-    if (!investigation) return;
-    debouncedUpdate('recommendations', localRecommendations);
-  }, [localRecommendations, debouncedUpdate, investigation]);
+      // Update cache without refetching
+      queryClient.setQueryData(['investigation', id], (old: any) => ({
+        ...old,
+        [field]: value
+      }));
+      
+      toast.success("Saved", { duration: 1000 });
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save");
+      console.error('Save error:', error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const { data: persons = [] } = useQuery({
     queryKey: ['investigation-persons', id],
@@ -295,7 +222,11 @@ const InvestigationDetail = () => {
 
       if (error) throw error;
 
-      queryClient.invalidateQueries({ queryKey: ['investigation', id] });
+      // Update cache without refetching to avoid losing user input
+      queryClient.setQueryData(['investigation', id], (old: any) => ({
+        ...old,
+        [field]: value
+      }));
     } catch (error: any) {
       toast.error(error.message || "Failed to save");
       console.error('Save error:', error);
@@ -971,6 +902,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     <Input 
                       value={localFileNumber}
                       onChange={(e) => setLocalFileNumber(e.target.value)}
+                      onBlur={() => saveField('file_number', localFileNumber)}
                     />
                   </div>
                   <div>
@@ -978,6 +910,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     <Input 
                       value={localMaximoNumber}
                       onChange={(e) => setLocalMaximoNumber(e.target.value)}
+                      onBlur={() => saveField('maximo_number', localMaximoNumber)}
                       placeholder="Optional"
                     />
                   </div>
@@ -986,6 +919,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     <Input 
                       value={localPoliceFileNumber}
                       onChange={(e) => setLocalPoliceFileNumber(e.target.value)}
+                      onBlur={() => saveField('police_file_number', localPoliceFileNumber)}
                       placeholder="Optional"
                     />
                   </div>
@@ -1030,6 +964,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                   <Textarea 
                     value={localSynopsis}
                     onChange={(e) => setLocalSynopsis(e.target.value)}
+                    onBlur={() => saveField('synopsis', localSynopsis)}
                     placeholder="Brief overview of the investigation..."
                     className="min-h-[100px]"
                   />
@@ -1040,6 +975,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                   <Textarea 
                     value={localInformation}
                     onChange={(e) => setLocalInformation(e.target.value)}
+                    onBlur={() => saveField('information', localInformation)}
                     placeholder="Detailed information about the investigation..."
                     className="min-h-[150px]"
                   />
@@ -1067,6 +1003,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                   <Textarea 
                     value={localRecommendations}
                     onChange={(e) => setLocalRecommendations(e.target.value)}
+                    onBlur={() => saveField('recommendations', localRecommendations)}
                     placeholder="Recommendations and next steps..."
                     className="min-h-[100px]"
                   />
