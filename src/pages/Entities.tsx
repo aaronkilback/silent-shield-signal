@@ -11,13 +11,14 @@ import { EntityDetailDialog } from "@/components/EntityDetailDialog";
 import { SecurityBulletinGenerator } from "@/components/SecurityBulletinGenerator";
 import { EntityCrossReferenceDialog } from "@/components/EntityCrossReferenceDialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Search, Users, MapPin, Building2, Globe, Upload, LayoutGrid, List, FileText, Trash2, GitCompare } from "lucide-react";
+import { Plus, Search, Users, MapPin, Building2, Globe, Upload, LayoutGrid, List, FileText, Trash2, GitCompare, Map } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 import { DashboardClientSelector } from "@/components/DashboardClientSelector";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { LocationsMap } from "@/components/LocationsMap";
 
 export default function Entities() {
   const { selectedClientId } = useClientSelection();
@@ -363,6 +364,24 @@ export default function Entities() {
             )}
           </div>
         </Card>
+
+        {/* Location Map for Location Entities */}
+        {selectedType === 'location' && entities.length > 0 && (
+          <Card className="mb-4 p-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Map className="w-5 h-5 text-primary" />
+              <h3 className="font-semibold">Location Map</h3>
+            </div>
+            <LocationsMap 
+              locations={entities.map((e: any) => ({
+                id: e.id,
+                name: e.name,
+                current_location: e.current_location,
+                description: e.description
+              }))} 
+            />
+          </Card>
+        )}
 
         {/* Bulk Actions Bar */}
         {selectedEntityIds.size > 0 && (
