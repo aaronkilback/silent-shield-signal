@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
+import pdfParse from "https://esm.sh/pdf-parse@1.1.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -30,7 +31,7 @@ serve(async (req) => {
 
     console.log("Processing itinerary:", filePath);
 
-    // Download the file from storage and convert to base64
+    // Download the file from storage
     const { data: fileData, error: downloadError } = await supabaseClient
       .storage
       .from("travel-documents")
@@ -41,26 +42,27 @@ serve(async (req) => {
       throw new Error(`Failed to download file: ${downloadError?.message}`);
     }
 
-    console.log("File downloaded, converting to base64...");
+    console.log("File downloaded, extracting text with pdf-parse...");
 
-    // Convert blob to base64
+    // Extract text using pdf-parse
     const arrayBuffer = await fileData.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    const base64 = btoa(binary);
-    const dataUrl = `data:application/pdf;base64,${base64}`;
+    const pdfData = await pdfParse(arrayBuffer);
+    const textContent = pdfData.text.trim();
 
-    console.log("Sending PDF to AI for analysis...");
+    console.log(`Extracted ${textContent.length} characters from ${pdfData.numpages} page(s)`);
+
+    if (!textContent || textContent.length < 20) {
+      throw new Error("Could not extract meaningful text from PDF. The PDF may be empty or image-based.");
+    }
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY not configured");
     }
 
-    // Use AI to extract structured data from PDF
+    console.log("Calling AI to extract travel details from text");
+
+    // Use AI to extract structured data from text
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -72,16 +74,16 @@ serve(async (req) => {
         messages: [
           {
             role: "user",
-            content: [
-              {
-                type: "text",
-                text: `Extract ALL travel details from this travel itinerary PDF. Be thorough and extract everything you can find:
+            content: `Extract ALL travel details from this itinerary text. Be thorough and extract everything you can find:
+
+ITINERARY TEXT:
+${textContent}
 
 Extract:
-- Traveler name (passenger name, traveler, guest name)
+- Traveler name (look for passenger name, traveler, guest name)
 - Trip name or purpose
-- Departure date and time (convert to ISO format)
-- Return date and time (convert to ISO format)
+- Departure date and time
+- Return date and time  
 - Origin city and country
 - Destination city and country
 - ALL flight numbers mentioned
@@ -89,15 +91,7 @@ Extract:
 - Hotel full address
 - Any other relevant details
 
-Be very thorough - extract all information present.`
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: dataUrl
-                }
-              }
-            ]
+Be very thorough - extract all information present.`,
           },
         ],
         tools: [
@@ -119,12 +113,12 @@ Be very thorough - extract all information present.`
                   departure_date: { 
                     type: "string", 
                     format: "date-time",
-                    description: "Departure date and time in ISO format (YYYY-MM-DDTHH:mm:ss)"
+                    description: "Departure date and time in ISO format"
                   },
                   return_date: { 
                     type: "string", 
                     format: "date-time",
-                    description: "Return date and time in ISO format (YYYY-MM-DDTHH:mm:ss)"
+                    description: "Return date and time in ISO format"
                   },
                   origin_city: { type: "string" },
                   origin_country: { type: "string" },
@@ -168,12 +162,10 @@ Be very thorough - extract all information present.`
     }
 
     const aiData = await aiResponse.json();
-    console.log("AI response:", JSON.stringify(aiData, null, 2));
-
     const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
 
     if (!toolCall) {
-      throw new Error("Could not extract travel data from PDF");
+      throw new Error("Could not extract travel data from text");
     }
 
     const travelData = JSON.parse(toolCall.function.arguments);
