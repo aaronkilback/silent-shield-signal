@@ -14,7 +14,7 @@ serve(async (req) => {
   try {
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
       {
         global: {
           headers: { Authorization: req.headers.get("Authorization")! },
@@ -28,7 +28,7 @@ serve(async (req) => {
       throw new Error("File path is required");
     }
 
-    console.log("Downloading file from storage:", filePath);
+    console.log("Downloading PDF from storage:", filePath);
 
     // Download the file from storage
     const { data: fileData, error: downloadError } = await supabaseClient
@@ -43,49 +43,27 @@ serve(async (req) => {
 
     console.log("File downloaded, size:", fileData.size);
 
-    // Convert file to base64
+    // Read file as text (basic extraction for PDF)
     const arrayBuffer = await fileData.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    let binary = '';
-    const chunkSize = 8192;
-    for (let i = 0; i < uint8Array.length; i += chunkSize) {
-      const chunk = uint8Array.subarray(i, Math.min(i + chunkSize, uint8Array.length));
-      binary += String.fromCharCode.apply(null, Array.from(chunk));
-    }
-    const base64 = btoa(binary);
+    const textDecoder = new TextDecoder("utf-8");
+    let rawText = textDecoder.decode(arrayBuffer);
+    
+    // Clean up text - remove non-printable characters but keep useful content
+    const cleanedText = rawText
+      .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
 
-    console.log("Calling parse-document function");
-
-    // Call parse-document with base64 file
-    const { data: parseData, error: parseError } = await supabaseClient.functions.invoke(
-      "parse-document",
-      {
-        body: {
-          file: base64,
-          filename: filePath,
-          mimeType: "application/pdf",
-        },
-      }
-    );
-
-    if (parseError) {
-      console.error("Parse document error:", parseError);
-      throw new Error(`Failed to parse document: ${parseError.message}`);
-    }
-
-    console.log("Document parsed successfully");
-
-    // Extract the text from the signal response
-    const extractedText = parseData?.success ? parseData.message : "";
+    console.log("Extracted text length:", cleanedText.length);
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY not configured");
     }
 
-    console.log("Calling AI to extract travel details");
+    console.log("Calling AI to parse travel itinerary");
 
-    // Call AI to extract structured data from parsed text
+    // Call AI to extract structured data
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -97,11 +75,11 @@ serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: "You are a travel document parser. Extract structured travel information from flight itineraries and e-tickets.",
+            content: "You are a travel document parser. Extract structured travel information from flight itineraries and e-tickets. Be flexible with date formats and extract what you can find.",
           },
           {
             role: "user",
-            content: `Extract all travel details from this itinerary. Look for traveler name, departure and return dates, flight numbers, cities and countries of origin and destination, and any hotel information.\n\nDocument content:\n${extractedText}`,
+            content: `Extract travel details from this document. Look for: passenger/traveler name, flight numbers, dates, origin and destination cities/countries, and hotel info.\n\nDocument:\n${cleanedText.substring(0, 50000)}`,
           },
         ],
         tools: [
@@ -114,7 +92,7 @@ serve(async (req) => {
                 type: "object",
                 properties: {
                   traveler_name: { type: "string" },
-                  trip_name: { type: "string", description: "Descriptive name for the trip" },
+                  trip_name: { type: "string", description: "Descriptive name for the trip based on destination" },
                   trip_type: { type: "string", enum: ["domestic", "international"] },
                   departure_date: { type: "string", format: "date-time" },
                   return_date: { type: "string", format: "date-time" },
