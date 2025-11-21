@@ -65,6 +65,20 @@ export default function Entities() {
     }
   });
 
+  // Get total entity count
+  const { data: totalCount = 0 } = useQuery({
+    queryKey: ['entities-total-count'],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from('entities')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_active', true);
+      
+      if (error) throw error;
+      return count || 0;
+    }
+  });
+
   const handleDocumentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -317,6 +331,38 @@ export default function Entities() {
             </div>
           </div>
         </div>
+
+        {/* Entity Counter */}
+        <Card className="mb-4 p-4 bg-muted/50">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Users className="w-5 h-5 text-primary" />
+              <span className="font-semibold text-lg">
+                {searchTerm || selectedType ? (
+                  <>
+                    Showing {entities.length} of {totalCount} entities
+                  </>
+                ) : (
+                  <>
+                    {totalCount} {totalCount === 1 ? 'entity' : 'entities'}
+                  </>
+                )}
+              </span>
+            </div>
+            {(searchTerm || selectedType) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSearchTerm('');
+                  setSelectedType(null);
+                }}
+              >
+                Clear Filters
+              </Button>
+            )}
+          </div>
+        </Card>
 
         {/* Bulk Actions Bar */}
         {selectedEntityIds.size > 0 && (
