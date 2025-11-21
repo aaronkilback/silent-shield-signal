@@ -139,6 +139,15 @@ export const LocationsMap = ({ locations }: LocationsMapProps) => {
         return null;
       }
 
+      // Check for plain coordinates first (e.g., "51.0447, -114.0719" or "51.0447,-114.0719")
+      const plainCoordMatch = locationStr.trim().match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+      if (plainCoordMatch) {
+        const lat = parseFloat(plainCoordMatch[1]);
+        const lng = parseFloat(plainCoordMatch[2]);
+        console.log(`Parsed plain coordinates: [${lat}, ${lng}]`);
+        return { lat, lng };
+      }
+
       // Handle shortened Google Maps URLs (goo.gl, maps.app.goo.gl)
       if (locationStr.includes('goo.gl') || locationStr.includes('maps.app.goo.gl')) {
         console.warn(`Shortened Google Maps URLs (${locationStr}) cannot be parsed. Please use the full coordinates or address instead.`);
