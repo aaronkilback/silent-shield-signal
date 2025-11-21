@@ -428,20 +428,27 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     
     setScanningContent(true);
     try {
-      toast({ title: "Scanning for Content", description: "Searching for news articles and online mentions..." });
+      toast({ 
+        title: "OSINT Web Search Started", 
+        description: "Performing comprehensive web search including Google, Facebook, LinkedIn, Twitter and more..."
+      });
       
-      const { data, error } = await supabase.functions.invoke('scan-entity-content', {
-        body: { entityId }
+      const { data, error } = await supabase.functions.invoke('osint-web-search', {
+        body: { entity_id: entityId }
       });
 
       if (error) throw error;
 
-      const contentAdded = data?.contentAdded || 0;
+      const contentAdded = data?.content_created || 0;
+      const signalsCreated = data?.signals_created || 0;
+      
       toast({ 
-        title: "Content Scan Complete", 
-        description: `Found ${contentAdded} articles/mentions for ${entity?.name}`
+        title: "Web Search Complete", 
+        description: `Found ${contentAdded} relevant items and created ${signalsCreated} security signals for ${entity?.name}`
       });
+      
       queryClient.invalidateQueries({ queryKey: ['entity-content', entityId] });
+      queryClient.invalidateQueries({ queryKey: ['signals'] });
     } catch (error: any) {
       console.error('Error scanning content:', error);
       toast({ 
@@ -1188,7 +1195,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                 ) : (
                   <>
                     <Search className="w-4 h-4 mr-2" />
-                    Scan for Content
+                    Web Search
                   </>
                 )}
               </Button>
