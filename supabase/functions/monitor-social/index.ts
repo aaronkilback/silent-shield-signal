@@ -239,6 +239,27 @@ serve(async (req) => {
                 if (!signalError) {
                   signalsCreated++;
                   console.log(`Created social signal for ${client.name}`);
+                  
+                  // Correlate entities from social media post
+                  const { data: signalData } = await supabase
+                    .from('signals')
+                    .select('id')
+                    .eq('normalized_text', post.data.title)
+                    .eq('client_id', client.id)
+                    .order('created_at', { ascending: false })
+                    .limit(1)
+                    .single();
+                  
+                  if (signalData) {
+                    await supabase.functions.invoke('correlate-entities', {
+                      body: {
+                        text: `${post.data.title}. ${selftext || ''}`,
+                        sourceType: 'signal',
+                        sourceId: signalData.id,
+                        autoApprove: false
+                      }
+                    });
+                  }
                 }
                 
                 // Limit to one signal per client per scan
