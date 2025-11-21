@@ -1128,7 +1128,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                   {locations.length > 0 ? (
                     <>
                       {/* Map showing all locations */}
-                      {locations.some(loc => loc.current_location) && (
+                      {locations.some(loc => loc.current_location || loc.name) && (
                         <Card>
                           <CardHeader>
                             <CardTitle className="text-base flex items-center gap-2">
