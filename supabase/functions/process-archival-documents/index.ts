@@ -29,7 +29,6 @@ serve(async (req) => {
 
     const results = [];
     const errors = [];
-    const entitySuggestions = [];
 
     for (const fileData of files) {
       try {
@@ -169,60 +168,13 @@ serve(async (req) => {
           archival_document_id: document.id
         });
 
-        // Create entity suggestions for text files only
-        if ((mimeType === 'text/plain' || filename.endsWith('.txt')) && text.length > 50) {
-          console.log(`Checking for entity suggestions in ${filename}...`);
-          
-          // Extract potential entity names (simple pattern matching)
-          const potentialEntities = new Set<string>();
-          
-          // Look for capitalized phrases (potential names/organizations)
-          const capitalizedPattern = /\b[A-Z][a-z]+(?: [A-Z][a-z]+){0,3}\b/g;
-          const matches = text.match(capitalizedPattern) || [];
-          matches.slice(0, 10).forEach(match => {
-            if (match.length > 3 && match.length < 50) {
-              potentialEntities.add(match);
-            }
-          });
-
-          // Create entity suggestions
-          for (const entityName of potentialEntities) {
-            const { data: existing } = await supabase
-              .from('entities')
-              .select('id, name')
-              .ilike('name', entityName)
-              .maybeSingle();
-
-            if (!existing) {
-              const { data: suggestion, error: suggestionError } = await supabase
-                .from('entity_suggestions')
-                .insert({
-                  source_id: document.id,
-                  source_type: 'archival_document',
-                  suggested_name: entityName,
-                  suggested_type: 'person',
-                  confidence: 0.6,
-                  context: `Found in archival document: ${filename}`,
-                  status: 'pending'
-                })
-                .select()
-                .single();
-
-              if (suggestion) {
-                entitySuggestions.push({
-                  name: entityName,
-                  documentId: document.id,
-                  suggestionId: suggestion.id
-                });
-              }
-            }
-          }
-        }
+        // Entity suggestions will be created by process-stored-document edge function
+        // which uses AI for proper entity extraction
+        console.log(`Document ${filename} saved - entity processing will happen in background`);
         
         results.push({
           filename: filename,
           documentId: document.id,
-          entitySuggestions: entitySuggestions.length,
           success: true
         });
 
@@ -236,7 +188,7 @@ serve(async (req) => {
       }
     }
 
-    console.log(`Batch complete: ${results.length} succeeded, ${errors.length} failed, ${entitySuggestions.length} entity suggestions created`);
+    console.log(`Batch complete: ${results.length} succeeded, ${errors.length} failed`);
 
     return new Response(
       JSON.stringify({ 
@@ -244,8 +196,7 @@ serve(async (req) => {
         processed: results.length,
         failed: errors.length,
         results: results,
-        errors: errors,
-        entitySuggestions: entitySuggestions
+        errors: errors
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
