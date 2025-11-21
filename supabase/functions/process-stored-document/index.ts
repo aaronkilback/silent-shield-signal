@@ -273,15 +273,20 @@ serve(async (req) => {
 
     // Fetch learning context from adaptive adjuster
     let adjustedThreshold = 0.3;
-    let fpPatterns: string[] = [];
     let learningGuidance = '';
+    let falsePositiveNames: Array<{ name: string; count: number }> = [];
+    let falsePositiveTypes: Array<{ type: string; count: number }> = [];
+    let falsePositivePhrases: Array<{ phrase: string; count: number }> = [];
     
     try {
       const { data: adjusterData } = await supabase.functions.invoke('adaptive-confidence-adjuster');
       if (adjusterData?.success) {
         adjustedThreshold = adjusterData.recommendations.recommended_threshold;
-        learningGuidance = adjusterData.recommendations.reason;
-        console.log(`Using adjusted threshold: ${adjustedThreshold} - ${learningGuidance}`);
+        learningGuidance = adjusterData.recommendations.learning_guidance || '';
+        falsePositiveNames = adjusterData.recommendations.false_positive_patterns?.top_names || [];
+        falsePositiveTypes = adjusterData.recommendations.false_positive_patterns?.top_types || [];
+        falsePositivePhrases = adjusterData.recommendations.false_positive_patterns?.top_context_phrases || [];
+        console.log(`Using adjusted threshold: ${adjustedThreshold} with ${falsePositiveNames.length} known FP patterns`);
       }
     } catch (e) {
       console.warn('Could not fetch adaptive threshold, using default:', e);
@@ -293,7 +298,7 @@ serve(async (req) => {
       .select('suggested_name, suggested_type, context, confidence')
       .eq('status', 'rejected')
       .order('created_at', { ascending: false })
-      .limit(15);
+      .limit(20);
 
     const fpExamples = (rejectedSuggestions || []).map(ex => 
       `✗ REJECTED: "${ex.suggested_name}" (${ex.suggested_type}) from context: "${ex.context?.substring(0, 100)}"`
@@ -352,40 +357,54 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: `You are an expert entity extraction system for security intelligence and threat analysis. Extract security-relevant entities from documents.
+            content: `You are an expert entity extraction system for security intelligence. Extract security-relevant entities from documents.
 
-ADAPTIVE LEARNING FEEDBACK:
+🎯 ADAPTIVE LEARNING (${rejectedSuggestions?.length || 0} rejected entities analyzed)
 ${learningGuidance}
-Current confidence threshold: ${adjustedThreshold}
+
+⚠️ CONFIDENCE THRESHOLD: ${adjustedThreshold.toFixed(2)}
+Only extract entities with confidence >= ${adjustedThreshold.toFixed(2)}
+
+🚫 DO NOT EXTRACT THESE NAMES (frequently rejected):
+${falsePositiveNames.slice(0, 15).map(({ name, count }) => `  ✗ "${name}" (rejected ${count}x)`).join('\n') || '  (No patterns yet)'}
+
+🚫 AVOID THESE ENTITY TYPES (high false positive rates):
+${falsePositiveTypes.slice(0, 8).map(({ type, count }) => `  ✗ ${type} (${count} false positives)`).join('\n') || '  (No patterns yet)'}
+
+🚫 BE CAUTIOUS WITH THESE CONTEXT PHRASES:
+${falsePositivePhrases.slice(0, 15).map(({ phrase }) => `  ✗ "${phrase}"`).join('\n') || '  (No patterns yet)'}
+
+❌ REJECTED EXAMPLES (learn from these):
+${(rejectedSuggestions || []).slice(0, 5).map(ex => 
+  `  ✗ "${ex.suggested_name}" (${ex.suggested_type}, conf: ${ex.confidence?.toFixed(2) || 'N/A'})\n     Context: "${ex.context?.substring(0, 120) || 'N/A'}..."`
+).join('\n\n')}
 
 KNOWN ENTITIES IN DATABASE:
 ${entityContext}
 
-EXAMPLES OF FALSE POSITIVES TO AVOID:
-${fpExamples || 'No false positive patterns identified yet.'}
-
-WHAT TO EXTRACT:
-1. Organizations: Companies, government agencies, threat groups, security vendors
-2. Persons: Named individuals, executives, threat actors, security personnel  
+✅ WHAT TO EXTRACT:
+1. Organizations: Companies, agencies, threat groups (specific names only)
+2. Persons: Named individuals with clear identification
 3. Locations: Cities, countries, facilities, addresses
-4. Infrastructure: Systems, networks, servers, databases, cloud services
-5. Domains/URLs/IPs: Web addresses, domains, IP addresses mentioned
-6. Email addresses: Email addresses found in incidents or communications
-7. Phone numbers: Contact numbers found in context
-8. Vehicles: Vehicles with identifiers (license plates, etc.)
+4. Infrastructure: Systems, networks, servers, databases
+5. Domains/IPs/Emails: Technical identifiers
+6. Vehicles: With license plates or identifiers
 
-DO NOT EXTRACT:
-- Generic terms like "user", "admin", "system" (without specifics)
-- Software/application names unless they're attack targets (skip "Excel", "Word", etc.)
+❌ DO NOT EXTRACT:
+- Generic terms ("user", "admin", "system")
+- Software names unless attack targets
 - Common job titles without names
-- The document filename itself
-- Patterns similar to the FALSE POSITIVES examples above
+- Document filenames
+- Any name matching the rejected patterns above
+- Terms with context phrases flagged above
 
-CONFIDENCE GUIDELINES:
-- Above ${adjustedThreshold}: High confidence, specific entity with clear context
-- Below ${adjustedThreshold}: DO NOT suggest - insufficient evidence
+STRICT RULES:
+1. Confidence MUST be >= ${adjustedThreshold.toFixed(2)}
+2. If name appears in rejected list → DO NOT EXTRACT
+3. If context contains flagged phrases → Require >= ${Math.min(0.95, adjustedThreshold + 0.2).toFixed(2)} confidence
+4. When uncertain → DO NOT EXTRACT (false negatives better than false positives)
+5. Proper nouns only, no generic terms`
 
-BE SELECTIVE: Only extract entities with confidence >= ${adjustedThreshold}. Quality over quantity.`
           },
           {
             role: 'user',
