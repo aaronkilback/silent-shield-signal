@@ -1,70 +1,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
+// @ts-ignore - no types available
+import pdf from "https://esm.sh/pdf-parse@1.1.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
-
-// Enhanced PDF text extraction
-function extractTextFromPDF(arrayBuffer: ArrayBuffer): string {
-  const uint8Array = new Uint8Array(arrayBuffer);
-  const decoder = new TextDecoder('utf-8', { fatal: false });
-  let text = decoder.decode(uint8Array);
-  
-  // Try latin1 if utf-8 fails
-  if (!text || text.length < 100) {
-    const latin1Decoder = new TextDecoder('latin1');
-    text = latin1Decoder.decode(uint8Array);
-  }
-  
-  // Extract text from PDF structure
-  let extractedText = '';
-  
-  // Method 1: Extract text between BT/ET markers (text objects)
-  const btEtMatches = text.match(/BT[\s\S]*?ET/g) || [];
-  for (const match of btEtMatches) {
-    // Extract strings in parentheses
-    const strings = match.match(/\(([^)]+)\)/g) || [];
-    for (const str of strings) {
-      let cleanStr = str.slice(1, -1); // Remove parentheses
-      // Unescape PDF special characters
-      cleanStr = cleanStr
-        .replace(/\\n/g, ' ')
-        .replace(/\\r/g, ' ')
-        .replace(/\\t/g, ' ')
-        .replace(/\\\(/g, '(')
-        .replace(/\\\)/g, ')')
-        .replace(/\\\\/g, '\\')
-        .replace(/\\(\d{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)));
-      extractedText += cleanStr + ' ';
-    }
-  }
-  
-  // Method 2: Extract text from Tj and TJ operators
-  const tjMatches = text.match(/\((.*?)\)\s*Tj/g) || [];
-  for (const match of tjMatches) {
-    const content = match.match(/\((.*?)\)/)?.[1] || '';
-    extractedText += content + ' ';
-  }
-  
-  // Method 3: Look for common text patterns
-  const streamMatches = text.match(/stream[\s\S]*?endstream/g) || [];
-  for (const stream of streamMatches) {
-    const readable = stream.replace(/[^\x20-\x7E\s]/g, '');
-    if (readable.length > 10) {
-      extractedText += readable + ' ';
-    }
-  }
-  
-  // Clean up the extracted text
-  extractedText = extractedText
-    .replace(/\s+/g, ' ')
-    .replace(/\x00/g, '')
-    .trim();
-  
-  return extractedText;
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -103,9 +45,10 @@ serve(async (req) => {
 
     console.log("File downloaded, extracting text...");
 
-    // Extract text from PDF
+    // Extract text from PDF using pdf-parse
     const arrayBuffer = await fileData.arrayBuffer();
-    const textContent = extractTextFromPDF(arrayBuffer);
+    const data = await pdf(arrayBuffer);
+    const textContent = data.text;
 
     console.log(`Extracted ${textContent.length} characters from PDF`);
 
