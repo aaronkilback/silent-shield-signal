@@ -1,9 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
-import { getDocument, GlobalWorkerOptions } from "https://esm.sh/pdfjs-dist@3.11.174";
-
-// Set worker source
-GlobalWorkerOptions.workerSrc = "https://esm.sh/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -18,7 +14,7 @@ serve(async (req) => {
   try {
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+      Deno.env.get("SUPABASE_ANON_KEY") ?? "",
       {
         global: {
           headers: { Authorization: req.headers.get("Authorization")! },
@@ -32,46 +28,34 @@ serve(async (req) => {
       throw new Error("File path is required");
     }
 
-    console.log("Downloading file from storage:", filePath);
+    console.log("Parsing document from storage:", filePath);
 
-    // Download the file from storage
-    const { data: fileData, error: downloadError } = await supabaseClient
-      .storage
-      .from("travel-documents")
-      .download(filePath);
+    // Call the existing parse-document function
+    const { data: parseData, error: parseError } = await supabaseClient.functions.invoke(
+      "parse-document",
+      {
+        body: {
+          bucket: "travel-documents",
+          path: filePath,
+        },
+      }
+    );
 
-    if (downloadError) {
-      console.error("Download error:", downloadError);
-      throw new Error(`Failed to download file: ${downloadError.message}`);
+    if (parseError) {
+      console.error("Parse document error:", parseError);
+      throw new Error(`Failed to parse document: ${parseError.message}`);
     }
 
-    console.log("File downloaded, size:", fileData.size);
-
-    // Parse PDF to extract text
-    const arrayBuffer = await fileData.arrayBuffer();
-    
-    console.log("Parsing PDF...");
-    const pdf = await getDocument({ data: arrayBuffer }).promise;
-    let fullText = "";
-    
-    // Extract text from all pages
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items.map((item: any) => item.str).join(" ");
-      fullText += pageText + "\n\n";
-    }
-
-    console.log("Extracted text length:", fullText.length);
+    console.log("Document parsed, extracted text length:", parseData.text?.length || 0);
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY not configured");
     }
 
-    console.log("Calling AI to parse itinerary text");
+    console.log("Calling AI to extract travel details");
 
-    // Call AI to extract structured data from text
+    // Call AI to extract structured data from parsed text
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -83,11 +67,11 @@ serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: "You are a travel document parser. Extract structured travel information from flight itineraries and e-tickets text.",
+            content: "You are a travel document parser. Extract structured travel information from flight itineraries and e-tickets.",
           },
           {
             role: "user",
-            content: `Extract all travel details from this itinerary text including: traveler name, trip dates, flight numbers, origin/destination cities and countries, hotel information if present.\n\nText:\n${fullText}`,
+            content: `Extract all travel details from this itinerary text:\n\n${parseData.text}`,
           },
         ],
         tools: [
