@@ -338,6 +338,11 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     
     setScanningRelationships(true);
     try {
+      toast({ 
+        title: "OSINT Scan Started", 
+        description: "Performing web search and analyzing relationships..."
+      });
+      
       const { data, error } = await supabase.functions.invoke('osint-entity-scan', {
         body: { entity_id: entityId }
       });
@@ -345,11 +350,15 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
       if (error) throw error;
 
       const relationshipsFound = data?.relationships_created || 0;
+      const contentCreated = data?.content_created || 0;
+      
       toast({ 
-        title: "Scan Complete", 
-        description: `Found and created ${relationshipsFound} potential relationships`
+        title: "OSINT Scan Complete", 
+        description: `Created ${relationshipsFound} relationships and ${contentCreated} content items`
       });
+      
       queryClient.invalidateQueries({ queryKey: ['entity-relationships', entityId] });
+      queryClient.invalidateQueries({ queryKey: ['entity-content', entityId] });
     } catch (error: any) {
       console.error('Error scanning relationships:', error);
       toast({ 
@@ -1306,7 +1315,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                   ) : (
                     <>
                       <Brain className="w-4 h-4 mr-2" />
-                      AI Scan
+                      OSINT Scan
                     </>
                   )}
                 </Button>

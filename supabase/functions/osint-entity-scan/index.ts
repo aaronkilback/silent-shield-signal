@@ -15,11 +15,21 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
+    const googleApiKey = Deno.env.get('GOOGLE_SEARCH_API_KEY');
+    const googleEngineId = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
 
     if (!lovableApiKey) {
       console.error('LOVABLE_API_KEY not configured');
       return new Response(
         JSON.stringify({ error: 'AI service not configured' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!googleApiKey || !googleEngineId) {
+      console.error('Google Search API not configured');
+      return new Response(
+        JSON.stringify({ error: 'Search service not configured' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -60,15 +70,68 @@ serve(async (req) => {
       entities = data || [];
     }
 
-    console.log(`Processing ${entities?.length || 0} entities for OSINT scan`);
+    console.log(`Processing ${entities?.length || 0} entities for OSINT web search and relationship scan`);
 
     let totalRelationshipsCreated = 0;
+    let totalContentCreated = 0;
+    let totalSignalsCreated = 0;
 
     for (const entity of entities || []) {
       console.log(`Scanning entity: ${entity.name} (${entity.type})`);
 
       try {
-        // Perform AI-powered OSINT research
+        // PART 1: Perform web searches
+        const searchQueries = [
+          `"${entity.name}"`,
+          `"${entity.name}" news`,
+          `site:facebook.com "${entity.name}"`,
+          `site:linkedin.com "${entity.name}"`,
+        ];
+
+        if (entity.aliases && entity.aliases.length > 0) {
+          searchQueries.push(`"${entity.aliases[0]}"`);
+        }
+
+        for (const query of searchQueries.slice(0, 3)) { // Limit to 3 searches per entity
+          console.log(`Web search: ${query}`);
+          
+          const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${googleApiKey}&cx=${googleEngineId}&q=${encodeURIComponent(query)}&num=5`;
+          const searchResponse = await fetch(searchUrl);
+          
+          if (!searchResponse.ok) continue;
+
+          const searchData = await searchResponse.json();
+          const items = searchData.items || [];
+
+          for (const item of items) {
+            // Create ingested document and process with AI
+            const { data: doc, error: docError } = await supabase
+              .from('ingested_documents')
+              .insert({
+                title: item.title,
+                raw_text: `${item.title}\n\n${item.snippet || ''}`,
+                metadata: {
+                  url: item.link,
+                  source: 'osint_scan',
+                  entity_id: entity.id
+                }
+              })
+              .select()
+              .single();
+
+            if (!docError && doc) {
+              // Invoke intelligence processing
+              await supabase.functions.invoke('process-intelligence-document', {
+                body: { documentId: doc.id }
+              });
+              totalContentCreated++;
+            }
+          }
+
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limiting
+        }
+
+        // PART 2: Perform AI-powered relationship analysis
         const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -249,13 +312,15 @@ Format your response as a JSON array of relationship suggestions with this struc
       }
     }
 
-    console.log(`OSINT scan complete. Created ${totalRelationshipsCreated} new relationships`);
+    console.log(`OSINT scan complete. Created ${totalRelationshipsCreated} relationships, ${totalContentCreated} content items`);
 
     return new Response(
       JSON.stringify({ 
         success: true, 
         entities_scanned: entities?.length || 0,
-        relationships_created: totalRelationshipsCreated
+        relationships_created: totalRelationshipsCreated,
+        content_created: totalContentCreated,
+        signals_created: totalSignalsCreated
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
