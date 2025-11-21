@@ -280,6 +280,54 @@ export type Database = {
         }
         Relationships: []
       }
+      document_entity_mentions: {
+        Row: {
+          confidence: number | null
+          created_at: string | null
+          document_id: string
+          entity_id: string
+          id: string
+          mention_text: string | null
+          position_end: number | null
+          position_start: number | null
+        }
+        Insert: {
+          confidence?: number | null
+          created_at?: string | null
+          document_id: string
+          entity_id: string
+          id?: string
+          mention_text?: string | null
+          position_end?: number | null
+          position_start?: number | null
+        }
+        Update: {
+          confidence?: number | null
+          created_at?: string | null
+          document_id?: string
+          entity_id?: string
+          id?: string
+          mention_text?: string | null
+          position_end?: number | null
+          position_start?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_entity_mentions_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "ingested_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_entity_mentions_entity_id_fkey"
+            columns: ["entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       document_hashes: {
         Row: {
           archival_document_id: string | null
@@ -384,10 +432,12 @@ export type Database = {
           aliases: string[] | null
           associations: string[] | null
           attributes: Json | null
+          confidence_score: number | null
           created_at: string
           created_by: string | null
           current_location: string | null
           description: string | null
+          entity_status: string | null
           id: string
           is_active: boolean | null
           monitoring_radius_km: number | null
@@ -403,10 +453,12 @@ export type Database = {
           aliases?: string[] | null
           associations?: string[] | null
           attributes?: Json | null
+          confidence_score?: number | null
           created_at?: string
           created_by?: string | null
           current_location?: string | null
           description?: string | null
+          entity_status?: string | null
           id?: string
           is_active?: boolean | null
           monitoring_radius_km?: number | null
@@ -422,10 +474,12 @@ export type Database = {
           aliases?: string[] | null
           associations?: string[] | null
           attributes?: Json | null
+          confidence_score?: number | null
           created_at?: string
           created_by?: string | null
           current_location?: string | null
           description?: string | null
+          entity_status?: string | null
           id?: string
           is_active?: boolean | null
           monitoring_radius_km?: number | null
@@ -879,6 +933,44 @@ export type Database = {
         }
         Relationships: []
       }
+      feedback_events: {
+        Row: {
+          created_at: string | null
+          feedback: string
+          id: string
+          notes: string | null
+          object_id: string
+          object_type: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          feedback: string
+          id?: string
+          notes?: string | null
+          object_id: string
+          object_type: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          feedback?: string
+          id?: string
+          notes?: string | null
+          object_id?: string
+          object_type?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "feedback_events_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       improvements: {
         Row: {
           created_at: string
@@ -923,6 +1015,39 @@ export type Database = {
             columns: ["owner_user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      incident_entities: {
+        Row: {
+          created_at: string | null
+          entity_id: string
+          incident_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          entity_id: string
+          incident_id: string
+        }
+        Update: {
+          created_at?: string | null
+          entity_id?: string
+          incident_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "incident_entities_entity_id_fkey"
+            columns: ["entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "incident_entities_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
             referencedColumns: ["id"]
           },
         ]
@@ -974,6 +1099,39 @@ export type Database = {
           },
         ]
       }
+      incident_signals: {
+        Row: {
+          incident_id: string
+          linked_at: string | null
+          signal_id: string
+        }
+        Insert: {
+          incident_id: string
+          linked_at?: string | null
+          signal_id: string
+        }
+        Update: {
+          incident_id?: string
+          linked_at?: string | null
+          signal_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "incident_signals_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "incident_signals_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       incidents: {
         Row: {
           acknowledged_at: string | null
@@ -981,16 +1139,20 @@ export type Database = {
           contained_at: string | null
           created_at: string
           id: string
+          incident_type: string | null
           is_read: boolean | null
           is_test: boolean | null
           opened_at: string
           owner_user_id: string | null
           priority: Database["public"]["Enums"]["incident_priority"]
           resolved_at: string | null
+          severity_level: string | null
           signal_id: string | null
           sla_targets_json: Json | null
           status: Database["public"]["Enums"]["incident_status"]
+          summary: string | null
           timeline_json: Json | null
+          title: string | null
           updated_at: string
         }
         Insert: {
@@ -999,16 +1161,20 @@ export type Database = {
           contained_at?: string | null
           created_at?: string
           id?: string
+          incident_type?: string | null
           is_read?: boolean | null
           is_test?: boolean | null
           opened_at?: string
           owner_user_id?: string | null
           priority?: Database["public"]["Enums"]["incident_priority"]
           resolved_at?: string | null
+          severity_level?: string | null
           signal_id?: string | null
           sla_targets_json?: Json | null
           status?: Database["public"]["Enums"]["incident_status"]
+          summary?: string | null
           timeline_json?: Json | null
+          title?: string | null
           updated_at?: string
         }
         Update: {
@@ -1017,16 +1183,20 @@ export type Database = {
           contained_at?: string | null
           created_at?: string
           id?: string
+          incident_type?: string | null
           is_read?: boolean | null
           is_test?: boolean | null
           opened_at?: string
           owner_user_id?: string | null
           priority?: Database["public"]["Enums"]["incident_priority"]
           resolved_at?: string | null
+          severity_level?: string | null
           signal_id?: string | null
           sla_targets_json?: Json | null
           status?: Database["public"]["Enums"]["incident_status"]
+          summary?: string | null
           timeline_json?: Json | null
+          title?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -1049,6 +1219,104 @@ export type Database = {
             columns: ["signal_id"]
             isOneToOne: false
             referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ingested_documents: {
+        Row: {
+          chunk_index: number | null
+          content_hash: string | null
+          created_at: string | null
+          error_message: string | null
+          id: string
+          ingested_at: string | null
+          metadata: Json | null
+          parent_document_id: string | null
+          processed_at: string | null
+          processing_status: string | null
+          raw_text: string | null
+          source_id: string | null
+          title: string | null
+          total_chunks: number | null
+        }
+        Insert: {
+          chunk_index?: number | null
+          content_hash?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          ingested_at?: string | null
+          metadata?: Json | null
+          parent_document_id?: string | null
+          processed_at?: string | null
+          processing_status?: string | null
+          raw_text?: string | null
+          source_id?: string | null
+          title?: string | null
+          total_chunks?: number | null
+        }
+        Update: {
+          chunk_index?: number | null
+          content_hash?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          ingested_at?: string | null
+          metadata?: Json | null
+          parent_document_id?: string | null
+          processed_at?: string | null
+          processing_status?: string | null
+          raw_text?: string | null
+          source_id?: string | null
+          title?: string | null
+          total_chunks?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingested_documents_parent_document_id_fkey"
+            columns: ["parent_document_id"]
+            isOneToOne: false
+            referencedRelation: "ingested_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingested_documents_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      intelligence_config: {
+        Row: {
+          description: string | null
+          key: string
+          updated_at: string | null
+          updated_by: string | null
+          value: Json
+        }
+        Insert: {
+          description?: string | null
+          key: string
+          updated_at?: string | null
+          updated_by?: string | null
+          value: Json
+        }
+        Update: {
+          description?: string | null
+          key?: string
+          updated_at?: string | null
+          updated_by?: string | null
+          value?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "intelligence_config_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -1353,6 +1621,36 @@ export type Database = {
           },
         ]
       }
+      learning_profiles: {
+        Row: {
+          created_at: string | null
+          features: Json
+          id: string
+          last_updated: string | null
+          profile_type: string
+          sample_count: number | null
+          weight: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          features?: Json
+          id?: string
+          last_updated?: string | null
+          profile_type: string
+          sample_count?: number | null
+          weight?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          features?: Json
+          id?: string
+          last_updated?: string | null
+          profile_type?: string
+          sample_count?: number | null
+          weight?: number | null
+        }
+        Relationships: []
+      }
       monitoring_history: {
         Row: {
           created_at: string
@@ -1646,6 +1944,39 @@ export type Database = {
           },
         ]
       }
+      signal_documents: {
+        Row: {
+          created_at: string | null
+          document_id: string
+          signal_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          document_id: string
+          signal_id: string
+        }
+        Update: {
+          created_at?: string | null
+          document_id?: string
+          signal_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_documents_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "ingested_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_documents_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       signals: {
         Row: {
           auto_correlated_entities: string[] | null
@@ -1657,6 +1988,7 @@ export type Database = {
           correlation_confidence: number | null
           correlation_group_id: string | null
           created_at: string
+          description: string | null
           entity_tags: string[] | null
           id: string
           is_primary_signal: boolean | null
@@ -1668,9 +2000,13 @@ export type Database = {
           proximity: number | null
           raw_json: Json | null
           received_at: string
+          relevance_score: number | null
           severity: string | null
+          severity_score: number | null
+          signal_type: string | null
           source_id: string | null
           status: Database["public"]["Enums"]["signal_status"]
+          title: string | null
           updated_at: string
         }
         Insert: {
@@ -1683,6 +2019,7 @@ export type Database = {
           correlation_confidence?: number | null
           correlation_group_id?: string | null
           created_at?: string
+          description?: string | null
           entity_tags?: string[] | null
           id?: string
           is_primary_signal?: boolean | null
@@ -1694,9 +2031,13 @@ export type Database = {
           proximity?: number | null
           raw_json?: Json | null
           received_at?: string
+          relevance_score?: number | null
           severity?: string | null
+          severity_score?: number | null
+          signal_type?: string | null
           source_id?: string | null
           status?: Database["public"]["Enums"]["signal_status"]
+          title?: string | null
           updated_at?: string
         }
         Update: {
@@ -1709,6 +2050,7 @@ export type Database = {
           correlation_confidence?: number | null
           correlation_group_id?: string | null
           created_at?: string
+          description?: string | null
           entity_tags?: string[] | null
           id?: string
           is_primary_signal?: boolean | null
@@ -1720,9 +2062,13 @@ export type Database = {
           proximity?: number | null
           raw_json?: Json | null
           received_at?: string
+          relevance_score?: number | null
           severity?: string | null
+          severity_score?: number | null
+          signal_type?: string | null
           source_id?: string | null
           status?: Database["public"]["Enums"]["signal_status"]
+          title?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -1738,13 +2084,6 @@ export type Database = {
             columns: ["correlation_group_id"]
             isOneToOne: false
             referencedRelation: "signal_correlation_groups"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "signals_source_id_fkey"
-            columns: ["source_id"]
-            isOneToOne: false
-            referencedRelation: "sources"
             referencedColumns: ["id"]
           },
         ]
@@ -1783,46 +2122,41 @@ export type Database = {
           source_name?: string
           total_signals?: number | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "source_reliability_metrics_source_id_fkey"
-            columns: ["source_id"]
-            isOneToOne: true
-            referencedRelation: "sources"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       sources: {
         Row: {
-          config_json: Json | null
-          created_at: string
+          config: Json | null
+          created_at: string | null
+          error_message: string | null
           id: string
-          is_active: boolean
-          monitor_type: string | null
+          last_ingested_at: string | null
           name: string
+          status: string | null
           type: string
-          updated_at: string
+          updated_at: string | null
         }
         Insert: {
-          config_json?: Json | null
-          created_at?: string
+          config?: Json | null
+          created_at?: string | null
+          error_message?: string | null
           id?: string
-          is_active?: boolean
-          monitor_type?: string | null
+          last_ingested_at?: string | null
           name: string
+          status?: string | null
           type: string
-          updated_at?: string
+          updated_at?: string | null
         }
         Update: {
-          config_json?: Json | null
-          created_at?: string
+          config?: Json | null
+          created_at?: string | null
+          error_message?: string | null
           id?: string
-          is_active?: boolean
-          monitor_type?: string | null
+          last_ingested_at?: string | null
           name?: string
+          status?: string | null
           type?: string
-          updated_at?: string
+          updated_at?: string | null
         }
         Relationships: []
       }

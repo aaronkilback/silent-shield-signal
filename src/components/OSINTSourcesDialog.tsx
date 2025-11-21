@@ -43,7 +43,7 @@ export function OSINTSourcesDialog({ open, onOpenChange }: OSINTSourcesDialogPro
       const { data: dbSources, error } = await supabase
         .from('sources')
         .select('*')
-        .order('monitor_type', { ascending: true });
+        .order('type', { ascending: true });
 
       if (error) throw error;
 
@@ -56,20 +56,20 @@ export function OSINTSourcesDialog({ open, onOpenChange }: OSINTSourcesDialogPro
 
       // Map database sources to display format
       const mappedSources: OSINTSource[] = (dbSources || []).map(source => {
-        const configDesc = source.config_json as any;
+        const configDesc = source.config as any;
         const recentHistory = historyData?.find(h => 
-          h.source_name.toLowerCase().includes(source.monitor_type?.toLowerCase() || '')
+          h.source_name.toLowerCase().includes(source.type?.toLowerCase() || '')
         );
 
         return {
           name: source.name,
-          category: source.monitor_type 
-            ? source.monitor_type.replace('monitor-', '').replace(/-/g, ' ')
+          category: source.type 
+            ? source.type.replace(/_/g, ' ')
             : 'Uncategorized',
-          status: !source.is_active ? 'inactive' : 
+          status: source.status !== 'active' ? 'inactive' : 
                   recentHistory?.status === 'failed' ? 'error' : 'active',
-          lastError: recentHistory?.error_message || undefined,
-          lastRun: recentHistory?.scan_completed_at || undefined,
+          lastError: source.error_message || recentHistory?.error_message || undefined,
+          lastRun: source.last_ingested_at || recentHistory?.scan_completed_at || undefined,
           description: configDesc?.description || 'No description available'
         };
       });
