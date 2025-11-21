@@ -47,7 +47,7 @@ export const IncidentLocationMap = ({ location }: IncidentLocationMapProps) => {
 
       map.current = new mapboxgl.Map({
         container: mapContainer.current,
-        style: 'mapbox://styles/mapbox/dark-v11',
+        style: 'mapbox://styles/mapbox/satellite-streets-v12',
         zoom: 10,
         center: [coords.lng, coords.lat],
       });
