@@ -53,41 +53,70 @@ serve(async (req) => {
     const matches: EntityMatch[] = [];
     const potentialNewEntities: string[] = [];
 
-    // Common entity patterns
-    const personPattern = /\b([A-Z][a-z]+ [A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/g;
-    const orgPattern = /\b([A-Z][A-Za-z]+(?:\s+(?:Inc|Corp|LLC|Ltd|Company|Corporation|Group|Association|Organization)\.?))\b/gi;
-    const emailPattern = /\b([a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/g;
+    // Blacklist of common false positives
+    const blacklist = new Set([
+      // Common titles/words
+      'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
+      // Days/Months
+      'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+      'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august',
+      'september', 'october', 'november', 'december',
+      // Common names that are also words
+      'will', 'may', 'john doe', 'jane doe', 'test user',
+      // Generic terms
+      'unknown', 'anonymous', 'n/a', 'none', 'null', 'undefined'
+    ]);
+
+    // Common entity patterns (more restrictive)
+    const personPattern = /\b([A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})?)\b/g;
+    const orgPattern = /\b([A-Z][A-Za-z]{2,}(?:\s+(?:Inc|Corp|LLC|Ltd|Company|Corporation|Group|Association|Organization|Systems|Solutions|Technologies|Services)\.?))\b/gi;
+    const emailPattern = /\b([a-zA-Z0-9._-]{3,}@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/g;
     const phonePattern = /\b(\+?1?\s*\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})\b/g;
     const domainPattern = /\b((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,})\b/gi;
 
     // Extract potential entities from text
     const extractedNames = new Set<string>();
     
-    // Extract person names
+    // Extract person names (minimum 3 chars per name part)
     let match;
     while ((match = personPattern.exec(text)) !== null) {
-      extractedNames.add(match[1]);
+      const name = match[1];
+      const nameLower = name.toLowerCase();
+      
+      // Skip if in blacklist or too generic
+      if (!blacklist.has(nameLower) && 
+          !nameLower.includes('test') && 
+          !nameLower.includes('example') &&
+          name.length >= 5) {
+        extractedNames.add(name);
+      }
     }
     
     // Extract organizations
     while ((match = orgPattern.exec(text)) !== null) {
-      extractedNames.add(match[1]);
+      const org = match[1];
+      if (org.length >= 5 && !blacklist.has(org.toLowerCase())) {
+        extractedNames.add(org);
+      }
     }
 
-    // Extract emails
+    // Extract emails (minimum 5 chars before @)
     while ((match = emailPattern.exec(text)) !== null) {
       extractedNames.add(match[1]);
     }
 
-    // Extract domains
+    // Extract domains (skip common public domains)
+    const publicDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'example.com', 'test.com'];
     while ((match = domainPattern.exec(textLower)) !== null) {
       const domain = match[1];
-      if (!domain.includes('@') && domain.split('.').length >= 2) {
+      if (!domain.includes('@') && 
+          domain.split('.').length >= 2 && 
+          !publicDomains.includes(domain)) {
         extractedNames.add(domain);
       }
     }
 
-    console.log(`Extracted ${extractedNames.size} potential entity names`);
+    console.log(`Extracted ${extractedNames.size} potential entity names after filtering`);
 
     // Match against existing entities
     if (entities && entities.length > 0) {
@@ -125,23 +154,35 @@ serve(async (req) => {
     }
 
     // Remaining extracted names are potential new entities
-    const remainingNames = Array.from(extractedNames).slice(0, 10); // Limit to 10 suggestions
+    // Only keep high confidence matches (appeared multiple times or in key positions)
+    const remainingNames = Array.from(extractedNames).slice(0, 5); // Reduced to 5 suggestions max
+
+    // Minimum confidence threshold for auto-creation
+    const MIN_AUTO_CREATE_CONFIDENCE = 0.8;
 
     // Determine entity type based on pattern
     const suggestions = [];
     for (const name of remainingNames) {
       let suggestedType = 'other';
+      let confidence = 0.7; // Base confidence
       
       if (emailPattern.test(name)) {
         suggestedType = 'email';
+        confidence = 0.9; // High confidence for emails
       } else if (phonePattern.test(name)) {
         suggestedType = 'phone';
+        confidence = 0.9; // High confidence for phones
       } else if (domainPattern.test(name) && !name.includes('@')) {
         suggestedType = 'domain';
-      } else if (/\b(?:Inc|Corp|LLC|Ltd|Company)\b/i.test(name)) {
+        confidence = 0.85;
+      } else if (/\b(?:Inc|Corp|LLC|Ltd|Company|Corporation|Group|Systems|Solutions)\b/i.test(name)) {
         suggestedType = 'organization';
-      } else if (/^[A-Z][a-z]+ [A-Z][a-z]+/.test(name)) {
+        confidence = 0.85;
+      } else if (/^[A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}/.test(name)) {
         suggestedType = 'person';
+        // Check if name appears multiple times in text
+        const occurrences = (text.match(new RegExp(name, 'g')) || []).length;
+        confidence = Math.min(0.7 + (occurrences * 0.1), 0.95);
       }
 
       // Extract context around the mention
@@ -150,7 +191,8 @@ serve(async (req) => {
       const contextEnd = Math.min(text.length, nameIndex + name.length + 100);
       const context = text.substring(contextStart, contextEnd);
 
-      if (autoApprove) {
+      // Only auto-approve if confidence is high enough
+      if (autoApprove && confidence >= MIN_AUTO_CREATE_CONFIDENCE) {
         // Create entity immediately
         const { data: newEntity, error: createError } = await supabase
           .from('entities')
@@ -158,7 +200,7 @@ serve(async (req) => {
             name: name,
             type: suggestedType,
             is_active: true,
-            description: `Auto-created from ${sourceType}`,
+            description: `Auto-created from ${sourceType} (confidence: ${confidence.toFixed(2)})`,
           })
           .select()
           .single();
@@ -167,13 +209,13 @@ serve(async (req) => {
           matches.push({
             entityId: newEntity.id,
             entityName: newEntity.name,
-            confidence: 0.7,
+            confidence: confidence,
             matchedOn: [name]
           });
-          console.log(`Auto-created entity: ${name}`);
+          console.log(`Auto-created high-confidence entity: ${name} (${confidence.toFixed(2)})`);
         }
       } else {
-        // Create suggestion for approval
+        // Create suggestion for approval (always create suggestions for manual review)
         const { data: suggestion, error: suggestionError } = await supabase
           .from('entity_suggestions')
           .insert({
@@ -181,7 +223,7 @@ serve(async (req) => {
             suggested_type: suggestedType,
             source_type: sourceType,
             source_id: sourceId,
-            confidence: 0.7,
+            confidence: confidence,
             context: context,
             status: 'pending'
           })
@@ -190,7 +232,7 @@ serve(async (req) => {
 
         if (!suggestionError && suggestion) {
           suggestions.push(suggestion);
-          console.log(`Created suggestion for: ${name}`);
+          console.log(`Created suggestion for: ${name} (confidence: ${confidence.toFixed(2)})`);
         }
       }
     }
