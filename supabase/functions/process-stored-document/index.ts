@@ -33,6 +33,18 @@ serve(async (req) => {
       throw new Error('LOVABLE_API_KEY not configured');
     }
 
+    // Get feedback-based learning context
+    let learningContext: any = { adjustedThreshold: 0.3, avoidKeywords: [], guidance: '' };
+    try {
+      const { data: learningData } = await supabase.functions.invoke('adaptive-confidence-adjuster');
+      if (learningData) {
+        learningContext = learningData;
+        console.log(`Using adjusted threshold: ${learningContext.adjustedThreshold}, FP rate: ${learningContext.falsePositiveRate}`);
+      }
+    } catch (e) {
+      console.warn('Could not fetch learning context, using defaults:', e);
+    }
+
     // Get document details
     const { data: document, error: docError } = await supabase
       .from('archival_documents')
@@ -259,19 +271,33 @@ serve(async (req) => {
     
     console.log(`Loaded ${existingEntities?.length || 0} existing entities for matching`);
 
-    // Fetch learning examples from approved suggestions (for continuous improvement)
-    const { data: learningExamples } = await supabase
+    // Fetch learning context from adaptive adjuster
+    let adjustedThreshold = 0.3;
+    let fpPatterns: string[] = [];
+    let learningGuidance = '';
+    
+    try {
+      const { data: adjusterData } = await supabase.functions.invoke('adaptive-confidence-adjuster');
+      if (adjusterData?.success) {
+        adjustedThreshold = adjusterData.recommendations.recommended_threshold;
+        learningGuidance = adjusterData.recommendations.reason;
+        console.log(`Using adjusted threshold: ${adjustedThreshold} - ${learningGuidance}`);
+      }
+    } catch (e) {
+      console.warn('Could not fetch adaptive threshold, using default:', e);
+    }
+
+    // Get false positive examples to teach AI what NOT to extract
+    const { data: rejectedSuggestions } = await supabase
       .from('entity_suggestions')
       .select('suggested_name, suggested_type, context, confidence')
-      .eq('status', 'approved')
+      .eq('status', 'rejected')
       .order('created_at', { ascending: false })
-      .limit(20); // Get top 20 successful extractions
+      .limit(15);
 
-    const successExamples = (learningExamples || []).slice(0, 10).map(ex => 
-      `✓ ${ex.suggested_name} (${ex.suggested_type}) - "${ex.context}" [confidence: ${(ex.confidence * 100).toFixed(0)}%]`
+    const fpExamples = (rejectedSuggestions || []).map(ex => 
+      `✗ REJECTED: "${ex.suggested_name}" (${ex.suggested_type}) from context: "${ex.context?.substring(0, 100)}"`
     ).join('\n');
-
-    console.log(`Loaded ${learningExamples?.length || 0} learning examples from approved suggestions`);
 
     const entitySuggestions: Array<{
       suggested_name: string;
@@ -328,15 +354,19 @@ serve(async (req) => {
             role: 'system',
             content: `You are an expert entity extraction system for security intelligence and threat analysis. Extract security-relevant entities from documents.
 
+ADAPTIVE LEARNING FEEDBACK:
+${learningGuidance}
+Current confidence threshold: ${adjustedThreshold}
+
 KNOWN ENTITIES IN DATABASE:
 ${entityContext}
 
-LEARNING FROM SUCCESSFUL EXTRACTIONS:
-${successExamples || 'Be thorough and accurate in extraction.'}
+EXAMPLES OF FALSE POSITIVES TO AVOID:
+${fpExamples || 'No false positive patterns identified yet.'}
 
 WHAT TO EXTRACT:
 1. Organizations: Companies, government agencies, threat groups, security vendors
-2. Persons: Named individuals, executives, threat actors, security personnel
+2. Persons: Named individuals, executives, threat actors, security personnel  
 3. Locations: Cities, countries, facilities, addresses
 4. Infrastructure: Systems, networks, servers, databases, cloud services
 5. Domains/URLs/IPs: Web addresses, domains, IP addresses mentioned
@@ -349,13 +379,13 @@ DO NOT EXTRACT:
 - Software/application names unless they're attack targets (skip "Excel", "Word", etc.)
 - Common job titles without names
 - The document filename itself
+- Patterns similar to the FALSE POSITIVES examples above
 
 CONFIDENCE GUIDELINES:
-- 0.7-1.0: Clearly identified entity with full context
-- 0.5-0.69: Entity mentioned with some context
-- 0.3-0.49: Possible entity but uncertain
+- Above ${adjustedThreshold}: High confidence, specific entity with clear context
+- Below ${adjustedThreshold}: DO NOT suggest - insufficient evidence
 
-BE THOROUGH: Extract all relevant security entities even if mentioned once, but assign appropriate confidence based on context.`
+BE SELECTIVE: Only extract entities with confidence >= ${adjustedThreshold}. Quality over quantity.`
           },
           {
             role: 'user',
@@ -372,9 +402,7 @@ Extract:
 - All threat actors or threat groups
 - All security vendors or tools mentioned
 
-Include entities even if mentioned only once, but adjust confidence accordingly.
-
-For relationships, note when entities appear together in context.`
+CRITICAL: Only extract entities where confidence >= ${adjustedThreshold}. Skip low-confidence matches and patterns similar to our false positive examples.`
           }
         ],
         tools: [
@@ -524,9 +552,12 @@ For relationships, note when entities appear together in context.`
         (existingSuggestions || []).map(s => `${s.suggested_name.toLowerCase()}:${s.suggested_type}`)
       );
 
-      // Convert to entity suggestions with matching (lowered threshold to 0.3 for maximum recall)
+      // Convert to entity suggestions using adaptive threshold
       for (const entity of filteredEntities) {
-        if (entity.confidence < 0.3) continue;
+        if (entity.confidence < adjustedThreshold) {
+          console.log(`Skipping low confidence entity: ${entity.name} (${entity.confidence} < ${adjustedThreshold})`);
+          continue;
+        }
         
         const key = `${entity.name.toLowerCase()}:${entity.type}`;
         if (existingSet.has(key)) {
