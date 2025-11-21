@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +34,29 @@ export const ReprocessDocuments = () => {
 
   const documents = processAll ? allDocuments : unprocessedDocs;
 
+  // Listen for document updates in real-time
+  useEffect(() => {
+    const channel = supabase
+      .channel('archival-docs-updates')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'archival_documents'
+        },
+        () => {
+          // Refetch when documents are updated
+          refetch();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [refetch]);
+
   const reprocessAll = async () => {
     if (!documents?.length) {
       toast.error('No documents to process');
@@ -44,65 +67,73 @@ export const ReprocessDocuments = () => {
     setProcessedCount(0);
     
     const total = documents.length;
-    let successful = 0;
-    let failed = 0;
 
-    toast.info(`Starting entity processing for ${total} documents...`);
+    toast.success(`🚀 Processing ${total} documents in background. You can navigate to other pages - we'll notify you when complete!`, {
+      duration: 5000
+    });
 
-    // If reprocessing all, clear existing suggestions from these documents
-    if (processAll && documents.length > 0) {
-      console.log('Clearing existing entity suggestions...');
-      const docIds = documents.map(d => d.id);
-      await supabase
-        .from('entity_suggestions')
-        .delete()
-        .in('source_id', docIds)
-        .eq('source_type', 'archival_document');
-    }
+    // Run processing in background (non-blocking)
+    (async () => {
+      let successful = 0;
+      let failed = 0;
 
-    for (const doc of documents) {
-      try {
-        console.log(`Processing document ${processedCount + 1}/${total}: ${doc.filename}`);
-        
-        const { data, error } = await supabase.functions.invoke('process-stored-document', {
-          body: { documentId: doc.id }
-        });
-
-        if (error) {
-          console.error(`Failed to process ${doc.filename}:`, error);
-          failed++;
-        } else if (data?.error) {
-          console.error(`Processing error for ${doc.filename}:`, data.error);
-          if (!data.error.includes('not found')) {
-            console.error(`Error details: ${data.error}`);
-          }
-          failed++;
-        } else {
-          successful++;
-        }
-        
-        setProcessedCount(prev => prev + 1);
-
-        // Small delay between requests
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (error: any) {
-        console.error(`Error processing ${doc.filename}:`, error);
-        failed++;
-        setProcessedCount(prev => prev + 1);
+      // If reprocessing all, clear existing suggestions from these documents
+      if (processAll && documents.length > 0) {
+        console.log('Clearing existing entity suggestions...');
+        const docIds = documents.map(d => d.id);
+        await supabase
+          .from('entity_suggestions')
+          .delete()
+          .in('source_id', docIds)
+          .eq('source_type', 'archival_document');
       }
-    }
 
-    setProcessing(false);
-    
-    if (successful > 0) {
-      toast.success(
-        `✅ Successfully processed ${successful}/${total} documents!${failed > 0 ? ` (${failed} failed)` : ''}\n\n📋 Entity suggestions created - go to Entity Management to review and approve them.`,
-        { duration: 8000 }
-      );
-      refetch();
-    } else {
-      toast.error(`❌ Failed to process documents. Check console for details.`);
-    }
+      for (const doc of documents) {
+        try {
+          console.log(`Processing document ${successful + failed + 1}/${total}: ${doc.filename}`);
+          
+          const { data, error } = await supabase.functions.invoke('process-stored-document', {
+            body: { documentId: doc.id }
+          });
+
+          if (error) {
+            console.error(`Failed to process ${doc.filename}:`, error);
+            failed++;
+          } else if (data?.error) {
+            console.error(`Processing error for ${doc.filename}:`, data.error);
+            if (!data.error.includes('not found')) {
+              console.error(`Error details: ${data.error}`);
+            }
+            failed++;
+          } else {
+            successful++;
+          }
+          
+          setProcessedCount(prev => prev + 1);
+
+          // Small delay between requests
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (error: any) {
+          console.error(`Error processing ${doc.filename}:`, error);
+          failed++;
+          setProcessedCount(prev => prev + 1);
+        }
+      }
+
+      setProcessing(false);
+      
+      if (successful > 0) {
+        toast.success(
+          `✅ Processing complete! ${successful}/${total} documents processed successfully${failed > 0 ? ` (${failed} failed)` : ''}\n\n📋 Go to Entity Management to review and approve entity suggestions.`,
+          { duration: 10000 }
+        );
+        refetch();
+      } else {
+        toast.error(`❌ Processing failed for all documents. Check console for details.`, {
+          duration: 8000
+        });
+      }
+    })();
   };
 
   return (
