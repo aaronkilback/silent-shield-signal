@@ -152,6 +152,20 @@ serve(async (req) => {
     
     console.log(`Loaded ${existingEntities?.length || 0} existing entities for matching`);
 
+    // Fetch learning examples from approved suggestions (for continuous improvement)
+    const { data: learningExamples } = await supabase
+      .from('entity_suggestions')
+      .select('suggested_name, suggested_type, context, confidence')
+      .eq('status', 'approved')
+      .order('created_at', { ascending: false })
+      .limit(20); // Get top 20 successful extractions
+
+    const successExamples = (learningExamples || []).slice(0, 10).map(ex => 
+      `✓ ${ex.suggested_name} (${ex.suggested_type}) - "${ex.context}" [confidence: ${(ex.confidence * 100).toFixed(0)}%]`
+    ).join('\n');
+
+    console.log(`Loaded ${learningExamples?.length || 0} learning examples from approved suggestions`);
+
     const entitySuggestions: Array<{
       suggested_name: string;
       suggested_type: string;
@@ -209,6 +223,15 @@ serve(async (req) => {
 
 KNOWN ENTITIES IN DATABASE:
 ${entityContext}
+
+LEARNING FROM SUCCESSFUL EXTRACTIONS:
+Here are examples of entities that were previously extracted and approved by analysts:
+${successExamples || 'No learning examples yet - be thorough and accurate!'}
+
+Learn from these patterns:
+- Notice what types of entities are commonly approved
+- Match the confidence levels of successful extractions
+- Use similar context descriptions
 
 Extract these entity types:
 - Organizations (companies, government agencies, threat actors)
