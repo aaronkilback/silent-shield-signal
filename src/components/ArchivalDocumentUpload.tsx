@@ -29,21 +29,16 @@ export const ArchivalDocumentUpload = () => {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []);
     
-    // New limits: 3MB for edge function processing, 50MB for direct storage
-    const EDGE_FUNCTION_LIMIT = 3 * 1024 * 1024; // 3MB
     const STORAGE_LIMIT = 50 * 1024 * 1024; // 50MB
     
     const tooLargeFiles: Array<{name: string, size: number}> = [];
-    const largeFiles: File[] = []; // 3-50MB: direct storage
-    const smallFiles: File[] = []; // <3MB: edge function processing
+    const validFiles: File[] = [];
     
     selectedFiles.forEach(file => {
       if (file.size > STORAGE_LIMIT) {
         tooLargeFiles.push({ name: file.name, size: file.size });
-      } else if (file.size > EDGE_FUNCTION_LIMIT) {
-        largeFiles.push(file);
       } else {
-        smallFiles.push(file);
+        validFiles.push(file);
       }
     });
     
@@ -58,8 +53,6 @@ export const ArchivalDocumentUpload = () => {
       );
     }
     
-    const validFiles = [...smallFiles, ...largeFiles];
-    
     if (validFiles.length === 0) {
       e.target.value = "";
       return;
@@ -73,15 +66,8 @@ export const ArchivalDocumentUpload = () => {
     
     setFiles(prev => [...prev, ...newFiles]);
     
-    if (largeFiles.length > 0) {
-      toast.info(
-        `Added ${largeFiles.length} large file(s) (3-50MB) - will use direct storage upload`,
-        { duration: 5000 }
-      );
-    }
-    
-    if (tooLargeFiles.length > 0 && validFiles.length > 0) {
-      toast.success(`Added ${validFiles.length} valid file(s)`);
+    if (validFiles.length > 0) {
+      toast.success(`Added ${validFiles.length} file(s) for upload`);
     }
     
     e.target.value = "";
@@ -89,18 +75,6 @@ export const ArchivalDocumentUpload = () => {
 
   const removeFile = (id: string) => {
     setFiles(prev => prev.filter(f => f.id !== id));
-  };
-
-  const processFileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = (reader.result as string).split(',')[1];
-        resolve(base64);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
   };
 
   const handleBulkUpload = async () => {
@@ -112,135 +86,80 @@ export const ArchivalDocumentUpload = () => {
     setUploading(true);
     const tagArray = tags.split(',').map(t => t.trim()).filter(t => t);
     
-    // Process 1 file at a time with 2 second delays
+    // Process 1 file at a time with 1 second delays
     const BATCH_SIZE = 1;
-    const DELAY_MS = 2000;
-    const EDGE_FUNCTION_LIMIT = 3 * 1024 * 1024; // 3MB
+    const DELAY_MS = 1000;
     
     for (let i = 0; i < files.length; i += BATCH_SIZE) {
       const batch = files.slice(i, i + BATCH_SIZE);
-      const file = batch[0]; // Single file processing
+      const file = batch[0];
       
       console.log(`Processing file ${i + 1}/${files.length}: ${file.file.name} (${(file.file.size / (1024 * 1024)).toFixed(2)}MB)`);
       setProgress(((i + 1) / files.length) * 100);
       
-      // Update status to uploading
       setFiles(prev => prev.map(f => 
         f.id === file.id ? { ...f, status: 'uploading' as const } : f
       ));
 
       try {
-        const isLargeFile = file.file.size > EDGE_FUNCTION_LIMIT;
+        // Direct storage upload for ALL files
+        const timestamp = Date.now();
+        const storagePath = `${clientId || 'unassigned'}/${timestamp}_${file.file.name}`;
         
-        if (isLargeFile) {
-          // Direct storage upload for large files (3-50MB)
-          console.log(`Large file detected - using direct storage upload`);
-          
-          const timestamp = Date.now();
-          const storagePath = `${clientId || 'unassigned'}/${timestamp}_${file.file.name}`;
-          
-          // Upload directly to storage
-          const { error: uploadError } = await supabase
-            .storage
-            .from('archival-documents')
-            .upload(storagePath, file.file, {
-              contentType: file.file.type,
-              upsert: false
-            });
+        // Upload directly to storage
+        const { error: uploadError } = await supabase
+          .storage
+          .from('archival-documents')
+          .upload(storagePath, file.file, {
+            contentType: file.file.type,
+            upsert: false
+          });
 
-          if (uploadError) {
-            throw new Error(`Storage upload failed: ${uploadError.message}`);
-          }
-
-          console.log(`Uploaded to storage: ${storagePath}`);
-
-          // Create database record via lightweight edge function
-          const { data, error } = await supabase.functions.invoke(
-            'create-archival-record',
-            {
-              body: {
-                filename: file.file.name,
-                storagePath: storagePath,
-                fileSize: file.file.size,
-                mimeType: file.file.type,
-                tags: tagArray,
-                clientId: clientId || null,
-                userId: user?.id || null,
-                dateOfDocument: null
-              }
-            }
-          );
-
-          if (error) {
-            throw new Error(error.message || 'Failed to create record');
-          }
-
-          if (data?.isDuplicate) {
-            // Delete the uploaded file since it's a duplicate
-            await supabase.storage.from('archival-documents').remove([storagePath]);
-            throw new Error(data.error || 'Duplicate file');
-          }
-
-          // Trigger background entity processing for large files
-          if (data?.documentId) {
-            console.log(`Triggering entity processing for document: ${data.documentId}`);
-            supabase.functions.invoke('process-stored-document', {
-              body: { documentId: data.documentId }
-            }).catch(err => console.error('Background entity processing error:', err));
-          }
-
-          setFiles(prev => prev.map(f => 
-            f.id === file.id ? { ...f, status: 'success' as const } : f
-          ));
-
-          console.log(`Successfully processed large file: ${file.file.name}`);
-          
-        } else {
-          // Small file - use edge function processing for entity extraction
-          console.log(`Small file - using edge function processing`);
-          
-          const base64 = await processFileToBase64(file.file);
-          
-          const { data, error } = await supabase.functions.invoke(
-            'process-archival-documents',
-            {
-              body: {
-                files: [{
-                  file: base64,
-                  filename: file.file.name,
-                  mimeType: file.file.type,
-                  dateOfDocument: null
-                }],
-                tags: tagArray,
-                clientId: clientId || null,
-                userId: user?.id || null
-              }
-            }
-          );
-
-          if (error) {
-            throw new Error(error.message || 'Upload failed');
-          }
-
-          if (data?.results && data.results.length > 0) {
-            setFiles(prev => prev.map(f => 
-              f.id === file.id ? { ...f, status: 'success' as const } : f
-            ));
-            
-            if (data.entitySuggestions && data.entitySuggestions.length > 0) {
-              toast.success(
-                `${data.entitySuggestions.length} entity suggestions created - review them in Entity Management`,
-                { duration: 7000 }
-              );
-            }
-          }
-
-          if (data?.errors && data.errors.length > 0) {
-            throw new Error(data.errors[0].error);
-          }
-
-          console.log(`Successfully processed small file: ${file.file.name}`);
+        if (uploadError) {
+          throw new Error(`Storage upload failed: ${uploadError.message}`);
         }
+
+        console.log(`Uploaded to storage: ${storagePath}`);
+
+        // Create database record
+        const { data, error } = await supabase.functions.invoke(
+          'create-archival-record',
+          {
+            body: {
+              filename: file.file.name,
+              storagePath: storagePath,
+              fileSize: file.file.size,
+              mimeType: file.file.type,
+              tags: tagArray,
+              clientId: clientId || null,
+              userId: user?.id || null,
+              dateOfDocument: null
+            }
+          }
+        );
+
+        if (error) {
+          throw new Error(error.message || 'Failed to create record');
+        }
+
+        if (data?.isDuplicate) {
+          await supabase.storage.from('archival-documents').remove([storagePath]);
+          throw new Error(data.error || 'Duplicate file');
+        }
+
+        // Trigger background entity processing
+        if (data?.documentId) {
+          console.log(`Triggering entity processing for document: ${data.documentId}`);
+          supabase.functions.invoke('process-stored-document', {
+            body: { documentId: data.documentId }
+          }).catch(err => console.error('Background entity processing error:', err));
+        }
+
+        setFiles(prev => prev.map(f => 
+          f.id === file.id ? { ...f, status: 'success' as const } : f
+        ));
+
+        console.log(`Successfully processed: ${file.file.name}`);
         
       } catch (error: any) {
         console.error('Upload error:', error);
@@ -299,7 +218,7 @@ export const ArchivalDocumentUpload = () => {
         </div>
         <CardDescription>
           Upload historical documents for reference. <strong className="text-primary">Maximum: 50MB per file.</strong>
-          <br />Files under 3MB get full processing with entity extraction. Files 3-50MB use direct storage upload.
+          <br />All files uploaded directly to secure storage. Entity extraction runs in the background.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -345,13 +264,11 @@ export const ArchivalDocumentUpload = () => {
             )}
             <div className="bg-muted/50 border border-primary/20 rounded-lg p-3 mb-2">
               <p className="text-sm text-muted-foreground">
-                📁 <strong>File Size Limits:</strong>
+                📁 <strong>File Size Limit:</strong> Maximum 50MB per file
                 <br />
-                • <span className="text-primary font-semibold">Under 3MB:</span> Full processing with entity extraction
+                • All files use direct storage upload for reliability
                 <br />
-                • <span className="text-blue-600 font-semibold">3-50MB:</span> Direct storage upload (metadata only)
-                <br />
-                • <span className="text-destructive font-semibold">Over 50MB:</span> Not supported
+                • Entity extraction happens in the background after upload
               </p>
             </div>
             <ScrollArea className="h-[200px] border rounded-md p-2">
@@ -373,12 +290,8 @@ export const ArchivalDocumentUpload = () => {
                         <div className="text-sm truncate font-medium">{f.file.name}</div>
                         <div className="text-xs text-muted-foreground">
                           {(f.file.size / (1024 * 1024)).toFixed(2)} MB
-                          {f.file.size > 50 * 1024 * 1024 ? (
+                          {f.file.size > 50 * 1024 * 1024 && (
                             <span className="text-destructive font-semibold ml-1">- TOO LARGE!</span>
-                          ) : f.file.size > 3 * 1024 * 1024 ? (
-                            <span className="text-blue-600 font-semibold ml-1">- Direct Upload</span>
-                          ) : (
-                            <span className="text-primary font-semibold ml-1">- Full Processing</span>
                           )}
                         </div>
                         {f.error && (
