@@ -126,30 +126,70 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
           const flightSegments = parsed.segments?.filter((s: any) => s.type === "flight") || [];
           const hotelSegments = parsed.segments?.filter((s: any) => s.type === "hotel") || [];
           
-          // Determine trip type based on origin/destination
+          console.log("Parsed data:", parsed);
+          console.log("Flight segments:", flightSegments);
+          console.log("Hotel segments:", hotelSegments);
+          
+          // Determine trip type and locations
           let tripType = "international";
+          let originCity = "";
+          let originCountry = "";
+          let destinationCity = "";
+          let destinationCountry = "";
+          
           if (flightSegments.length > 0) {
             const firstFlight = flightSegments[0];
             const lastFlight = flightSegments[flightSegments.length - 1];
             
-            // If origin and destination airports are both Canadian, it's domestic
+            // Origin is where the trip starts
+            originCity = firstFlight.origin_city || "";
+            
+            // Destination is where they're staying (hotel location or middle flight destination)
+            if (hotelSegments.length > 0 && hotelSegments[0].hotel_address) {
+              // Try to extract city from hotel or use the destination before hotel check-in
+              const hotelSegment = hotelSegments[0];
+              // Find the flight that arrives at the hotel location
+              const arrivalFlight = flightSegments.find((f: any) => 
+                f.end_datetime && hotelSegment.start_datetime &&
+                f.end_datetime <= hotelSegment.start_datetime
+              );
+              if (arrivalFlight) {
+                destinationCity = arrivalFlight.destination_city || "";
+              }
+            }
+            
+            // If still no destination, use last flight's destination
+            if (!destinationCity) {
+              destinationCity = lastFlight.destination_city || "";
+            }
+            
+            // Determine if domestic based on airport codes
             const canadianAirports = ["YYC", "YVR", "YYZ", "YUL", "YOW", "YHZ", "YWG", "YEG"];
             if (canadianAirports.includes(firstFlight.origin_airport_code) && 
                 canadianAirports.includes(lastFlight.destination_airport_code)) {
               tripType = "domestic";
+              originCountry = "Canada";
+              destinationCountry = "Canada";
+            } else {
+              tripType = "international";
+              // Try to infer countries from airport codes
+              if (canadianAirports.includes(firstFlight.origin_airport_code)) {
+                originCountry = "Canada";
+              }
+              // For international trips, try to determine destination country
+              if (destinationCity.toLowerCase().includes("hong kong")) {
+                destinationCountry = "Hong Kong";
+              } else if (destinationCity.toLowerCase().includes("kuala lumpur")) {
+                destinationCountry = "Malaysia";
+              }
             }
-            
-            // Fill origin/destination from flights
-            (form.elements.namedItem("origin_city") as HTMLInputElement).value = 
-              firstFlight.origin_city || "";
-            (form.elements.namedItem("origin_country") as HTMLInputElement).value = 
-              tripType === "domestic" ? "Canada" : "";
-            (form.elements.namedItem("destination_city") as HTMLInputElement).value = 
-              firstFlight.destination_city || "";
-            (form.elements.namedItem("destination_country") as HTMLInputElement).value = 
-              tripType === "domestic" ? "Canada" : "";
           }
           
+          // Fill form fields
+          (form.elements.namedItem("origin_city") as HTMLInputElement).value = originCity;
+          (form.elements.namedItem("origin_country") as HTMLInputElement).value = originCountry;
+          (form.elements.namedItem("destination_city") as HTMLInputElement).value = destinationCity;
+          (form.elements.namedItem("destination_country") as HTMLInputElement).value = destinationCountry;
           (form.elements.namedItem("trip_type") as HTMLSelectElement).value = tripType;
           
           // Format dates for datetime-local input (YYYY-MM-DDTHH:MM)
