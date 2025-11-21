@@ -20,7 +20,6 @@ import { format } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import { parseGoogleMapsUrl, formatLocationFromUrl } from "@/lib/locationUtils";
 
 const InvestigationDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -1168,23 +1167,11 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     value={newLocationName}
                     onChange={(e) => setNewLocationName(e.target.value)}
                   />
-                  <div className="relative">
-                    <Input 
-                      placeholder="Address or Google Maps link"
-                      value={newLocationAddress}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        const parsed = parseGoogleMapsUrl(value);
-                        if (parsed) {
-                          const formatted = formatLocationFromUrl(parsed);
-                          setNewLocationAddress(formatted);
-                        } else {
-                          setNewLocationAddress(value);
-                        }
-                      }}
-                    />
-                    <MapPin className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  </div>
+                  <Input 
+                    placeholder="Address"
+                    value={newLocationAddress}
+                    onChange={(e) => setNewLocationAddress(e.target.value)}
+                  />
                   <div className="flex gap-2">
                     <Input 
                       placeholder="Description"

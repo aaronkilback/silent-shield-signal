@@ -9,8 +9,6 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { parseGoogleMapsUrl, formatLocationFromUrl } from "@/lib/locationUtils";
-import { MapPin } from "lucide-react";
 
 interface CreateEntityDialogProps {
   open: boolean;
@@ -389,29 +387,14 @@ export const CreateEntityDialog = ({
             {formData.active_monitoring_enabled && (
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="current_location" className="flex items-center gap-2">
-                    Current Location *
-                    <span className="text-xs text-muted-foreground font-normal">(accepts Google Maps links)</span>
-                  </Label>
-                  <div className="relative">
-                    <Input
-                      id="current_location"
-                      value={formData.current_location}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        const parsed = parseGoogleMapsUrl(value);
-                        if (parsed) {
-                          const formatted = formatLocationFromUrl(parsed);
-                          setFormData({ ...formData, current_location: formatted });
-                        } else {
-                          setFormData({ ...formData, current_location: value });
-                        }
-                      }}
-                      placeholder="e.g., Vancouver, BC or Google Maps link"
-                      required={formData.active_monitoring_enabled}
-                    />
-                    <MapPin className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  </div>
+                  <Label htmlFor="current_location">Current Location *</Label>
+                  <Input
+                    id="current_location"
+                    value={formData.current_location}
+                    onChange={(e) => setFormData({ ...formData, current_location: e.target.value })}
+                    placeholder="e.g., Vancouver, BC"
+                    required={formData.active_monitoring_enabled}
+                  />
                 </div>
 
                 <div className="space-y-2">
