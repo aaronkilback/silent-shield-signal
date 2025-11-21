@@ -84,13 +84,22 @@ serve(async (req) => {
       const arrayBuffer = await fileData.slice(0, 100 * 1024).arrayBuffer();
       textContent = new TextDecoder().decode(arrayBuffer);
     } else if (document.file_type === 'application/pdf') {
-      // For PDFs, we'll just use filename and any existing content
-      textContent = document.filename + ' ' + (document.content_text || '');
+      // For PDFs, extract first 50KB of content
+      const arrayBuffer = await fileData.slice(0, 50 * 1024).arrayBuffer();
+      const rawText = new TextDecoder('utf-8', { fatal: false }).decode(arrayBuffer);
+      // Clean up PDF binary artifacts
+      textContent = rawText.replace(/[\x00-\x1F\x7F-\x9F]/g, ' ').replace(/\s+/g, ' ').trim();
     }
 
-    console.log(`Extracted ${textContent.length} characters`);
+    console.log(`Extracted ${textContent.length} characters for AI analysis`);
 
-    // Entity detection logic (same as process-archival-documents)
+    // Use AI to extract entities
+    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    if (!LOVABLE_API_KEY) {
+      console.error('LOVABLE_API_KEY not configured');
+      throw new Error('LOVABLE_API_KEY not configured');
+    }
+
     const entitySuggestions: Array<{
       suggested_name: string;
       suggested_type: string;
@@ -100,69 +109,156 @@ serve(async (req) => {
       source_type: string;
     }> = [];
 
-    const sampleText = textContent.slice(0, 500);
-    
-    // Email pattern
-    const emailPattern = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
-    const emails = sampleText.match(emailPattern) || [];
-    
-    for (const email of emails.slice(0, 5)) {
-      entitySuggestions.push({
-        suggested_name: email,
-        suggested_type: 'email',
-        confidence: 0.9,
-        context: `Found in document: ${document.filename}`,
-        source_id: documentId,
-        source_type: 'archival_document'
-      });
+    // Only process if we have meaningful content
+    if (textContent.length < 50) {
+      console.log('Document too short for entity extraction');
+      await supabase
+        .from('archival_documents')
+        .update({
+          metadata: {
+            ...document.metadata,
+            entities_processed: true,
+            processing_note: 'Document too short for analysis',
+            processed_at: new Date().toISOString()
+          }
+        })
+        .eq('id', documentId);
+      
+      return new Response(
+        JSON.stringify({ 
+          success: true,
+          documentId,
+          entitiesFound: 0,
+          note: 'Document too short'
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
-    // Phone pattern
-    const phonePattern = /\b(\+?1[-.]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g;
-    const phones = sampleText.match(phonePattern) || [];
-    
-    for (const phone of phones.slice(0, 5)) {
-      entitySuggestions.push({
-        suggested_name: phone,
-        suggested_type: 'phone',
-        confidence: 0.85,
-        context: `Found in document: ${document.filename}`,
-        source_id: documentId,
-        source_type: 'archival_document'
-      });
+    // Prepare text sample (max 8000 chars for AI processing)
+    const sampleText = textContent.slice(0, 8000);
+
+    console.log('Calling Lovable AI for entity extraction...');
+
+    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an expert entity extraction system for security and intelligence documents. Extract all relevant entities with high precision.'
+          },
+          {
+            role: 'user',
+            content: `Extract entities from this document: "${document.filename}"
+
+Document content:
+${sampleText}
+
+Find all relevant entities including:
+- Person names (executives, employees, suspects, witnesses)
+- Organizations (companies, agencies, groups)
+- Locations (addresses, cities, facilities)
+- Infrastructure (systems, networks, assets)
+- Threat indicators (malware, vulnerabilities, attack vectors)
+- Contact information (emails, phones)
+- Technical identifiers (domains, IPs, URLs)
+
+Provide context snippets showing where each entity appears.`
+          }
+        ],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "extract_entities",
+              description: "Extract entities from the document",
+              parameters: {
+                type: "object",
+                properties: {
+                  entities: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        name: { type: "string", description: "The entity name or identifier" },
+                        type: { 
+                          type: "string",
+                          enum: ["person", "organization", "location", "infrastructure", "domain", "ip_address", "email", "phone", "vehicle", "other"],
+                          description: "Entity type"
+                        },
+                        confidence: { 
+                          type: "number",
+                          minimum: 0,
+                          maximum: 1,
+                          description: "Confidence score 0-1"
+                        },
+                        context: { 
+                          type: "string",
+                          description: "Short snippet showing where this entity appears in the document"
+                        }
+                      },
+                      required: ["name", "type", "confidence", "context"]
+                    }
+                  }
+                },
+                required: ["entities"]
+              }
+            }
+          }
+        ],
+        tool_choice: { type: "function", function: { name: "extract_entities" } }
+      }),
+    });
+
+    if (!aiResponse.ok) {
+      const errorText = await aiResponse.text();
+      console.error('AI API error:', aiResponse.status, errorText);
+      
+      if (aiResponse.status === 429) {
+        throw new Error('Rate limit exceeded - please try again later');
+      }
+      if (aiResponse.status === 402) {
+        throw new Error('AI credits exhausted - please add credits to continue');
+      }
+      
+      throw new Error(`AI API error: ${aiResponse.status}`);
     }
 
-    // Organization pattern (capitalized words before Inc, Corp, LLC, Ltd)
-    const orgPattern = /\b([A-Z][a-z]+(?: [A-Z][a-z]+)*)\s+(Inc\.|Corp\.|LLC|Ltd\.?|Corporation|Company)\b/g;
-    const orgs = sampleText.match(orgPattern) || [];
-    
-    for (const org of orgs.slice(0, 5)) {
-      entitySuggestions.push({
-        suggested_name: org,
-        suggested_type: 'organization',
-        confidence: 0.8,
-        context: `Found in document: ${document.filename}`,
-        source_id: documentId,
-        source_type: 'archival_document'
-      });
+    const aiData = await aiResponse.json();
+    console.log('AI response received');
+
+    const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+    if (!toolCall) {
+      console.log('No tool call in AI response');
+    } else {
+      const extractedData = JSON.parse(toolCall.function.arguments);
+      const entities = extractedData.entities || [];
+      
+      console.log(`AI extracted ${entities.length} entities`);
+
+      // Convert to entity suggestions
+      for (const entity of entities) {
+        // Skip low confidence entities
+        if (entity.confidence < 0.6) continue;
+        
+        entitySuggestions.push({
+          suggested_name: entity.name,
+          suggested_type: entity.type,
+          confidence: entity.confidence,
+          context: entity.context || `Found in ${document.filename}`,
+          source_id: documentId,
+          source_type: 'archival_document'
+        });
+      }
     }
 
-    // Person pattern (Title + Name, e.g., "Mr. John Smith", "Dr. Jane Doe")
-    const personPattern = /\b(Mr\.|Mrs\.|Ms\.|Dr\.|Prof\.)\s+([A-Z][a-z]+\s+[A-Z][a-z]+)\b/g;
-    const persons = sampleText.match(personPattern) || [];
-    
-    for (const person of persons.slice(0, 5)) {
-      entitySuggestions.push({
-        suggested_name: person,
-        suggested_type: 'person',
-        confidence: 0.75,
-        context: `Found in document: ${document.filename}`,
-        source_id: documentId,
-        source_type: 'archival_document'
-      });
-    }
-
-    console.log(`Found ${entitySuggestions.length} potential entities`);
+    console.log(`Found ${entitySuggestions.length} high-confidence entities`);
 
     // Insert entity suggestions
     if (entitySuggestions.length > 0) {
