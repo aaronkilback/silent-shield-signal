@@ -207,95 +207,48 @@ export const SignalHistory = () => {
             <p>No signals found. Use the Test Signal Generator to create demo signals.</p>
           </div>
         ) : (
-          <ScrollArea className="h-[calc(100vh-28rem)] min-h-[300px] pr-4">
-            <div className="space-y-3">
+          <ScrollArea className="h-[400px] pr-4">
+            <div className="space-y-2">
               {signals.map((signal) => (
                 <div
                   key={signal.id}
-                  className={`p-4 border rounded-lg space-y-2 hover:bg-muted/50 transition-colors cursor-pointer ${!signal.is_read ? 'bg-primary/5 border-primary/20' : ''}`}
+                  className={`p-3 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer ${!signal.is_read ? 'bg-primary/5 border-primary/20' : ''}`}
                   onClick={() => handleSignalClick(signal)}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        {!signal.is_read && (
-                          <Badge variant="default" className="gap-1">
-                            <Eye className="w-3 h-3" />
-                            Unread
-                          </Badge>
-                        )}
-                        {signal.is_test && (
-                          <Badge variant="outline" className="gap-1">
-                            <Sparkles className="w-3 h-3" />
-                            Test
-                          </Badge>
-                        )}
-                        <Badge variant={getSeverityColor(signal.severity)}>
-                          {signal.severity}
-                        </Badge>
-                        <Badge variant={getStatusColor(signal.status)}>
-                          {signal.status}
-                        </Badge>
-                        <Badge variant="outline">{signal.category}</Badge>
-                        {signal.raw_json?.processing_method === 'ai' && (
-                          <Badge variant="secondary" className="gap-1">
-                            <AlertCircle className="w-3 h-3" />
-                            AI Analyzed
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-sm font-medium line-clamp-2">
-                        {signal.normalized_text}
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <div className="flex items-center gap-4">
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
-                      </span>
-                      {signal.sources && (
-                        <span>Source: {signal.sources.name}</span>
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {!signal.is_read && (
+                        <Badge variant="default" className="h-5 px-1.5 text-xs">New</Badge>
                       )}
-                      {signal.clients && (
-                        <span>Client: {signal.clients.name}</span>
-                      )}
+                      <Badge variant={getSeverityColor(signal.severity)} className="h-5 px-1.5 text-xs">
+                        {signal.severity}
+                      </Badge>
+                      <Badge variant="outline" className="h-5 px-1.5 text-xs">{signal.category}</Badge>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span>
-                        Confidence: {((signal.confidence || 0) * 100).toFixed(0)}%
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-muted-foreground">
+                        {((signal.confidence || 0) * 100).toFixed(0)}%
                       </span>
                       <SignalFalsePositiveButton
                         signalId={signal.id}
                         currentStatus={signal.status}
                         onSuccess={loadSignals}
                       />
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 gap-1"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          console.log('Viewing analysis for signal:', {
-                            id: signal.id,
-                            text: signal.normalized_text?.substring(0, 30),
-                            hasRawJson: !!signal.raw_json,
-                            hasAiAnalysis: !!signal.raw_json?.ai_analysis,
-                            processingMethod: signal.raw_json?.processing_method
-                          });
-                          // Force close then reopen to ensure fresh render
-                          setDialogOpen(false);
-                          setTimeout(() => {
-                            setSelectedSignal(signal);
-                            setDialogOpen(true);
-                          }, 50);
-                        }}
-                      >
-                        <Eye className="w-4 h-4" />
-                      </Button>
                     </div>
+                  </div>
+                  
+                  <p className="text-sm line-clamp-2 mb-2">
+                    {signal.normalized_text}
+                  </p>
+                  
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
+                    </span>
+                    {signal.sources && (
+                      <span>{signal.sources.name}</span>
+                    )}
                   </div>
                 </div>
               ))}
