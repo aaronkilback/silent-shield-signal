@@ -189,8 +189,8 @@ serve(async (req) => {
       );
     }
 
-    // Prepare text sample (max 8000 chars for AI processing)
-    const sampleText = textContent.slice(0, 8000);
+    // Prepare text sample (max 20000 chars for AI processing - increased for better extraction)
+    const sampleText = textContent.slice(0, 20000);
 
     console.log('Calling Lovable AI for entity extraction...');
 
@@ -205,26 +205,40 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: `You are an expert entity extraction system for security intelligence. Extract ONLY real security entities from actual incidents, not document metadata.
+            content: `You are an expert entity extraction system for security intelligence. Extract ALL security-relevant entities from the document.
 
 KNOWN ENTITIES IN DATABASE:
 ${entityContext}
 
-When you find entities, note if they match any known entities above.`
+Extract these entity types:
+- Organizations (companies, government agencies, threat actors)
+- Persons (individuals mentioned in security context)
+- Locations (cities, countries, regions, facilities)
+- Infrastructure (systems, networks, servers, IP addresses)
+- Domains and URLs (websites, domains)
+- Email addresses
+- Phone numbers
+- Other security-relevant identifiers
+
+Focus on entities that appear in security incidents, threats, vulnerabilities, or monitoring contexts.`
           },
           {
             role: 'user',
-            content: `Extract security entities and relationships from: "${document.filename}"
+            content: `Analyze this security document and extract ALL relevant entities and relationships.
 
-Content sample (first 8000 chars):
+Document: "${document.filename}"
+Content (first 20,000 characters):
 ${sampleText}
 
-EXTRACT:
-- Security entities: threat actors, victims, suspects, compromised systems, attack targets, incident locations
-- Relationships: when entities appear together in the same incident context
+Extract ALL entities that are relevant to security, threats, incidents, or monitoring. Include:
+- Organizations mentioned (both threat actors and victims)
+- Specific people, locations, systems
+- Domains, IPs, email addresses
+- Any infrastructure or technology mentioned
 
-IGNORE:
-- Document metadata, titles, dates, filenames, report author organizations`
+For relationships, note when entities appear together in the same security context.
+
+Be thorough - extract all security-relevant entities, not just those in active incidents.`
           }
         ],
         tools: [
@@ -322,9 +336,9 @@ IGNORE:
         (existingSuggestions || []).map(s => `${s.suggested_name.toLowerCase()}:${s.suggested_type}`)
       );
 
-      // Convert to entity suggestions with matching
+      // Convert to entity suggestions with matching (lowered threshold to 0.6 for better recall)
       for (const entity of entities) {
-        if (entity.confidence < 0.7) continue;
+        if (entity.confidence < 0.6) continue;
         
         const key = `${entity.name.toLowerCase()}:${entity.type}`;
         if (existingSet.has(key)) {
