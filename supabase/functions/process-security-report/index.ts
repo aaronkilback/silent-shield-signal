@@ -52,12 +52,74 @@ serve(async (req) => {
       document = doc;
       clientId = doc.client_id;
 
-      // If no text content provided, use content_text from document
-      if (!content && doc.content_text) {
+      // Check if content_text exists and is meaningful
+      const hasValidContent = doc.content_text && 
+        doc.content_text.length > 500 && 
+        !doc.content_text.includes('content not processed');
+
+      if (!content && hasValidContent) {
         content = doc.content_text;
       } else if (!content) {
-        throw new Error('No text content available');
+        // Need to extract text from file
+        console.log('Content not extracted yet, downloading file...');
+        
+        const { data: fileData, error: downloadError } = await supabase.storage
+          .from('archival-documents')
+          .download(doc.storage_path);
+
+        if (downloadError) {
+          throw new Error(`Failed to download file: ${downloadError.message}`);
+        }
+
+        // Extract text based on file type
+        if (doc.file_type === 'application/pdf') {
+          console.log('Extracting text from PDF...');
+          // For PDFs, we use a simple approach - read as text
+          // In production, you'd use a proper PDF parser
+          const arrayBuffer = await fileData.arrayBuffer();
+          const decoder = new TextDecoder('utf-8');
+          const rawText = decoder.decode(arrayBuffer);
+          
+          // Extract readable text between PDF objects
+          const textMatches = rawText.match(/\(([^)]+)\)/g);
+          if (textMatches) {
+            content = textMatches
+              .map(match => match.slice(1, -1))
+              .filter(text => text.length > 3)
+              .join(' ')
+              .replace(/\\[rn]/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+          }
+          
+          if (!content || content.length < 100) {
+            throw new Error('Failed to extract meaningful text from PDF. File may be scanned or encrypted.');
+          }
+        } else if (doc.file_type.includes('text')) {
+          content = await fileData.text();
+        } else {
+          throw new Error(`Unsupported file type: ${doc.file_type}. Please upload PDF or text files.`);
+        }
+
+        // Update document with extracted text
+        await supabase
+          .from('archival_documents')
+          .update({
+            content_text: content.slice(0, 50000), // Store first 50k chars
+            metadata: {
+              ...doc.metadata,
+              text_extracted: true,
+              extraction_date: new Date().toISOString()
+            }
+          })
+          .eq('id', documentId);
+        
+        console.log(`Extracted ${content.length} characters from ${doc.filename}`);
       }
+    }
+
+    if (!content || content.length < 100) {
+      throw new Error('Document content is too short to analyze. Please ensure the document contains readable text.');
     }
 
     console.log(`Content length: ${content.length} characters`);
