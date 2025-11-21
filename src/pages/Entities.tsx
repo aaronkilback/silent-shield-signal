@@ -366,13 +366,14 @@ export default function Entities() {
         </Card>
 
         {/* Location Map for Location Entities */}
-        {selectedType === 'location' && 
-         entities.length > 0 && 
-         entities.some((e: any) => e.current_location || e.name) && (
+        {selectedType === 'location' && entities.length > 0 && (
           <Card className="mb-4 p-4">
             <div className="flex items-center gap-2 mb-4">
               <Map className="w-5 h-5 text-primary" />
               <h3 className="font-semibold">Location Map</h3>
+              <span className="text-xs text-muted-foreground">
+                ({entities.length} location{entities.length !== 1 ? 's' : ''})
+              </span>
             </div>
             <LocationsMap 
               locations={entities.map((e: any) => ({
