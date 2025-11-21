@@ -111,13 +111,19 @@ const InvestigationDetail = () => {
       
       if (error) throw error;
 
-      // Get public URLs
+      // Create signed URLs for private bucket access
       const withUrls = await Promise.all(
         data.map(async (att) => {
-          const { data: urlData } = supabase.storage
+          const { data: signedData, error: signedError } = await supabase.storage
             .from('investigation-files')
-            .getPublicUrl(att.storage_path);
-          return { ...att, url: urlData.publicUrl };
+            .createSignedUrl(att.storage_path, 3600); // 1 hour expiry
+          
+          if (signedError) {
+            console.error('Error creating signed URL:', signedError);
+            return { ...att, url: '' };
+          }
+          
+          return { ...att, url: signedData.signedUrl };
         })
       );
       
@@ -258,44 +264,57 @@ const InvestigationDetail = () => {
     const files = e.target.files;
     if (!files || files.length === 0 || !id || !user) return;
 
-    const file = files[0];
-    const fileExt = file.name.split('.').pop();
-    const filePath = `${id}/${crypto.randomUUID()}.${fileExt}`;
+    const fileArray = Array.from(files);
+    const totalFiles = fileArray.length;
 
     try {
-      toast.loading("Uploading file...");
+      toast.loading(`Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''}...`);
 
-      const { error: uploadError } = await supabase.storage
-        .from('investigation-files')
-        .upload(filePath, file);
+      // Upload all files in parallel
+      const uploadPromises = fileArray.map(async (file) => {
+        const fileExt = file.name.split('.').pop();
+        const filePath = `${id}/${crypto.randomUUID()}.${fileExt}`;
 
-      if (uploadError) throw uploadError;
+        const { error: uploadError } = await supabase.storage
+          .from('investigation-files')
+          .upload(filePath, file);
 
-      let fileType = 'other';
-      if (file.type.startsWith('image/')) fileType = 'image';
-      else if (file.type.startsWith('video/')) fileType = 'video';
-      else if (file.type.startsWith('audio/')) fileType = 'audio';
-      else if (file.type.includes('document') || file.type.includes('pdf')) fileType = 'document';
+        if (uploadError) throw uploadError;
 
-      const { error: dbError } = await supabase
-        .from('investigation_attachments')
-        .insert({
+        let fileType = 'other';
+        if (file.type.startsWith('image/')) fileType = 'image';
+        else if (file.type.startsWith('video/')) fileType = 'video';
+        else if (file.type.startsWith('audio/')) fileType = 'audio';
+        else if (file.type.includes('document') || file.type.includes('pdf')) fileType = 'document';
+
+        return {
           investigation_id: id,
           filename: file.name,
           storage_path: filePath,
           file_type: fileType,
           file_size: file.size,
           uploaded_by: user.id
-        });
+        };
+      });
+
+      const attachmentRecords = await Promise.all(uploadPromises);
+
+      // Insert all records in one batch
+      const { error: dbError } = await supabase
+        .from('investigation_attachments')
+        .insert(attachmentRecords);
 
       if (dbError) throw dbError;
 
       queryClient.invalidateQueries({ queryKey: ['investigation-attachments', id] });
       toast.dismiss();
-      toast.success("File uploaded");
+      toast.success(`${totalFiles} file${totalFiles > 1 ? 's' : ''} uploaded successfully`);
+      
+      // Reset the file input
+      e.target.value = '';
     } catch (error: any) {
       toast.dismiss();
-      toast.error(error.message || "Failed to upload file");
+      toast.error(error.message || "Failed to upload files");
     }
   };
 
@@ -1004,9 +1023,11 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                   <Input 
                     id="file-upload"
                     type="file"
+                    multiple
                     onChange={handleFileUpload}
                     className="mt-2"
                   />
+                  <p className="text-xs text-muted-foreground mt-1">Select one or multiple files to upload</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
