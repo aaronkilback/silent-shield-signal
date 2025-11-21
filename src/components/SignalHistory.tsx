@@ -2,13 +2,36 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { History, Clock, AlertCircle, Eye, Sparkles } from "lucide-react";
+import { History, Clock, AlertCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { SignalDetailDialog } from "./SignalDetailDialog";
 import { SignalFalsePositiveButton } from "./SignalFalsePositiveButton";
+
+// Helper to decode HTML entities and clean text
+const cleanSignalText = (text: string): string => {
+  if (!text) return "";
+  
+  // Create a temporary element to decode HTML entities
+  const txt = document.createElement("textarea");
+  txt.innerHTML = text;
+  let decoded = txt.value;
+  
+  // Remove HTML tags
+  decoded = decoded.replace(/<[^>]*>/g, " ");
+  
+  // Extract title from common patterns like "Title - Source"
+  const titleMatch = decoded.match(/^([^-]+)/);
+  if (titleMatch) {
+    decoded = titleMatch[1].trim();
+  }
+  
+  // Remove extra whitespace
+  decoded = decoded.replace(/\s+/g, " ").trim();
+  
+  return decoded;
+};
 
 interface Signal {
   id: string;
@@ -212,21 +235,21 @@ export const SignalHistory = () => {
               {signals.map((signal) => (
                 <div
                   key={signal.id}
-                  className={`p-3 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer ${!signal.is_read ? 'bg-primary/5 border-primary/20' : ''}`}
+                  className={`p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer ${!signal.is_read ? 'bg-primary/5 border-primary/20' : ''}`}
                   onClick={() => handleSignalClick(signal)}
                 >
-                  <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="flex items-start justify-between gap-3 mb-3">
                     <div className="flex items-center gap-2 flex-wrap">
                       {!signal.is_read && (
-                        <Badge variant="default" className="h-5 px-1.5 text-xs">New</Badge>
+                        <Badge variant="default" className="h-5 px-2 text-xs">New</Badge>
                       )}
-                      <Badge variant={getSeverityColor(signal.severity)} className="h-5 px-1.5 text-xs">
+                      <Badge variant={getSeverityColor(signal.severity)} className="h-5 px-2 text-xs">
                         {signal.severity}
                       </Badge>
-                      <Badge variant="outline" className="h-5 px-1.5 text-xs">{signal.category}</Badge>
+                      <Badge variant="outline" className="h-5 px-2 text-xs">{signal.category}</Badge>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <span className="text-xs text-muted-foreground">
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-xs text-muted-foreground font-medium">
                         {((signal.confidence || 0) * 100).toFixed(0)}%
                       </span>
                       <SignalFalsePositiveButton
@@ -237,17 +260,17 @@ export const SignalHistory = () => {
                     </div>
                   </div>
                   
-                  <p className="text-sm line-clamp-2 mb-2">
-                    {signal.normalized_text}
+                  <p className="text-sm leading-relaxed mb-3 line-clamp-3">
+                    {cleanSignalText(signal.normalized_text)}
                   </p>
                   
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
+                    <span className="flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5" />
                       {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
                     </span>
                     {signal.sources && (
-                      <span>{signal.sources.name}</span>
+                      <span className="font-medium">{signal.sources.name}</span>
                     )}
                   </div>
                 </div>
