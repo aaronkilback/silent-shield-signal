@@ -131,6 +131,23 @@ serve(async (req) => {
 
     console.log(`Text content ready for AI analysis (${textContent.length} chars)`);
 
+    // Fetch existing entities for context and matching
+    const { data: existingEntities } = await supabase
+      .from('entities')
+      .select('id, name, type, aliases, threat_score, associations')
+      .eq('is_active', true);
+    
+    const entityContext = (existingEntities || []).map(e => ({
+      id: e.id,
+      name: e.name,
+      type: e.type,
+      aliases: e.aliases || [],
+      threat_score: e.threat_score,
+      known_associations: e.associations || []
+    }));
+    
+    console.log(`Loaded ${entityContext.length} existing entities for matching`);
+
     const entitySuggestions: Array<{
       suggested_name: string;
       suggested_type: string;
@@ -138,6 +155,8 @@ serve(async (req) => {
       context: string;
       source_id: string;
       source_type: string;
+      matched_entity_id?: string | null;
+      suggested_aliases?: string[];
     }> = [];
 
     // Only process if we have meaningful content
@@ -182,38 +201,47 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: 'You are an expert entity extraction system for security intelligence documents. Extract ONLY real-world entities mentioned in security incidents, threats, or events. DO NOT extract document metadata, titles, dates, or filenames.'
+            content: `You are an expert entity extraction and relationship detection system for security intelligence. 
+
+CRITICAL INSTRUCTIONS:
+1. Extract ONLY real security entities from actual incidents (not document metadata)
+2. Match extracted entities to existing known entities when possible
+3. Detect relationships between entities that appear together
+4. Build connections across the knowledge base
+
+EXISTING ENTITIES IN DATABASE:
+${JSON.stringify(entityContext, null, 2)}
+
+When you find an entity, check if it matches any existing entity by name or alias. If it matches, reference that entity_id.`
           },
           {
             role: 'user',
-            content: `Extract security-relevant entities from this document: "${document.filename}"
+            content: `Analyze this security document for entities and relationships: "${document.filename}"
 
 Document content:
 ${sampleText}
 
-IMPORTANT RULES:
-- ONLY extract entities that are part of actual security incidents or threats mentioned in the content
-- DO NOT extract: document titles, dates, filenames, report names, generic phrases
-- DO NOT extract the organization name if it's just the report author
-- Focus on: threat actors, victims, suspicious individuals, compromised systems, attack targets, locations of incidents
+EXTRACT:
+1. Security-relevant entities (threat actors, victims, suspicious individuals, compromised systems, attack targets, incident locations)
+2. Relationships between entities when they appear together in the same context
 
-Find entities like:
-- Person names (suspects, threat actors, victims - NOT report authors)
-- Organizations (targets, threat groups - NOT the reporting organization)
-- Locations (incident locations, attack origins)
-- Infrastructure (compromised systems, targeted networks)
-- Threat indicators (malware names, attack tools)
-- Technical identifiers (suspicious domains, IPs, emails used in attacks)
+DO NOT EXTRACT:
+- Document metadata (titles, dates, filenames)
+- Report author organizations (unless they're incident victims)
+- Generic phrases or section headers
 
-Provide context showing WHERE in the incident description each entity appears.`
+For each entity:
+- Check if it matches an existing entity in the database
+- Note the context where it appears
+- Identify what other entities it's connected to in the text`
           }
         ],
         tools: [
           {
             type: "function",
             function: {
-              name: "extract_entities",
-              description: "Extract security-relevant entities from incident reports",
+              name: "extract_entities_and_relationships",
+              description: "Extract security entities and detect relationships between them",
               parameters: {
                 type: "object",
                 properties: {
@@ -222,33 +250,50 @@ Provide context showing WHERE in the incident description each entity appears.`
                     items: {
                       type: "object",
                       properties: {
-                        name: { type: "string", description: "The entity name or identifier" },
+                        name: { type: "string", description: "Entity name" },
                         type: { 
                           type: "string",
-                          enum: ["person", "organization", "location", "infrastructure", "domain", "ip_address", "email", "phone", "vehicle", "other"],
-                          description: "Entity type"
+                          enum: ["person", "organization", "location", "infrastructure", "domain", "ip_address", "email", "phone", "vehicle", "other"]
                         },
-                        confidence: { 
-                          type: "number",
-                          minimum: 0,
-                          maximum: 1,
-                          description: "Confidence score 0-1"
+                        confidence: { type: "number", minimum: 0, maximum: 1 },
+                        context: { type: "string", description: "Where entity appears in incident" },
+                        matched_entity_id: { 
+                          type: "string", 
+                          description: "UUID of existing entity this matches (if any)" 
                         },
-                        context: { 
-                          type: "string",
-                          description: "Short snippet showing where this entity appears in the incident description"
+                        aliases: {
+                          type: "array",
+                          items: { type: "string" },
+                          description: "Alternative names or identifiers"
                         }
                       },
                       required: ["name", "type", "confidence", "context"]
                     }
+                  },
+                  relationships: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        entity_a: { type: "string", description: "First entity name" },
+                        entity_b: { type: "string", description: "Second entity name" },
+                        relationship_type: { 
+                          type: "string",
+                          description: "Type of relationship (e.g., 'targeted', 'employed_by', 'located_at', 'communicates_with')"
+                        },
+                        context: { type: "string", description: "How they're related in the text" },
+                        confidence: { type: "number", minimum: 0, maximum: 1 }
+                      },
+                      required: ["entity_a", "entity_b", "relationship_type", "context", "confidence"]
+                    }
                   }
                 },
-                required: ["entities"]
+                required: ["entities", "relationships"]
               }
             }
           }
         ],
-        tool_choice: { type: "function", function: { name: "extract_entities" } }
+        tool_choice: { type: "function", function: { name: "extract_entities_and_relationships" } }
       }),
     });
 
@@ -275,8 +320,9 @@ Provide context showing WHERE in the incident description each entity appears.`
     } else {
       const extractedData = JSON.parse(toolCall.function.arguments);
       const entities = extractedData.entities || [];
+      const relationships = extractedData.relationships || [];
       
-      console.log(`AI extracted ${entities.length} entities`);
+      console.log(`AI extracted ${entities.length} entities and ${relationships.length} relationships`);
 
       // Check for existing suggestions to avoid duplicates
       const { data: existingSuggestions } = await supabase
@@ -289,12 +335,10 @@ Provide context showing WHERE in the incident description each entity appears.`
         (existingSuggestions || []).map(s => `${s.suggested_name.toLowerCase()}:${s.suggested_type}`)
       );
 
-      // Convert to entity suggestions, filtering duplicates and low confidence
+      // Convert to entity suggestions with matching
       for (const entity of entities) {
-        // Skip low confidence entities
         if (entity.confidence < 0.7) continue;
         
-        // Skip if already suggested
         const key = `${entity.name.toLowerCase()}:${entity.type}`;
         if (existingSet.has(key)) {
           console.log(`Skipping duplicate: ${entity.name}`);
@@ -307,8 +351,27 @@ Provide context showing WHERE in the incident description each entity appears.`
           confidence: entity.confidence,
           context: entity.context || `Found in ${document.filename}`,
           source_id: documentId,
-          source_type: 'archival_document'
+          source_type: 'archival_document',
+          matched_entity_id: entity.matched_entity_id || null,
+          suggested_aliases: entity.aliases || []
         });
+      }
+      
+      // Store detected relationships for processing after entities are created/matched
+      if (relationships.length > 0) {
+        console.log(`Storing ${relationships.length} detected relationships`);
+        
+        // Store relationships in document metadata for later processing
+        await supabase
+          .from('archival_documents')
+          .update({
+            metadata: {
+              ...document.metadata,
+              detected_relationships: relationships,
+              relationships_detected_at: new Date().toISOString()
+            }
+          })
+          .eq('id', documentId);
       }
     }
 
