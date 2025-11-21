@@ -58,8 +58,8 @@ serve(async (req) => {
     const { data: rssSources, error: sourcesError } = await supabaseClient
       .from('sources')
       .select('*')
-      .eq('type', 'rss')
-      .eq('is_active', true);
+      .eq('type', 'url_feed')
+      .eq('status', 'active');
 
     if (sourcesError) throw sourcesError;
 
