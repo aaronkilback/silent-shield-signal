@@ -43,7 +43,7 @@ const Sources = () => {
     mutationFn: async ({ id, isActive }: { id: string; isActive: boolean }) => {
       const { error } = await supabase
         .from("sources")
-        .update({ is_active: !isActive })
+        .update({ status: isActive ? 'paused' : 'active' })
         .eq("id", id);
 
       if (error) throw error;

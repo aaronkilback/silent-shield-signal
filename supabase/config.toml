@@ -1,5 +1,17 @@
 project_id = "udbjjeppbgwjlqmaeftn"
 
+[functions.ingest-intelligence]
+verify_jwt = true
+
+[functions.process-intelligence-document]
+verify_jwt = false
+
+[functions.check-incident-escalation]
+verify_jwt = false
+
+[functions.process-feedback]
+verify_jwt = true
+
 [functions.monitor-rss-sources]
 verify_jwt = false
 

@@ -41,24 +41,21 @@ export const SourcesList = ({ sources, onToggleActive, onDelete, onEdit }: Sourc
               <Badge className={getSourceTypeColor(source.type)}>
                 {source.type.replace(/_/g, " ")}
               </Badge>
-              {source.is_active ? (
+              {source.status === 'active' ? (
                 <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">
                   Active
                 </Badge>
+              ) : source.status === 'failed' ? (
+                <Badge variant="outline" className="bg-red-500/10 text-red-500 border-red-500/20">
+                  Failed
+                </Badge>
               ) : (
                 <Badge variant="outline" className="bg-gray-500/10 text-gray-500 border-gray-500/20">
-                  Inactive
+                  Paused
                 </Badge>
               )}
             </div>
-            {source.monitor_type && (
-              <p className="text-sm text-muted-foreground">
-                Assigned to: <Badge variant="secondary" className="text-xs ml-1">
-                  {source.monitor_type.replace('monitor-', '').replace(/-/g, ' ')}
-                </Badge>
-              </p>
-            )}
-            {source.config_json && (
+            {source.config && Object.keys(source.config).length > 0 && (
               <p className="text-sm text-muted-foreground">
                 <Settings className="w-3 h-3 inline mr-1" />
                 Configured with custom settings
@@ -73,8 +70,8 @@ export const SourcesList = ({ sources, onToggleActive, onDelete, onEdit }: Sourc
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">Enable</span>
               <Switch
-                checked={source.is_active}
-                onCheckedChange={() => onToggleActive(source.id, source.is_active)}
+                checked={source.status === 'active'}
+                onCheckedChange={() => onToggleActive(source.id, source.status === 'active')}
               />
             </div>
             <Button

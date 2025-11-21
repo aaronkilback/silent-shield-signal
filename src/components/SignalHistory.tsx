@@ -122,10 +122,6 @@ export const SignalHistory = () => {
           is_read,
           is_test,
           source_id,
-          sources (
-            name,
-            type
-          ),
           clients (
             name
           )
@@ -135,7 +131,22 @@ export const SignalHistory = () => {
         .limit(50);
 
       if (error) throw error;
-      setSignals(data || []);
+      
+      // Fetch source names separately if needed
+      const dataWithSources = await Promise.all((data || []).map(async (signal) => {
+        if (signal.source_id) {
+          const { data: sourceData } = await supabase
+            .from('sources')
+            .select('name, type')
+            .eq('id', signal.source_id)
+            .single();
+          
+          return { ...signal, sources: sourceData };
+        }
+        return signal;
+      }));
+      
+      setSignals(dataWithSources as any);
     } catch (error) {
       console.error('Error loading signals:', error);
     } finally {
