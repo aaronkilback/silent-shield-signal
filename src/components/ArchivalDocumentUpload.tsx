@@ -147,12 +147,29 @@ export const ArchivalDocumentUpload = () => {
           throw new Error(data.error || 'Duplicate file');
         }
 
-        // Trigger background entity processing
+        // Trigger background entity processing with feedback
         if (data?.documentId) {
           console.log(`Triggering entity processing for document: ${data.documentId}`);
+          
+          // Call the edge function and handle response
           supabase.functions.invoke('process-stored-document', {
             body: { documentId: data.documentId }
-          }).catch(err => console.error('Background entity processing error:', err));
+          }).then(({ data: processData, error: processError }) => {
+            if (processError) {
+              console.error('Entity processing error:', processError);
+              toast.error(`Entity extraction failed: ${processError.message}`);
+            } else {
+              console.log(`Entity processing result:`, processData);
+              if (processData?.entitiesFound > 0) {
+                toast.success(`✨ Extracted ${processData.entitiesFound} entities from ${file.file.name}!`);
+              } else {
+                toast.info(`No entities found in ${file.file.name} - may be a non-text document or contain no named entities.`);
+              }
+            }
+          }).catch(err => {
+            console.error('Background entity processing error:', err);
+            toast.error('Entity processing failed - check console for details');
+          });
         }
 
         setFiles(prev => prev.map(f => 

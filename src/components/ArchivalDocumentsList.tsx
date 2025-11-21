@@ -1,13 +1,18 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Archive, Download, FileText } from "lucide-react";
+import { Archive, Download, FileText, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
+import { toast } from "sonner";
+import { useState } from "react";
 
 export const ArchivalDocumentsList = () => {
+  const queryClient = useQueryClient();
+  const [reprocessing, setReprocessing] = useState<string | null>(null);
+
   const { data: documents, isLoading } = useQuery({
     queryKey: ['archival-documents'],
     queryFn: async () => {
@@ -30,6 +35,7 @@ export const ArchivalDocumentsList = () => {
     
     if (error) {
       console.error('Download error:', error);
+      toast.error('Failed to download document');
       return;
     }
 
@@ -41,6 +47,35 @@ export const ArchivalDocumentsList = () => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    toast.success('Download started');
+  };
+
+  const handleReprocess = async (documentId: string, filename: string) => {
+    setReprocessing(documentId);
+    toast.info(`Reprocessing ${filename}...`);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('process-stored-document', {
+        body: { documentId }
+      });
+
+      if (error) throw error;
+
+      if (data?.entitiesFound > 0) {
+        toast.success(`✨ Found ${data.entitiesFound} entities in ${filename}!`);
+      } else {
+        toast.info(`No entities extracted from ${filename}`);
+      }
+
+      // Refresh the documents list
+      queryClient.invalidateQueries({ queryKey: ['archival-documents'] });
+      queryClient.invalidateQueries({ queryKey: ['pending-entity-suggestions-count'] });
+    } catch (error: any) {
+      console.error('Reprocess error:', error);
+      toast.error(`Failed to reprocess: ${error.message}`);
+    } finally {
+      setReprocessing(null);
+    }
   };
 
   if (isLoading) {
@@ -114,16 +149,32 @@ export const ArchivalDocumentsList = () => {
                       <div className="flex items-center gap-4 text-xs text-muted-foreground">
                         <span>{(doc.file_size / 1024).toFixed(1)} KB</span>
                         <span>{format(new Date(doc.upload_date), 'MMM d, yyyy')}</span>
+                        {doc.metadata && typeof doc.metadata === 'object' && 'entities_processed' in doc.metadata && doc.metadata.entities_processed && (
+                          <Badge variant="outline" className="text-xs">
+                            Processed
+                          </Badge>
+                        )}
                       </div>
                     </div>
 
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDownload(doc.storage_path, doc.filename)}
-                    >
-                      <Download className="w-4 h-4" />
-                    </Button>
+                    <div className="flex gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleReprocess(doc.id, doc.filename)}
+                        disabled={reprocessing === doc.id}
+                        title="Re-extract entities"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${reprocessing === doc.id ? 'animate-spin' : ''}`} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDownload(doc.storage_path, doc.filename)}
+                      >
+                        <Download className="w-4 h-4" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               ))}
