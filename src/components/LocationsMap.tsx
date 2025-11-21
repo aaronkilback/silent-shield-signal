@@ -138,8 +138,36 @@ export const LocationsMap = ({ locations }: LocationsMapProps) => {
         return null;
       }
 
+      // Extract coordinates from Google Maps URLs
+      // Format: https://maps.google.com/?q=51.0447,-114.0719
+      // Format: https://www.google.com/maps/place/51.0447,-114.0719
+      // Format: https://www.google.com/maps/@51.0447,-114.0719,15z
+      const googleMapsMatch = locationStr.match(/[@?q=](-?\d+\.?\d*),\s*(-?\d+\.?\d*)/);
+      if (googleMapsMatch) {
+        const lat = parseFloat(googleMapsMatch[1]);
+        const lng = parseFloat(googleMapsMatch[2]);
+        console.log(`Extracted coordinates from Google Maps URL: [${lat}, ${lng}]`);
+        return { lat, lng };
+      }
+
+      // If it's a URL but we couldn't extract coords, try to extract a place name
+      let searchQuery = locationStr;
+      if (locationStr.includes('google.com/maps') || locationStr.includes('maps.google.com')) {
+        // Try to extract place name from URL
+        const placeMatch = locationStr.match(/place\/([^/@]+)/);
+        if (placeMatch) {
+          searchQuery = decodeURIComponent(placeMatch[1].replace(/\+/g, ' '));
+          console.log(`Extracted place name from URL: ${searchQuery}`);
+        } else {
+          console.warn(`Could not extract coordinates or place name from Google Maps URL: ${locationStr}`);
+          return null;
+        }
+      }
+
       // Add Canada bias for better Canadian location results
-      const searchQuery = locationStr.includes('Canada') ? locationStr : `${locationStr}, Canada`;
+      if (!searchQuery.includes('Canada')) {
+        searchQuery = `${searchQuery}, Canada`;
+      }
       
       console.log(`Geocoding location: "${locationStr}" -> "${searchQuery}"`);
       
