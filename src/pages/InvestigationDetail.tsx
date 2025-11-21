@@ -37,6 +37,14 @@ const InvestigationDetail = () => {
   const [newPersonCompany, setNewPersonCompany] = useState("");
   const [suggestedReferences, setSuggestedReferences] = useState<any[]>([]);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  
+  // Local state for form fields
+  const [localFileNumber, setLocalFileNumber] = useState("");
+  const [localMaximoNumber, setLocalMaximoNumber] = useState("");
+  const [localPoliceFileNumber, setLocalPoliceFileNumber] = useState("");
+  const [localSynopsis, setLocalSynopsis] = useState("");
+  const [localInformation, setLocalInformation] = useState("");
+  const [localRecommendations, setLocalRecommendations] = useState("");
 
   const { data: investigation, isLoading } = useQuery({
     queryKey: ['investigation', id],
@@ -48,6 +56,15 @@ const InvestigationDetail = () => {
         .single();
       
       if (error) throw error;
+      
+      // Initialize local state when data is loaded
+      setLocalFileNumber(data.file_number || '');
+      setLocalMaximoNumber(data.maximo_number || '');
+      setLocalPoliceFileNumber(data.police_file_number || '');
+      setLocalSynopsis(data.synopsis || '');
+      setLocalInformation(data.information || '');
+      setLocalRecommendations(data.recommendations || '');
+      
       return data;
     },
     enabled: !!id
@@ -702,23 +719,26 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                   <div>
                     <Label>File Number</Label>
                     <Input 
-                      value={investigation.file_number}
-                      onChange={(e) => updateInvestigation('file_number', e.target.value)}
+                      value={localFileNumber}
+                      onChange={(e) => setLocalFileNumber(e.target.value)}
+                      onBlur={() => updateInvestigation('file_number', localFileNumber)}
                     />
                   </div>
                   <div>
                     <Label>Maximo Number</Label>
                     <Input 
-                      value={investigation.maximo_number || ''}
-                      onChange={(e) => updateInvestigation('maximo_number', e.target.value)}
+                      value={localMaximoNumber}
+                      onChange={(e) => setLocalMaximoNumber(e.target.value)}
+                      onBlur={() => updateInvestigation('maximo_number', localMaximoNumber)}
                       placeholder="Optional"
                     />
                   </div>
                   <div>
                     <Label>Police File Number</Label>
                     <Input 
-                      value={investigation.police_file_number || ''}
-                      onChange={(e) => updateInvestigation('police_file_number', e.target.value)}
+                      value={localPoliceFileNumber}
+                      onChange={(e) => setLocalPoliceFileNumber(e.target.value)}
+                      onBlur={() => updateInvestigation('police_file_number', localPoliceFileNumber)}
                       placeholder="Optional"
                     />
                   </div>
@@ -749,7 +769,10 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                       size="sm"
                       onClick={async () => {
                         const text = await getAiAssist('write_synopsis');
-                        if (text) updateInvestigation('synopsis', text);
+                        if (text) {
+                          setLocalSynopsis(text);
+                          updateInvestigation('synopsis', text);
+                        }
                       }}
                       disabled={isAiGenerating}
                     >
@@ -758,8 +781,9 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     </Button>
                   </div>
                   <Textarea 
-                    value={investigation.synopsis || ''}
-                    onChange={(e) => updateInvestigation('synopsis', e.target.value)}
+                    value={localSynopsis}
+                    onChange={(e) => setLocalSynopsis(e.target.value)}
+                    onBlur={() => updateInvestigation('synopsis', localSynopsis)}
                     placeholder="Brief overview of the investigation..."
                     className="min-h-[100px]"
                   />
@@ -768,8 +792,9 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                 <div>
                   <Label>Information</Label>
                   <Textarea 
-                    value={investigation.information || ''}
-                    onChange={(e) => updateInvestigation('information', e.target.value)}
+                    value={localInformation}
+                    onChange={(e) => setLocalInformation(e.target.value)}
+                    onBlur={() => updateInvestigation('information', localInformation)}
                     placeholder="Detailed information about the investigation..."
                     className="min-h-[150px]"
                   />
@@ -783,7 +808,10 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                       size="sm"
                       onClick={async () => {
                         const text = await getAiAssist('write_recommendations');
-                        if (text) updateInvestigation('recommendations', text);
+                        if (text) {
+                          setLocalRecommendations(text);
+                          updateInvestigation('recommendations', text);
+                        }
                       }}
                       disabled={isAiGenerating}
                     >
@@ -792,8 +820,9 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     </Button>
                   </div>
                   <Textarea 
-                    value={investigation.recommendations || ''}
-                    onChange={(e) => updateInvestigation('recommendations', e.target.value)}
+                    value={localRecommendations}
+                    onChange={(e) => setLocalRecommendations(e.target.value)}
+                    onBlur={() => updateInvestigation('recommendations', localRecommendations)}
                     placeholder="Recommendations and next steps..."
                     className="min-h-[100px]"
                   />
