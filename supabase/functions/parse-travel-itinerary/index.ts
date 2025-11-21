@@ -47,10 +47,16 @@ serve(async (req) => {
       throw new Error(`Failed to download file: ${downloadError.message}`);
     }
 
-    // Convert to base64 for document parsing
+    // Convert to base64 for document parsing (chunked to avoid stack overflow)
     const arrayBuffer = await fileData.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
-    const base64 = btoa(String.fromCharCode(...bytes));
+    let binary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+      binary += String.fromCharCode.apply(null, Array.from(chunk));
+    }
+    const base64 = btoa(binary);
 
     console.log("Parsing PDF with document API");
 
