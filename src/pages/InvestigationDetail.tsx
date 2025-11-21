@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -49,51 +49,8 @@ const InvestigationDetail = () => {
   const [localInformation, setLocalInformation] = useState("");
   const [localRecommendations, setLocalRecommendations] = useState("");
 
-  // Debounced save function
-  const debouncedUpdate = useCallback((field: string, value: any) => {
-    const timer = setTimeout(() => {
-      updateInvestigation(field, value);
-    }, 1000); // 1 second debounce
-
-    return () => clearTimeout(timer);
-  }, [id]);
-
-  // Update handlers with debounce
-  useEffect(() => {
-    if (!investigation) return;
-    const cleanup = debouncedUpdate('file_number', localFileNumber);
-    return cleanup;
-  }, [localFileNumber]);
-
-  useEffect(() => {
-    if (!investigation) return;
-    const cleanup = debouncedUpdate('maximo_number', localMaximoNumber);
-    return cleanup;
-  }, [localMaximoNumber]);
-
-  useEffect(() => {
-    if (!investigation) return;
-    const cleanup = debouncedUpdate('police_file_number', localPoliceFileNumber);
-    return cleanup;
-  }, [localPoliceFileNumber]);
-
-  useEffect(() => {
-    if (!investigation) return;
-    const cleanup = debouncedUpdate('synopsis', localSynopsis);
-    return cleanup;
-  }, [localSynopsis]);
-
-  useEffect(() => {
-    if (!investigation) return;
-    const cleanup = debouncedUpdate('information', localInformation);
-    return cleanup;
-  }, [localInformation]);
-
-  useEffect(() => {
-    if (!investigation) return;
-    const cleanup = debouncedUpdate('recommendations', localRecommendations);
-    return cleanup;
-  }, [localRecommendations]);
+  // Track pending save timers
+  const saveTimersRef = useRef<{ [key: string]: NodeJS.Timeout }>({});
 
   const { data: investigation, isLoading } = useQuery({
     queryKey: ['investigation', id],
@@ -118,6 +75,110 @@ const InvestigationDetail = () => {
     },
     enabled: !!id
   });
+
+  // Debounced save function
+  const debouncedUpdate = useCallback((field: string, value: any) => {
+    // Clear existing timer for this field
+    if (saveTimersRef.current[field]) {
+      clearTimeout(saveTimersRef.current[field]);
+    }
+
+    // Set new timer
+    const timer = setTimeout(() => {
+      updateInvestigation(field, value);
+      delete saveTimersRef.current[field];
+    }, 800); // 800ms debounce
+
+    saveTimersRef.current[field] = timer;
+  }, [id]);
+
+  // Save all pending changes immediately
+  const saveAllPending = useCallback(async () => {
+    if (!investigation || !id) return;
+
+    const updates: any = {};
+    let hasChanges = false;
+
+    // Check each field for unsaved changes
+    if (localFileNumber !== investigation.file_number) {
+      updates.file_number = localFileNumber;
+      hasChanges = true;
+    }
+    if (localMaximoNumber !== investigation.maximo_number) {
+      updates.maximo_number = localMaximoNumber;
+      hasChanges = true;
+    }
+    if (localPoliceFileNumber !== investigation.police_file_number) {
+      updates.police_file_number = localPoliceFileNumber;
+      hasChanges = true;
+    }
+    if (localSynopsis !== investigation.synopsis) {
+      updates.synopsis = localSynopsis;
+      hasChanges = true;
+    }
+    if (localInformation !== investigation.information) {
+      updates.information = localInformation;
+      hasChanges = true;
+    }
+    if (localRecommendations !== investigation.recommendations) {
+      updates.recommendations = localRecommendations;
+      hasChanges = true;
+    }
+
+    if (hasChanges) {
+      try {
+        const { error } = await supabase
+          .from('investigations')
+          .update(updates)
+          .eq('id', id);
+
+        if (error) throw error;
+      } catch (error) {
+        console.error('Failed to save pending changes:', error);
+      }
+    }
+  }, [id, investigation, localFileNumber, localMaximoNumber, localPoliceFileNumber, localSynopsis, localInformation, localRecommendations]);
+
+  // Save on unmount (navigation away)
+  useEffect(() => {
+    return () => {
+      // Clear all pending timers
+      Object.values(saveTimersRef.current).forEach(clearTimeout);
+      // Save immediately when unmounting
+      saveAllPending();
+    };
+  }, [saveAllPending]);
+
+  // Update handlers with debounce
+  useEffect(() => {
+    if (!investigation) return;
+    debouncedUpdate('file_number', localFileNumber);
+  }, [localFileNumber, debouncedUpdate, investigation]);
+
+  useEffect(() => {
+    if (!investigation) return;
+    debouncedUpdate('maximo_number', localMaximoNumber);
+  }, [localMaximoNumber, debouncedUpdate, investigation]);
+
+  useEffect(() => {
+    if (!investigation) return;
+    debouncedUpdate('police_file_number', localPoliceFileNumber);
+  }, [localPoliceFileNumber, debouncedUpdate, investigation]);
+
+  useEffect(() => {
+    if (!investigation) return;
+    debouncedUpdate('synopsis', localSynopsis);
+  }, [localSynopsis, debouncedUpdate, investigation]);
+
+  useEffect(() => {
+    if (!investigation) return;
+    debouncedUpdate('information', localInformation);
+  }, [localInformation, debouncedUpdate, investigation]);
+
+  useEffect(() => {
+    if (!investigation) return;
+    debouncedUpdate('recommendations', localRecommendations);
+  }, [localRecommendations, debouncedUpdate, investigation]);
 
   const { data: persons = [] } = useQuery({
     queryKey: ['investigation-persons', id],
