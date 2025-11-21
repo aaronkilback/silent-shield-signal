@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -48,6 +48,52 @@ const InvestigationDetail = () => {
   const [localSynopsis, setLocalSynopsis] = useState("");
   const [localInformation, setLocalInformation] = useState("");
   const [localRecommendations, setLocalRecommendations] = useState("");
+
+  // Debounced save function
+  const debouncedUpdate = useCallback((field: string, value: any) => {
+    const timer = setTimeout(() => {
+      updateInvestigation(field, value);
+    }, 1000); // 1 second debounce
+
+    return () => clearTimeout(timer);
+  }, [id]);
+
+  // Update handlers with debounce
+  useEffect(() => {
+    if (!investigation) return;
+    const cleanup = debouncedUpdate('file_number', localFileNumber);
+    return cleanup;
+  }, [localFileNumber]);
+
+  useEffect(() => {
+    if (!investigation) return;
+    const cleanup = debouncedUpdate('maximo_number', localMaximoNumber);
+    return cleanup;
+  }, [localMaximoNumber]);
+
+  useEffect(() => {
+    if (!investigation) return;
+    const cleanup = debouncedUpdate('police_file_number', localPoliceFileNumber);
+    return cleanup;
+  }, [localPoliceFileNumber]);
+
+  useEffect(() => {
+    if (!investigation) return;
+    const cleanup = debouncedUpdate('synopsis', localSynopsis);
+    return cleanup;
+  }, [localSynopsis]);
+
+  useEffect(() => {
+    if (!investigation) return;
+    const cleanup = debouncedUpdate('information', localInformation);
+    return cleanup;
+  }, [localInformation]);
+
+  useEffect(() => {
+    if (!investigation) return;
+    const cleanup = debouncedUpdate('recommendations', localRecommendations);
+    return cleanup;
+  }, [localRecommendations]);
 
   const { data: investigation, isLoading } = useQuery({
     queryKey: ['investigation', id],
@@ -174,6 +220,9 @@ const InvestigationDetail = () => {
   const updateInvestigation = async (field: string, value: any) => {
     if (!id) return;
 
+    // Skip if value hasn't actually changed from database
+    if (investigation && investigation[field] === value) return;
+
     setIsSaving(true);
     try {
       const { error } = await supabase
@@ -184,9 +233,9 @@ const InvestigationDetail = () => {
       if (error) throw error;
 
       queryClient.invalidateQueries({ queryKey: ['investigation', id] });
-      toast.success("Updated successfully");
     } catch (error: any) {
-      toast.error(error.message || "Failed to update");
+      toast.error(error.message || "Failed to save");
+      console.error('Save error:', error);
     } finally {
       setIsSaving(false);
     }
@@ -781,30 +830,38 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
     <div className="min-h-screen bg-background">
       <Header />
       <main className="container mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" onClick={() => navigate('/investigations')}>
-              <ArrowLeft className="w-5 h-5" />
-            </Button>
-            <div>
-              <h1 className="text-3xl font-bold">{investigation.file_number}</h1>
-              <p className="text-muted-foreground">Investigation File</p>
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-4">
+              <Button variant="ghost" size="icon" onClick={() => navigate('/investigations')}>
+                <ArrowLeft className="w-5 h-5" />
+              </Button>
+              <div>
+                <h1 className="text-3xl font-bold">{investigation.file_number}</h1>
+                <p className="text-muted-foreground">Investigation File</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {isSaving && (
+                <span className="text-sm text-muted-foreground flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Saving...
+                </span>
+              )}
+              <Button onClick={downloadInvestigationReport} disabled={isDownloading}>
+                {isDownloading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <FileDown className="w-4 h-4 mr-2" />
+                    Download Report
+                  </>
+                )}
+              </Button>
             </div>
           </div>
-          <Button onClick={downloadInvestigationReport} disabled={isDownloading}>
-            {isDownloading ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Generating...
-              </>
-            ) : (
-              <>
-                <FileDown className="w-4 h-4 mr-2" />
-                Download Report
-              </>
-            )}
-          </Button>
-        </div>
 
         <Tabs defaultValue="overview" className="space-y-6">
           <TabsList>
@@ -851,7 +908,6 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     <Input 
                       value={localFileNumber}
                       onChange={(e) => setLocalFileNumber(e.target.value)}
-                      onBlur={() => updateInvestigation('file_number', localFileNumber)}
                     />
                   </div>
                   <div>
@@ -859,7 +915,6 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     <Input 
                       value={localMaximoNumber}
                       onChange={(e) => setLocalMaximoNumber(e.target.value)}
-                      onBlur={() => updateInvestigation('maximo_number', localMaximoNumber)}
                       placeholder="Optional"
                     />
                   </div>
@@ -868,7 +923,6 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     <Input 
                       value={localPoliceFileNumber}
                       onChange={(e) => setLocalPoliceFileNumber(e.target.value)}
-                      onBlur={() => updateInvestigation('police_file_number', localPoliceFileNumber)}
                       placeholder="Optional"
                     />
                   </div>
@@ -913,7 +967,6 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                   <Textarea 
                     value={localSynopsis}
                     onChange={(e) => setLocalSynopsis(e.target.value)}
-                    onBlur={() => updateInvestigation('synopsis', localSynopsis)}
                     placeholder="Brief overview of the investigation..."
                     className="min-h-[100px]"
                   />
@@ -924,7 +977,6 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                   <Textarea 
                     value={localInformation}
                     onChange={(e) => setLocalInformation(e.target.value)}
-                    onBlur={() => updateInvestigation('information', localInformation)}
                     placeholder="Detailed information about the investigation..."
                     className="min-h-[150px]"
                   />
@@ -952,7 +1004,6 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                   <Textarea 
                     value={localRecommendations}
                     onChange={(e) => setLocalRecommendations(e.target.value)}
-                    onBlur={() => updateInvestigation('recommendations', localRecommendations)}
                     placeholder="Recommendations and next steps..."
                     className="min-h-[100px]"
                   />
