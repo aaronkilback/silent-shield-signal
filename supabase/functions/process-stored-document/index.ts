@@ -131,22 +131,19 @@ serve(async (req) => {
 
     console.log(`Text content ready for AI analysis (${textContent.length} chars)`);
 
-    // Fetch existing entities for context and matching
+    // Fetch existing entities for matching (limit to most relevant ones)
     const { data: existingEntities } = await supabase
       .from('entities')
-      .select('id, name, type, aliases, threat_score, associations')
-      .eq('is_active', true);
+      .select('id, name, type, aliases')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(50); // Only send most recent 50 entities to keep prompt size manageable
     
-    const entityContext = (existingEntities || []).map(e => ({
-      id: e.id,
-      name: e.name,
-      type: e.type,
-      aliases: e.aliases || [],
-      threat_score: e.threat_score,
-      known_associations: e.associations || []
-    }));
+    const entityContext = (existingEntities || []).map(e => 
+      `${e.name} (${e.type})${e.aliases && e.aliases.length > 0 ? ` aka ${e.aliases.join(', ')}` : ''}`
+    ).join('\n');
     
-    console.log(`Loaded ${entityContext.length} existing entities for matching`);
+    console.log(`Loaded ${existingEntities?.length || 0} existing entities for matching`);
 
     const entitySuggestions: Array<{
       suggested_name: string;
@@ -201,39 +198,26 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: `You are an expert entity extraction and relationship detection system for security intelligence. 
+            content: `You are an expert entity extraction system for security intelligence. Extract ONLY real security entities from actual incidents, not document metadata.
 
-CRITICAL INSTRUCTIONS:
-1. Extract ONLY real security entities from actual incidents (not document metadata)
-2. Match extracted entities to existing known entities when possible
-3. Detect relationships between entities that appear together
-4. Build connections across the knowledge base
+KNOWN ENTITIES IN DATABASE:
+${entityContext}
 
-EXISTING ENTITIES IN DATABASE:
-${JSON.stringify(entityContext, null, 2)}
-
-When you find an entity, check if it matches any existing entity by name or alias. If it matches, reference that entity_id.`
+When you find entities, note if they match any known entities above.`
           },
           {
             role: 'user',
-            content: `Analyze this security document for entities and relationships: "${document.filename}"
+            content: `Extract security entities and relationships from: "${document.filename}"
 
-Document content:
+Content sample (first 8000 chars):
 ${sampleText}
 
 EXTRACT:
-1. Security-relevant entities (threat actors, victims, suspicious individuals, compromised systems, attack targets, incident locations)
-2. Relationships between entities when they appear together in the same context
+- Security entities: threat actors, victims, suspects, compromised systems, attack targets, incident locations
+- Relationships: when entities appear together in the same incident context
 
-DO NOT EXTRACT:
-- Document metadata (titles, dates, filenames)
-- Report author organizations (unless they're incident victims)
-- Generic phrases or section headers
-
-For each entity:
-- Check if it matches an existing entity in the database
-- Note the context where it appears
-- Identify what other entities it's connected to in the text`
+IGNORE:
+- Document metadata, titles, dates, filenames, report author organizations`
           }
         ],
         tools: [
