@@ -15,6 +15,7 @@ import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus, Brain, S
 import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
 import { CreateRelationshipDialog } from "./CreateRelationshipDialog";
+import { LocationsMap } from "./LocationsMap";
 
 interface EntityDetailDialogProps {
   entityId: string | null;
@@ -915,6 +916,28 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                     <p className="text-xs text-muted-foreground">
                       System actively searches for threats near this entity's location and creates alerts when detected.
                     </p>
+                  </div>
+                )}
+
+                {/* Map for location entities */}
+                {entity.type === 'location' && (entity.current_location || entity.name) && (
+                  <div className="border-t pt-4 space-y-2">
+                    <Label className="text-base font-semibold">Location Map</Label>
+                    <div className="mt-2">
+                      <LocationsMap 
+                        locations={[{
+                          id: entity.id,
+                          name: entity.name,
+                          current_location: (entity as any).current_location,
+                          description: entity.description
+                        }]} 
+                      />
+                    </div>
+                    {(entity as any).current_location && (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        📍 {(entity as any).current_location}
+                      </p>
+                    )}
                   </div>
                 )}
 
