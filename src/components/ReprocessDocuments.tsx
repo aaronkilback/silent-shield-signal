@@ -67,73 +67,55 @@ export const ReprocessDocuments = () => {
     setProcessedCount(0);
     
     const total = documents.length;
+    const documentIds = documents.map(d => d.id);
 
-    toast.success(`🚀 Processing ${total} documents in background. You can navigate to other pages - we'll notify you when complete!`, {
-      duration: 5000
+    // Start the processing - don't await so user can navigate away
+    supabase.functions.invoke('process-documents-batch', {
+      body: { 
+        documentIds,
+        clearExistingSuggestions: processAll
+      }
+    }).then(({ error }) => {
+      if (error) {
+        console.error('Error starting batch processing:', error);
+        toast.error(`Failed to start processing: ${error.message}`);
+        setProcessing(false);
+      }
     });
 
-    // Run processing in background (non-blocking)
-    (async () => {
-      let successful = 0;
-      let failed = 0;
+    toast.success(
+      `🚀 Processing ${total} documents on the server. You can navigate away - processing will continue!`,
+      { duration: 6000 }
+    );
 
-      // If reprocessing all, clear existing suggestions from these documents
-      if (processAll && documents.length > 0) {
-        console.log('Clearing existing entity suggestions...');
-        const docIds = documents.map(d => d.id);
-        await supabase
-          .from('entity_suggestions')
-          .delete()
-          .in('source_id', docIds)
-          .eq('source_type', 'archival_document');
-      }
+    // Set up polling to check progress
+    const pollInterval = setInterval(async () => {
+      const { data: docs } = await supabase
+        .from('archival_documents')
+        .select('id, entity_mentions')
+        .in('id', documentIds);
 
-      for (const doc of documents) {
-        try {
-          console.log(`Processing document ${successful + failed + 1}/${total}: ${doc.filename}`);
-          
-          const { data, error } = await supabase.functions.invoke('process-stored-document', {
-            body: { documentId: doc.id }
-          });
+      if (docs) {
+        const processed = docs.filter(d => d.entity_mentions && d.entity_mentions.length > 0).length;
+        setProcessedCount(processed);
 
-          if (error) {
-            console.error(`Failed to process ${doc.filename}:`, error);
-            failed++;
-          } else if (data?.error) {
-            console.error(`Processing error for ${doc.filename}:`, data.error);
-            if (!data.error.includes('not found')) {
-              console.error(`Error details: ${data.error}`);
-            }
-            failed++;
-          } else {
-            successful++;
-          }
-          
-          setProcessedCount(prev => prev + 1);
-
-          // Small delay between requests
-          await new Promise(resolve => setTimeout(resolve, 500));
-        } catch (error: any) {
-          console.error(`Error processing ${doc.filename}:`, error);
-          failed++;
-          setProcessedCount(prev => prev + 1);
+        if (processed === total) {
+          clearInterval(pollInterval);
+          setProcessing(false);
+          toast.success(
+            `✅ All ${total} documents processed! Go to Entity Management to review entity suggestions.`,
+            { duration: 10000 }
+          );
+          refetch();
         }
       }
+    }, 5000); // Check every 5 seconds
 
+    // Stop polling after 10 minutes
+    setTimeout(() => {
+      clearInterval(pollInterval);
       setProcessing(false);
-      
-      if (successful > 0) {
-        toast.success(
-          `✅ Processing complete! ${successful}/${total} documents processed successfully${failed > 0 ? ` (${failed} failed)` : ''}\n\n📋 Go to Entity Management to review and approve entity suggestions.`,
-          { duration: 10000 }
-        );
-        refetch();
-      } else {
-        toast.error(`❌ Processing failed for all documents. Check console for details.`, {
-          duration: 8000
-        });
-      }
-    })();
+    }, 600000);
   };
 
   return (
