@@ -28,63 +28,26 @@ serve(async (req) => {
       throw new Error("File path is required");
     }
 
-    console.log("Processing itinerary file:", filePath);
+    console.log("Processing itinerary:", filePath);
 
-    // Use Lovable's document parsing API for proper PDF extraction
+    // Get public URL for the file
+    const { data: urlData } = supabaseClient
+      .storage
+      .from("travel-documents")
+      .getPublicUrl(filePath);
+
+    if (!urlData?.publicUrl) {
+      throw new Error("Could not get file URL");
+    }
+
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY not configured");
     }
 
-    // Download the file
-    const { data: fileData, error: downloadError } = await supabaseClient
-      .storage
-      .from("travel-documents")
-      .download(filePath);
+    console.log("Calling AI with document URL");
 
-    if (downloadError) {
-      console.error("Download error:", downloadError);
-      throw new Error(`Failed to download file: ${downloadError.message}`);
-    }
-
-    // Convert to base64 for document parsing (chunked to avoid stack overflow)
-    const arrayBuffer = await fileData.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    let binary = '';
-    const chunkSize = 8192;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-      binary += String.fromCharCode.apply(null, Array.from(chunk));
-    }
-    const base64 = btoa(binary);
-
-    console.log("Parsing PDF with document API");
-
-    // Parse document using Lovable's API
-    const parseResponse = await fetch("https://document-parser.lovable.app/parse", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        file: base64,
-        filename: filePath,
-      }),
-    });
-
-    if (!parseResponse.ok) {
-      const errorText = await parseResponse.text();
-      console.error("Document parse error:", parseResponse.status, errorText);
-      throw new Error(`Failed to parse PDF: ${errorText}`);
-    }
-
-    const parseData = await parseResponse.json();
-    const extractedText = parseData.pages?.map((p: any) => p.text).join("\n\n") || "";
-
-    console.log("Extracted text length:", extractedText.length);
-
-    // Call AI to extract structured travel data
+    // Use AI vision to read the PDF directly
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -95,12 +58,19 @@ serve(async (req) => {
         model: "google/gemini-2.5-flash",
         messages: [
           {
-            role: "system",
-            content: "You are a travel document parser. Extract structured information from itineraries accurately.",
-          },
-          {
             role: "user",
-            content: `Extract travel details from this itinerary:\n\n${extractedText}`,
+            content: [
+              {
+                type: "text",
+                text: "Extract travel details from this itinerary PDF: traveler name, trip name, departure and return dates, flight numbers, origin city and country, destination city and country, hotel name and address.",
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: urlData.publicUrl,
+                },
+              },
+            ],
           },
         ],
         tools: [
@@ -113,7 +83,7 @@ serve(async (req) => {
                 type: "object",
                 properties: {
                   traveler_name: { type: "string" },
-                  trip_name: { type: "string", description: "Trip destination name" },
+                  trip_name: { type: "string" },
                   trip_type: { type: "string", enum: ["domestic", "international"] },
                   departure_date: { type: "string", format: "date-time" },
                   return_date: { type: "string", format: "date-time" },
@@ -150,19 +120,19 @@ serve(async (req) => {
 
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
-      console.error("AI API error:", aiResponse.status, errorText);
-      throw new Error(`AI extraction failed: ${errorText}`);
+      console.error("AI error:", aiResponse.status, errorText);
+      throw new Error(`AI failed: ${errorText}`);
     }
 
     const aiData = await aiResponse.json();
     const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
 
     if (!toolCall) {
-      throw new Error("Could not extract travel data from document");
+      throw new Error("Could not extract travel data");
     }
 
     const travelData = JSON.parse(toolCall.function.arguments);
-    console.log("Extracted:", JSON.stringify(travelData, null, 2));
+    console.log("Extracted:", travelData.traveler_name, "to", travelData.destination_city);
 
     return new Response(
       JSON.stringify({ success: true, data: travelData }),
