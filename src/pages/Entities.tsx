@@ -19,6 +19,12 @@ import { toast } from "sonner";
 import { DashboardClientSelector } from "@/components/DashboardClientSelector";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { LocationsMap } from "@/components/LocationsMap";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DuplicateDetectionPanel } from "@/components/DuplicateDetectionPanel";
+import { EntitySuggestionsPanel } from "@/components/EntitySuggestionsPanel";
+import { EntityUnifiedProfile } from "@/components/EntityUnifiedProfile";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 export default function Entities() {
   const { selectedClientId } = useClientSelection();
@@ -35,6 +41,8 @@ export default function Entities() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [crossReferenceDialogOpen, setCrossReferenceDialogOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("entities");
+  const [profileEntityId, setProfileEntityId] = useState<string>("");
 
   // Note: Entities are global - not filtered by client as they can be referenced across multiple clients
 
@@ -247,9 +255,9 @@ export default function Entities() {
         <DashboardClientSelector />
         <div className="flex items-center justify-between mb-6 mt-6">
           <div>
-            <h1 className="text-3xl font-bold">Entity Tracking</h1>
+            <h1 className="text-3xl font-bold">Entity Management</h1>
             <p className="text-muted-foreground">
-              Entities mentioned in {selectedClientId ? 'selected client' : 'all'} signals
+              Track entities, review suggestions, and manage duplicates
             </p>
           </div>
           <div className="flex gap-2">
@@ -283,6 +291,15 @@ export default function Entities() {
           </div>
         </div>
 
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+          <TabsList>
+            <TabsTrigger value="entities">Entities</TabsTrigger>
+            <TabsTrigger value="suggestions">Suggestions</TabsTrigger>
+            <TabsTrigger value="duplicates">Duplicates</TabsTrigger>
+            <TabsTrigger value="profile">Profile</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="entities" className="space-y-4">
         <div className="space-y-4 mb-6">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -595,6 +612,41 @@ export default function Entities() {
             </Button>
           </div>
         )}
+          </TabsContent>
+
+          <TabsContent value="suggestions">
+            <EntitySuggestionsPanel />
+          </TabsContent>
+
+          <TabsContent value="duplicates">
+            <DuplicateDetectionPanel />
+          </TabsContent>
+
+          <TabsContent value="profile" className="space-y-6">
+            <div className="space-y-2">
+              <Label>View Entity Profile</Label>
+              <Select value={profileEntityId} onValueChange={setProfileEntityId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select an entity" />
+                </SelectTrigger>
+                <SelectContent>
+                  {entities.map((entity: any) => (
+                    <SelectItem key={entity.id} value={entity.id}>
+                      {entity.name} ({entity.type})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {profileEntityId && (
+              <EntityUnifiedProfile
+                entityId={profileEntityId}
+                entityName={entities?.find((e: any) => e.id === profileEntityId)?.name || ''}
+              />
+            )}
+          </TabsContent>
+        </Tabs>
       </main>
 
         <CreateEntityDialog 

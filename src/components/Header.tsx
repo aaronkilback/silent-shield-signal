@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss, GitMerge } from "lucide-react";
+import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -90,18 +90,10 @@ export const Header = () => {
                 onClick={() => navigate("/entities")}
                 variant={location.pathname === "/entities" ? "default" : "ghost"}
                 size="sm"
+                className="relative"
               >
                 <Users className="w-4 h-4 mr-2" />
                 Entities
-              </Button>
-              <Button
-                onClick={() => navigate("/entity-management")}
-                variant={location.pathname === "/entity-management" ? "default" : "ghost"}
-                size="sm"
-                className="relative"
-              >
-                <GitMerge className="w-4 h-4 mr-2" />
-                Entity Management
                 {pendingSuggestions && pendingSuggestions > 0 && (
                   <Badge 
                     variant="destructive" 

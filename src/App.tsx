@@ -14,7 +14,6 @@ import Incidents from "./pages/Incidents";
 import Signals from "./pages/Signals";
 import Sources from "./pages/Sources";
 import Entities from "./pages/Entities";
-import EntityManagement from "./pages/EntityManagement";
 import Reports from "./pages/Reports";
 import Investigations from "./pages/Investigations";
 import InvestigationDetail from "./pages/InvestigationDetail";
@@ -40,7 +39,6 @@ const App = () => (
             <Route path="/signals" element={<Signals />} />
             <Route path="/sources" element={<Sources />} />
             <Route path="/entities" element={<Entities />} />
-            <Route path="/entity-management" element={<EntityManagement />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/investigations" element={<Investigations />} />
             <Route path="/investigation/:id" element={<InvestigationDetail />} />
