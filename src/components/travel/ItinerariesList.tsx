@@ -1,15 +1,30 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Calendar, MapPin, Plane, AlertCircle } from "lucide-react";
+import { Plus, Calendar, MapPin, Plane, AlertCircle, Pencil, Trash2 } from "lucide-react";
 import { CreateItineraryDialog } from "./CreateItineraryDialog";
+import { EditItineraryDialog } from "./EditItineraryDialog";
 import { format } from "date-fns";
+import { toast } from "sonner";
 
 export function ItinerariesList() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [editingItinerary, setEditingItinerary] = useState<any>(null);
+  const queryClient = useQueryClient();
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("itineraries").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["itineraries"] });
+      toast.success("Itinerary deleted");
+    },
+  });
 
   const { data: itineraries, isLoading } = useQuery({
     queryKey: ["itineraries"],
@@ -137,11 +152,34 @@ export function ItinerariesList() {
             )}
 
             {itinerary.hotel_name && (
-              <div className="text-sm text-muted-foreground">
+              <div className="text-sm text-muted-foreground mb-3">
                 <span className="font-medium">Hotel:</span> {itinerary.hotel_name}
                 {itinerary.hotel_address && ` - ${itinerary.hotel_address}`}
               </div>
             )}
+
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setEditingItinerary(itinerary)}
+              >
+                <Pencil className="h-4 w-4 mr-1" />
+                Edit
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (confirm("Are you sure you want to delete this itinerary?")) {
+                    deleteMutation.mutate(itinerary.id);
+                  }
+                }}
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                Delete
+              </Button>
+            </div>
           </Card>
         ))}
 
@@ -156,6 +194,14 @@ export function ItinerariesList() {
         open={showCreateDialog}
         onOpenChange={setShowCreateDialog}
       />
+
+      {editingItinerary && (
+        <EditItineraryDialog
+          open={!!editingItinerary}
+          onOpenChange={(open) => !open && setEditingItinerary(null)}
+          itinerary={editingItinerary}
+        />
+      )}
     </div>
   );
 }
