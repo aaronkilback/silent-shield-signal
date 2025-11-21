@@ -28,9 +28,15 @@ serve(async (req) => {
       throw new Error("File path is required");
     }
 
-    console.log("Downloading PDF from storage:", filePath);
+    console.log("Processing itinerary file:", filePath);
 
-    // Download the file from storage
+    // Use Lovable's document parsing API for proper PDF extraction
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) {
+      throw new Error("LOVABLE_API_KEY not configured");
+    }
+
+    // Download the file
     const { data: fileData, error: downloadError } = await supabaseClient
       .storage
       .from("travel-documents")
@@ -41,29 +47,38 @@ serve(async (req) => {
       throw new Error(`Failed to download file: ${downloadError.message}`);
     }
 
-    console.log("File downloaded, size:", fileData.size);
-
-    // Read file as text (basic extraction for PDF)
+    // Convert to base64 for document parsing
     const arrayBuffer = await fileData.arrayBuffer();
-    const textDecoder = new TextDecoder("utf-8");
-    let rawText = textDecoder.decode(arrayBuffer);
-    
-    // Clean up text - remove non-printable characters but keep useful content
-    const cleanedText = rawText
-      .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    const bytes = new Uint8Array(arrayBuffer);
+    const base64 = btoa(String.fromCharCode(...bytes));
 
-    console.log("Extracted text length:", cleanedText.length);
+    console.log("Parsing PDF with document API");
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY not configured");
+    // Parse document using Lovable's API
+    const parseResponse = await fetch("https://document-parser.lovable.app/parse", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        file: base64,
+        filename: filePath,
+      }),
+    });
+
+    if (!parseResponse.ok) {
+      const errorText = await parseResponse.text();
+      console.error("Document parse error:", parseResponse.status, errorText);
+      throw new Error(`Failed to parse PDF: ${errorText}`);
     }
 
-    console.log("Calling AI to parse travel itinerary");
+    const parseData = await parseResponse.json();
+    const extractedText = parseData.pages?.map((p: any) => p.text).join("\n\n") || "";
 
-    // Call AI to extract structured data
+    console.log("Extracted text length:", extractedText.length);
+
+    // Call AI to extract structured travel data
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -75,11 +90,11 @@ serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: "You are a travel document parser. Extract structured travel information from flight itineraries and e-tickets. Be flexible with date formats and extract what you can find.",
+            content: "You are a travel document parser. Extract structured information from itineraries accurately.",
           },
           {
             role: "user",
-            content: `Extract travel details from this document. Look for: passenger/traveler name, flight numbers, dates, origin and destination cities/countries, and hotel info.\n\nDocument:\n${cleanedText.substring(0, 50000)}`,
+            content: `Extract travel details from this itinerary:\n\n${extractedText}`,
           },
         ],
         tools: [
@@ -87,12 +102,12 @@ serve(async (req) => {
             type: "function",
             function: {
               name: "extract_travel_details",
-              description: "Extract structured travel information from an itinerary",
+              description: "Extract structured travel information",
               parameters: {
                 type: "object",
                 properties: {
                   traveler_name: { type: "string" },
-                  trip_name: { type: "string", description: "Descriptive name for the trip based on destination" },
+                  trip_name: { type: "string", description: "Trip destination name" },
                   trip_type: { type: "string", enum: ["domestic", "international"] },
                   departure_date: { type: "string", format: "date-time" },
                   return_date: { type: "string", format: "date-time" },
@@ -100,10 +115,7 @@ serve(async (req) => {
                   origin_country: { type: "string" },
                   destination_city: { type: "string" },
                   destination_country: { type: "string" },
-                  flight_numbers: {
-                    type: "array",
-                    items: { type: "string" },
-                  },
+                  flight_numbers: { type: "array", items: { type: "string" } },
                   hotel_name: { type: "string" },
                   hotel_address: { type: "string" },
                   notes: { type: "string" },
@@ -133,40 +145,28 @@ serve(async (req) => {
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
       console.error("AI API error:", aiResponse.status, errorText);
-      throw new Error(`AI API request failed: ${errorText}`);
+      throw new Error(`AI extraction failed: ${errorText}`);
     }
 
     const aiData = await aiResponse.json();
-    console.log("AI response received");
-
     const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
 
     if (!toolCall) {
-      throw new Error("No travel data could be extracted from the document");
+      throw new Error("Could not extract travel data from document");
     }
 
     const travelData = JSON.parse(toolCall.function.arguments);
-    console.log("Extracted travel data:", JSON.stringify(travelData, null, 2));
+    console.log("Extracted:", JSON.stringify(travelData, null, 2));
 
     return new Response(
-      JSON.stringify({
-        success: true,
-        data: travelData,
-      }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      JSON.stringify({ success: true, data: travelData }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("Error parsing travel itinerary:", error);
+    console.error("Error:", error);
     return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });
