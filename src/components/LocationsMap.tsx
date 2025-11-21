@@ -61,7 +61,7 @@ export const LocationsMap = ({ locations }: LocationsMapProps) => {
 
       map.current = new mapboxgl.Map({
         container: mapContainer.current,
-        style: 'mapbox://styles/mapbox/dark-v11',
+        style: 'mapbox://styles/mapbox/satellite-streets-v12',
         center: [geocodedLocations[0].lng, geocodedLocations[0].lat],
         zoom: 10,
       });
