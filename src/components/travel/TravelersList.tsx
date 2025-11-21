@@ -37,25 +37,90 @@ export function TravelersList() {
     },
   });
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "traveling":
-        return "bg-blue-500";
-      case "home":
-        return "bg-green-500";
-      case "at-risk":
-        return "bg-red-500";
-      default:
-        return "bg-gray-500";
-    }
+  const isActive = (status: string) => {
+    return status === "traveling" || status === "at-risk";
   };
+
+  const activeTravelers = travelers?.filter((t) => isActive(t.status)) || [];
+  const inactiveTravelers = travelers?.filter((t) => !isActive(t.status)) || [];
 
   if (isLoading) {
     return <div>Loading travelers...</div>;
   }
 
+  const renderTravelerCard = (traveler: any) => (
+    <Card key={traveler.id} className="p-4 space-y-3">
+      <div className="flex items-start justify-between">
+        <div className="flex items-center gap-2">
+          <div
+            className={`w-3 h-3 rounded-full ${
+              isActive(traveler.status) ? "bg-green-500" : "bg-red-500"
+            }`}
+          />
+          <h3 className="font-semibold">{traveler.name}</h3>
+        </div>
+        <Badge variant="outline">{traveler.status}</Badge>
+      </div>
+
+      <div className="space-y-2 text-sm text-muted-foreground">
+        {traveler.email && (
+          <div className="flex items-center gap-2">
+            <Mail className="h-4 w-4" />
+            {traveler.email}
+          </div>
+        )}
+        {traveler.phone && (
+          <div className="flex items-center gap-2">
+            <Phone className="h-4 w-4" />
+            {traveler.phone}
+          </div>
+        )}
+        {traveler.current_location && (
+          <div className="flex items-center gap-2">
+            <MapPin className="h-4 w-4" />
+            {traveler.current_location}
+          </div>
+        )}
+      </div>
+
+      {traveler.last_location_update && (
+        <div className="text-xs text-muted-foreground">
+          Last updated: {new Date(traveler.last_location_update).toLocaleString()}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between pt-2">
+        <div
+          className="w-6 h-6 rounded-full border-2 border-border"
+          style={{ backgroundColor: traveler.map_color }}
+          title="Map marker color"
+        />
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setEditingTraveler(traveler)}
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              if (confirm("Are you sure you want to delete this traveler?")) {
+                deleteMutation.mutate(traveler.id);
+              }
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-semibold">Travelers</h2>
         <Button onClick={() => setShowCreateDialog(true)}>
@@ -64,75 +129,42 @@ export function TravelersList() {
         </Button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {travelers?.map((traveler) => (
-          <Card key={traveler.id} className="p-4 space-y-3">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-2">
-                <div
-                  className={`w-3 h-3 rounded-full ${getStatusColor(traveler.status)}`}
-                />
-                <h3 className="font-semibold">{traveler.name}</h3>
-              </div>
-              <Badge variant="outline">{traveler.status}</Badge>
-            </div>
-
-            <div className="space-y-2 text-sm text-muted-foreground">
-              {traveler.email && (
-                <div className="flex items-center gap-2">
-                  <Mail className="h-4 w-4" />
-                  {traveler.email}
-                </div>
-              )}
-              {traveler.phone && (
-                <div className="flex items-center gap-2">
-                  <Phone className="h-4 w-4" />
-                  {traveler.phone}
-                </div>
-              )}
-              {traveler.current_location && (
-                <div className="flex items-center gap-2">
-                  <MapPin className="h-4 w-4" />
-                  {traveler.current_location}
-                </div>
-              )}
-            </div>
-
-            {traveler.last_location_update && (
-              <div className="text-xs text-muted-foreground">
-                Last updated: {new Date(traveler.last_location_update).toLocaleString()}
-              </div>
-            )}
-
-            <div className="flex items-center justify-between pt-2">
-              <div
-                className="w-6 h-6 rounded-full border-2 border-border"
-                style={{ backgroundColor: traveler.map_color }}
-                title="Map marker color"
-              />
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setEditingTraveler(traveler)}
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    if (confirm("Are you sure you want to delete this traveler?")) {
-                      deleteMutation.mutate(traveler.id);
-                    }
-                  }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
+      {/* Active Travelers Section */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-green-500" />
+          <h3 className="text-lg font-semibold">
+            Active ({activeTravelers.length})
+          </h3>
+        </div>
+        {activeTravelers.length > 0 ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {activeTravelers.map(renderTravelerCard)}
+          </div>
+        ) : (
+          <Card className="p-6 text-center text-muted-foreground">
+            No active travelers
           </Card>
-        ))}
+        )}
+      </div>
+
+      {/* Inactive Travelers Section */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-red-500" />
+          <h3 className="text-lg font-semibold">
+            Inactive ({inactiveTravelers.length})
+          </h3>
+        </div>
+        {inactiveTravelers.length > 0 ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {inactiveTravelers.map(renderTravelerCard)}
+          </div>
+        ) : (
+          <Card className="p-6 text-center text-muted-foreground">
+            No inactive travelers
+          </Card>
+        )}
       </div>
 
       <CreateTravelerDialog
