@@ -75,15 +75,15 @@ serve(async (req) => {
 
     console.log('Processing document:', filename, mimeType);
 
-    // Check file size before processing (10MB limit)
+    // Check file size before processing (20MB limit)
     const estimatedSize = (file.length * 3) / 4; // Base64 to bytes approximation
-    const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+    const MAX_SIZE = 20 * 1024 * 1024; // 20MB
     
     if (estimatedSize > MAX_SIZE) {
       console.error(`File too large: ${(estimatedSize / 1024 / 1024).toFixed(2)}MB`);
       return new Response(
         JSON.stringify({ 
-          error: `File too large (${(estimatedSize / 1024 / 1024).toFixed(1)}MB). Maximum size is 10MB. Please use the Archival Upload feature for larger documents.` 
+          error: `File too large (${(estimatedSize / 1024 / 1024).toFixed(1)}MB). Maximum size is 20MB. Please use the Archival Upload feature for larger documents.`
         }),
         { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
