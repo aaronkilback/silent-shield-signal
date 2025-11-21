@@ -1,13 +1,27 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TravelersList } from "@/components/travel/TravelersList";
 import { ItinerariesList } from "@/components/travel/ItinerariesList";
 import { TravelAlertsPanel } from "@/components/travel/TravelAlertsPanel";
 import { TravelersMap } from "@/components/travel/TravelersMap";
 import { Plane, Users, AlertTriangle, MapPin } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 
 export default function Travel() {
   const [activeTab, setActiveTab] = useState("travelers");
+
+  // Archive completed itineraries on page load
+  useEffect(() => {
+    const archiveCompletedItineraries = async () => {
+      try {
+        await supabase.functions.invoke("archive-completed-itineraries");
+      } catch (error) {
+        console.error("Error archiving itineraries:", error);
+      }
+    };
+    
+    archiveCompletedItineraries();
+  }, []);
 
   return (
     <div className="container mx-auto py-6 space-y-6">
