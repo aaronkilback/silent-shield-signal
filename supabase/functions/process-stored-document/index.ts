@@ -90,6 +90,113 @@ serve(async (req) => {
       const decoder = new TextDecoder();
       // Limit to 100KB
       textContent = decoder.decode(arrayBuffer.slice(0, 100 * 1024));
+    } else if (document.file_type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || 
+               document.file_type === 'application/msword') {
+      // Word documents (.docx, .doc)
+      console.log('Extracting text from Word document...');
+      
+      const arrayBuffer = await fileData.slice(0, 500 * 1024).arrayBuffer(); // Limit to 500KB
+      
+      // For .docx files (ZIP-based Office Open XML)
+      if (document.file_type.includes('openxmlformats')) {
+        try {
+          // Import JSZip for unzipping .docx
+          const JSZip = (await import('https://esm.sh/jszip@3.10.1')).default;
+          const zip = await JSZip.loadAsync(arrayBuffer);
+          
+          // Extract document.xml which contains the text content
+          const documentXml = await zip.file('word/document.xml')?.async('string');
+          
+          if (documentXml) {
+            // Extract text between XML tags
+            const textMatches = documentXml.match(/<w:t[^>]*>([^<]*)<\/w:t>/g);
+            if (textMatches) {
+              textContent = textMatches
+                .map(match => match.replace(/<[^>]+>/g, ''))
+                .join(' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 50000);
+              
+              console.log(`Extracted ${textContent.length} characters from Word document`);
+            }
+          }
+        } catch (error) {
+          console.error('Error extracting Word document:', error);
+          textContent = '';
+        }
+      } else {
+        // For older .doc files, try basic text extraction
+        const text = new TextDecoder('utf-8', { fatal: false }).decode(arrayBuffer);
+        textContent = text
+          .replace(/[^\x20-\x7E\s]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 50000);
+        console.log(`Extracted ${textContent.length} characters from legacy Word document`);
+      }
+    } else if (document.file_type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+               document.file_type === 'application/vnd.ms-excel') {
+      // Excel documents (.xlsx, .xls)
+      console.log('Extracting text from Excel document...');
+      
+      const arrayBuffer = await fileData.slice(0, 500 * 1024).arrayBuffer(); // Limit to 500KB
+      
+      // For .xlsx files (ZIP-based Office Open XML)
+      if (document.file_type.includes('openxmlformats')) {
+        try {
+          const JSZip = (await import('https://esm.sh/jszip@3.10.1')).default;
+          const zip = await JSZip.loadAsync(arrayBuffer);
+          
+          // Extract shared strings (contains cell text values)
+          const sharedStringsXml = await zip.file('xl/sharedStrings.xml')?.async('string');
+          
+          if (sharedStringsXml) {
+            // Extract text from shared strings
+            const textMatches = sharedStringsXml.match(/<t[^>]*>([^<]*)<\/t>/g);
+            if (textMatches) {
+              textContent = textMatches
+                .map(match => match.replace(/<[^>]+>/g, ''))
+                .join(' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 50000);
+              
+              console.log(`Extracted ${textContent.length} characters from Excel document`);
+            }
+          }
+          
+          // Also try to extract from worksheet if shared strings is empty
+          if (!textContent) {
+            const sheet1Xml = await zip.file('xl/worksheets/sheet1.xml')?.async('string');
+            if (sheet1Xml) {
+              const cellMatches = sheet1Xml.match(/<v[^>]*>([^<]*)<\/v>/g);
+              if (cellMatches) {
+                textContent = cellMatches
+                  .map(match => match.replace(/<[^>]+>/g, ''))
+                  .join(' ')
+                  .replace(/\s+/g, ' ')
+                  .trim()
+                  .slice(0, 50000);
+                
+                console.log(`Extracted ${textContent.length} characters from Excel worksheet`);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error extracting Excel document:', error);
+          textContent = '';
+        }
+      } else {
+        // For older .xls files, try basic text extraction
+        const text = new TextDecoder('utf-8', { fatal: false }).decode(arrayBuffer);
+        textContent = text
+          .replace(/[^\x20-\x7E\s]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 50000);
+        console.log(`Extracted ${textContent.length} characters from legacy Excel document`);
+      }
     } else if (document.file_type === 'application/pdf') {
       console.log('Extracting text from PDF...');
       
