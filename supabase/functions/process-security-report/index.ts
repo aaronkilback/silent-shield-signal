@@ -1,6 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import pdfParse from "https://esm.sh/pdf-parse@1.1.1";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -73,27 +74,23 @@ serve(async (req) => {
 
         // Extract text based on file type
         if (doc.file_type === 'application/pdf') {
-          console.log('Extracting text from PDF...');
-          // For PDFs, we use a simple approach - read as text
-          // In production, you'd use a proper PDF parser
-          const arrayBuffer = await fileData.arrayBuffer();
-          const decoder = new TextDecoder('utf-8');
-          const rawText = decoder.decode(arrayBuffer);
-          
-          // Extract readable text between PDF objects
-          const textMatches = rawText.match(/\(([^)]+)\)/g);
-          if (textMatches) {
-            content = textMatches
-              .map(match => match.slice(1, -1))
-              .filter(text => text.length > 3)
-              .join(' ')
-              .replace(/\\[rn]/g, ' ')
-              .replace(/\s+/g, ' ')
-              .trim();
-          }
-          
-          if (!content || content.length < 100) {
-            throw new Error('Failed to extract meaningful text from PDF. File may be scanned or encrypted.');
+          console.log('Extracting text from PDF using pdf-parse...');
+          try {
+            const arrayBuffer = await fileData.arrayBuffer();
+            const buffer = new Uint8Array(arrayBuffer);
+            
+            // Use pdf-parse to extract text
+            const pdfData = await pdfParse(buffer);
+            content = pdfData.text;
+            
+            console.log(`Extracted ${content.length} characters from PDF (${pdfData.numpages} pages)`);
+            
+            if (!content || content.trim().length < 100) {
+              throw new Error('Failed to extract meaningful text from PDF. File may be scanned, image-based, or encrypted. Please ensure the PDF contains selectable text.');
+            }
+          } catch (pdfError) {
+            console.error('PDF parsing error:', pdfError);
+            throw new Error(`Failed to parse PDF: ${pdfError instanceof Error ? pdfError.message : 'Unknown error'}. The file may be corrupted, encrypted, or contain only images.`);
           }
         } else if (doc.file_type.includes('text')) {
           content = await fileData.text();
