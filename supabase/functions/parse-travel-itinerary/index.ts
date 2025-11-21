@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
+import * as pdfjs from "https://esm.sh/pdfjs-dist@4.0.379/legacy/build/pdf.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,44 +44,30 @@ serve(async (req) => {
 
     console.log("File downloaded successfully");
 
-    // Extract text from PDF
+    // Parse PDF using pdfjs-dist
     const arrayBuffer = await fileData.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    const pdfString = new TextDecoder('latin1').decode(uint8Array);
     
-    console.log("Extracting text from PDF...");
+    console.log("Parsing PDF with pdfjs-dist...");
     
-    // Extract text between BT (Begin Text) and ET (End Text) markers
-    const textMatches = pdfString.match(/BT(.*?)ET/gs);
+    const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
+    const pdf = await loadingTask.promise;
+    
     let textContent = '';
     
-    if (textMatches && textMatches.length > 0) {
-      for (const match of textMatches) {
-        const parenStrings = match.match(/\(([^)]*)\)/g);
-        if (parenStrings) {
-          for (const str of parenStrings) {
-            const text = str.slice(1, -1);
-            const decoded = text
-              .replace(/\\n/g, ' ')
-              .replace(/\\r/g, ' ')
-              .replace(/\\t/g, ' ')
-              .replace(/\\\(/g, '(')
-              .replace(/\\\)/g, ')')
-              .replace(/\\\\/g, '\\');
-            textContent += decoded + ' ';
-          }
-        }
-      }
-      
-      textContent = textContent
-        .replace(/\s+/g, ' ')
-        .trim();
-      
-      console.log(`Extracted ${textContent.length} characters from PDF`);
+    // Extract text from all pages
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const pageText = content.items.map((item: any) => item.str).join(' ');
+      textContent += pageText + ' ';
     }
+    
+    textContent = textContent.trim();
+    
+    console.log(`Extracted ${textContent.length} characters from ${pdf.numPages} pages`);
 
     if (!textContent || textContent.length < 20) {
-      throw new Error("Could not extract meaningful text from PDF");
+      throw new Error("Could not extract meaningful text from PDF. The PDF may be empty or image-based.");
     }
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
