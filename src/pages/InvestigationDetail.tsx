@@ -1100,6 +1100,9 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground mb-2">
+                  💡 Tip: In Google Maps, right-click on a location → "What's here?" to copy coordinates (e.g., 51.0447, -114.0719)
+                </p>
                 <div className="grid grid-cols-3 gap-2">
                   <Input 
                     placeholder="Location Name"
@@ -1107,7 +1110,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     onChange={(e) => setNewLocationName(e.target.value)}
                   />
                   <Input 
-                    placeholder="Address"
+                    placeholder="Coordinates: 51.0447, -114.0719"
                     value={newLocationAddress}
                     onChange={(e) => setNewLocationAddress(e.target.value)}
                   />

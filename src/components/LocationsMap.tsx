@@ -4,6 +4,7 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import { MapPin } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { toast } from 'sonner';
 
 interface Location {
   id: string;
@@ -138,10 +139,18 @@ export const LocationsMap = ({ locations }: LocationsMapProps) => {
         return null;
       }
 
+      // Handle shortened Google Maps URLs (goo.gl, maps.app.goo.gl)
+      if (locationStr.includes('goo.gl') || locationStr.includes('maps.app.goo.gl')) {
+        console.warn(`Shortened Google Maps URLs (${locationStr}) cannot be parsed. Please use the full coordinates or address instead.`);
+        toast.error("Please use full Google Maps coordinates, not shortened URLs");
+        return null;
+      }
+
       // Extract coordinates from Google Maps URLs
       // Format: https://maps.google.com/?q=51.0447,-114.0719
       // Format: https://www.google.com/maps/place/51.0447,-114.0719
       // Format: https://www.google.com/maps/@51.0447,-114.0719,15z
+      // Format: https://www.google.com/maps?q=51.0447,-114.0719
       const googleMapsMatch = locationStr.match(/[@?q=](-?\d+\.?\d*),\s*(-?\d+\.?\d*)/);
       if (googleMapsMatch) {
         const lat = parseFloat(googleMapsMatch[1]);
