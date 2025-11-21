@@ -1,11 +1,70 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
-import pdfParse from "https://esm.sh/pdf-parse@1.1.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+// Enhanced PDF text extraction
+function extractTextFromPDF(arrayBuffer: ArrayBuffer): string {
+  const uint8Array = new Uint8Array(arrayBuffer);
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+  let text = decoder.decode(uint8Array);
+  
+  // Try latin1 if utf-8 fails
+  if (!text || text.length < 100) {
+    const latin1Decoder = new TextDecoder('latin1');
+    text = latin1Decoder.decode(uint8Array);
+  }
+  
+  // Extract text from PDF structure
+  let extractedText = '';
+  
+  // Method 1: Extract text between BT/ET markers (text objects)
+  const btEtMatches = text.match(/BT[\s\S]*?ET/g) || [];
+  for (const match of btEtMatches) {
+    // Extract strings in parentheses
+    const strings = match.match(/\(([^)]+)\)/g) || [];
+    for (const str of strings) {
+      let cleanStr = str.slice(1, -1); // Remove parentheses
+      // Unescape PDF special characters
+      cleanStr = cleanStr
+        .replace(/\\n/g, ' ')
+        .replace(/\\r/g, ' ')
+        .replace(/\\t/g, ' ')
+        .replace(/\\\(/g, '(')
+        .replace(/\\\)/g, ')')
+        .replace(/\\\\/g, '\\')
+        .replace(/\\(\d{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)));
+      extractedText += cleanStr + ' ';
+    }
+  }
+  
+  // Method 2: Extract text from Tj and TJ operators
+  const tjMatches = text.match(/\((.*?)\)\s*Tj/g) || [];
+  for (const match of tjMatches) {
+    const content = match.match(/\((.*?)\)/)?.[1] || '';
+    extractedText += content + ' ';
+  }
+  
+  // Method 3: Look for common text patterns
+  const streamMatches = text.match(/stream[\s\S]*?endstream/g) || [];
+  for (const stream of streamMatches) {
+    const readable = stream.replace(/[^\x20-\x7E\s]/g, '');
+    if (readable.length > 10) {
+      extractedText += readable + ' ';
+    }
+  }
+  
+  // Clean up the extracted text
+  extractedText = extractedText
+    .replace(/\s+/g, ' ')
+    .replace(/\x00/g, '')
+    .trim();
+  
+  return extractedText;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -42,17 +101,16 @@ serve(async (req) => {
       throw new Error(`Failed to download file: ${downloadError?.message}`);
     }
 
-    console.log("File downloaded, extracting text with pdf-parse...");
+    console.log("File downloaded, extracting text...");
 
-    // Extract text using pdf-parse
+    // Extract text from PDF
     const arrayBuffer = await fileData.arrayBuffer();
-    const pdfData = await pdfParse(arrayBuffer);
-    const textContent = pdfData.text.trim();
+    const textContent = extractTextFromPDF(arrayBuffer);
 
-    console.log(`Extracted ${textContent.length} characters from ${pdfData.numpages} page(s)`);
+    console.log(`Extracted ${textContent.length} characters from PDF`);
 
-    if (!textContent || textContent.length < 20) {
-      throw new Error("Could not extract meaningful text from PDF. The PDF may be empty or image-based.");
+    if (!textContent || textContent.length < 50) {
+      throw new Error("Could not extract sufficient text from PDF. Please ensure the PDF contains readable text (not just images or scanned documents).");
     }
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
@@ -82,8 +140,8 @@ ${textContent}
 Extract:
 - Traveler name (look for passenger name, traveler, guest name)
 - Trip name or purpose
-- Departure date and time
-- Return date and time  
+- Departure date and time (convert to ISO 8601 format: YYYY-MM-DDTHH:mm:ss)
+- Return date and time (convert to ISO 8601 format: YYYY-MM-DDTHH:mm:ss)
 - Origin city and country
 - Destination city and country
 - ALL flight numbers mentioned
@@ -113,12 +171,12 @@ Be very thorough - extract all information present.`,
                   departure_date: { 
                     type: "string", 
                     format: "date-time",
-                    description: "Departure date and time in ISO format"
+                    description: "Departure date and time in ISO 8601 format"
                   },
                   return_date: { 
                     type: "string", 
                     format: "date-time",
-                    description: "Return date and time in ISO format"
+                    description: "Return date and time in ISO 8601 format"
                   },
                   origin_city: { type: "string" },
                   origin_country: { type: "string" },
@@ -165,7 +223,8 @@ Be very thorough - extract all information present.`,
     const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
 
     if (!toolCall) {
-      throw new Error("Could not extract travel data from text");
+      console.log("AI response:", JSON.stringify(aiData, null, 2));
+      throw new Error("Could not extract travel data from text. The PDF may not contain a valid travel itinerary.");
     }
 
     const travelData = JSON.parse(toolCall.function.arguments);
