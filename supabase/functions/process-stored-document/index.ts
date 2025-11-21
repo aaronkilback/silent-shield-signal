@@ -326,70 +326,55 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: `You are an expert entity extraction system for security intelligence. Extract ONLY real-world security-relevant entities from document CONTENT.
+            content: `You are an expert entity extraction system for security intelligence and threat analysis. Extract security-relevant entities from documents.
 
 KNOWN ENTITIES IN DATABASE:
 ${entityContext}
 
 LEARNING FROM SUCCESSFUL EXTRACTIONS:
-Here are examples of entities that were previously extracted and approved by analysts:
-${successExamples || 'No learning examples yet - be thorough and accurate!'}
+${successExamples || 'Be thorough and accurate in extraction.'}
 
-Learn from these patterns:
-- Notice what types of entities are commonly approved
-- Match the confidence levels of successful extractions
-- Use similar context descriptions
+WHAT TO EXTRACT:
+1. Organizations: Companies, government agencies, threat groups, security vendors
+2. Persons: Named individuals, executives, threat actors, security personnel
+3. Locations: Cities, countries, facilities, addresses
+4. Infrastructure: Systems, networks, servers, databases, cloud services
+5. Domains/URLs/IPs: Web addresses, domains, IP addresses mentioned
+6. Email addresses: Email addresses found in incidents or communications
+7. Phone numbers: Contact numbers found in context
+8. Vehicles: Vehicles with identifiers (license plates, etc.)
 
-CRITICAL RULES - DO NOT EXTRACT:
-- Document titles, filenames, or headers
-- Software/file format names (e.g., "Microsoft Word", "PDF", "Excel")
-- Generic terms or categories (e.g., "Report", "Document", "File")
-- Author names appearing only in metadata or headers
-- Date stamps or version numbers from document properties
-- Template names or form titles
-- Only extract entities that appear in the ACTUAL CONTENT of the document
+DO NOT EXTRACT:
+- Generic terms like "user", "admin", "system" (without specifics)
+- Software/application names unless they're attack targets (skip "Excel", "Word", etc.)
+- Common job titles without names
+- The document filename itself
 
-EXTRACT THESE ENTITY TYPES:
-- Organizations: Real companies, government agencies, threat actors mentioned IN THE CONTENT
-- Persons: Specific individuals discussed IN INCIDENTS or security contexts (not just authors/creators)
-- Locations: Actual physical places, cities, facilities mentioned in security events
-- Infrastructure: Specific systems, networks, servers, IP addresses in use
-- Domains/URLs: Actual websites or domains involved in incidents
-- Email addresses: Real email addresses (not template placeholders)
-- Phone numbers: Actual phone numbers (not example formats)
-- Vehicles: Specific vehicles with identifiers
+CONFIDENCE GUIDELINES:
+- 0.7-1.0: Clearly identified entity with full context
+- 0.5-0.69: Entity mentioned with some context
+- 0.3-0.49: Possible entity but uncertain
 
-CONFIDENCE SCORING:
-- High (0.8-1.0): Entity clearly appears multiple times in content with context
-- Medium (0.5-0.79): Entity mentioned once or in limited context
-- Low (0.3-0.49): Uncertain extraction, may be generic reference
-
-Focus ONLY on entities that appear in actual security incidents, threats, vulnerabilities, or monitoring contexts within the document body.`
+BE THOROUGH: Extract all relevant security entities even if mentioned once, but assign appropriate confidence based on context.`
           },
           {
             role: 'user',
-            content: `Analyze the CONTENT of this security document. DO NOT extract metadata, titles, or filenames.
+            content: `Extract ALL security-relevant entities from this document content.
 
-Document name (DO NOT EXTRACT THIS): "${document.filename}"
-
-DOCUMENT CONTENT TO ANALYZE:
+DOCUMENT CONTENT:
 ${sampleText}
 
-Extract ONLY entities from the document content above that are:
-- Named individuals discussed in security contexts (not just document authors)
-- Specific organizations involved in incidents or threats
-- Actual locations mentioned in security events
-- Real infrastructure, domains, IPs, emails involved
-- Specific vehicles or assets with identifiers
+Extract:
+- All organizations and companies mentioned (even if just named)
+- All persons named in any security context
+- All locations, cities, countries referenced
+- All infrastructure, systems, domains, IPs, emails
+- All threat actors or threat groups
+- All security vendors or tools mentioned
 
-SKIP:
-- The document title/filename itself
-- Generic category terms
-- Software/application names unless they're attack targets
-- Author/creator metadata
-- Template or form field names
+Include entities even if mentioned only once, but adjust confidence accordingly.
 
-For relationships, note ONLY when entities appear together in the same security incident or context within the content.`
+For relationships, note when entities appear together in context.`
           }
         ],
         tools: [
@@ -539,9 +524,9 @@ For relationships, note ONLY when entities appear together in the same security 
         (existingSuggestions || []).map(s => `${s.suggested_name.toLowerCase()}:${s.suggested_type}`)
       );
 
-      // Convert to entity suggestions with matching (lowered threshold to 0.6 for better recall)
+      // Convert to entity suggestions with matching (lowered threshold to 0.3 for maximum recall)
       for (const entity of filteredEntities) {
-        if (entity.confidence < 0.6) continue;
+        if (entity.confidence < 0.3) continue;
         
         const key = `${entity.name.toLowerCase()}:${entity.type}`;
         if (existingSet.has(key)) {
