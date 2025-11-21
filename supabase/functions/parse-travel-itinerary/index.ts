@@ -63,9 +63,9 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY not configured");
     }
 
-    console.log("Calling AI to extract travel details directly from PDF");
+    console.log("Calling AI to parse itinerary with structured segments");
 
-    // Send PDF directly to AI - Gemini can read PDFs natively
+    // Send PDF directly to AI with the structured parsing prompt
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -76,25 +76,48 @@ serve(async (req) => {
         model: "google/gemini-2.5-flash",
         messages: [
           {
+            role: "system",
+            content: `You are an itinerary parsing engine. Extract travel information from documents and return ONLY valid JSON.
+
+Output a single, valid JSON object in this EXACT schema:
+
+{
+  "trip_title": "",
+  "start_date": "",
+  "end_date": "",
+  "segments": [
+    {
+      "type": "",
+      "start_datetime": "",
+      "end_datetime": "",
+      "origin_city": "",
+      "origin_airport_code": "",
+      "destination_city": "",
+      "destination_airport_code": "",
+      "airline": "",
+      "flight_number": "",
+      "hotel_name": "",
+      "hotel_address": "",
+      "notes": ""
+    }
+  ]
+}
+
+Rules:
+- Always return VALID JSON. No comments, no trailing commas, no markdown.
+- Use ISO date format: YYYY-MM-DD for start_date and end_date.
+- Use YYYY-MM-DD HH:MM (24h) for start_datetime and end_datetime.
+- If you do not know a field, use an empty string "".
+- If multiple flights, include each as a separate segment with "type": "flight".
+- If multiple hotels, include each as a separate segment with "type": "hotel".
+- Derive a useful trip_title using main origin/destination and dates.`
+          },
+          {
             role: "user",
             content: [
               {
                 type: "text",
-                text: `Extract ALL travel details from this PDF itinerary. Be thorough and extract everything you can find:
-
-Extract:
-- Traveler name (look for passenger name, traveler, guest name)
-- Trip name or purpose
-- Departure date and time (convert to ISO 8601 format: YYYY-MM-DDTHH:mm:ss)
-- Return date and time (convert to ISO 8601 format: YYYY-MM-DDTHH:mm:ss)
-- Origin city and country
-- Destination city and country
-- ALL flight numbers mentioned
-- Hotel name
-- Hotel full address
-- Any other relevant details
-
-Be very thorough - extract all information present.`
+                text: "Parse this travel itinerary and return ONLY the JSON object with no additional text or explanation."
               },
               {
                 type: "image_url",
@@ -109,60 +132,67 @@ Be very thorough - extract all information present.`
           {
             type: "function",
             function: {
-              name: "extract_travel_details",
-              description: "Extract structured travel information from itinerary",
+              name: "parse_itinerary",
+              description: "Parse travel itinerary into structured segments",
               parameters: {
                 type: "object",
                 properties: {
-                  traveler_name: { type: "string", description: "Full name of traveler" },
-                  trip_name: { type: "string", description: "Trip name or destination description" },
-                  trip_type: { 
+                  trip_title: { 
                     type: "string", 
-                    enum: ["domestic", "international"],
-                    description: "Domestic or international travel"
+                    description: "Descriptive title with origin/destination and dates" 
                   },
-                  departure_date: { 
+                  start_date: { 
                     type: "string", 
-                    format: "date-time",
-                    description: "Departure date and time in ISO 8601 format"
+                    pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+                    description: "Trip start date in YYYY-MM-DD format"
                   },
-                  return_date: { 
+                  end_date: { 
                     type: "string", 
-                    format: "date-time",
-                    description: "Return date and time in ISO 8601 format"
+                    pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+                    description: "Trip end date in YYYY-MM-DD format"
                   },
-                  origin_city: { type: "string" },
-                  origin_country: { type: "string" },
-                  destination_city: { type: "string" },
-                  destination_country: { type: "string" },
-                  flight_numbers: { 
-                    type: "array", 
-                    items: { type: "string" },
-                    description: "All flight numbers mentioned"
-                  },
-                  hotel_name: { type: "string" },
-                  hotel_address: { type: "string" },
-                  notes: { type: "string", description: "Any additional relevant details" },
+                  segments: {
+                    type: "array",
+                    description: "Array of flight and hotel segments",
+                    items: {
+                      type: "object",
+                      properties: {
+                        type: { 
+                          type: "string", 
+                          enum: ["flight", "hotel"],
+                          description: "Segment type"
+                        },
+                        start_datetime: { 
+                          type: "string",
+                          description: "Start date/time in YYYY-MM-DD HH:MM format"
+                        },
+                        end_datetime: { 
+                          type: "string",
+                          description: "End date/time in YYYY-MM-DD HH:MM format"
+                        },
+                        origin_city: { type: "string" },
+                        origin_airport_code: { type: "string" },
+                        destination_city: { type: "string" },
+                        destination_airport_code: { type: "string" },
+                        airline: { type: "string" },
+                        flight_number: { type: "string" },
+                        hotel_name: { type: "string" },
+                        hotel_address: { type: "string" },
+                        notes: { type: "string" }
+                      },
+                      required: ["type", "start_datetime", "end_datetime"]
+                    }
+                  }
                 },
-                required: [
-                  "traveler_name",
-                  "trip_name",
-                  "trip_type",
-                  "departure_date",
-                  "return_date",
-                  "origin_city",
-                  "origin_country",
-                  "destination_city",
-                  "destination_country",
-                ],
-              },
-            },
-          },
+                required: ["trip_title", "start_date", "end_date", "segments"]
+              }
+            }
+          }
         ],
         tool_choice: {
           type: "function",
-          function: { name: "extract_travel_details" },
-        },
+          function: { name: "parse_itinerary" }
+        }
       }),
     });
 
@@ -177,24 +207,21 @@ Be very thorough - extract all information present.`
 
     if (!toolCall) {
       console.log("AI response:", JSON.stringify(aiData, null, 2));
-      throw new Error("Could not extract travel data from text. The PDF may not contain a valid travel itinerary.");
+      throw new Error("Could not extract travel data from PDF. The document may not contain a valid travel itinerary.");
     }
 
-    const travelData = JSON.parse(toolCall.function.arguments);
+    const itineraryData = JSON.parse(toolCall.function.arguments);
     
-    // Log all extracted data for debugging
-    console.log("=== EXTRACTED TRAVEL DATA ===");
-    console.log(JSON.stringify(travelData, null, 2));
-    console.log("Traveler:", travelData.traveler_name);
-    console.log("Trip:", travelData.trip_name);
-    console.log("Dates:", travelData.departure_date, "to", travelData.return_date);
-    console.log("Route:", travelData.origin_city, "->", travelData.destination_city);
-    console.log("Flights:", travelData.flight_numbers);
-    console.log("Hotel:", travelData.hotel_name, "at", travelData.hotel_address);
-    console.log("============================");
+    // Log the parsed itinerary
+    console.log("=== PARSED ITINERARY ===");
+    console.log(JSON.stringify(itineraryData, null, 2));
+    console.log("Trip:", itineraryData.trip_title);
+    console.log("Dates:", itineraryData.start_date, "to", itineraryData.end_date);
+    console.log("Segments:", itineraryData.segments.length);
+    console.log("=======================");
 
     return new Response(
-      JSON.stringify({ success: true, data: travelData }),
+      JSON.stringify({ success: true, data: itineraryData }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {

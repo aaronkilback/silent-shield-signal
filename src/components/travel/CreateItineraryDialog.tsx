@@ -116,49 +116,90 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
       if (data?.success && data?.data) {
         const parsed = data.data;
         
-        // Auto-fill form fields
+        // Auto-fill form fields from segment-based structure
         const form = document.getElementById("itinerary-form") as HTMLFormElement;
         if (form) {
-          (form.elements.namedItem("trip_name") as HTMLInputElement).value = parsed.trip_name || "";
-          (form.elements.namedItem("trip_type") as HTMLSelectElement).value = parsed.trip_type || "international";
+          // Use trip_title for trip_name
+          (form.elements.namedItem("trip_name") as HTMLInputElement).value = parsed.trip_title || "";
+          
+          // Extract origin/destination from first/last flight segments
+          const flightSegments = parsed.segments?.filter((s: any) => s.type === "flight") || [];
+          const hotelSegments = parsed.segments?.filter((s: any) => s.type === "hotel") || [];
+          
+          // Determine trip type based on origin/destination
+          let tripType = "international";
+          if (flightSegments.length > 0) {
+            const firstFlight = flightSegments[0];
+            const lastFlight = flightSegments[flightSegments.length - 1];
+            
+            // If origin and destination airports are both Canadian, it's domestic
+            const canadianAirports = ["YYC", "YVR", "YYZ", "YUL", "YOW", "YHZ", "YWG", "YEG"];
+            if (canadianAirports.includes(firstFlight.origin_airport_code) && 
+                canadianAirports.includes(lastFlight.destination_airport_code)) {
+              tripType = "domestic";
+            }
+            
+            // Fill origin/destination from flights
+            (form.elements.namedItem("origin_city") as HTMLInputElement).value = 
+              firstFlight.origin_city || "";
+            (form.elements.namedItem("origin_country") as HTMLInputElement).value = 
+              tripType === "domestic" ? "Canada" : "";
+            (form.elements.namedItem("destination_city") as HTMLInputElement).value = 
+              firstFlight.destination_city || "";
+            (form.elements.namedItem("destination_country") as HTMLInputElement).value = 
+              tripType === "domestic" ? "Canada" : "";
+          }
+          
+          (form.elements.namedItem("trip_type") as HTMLSelectElement).value = tripType;
           
           // Format dates for datetime-local input (YYYY-MM-DDTHH:MM)
-          if (parsed.departure_date) {
-            const depDate = new Date(parsed.departure_date);
-            (form.elements.namedItem("departure_date") as HTMLInputElement).value = 
-              depDate.toISOString().slice(0, 16);
-          }
-          if (parsed.return_date) {
-            const retDate = new Date(parsed.return_date);
-            (form.elements.namedItem("return_date") as HTMLInputElement).value = 
-              retDate.toISOString().slice(0, 16);
-          }
-          
-          (form.elements.namedItem("origin_city") as HTMLInputElement).value = parsed.origin_city || "";
-          (form.elements.namedItem("origin_country") as HTMLInputElement).value = parsed.origin_country || "";
-          (form.elements.namedItem("destination_city") as HTMLInputElement).value = parsed.destination_city || "";
-          (form.elements.namedItem("destination_country") as HTMLInputElement).value = parsed.destination_country || "";
-          (form.elements.namedItem("hotel_name") as HTMLInputElement).value = parsed.hotel_name || "";
-          (form.elements.namedItem("hotel_address") as HTMLInputElement).value = parsed.hotel_address || "";
-          
-          // Handle flight numbers as comma-separated
-          if (parsed.flight_numbers && parsed.flight_numbers.length > 0) {
-            (form.elements.namedItem("flight_numbers") as HTMLInputElement).value = parsed.flight_numbers.join(", ");
+          if (parsed.start_date) {
+            // Convert YYYY-MM-DD to datetime-local format
+            const startSegment = parsed.segments?.[0];
+            if (startSegment?.start_datetime) {
+              // Format: "YYYY-MM-DD HH:MM" -> "YYYY-MM-DDTHH:MM"
+              const formatted = startSegment.start_datetime.replace(" ", "T");
+              (form.elements.namedItem("departure_date") as HTMLInputElement).value = formatted;
+            } else {
+              (form.elements.namedItem("departure_date") as HTMLInputElement).value = 
+                parsed.start_date + "T00:00";
+            }
           }
           
-          if (parsed.notes) {
-            (form.elements.namedItem("notes") as HTMLTextAreaElement).value = parsed.notes;
+          if (parsed.end_date) {
+            const lastSegment = parsed.segments?.[parsed.segments.length - 1];
+            if (lastSegment?.end_datetime) {
+              const formatted = lastSegment.end_datetime.replace(" ", "T");
+              (form.elements.namedItem("return_date") as HTMLInputElement).value = formatted;
+            } else {
+              (form.elements.namedItem("return_date") as HTMLInputElement).value = 
+                parsed.end_date + "T23:59";
+            }
           }
-        }
-
-        // Try to find matching traveler
-        if (parsed.traveler_name && travelers) {
-          const matchedTraveler = travelers.find(t => 
-            t.name.toLowerCase().includes(parsed.traveler_name.toLowerCase()) ||
-            parsed.traveler_name.toLowerCase().includes(t.name.toLowerCase())
-          );
-          if (matchedTraveler) {
-            setSelectedTraveler(matchedTraveler.id);
+          
+          // Extract hotel info from hotel segments
+          if (hotelSegments.length > 0) {
+            const hotel = hotelSegments[0];
+            (form.elements.namedItem("hotel_name") as HTMLInputElement).value = hotel.hotel_name || "";
+            (form.elements.namedItem("hotel_address") as HTMLInputElement).value = hotel.hotel_address || "";
+          }
+          
+          // Build flight numbers from all flight segments
+          const flightNumbers = flightSegments
+            .map((f: any) => f.flight_number)
+            .filter((n: string) => n)
+            .join(", ");
+          if (flightNumbers) {
+            (form.elements.namedItem("flight_numbers") as HTMLInputElement).value = flightNumbers;
+          }
+          
+          // Combine notes from all segments
+          const notes = parsed.segments
+            ?.map((s: any) => s.notes)
+            .filter((n: string) => n)
+            .join("\n") || "";
+          if (notes) {
+            (form.elements.namedItem("notes") as HTMLTextAreaElement).value = notes;
           }
         }
 
