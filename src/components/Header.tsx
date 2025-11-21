@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss } from "lucide-react";
+import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss, Plane } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -118,6 +118,14 @@ export const Header = () => {
               >
                 <ClipboardList className="w-4 h-4 mr-2" />
                 Investigations
+              </Button>
+              <Button
+                onClick={() => navigate("/travel")}
+                variant={location.pathname === "/travel" ? "default" : "ghost"}
+                size="sm"
+              >
+                <Plane className="w-4 h-4 mr-2" />
+                Travel
               </Button>
             </nav>
             <EntityNotifications />
