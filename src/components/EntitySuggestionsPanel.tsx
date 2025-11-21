@@ -198,7 +198,7 @@ export const EntitySuggestionsPanel = () => {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <ScrollArea className="h-[500px]">
+        <ScrollArea className="h-[500px] pr-4">
           {!suggestions || suggestions.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-[200px] text-muted-foreground">
               <CheckCircle className="w-12 h-12 mb-2 opacity-50" />
@@ -208,10 +208,10 @@ export const EntitySuggestionsPanel = () => {
             <div className="space-y-4">
               {suggestions.map((suggestion) => (
                 <div key={suggestion.id} className="p-4 border rounded-lg space-y-3">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <h4 className="font-semibold">{suggestion.suggested_name}</h4>
+                  <div className="flex flex-col gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 mb-2">
+                        <h4 className="font-semibold break-words">{suggestion.suggested_name}</h4>
                         <Badge variant="outline">{suggestion.suggested_type}</Badge>
                         <Badge variant="secondary" className="text-xs">
                           {suggestion.source_type}
@@ -220,7 +220,7 @@ export const EntitySuggestionsPanel = () => {
                       
                       {suggestion.context && (
                         <div className="bg-muted p-2 rounded text-sm mb-2">
-                          <p className="text-muted-foreground italic">"{suggestion.context}"</p>
+                          <p className="text-muted-foreground italic break-words">"{suggestion.context}"</p>
                         </div>
                       )}
 
@@ -230,12 +230,13 @@ export const EntitySuggestionsPanel = () => {
                       </div>
                     </div>
 
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-shrink-0">
                       <Button
                         size="sm"
                         variant="default"
                         onClick={() => approveMutation.mutate({ suggestionId: suggestion.id })}
                         disabled={approveMutation.isPending}
+                        className="flex-1 sm:flex-none"
                       >
                         <CheckCircle className="w-4 h-4 mr-1" />
                         Approve
@@ -245,6 +246,7 @@ export const EntitySuggestionsPanel = () => {
                         variant="destructive"
                         onClick={() => rejectMutation.mutate(suggestion.id)}
                         disabled={rejectMutation.isPending}
+                        className="flex-1 sm:flex-none"
                       >
                         <XCircle className="w-4 h-4 mr-1" />
                         Reject
