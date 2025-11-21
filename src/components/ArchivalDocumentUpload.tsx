@@ -29,7 +29,7 @@ export const ArchivalDocumentUpload = () => {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []);
     
-    const STORAGE_LIMIT = 50 * 1024 * 1024; // 50MB
+    const STORAGE_LIMIT = 100 * 1024 * 1024; // 100MB
     
     const tooLargeFiles: Array<{name: string, size: number}> = [];
     const validFiles: File[] = [];
@@ -48,7 +48,7 @@ export const ArchivalDocumentUpload = () => {
         .join(', ');
       
       toast.error(
-        `Cannot upload ${tooLargeFiles.length} file(s) - they exceed the 50MB limit: ${fileList}`,
+        `Cannot upload ${tooLargeFiles.length} file(s) - they exceed the 100MB limit: ${fileList}`,
         { duration: 10000 }
       );
     }
@@ -234,7 +234,7 @@ export const ArchivalDocumentUpload = () => {
           <CardTitle>Archival Document Upload</CardTitle>
         </div>
         <CardDescription>
-          Upload historical documents for reference. <strong className="text-primary">Maximum: 50MB per file.</strong>
+          Upload historical documents for reference. <strong className="text-primary">Maximum: 100MB per file.</strong>
           <br />All files uploaded directly to secure storage. Entity extraction runs in the background.
         </CardDescription>
       </CardHeader>
@@ -281,11 +281,13 @@ export const ArchivalDocumentUpload = () => {
             )}
             <div className="bg-muted/50 border border-primary/20 rounded-lg p-3 mb-2">
               <p className="text-sm text-muted-foreground">
-                📁 <strong>File Size Limit:</strong> Maximum 50MB per file
+                📁 <strong>File Size Limit:</strong> Maximum 100MB per file
                 <br />
                 • All files use direct storage upload for reliability
                 <br />
                 • Entity extraction happens in the background after upload
+                <br />
+                • <strong>For security reports:</strong> Click the Brain 🧠 icon after upload to extract intelligence
               </p>
             </div>
             <ScrollArea className="h-[200px] border rounded-md p-2">
@@ -307,7 +309,7 @@ export const ArchivalDocumentUpload = () => {
                         <div className="text-sm truncate font-medium">{f.file.name}</div>
                         <div className="text-xs text-muted-foreground">
                           {(f.file.size / (1024 * 1024)).toFixed(2)} MB
-                          {f.file.size > 50 * 1024 * 1024 && (
+                          {f.file.size > 100 * 1024 * 1024 && (
                             <span className="text-destructive font-semibold ml-1">- TOO LARGE!</span>
                           )}
                         </div>
