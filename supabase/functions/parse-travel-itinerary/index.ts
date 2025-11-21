@@ -1,12 +1,79 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
-// @ts-ignore - no types available
-import pdf from "https://esm.sh/pdf-parse@1.1.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+// Enhanced PDF text extraction that works in Deno
+function extractTextFromPDF(arrayBuffer: ArrayBuffer): string {
+  const uint8Array = new Uint8Array(arrayBuffer);
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+  let rawText = decoder.decode(uint8Array);
+  
+  // Try latin1 if utf-8 produces minimal output
+  if (!rawText || rawText.length < 100) {
+    const latin1Decoder = new TextDecoder('latin1');
+    rawText = latin1Decoder.decode(uint8Array);
+  }
+  
+  let extractedText = '';
+  
+  // Method 1: Extract text objects (between BT and ET markers)
+  const textObjectRegex = /BT\s+(.*?)\s+ET/gs;
+  const textObjects = rawText.match(textObjectRegex) || [];
+  
+  for (const obj of textObjects) {
+    // Extract strings in parentheses or angle brackets
+    const stringRegex = /\(([^)]*)\)|<([^>]*)>/g;
+    let match;
+    
+    while ((match = stringRegex.exec(obj)) !== null) {
+      const text = match[1] || match[2];
+      if (text) {
+        let decoded = text
+          .replace(/\\n/g, '\n')
+          .replace(/\\r/g, '\r')
+          .replace(/\\t/g, '\t')
+          .replace(/\\\(/g, '(')
+          .replace(/\\\)/g, ')')
+          .replace(/\\\\/g, '\\')
+          .replace(/\\(\d{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)));
+        
+        extractedText += decoded + ' ';
+      }
+    }
+  }
+  
+  // Method 2: Extract from Tj and TJ operators
+  const tjRegex = /\((.*?)\)\s*(?:Tj|TJ)/g;
+  let tjMatch;
+  while ((tjMatch = tjRegex.exec(rawText)) !== null) {
+    extractedText += tjMatch[1] + ' ';
+  }
+  
+  // Method 3: Extract readable text from stream objects
+  const streamRegex = /stream\s+([\s\S]*?)\s+endstream/g;
+  let streamMatch;
+  while ((streamMatch = streamRegex.exec(rawText)) !== null) {
+    const streamContent = streamMatch[1];
+    // Extract only printable ASCII characters and common symbols
+    const readable = streamContent.replace(/[^\x20-\x7E\n\r\t]/g, '');
+    if (readable.length > 20 && readable.match(/[a-zA-Z]{3,}/)) {
+      extractedText += readable + ' ';
+    }
+  }
+  
+  // Clean up the extracted text
+  extractedText = extractedText
+    .replace(/\s+/g, ' ')
+    .replace(/\x00/g, '')
+    .replace(/[^\x20-\x7E\n\r\t]/g, '')
+    .trim();
+  
+  return extractedText;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -45,12 +112,12 @@ serve(async (req) => {
 
     console.log("File downloaded, extracting text...");
 
-    // Extract text from PDF using pdf-parse
+    // Extract text from PDF
     const arrayBuffer = await fileData.arrayBuffer();
-    const data = await pdf(arrayBuffer);
-    const textContent = data.text;
+    const textContent = extractTextFromPDF(arrayBuffer);
 
     console.log(`Extracted ${textContent.length} characters from PDF`);
+    console.log("First 500 chars:", textContent.substring(0, 500));
 
     if (!textContent || textContent.length < 50) {
       throw new Error("Could not extract sufficient text from PDF. Please ensure the PDF contains readable text (not just images or scanned documents).");
