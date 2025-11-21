@@ -326,7 +326,7 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: `You are an expert entity extraction system for security intelligence. Extract ALL security-relevant entities from the document.
+            content: `You are an expert entity extraction system for security intelligence. Extract ONLY real-world security-relevant entities from document CONTENT.
 
 KNOWN ENTITIES IN DATABASE:
 ${entityContext}
@@ -340,35 +340,56 @@ Learn from these patterns:
 - Match the confidence levels of successful extractions
 - Use similar context descriptions
 
-Extract these entity types:
-- Organizations (companies, government agencies, threat actors)
-- Persons (individuals mentioned in security context)
-- Locations (cities, countries, regions, facilities)
-- Infrastructure (systems, networks, servers, IP addresses)
-- Domains and URLs (websites, domains)
-- Email addresses
-- Phone numbers
-- Other security-relevant identifiers
+CRITICAL RULES - DO NOT EXTRACT:
+- Document titles, filenames, or headers
+- Software/file format names (e.g., "Microsoft Word", "PDF", "Excel")
+- Generic terms or categories (e.g., "Report", "Document", "File")
+- Author names appearing only in metadata or headers
+- Date stamps or version numbers from document properties
+- Template names or form titles
+- Only extract entities that appear in the ACTUAL CONTENT of the document
 
-Focus on entities that appear in security incidents, threats, vulnerabilities, or monitoring contexts.`
+EXTRACT THESE ENTITY TYPES:
+- Organizations: Real companies, government agencies, threat actors mentioned IN THE CONTENT
+- Persons: Specific individuals discussed IN INCIDENTS or security contexts (not just authors/creators)
+- Locations: Actual physical places, cities, facilities mentioned in security events
+- Infrastructure: Specific systems, networks, servers, IP addresses in use
+- Domains/URLs: Actual websites or domains involved in incidents
+- Email addresses: Real email addresses (not template placeholders)
+- Phone numbers: Actual phone numbers (not example formats)
+- Vehicles: Specific vehicles with identifiers
+
+CONFIDENCE SCORING:
+- High (0.8-1.0): Entity clearly appears multiple times in content with context
+- Medium (0.5-0.79): Entity mentioned once or in limited context
+- Low (0.3-0.49): Uncertain extraction, may be generic reference
+
+Focus ONLY on entities that appear in actual security incidents, threats, vulnerabilities, or monitoring contexts within the document body.`
           },
           {
             role: 'user',
-            content: `Analyze this security document and extract ALL relevant entities and relationships.
+            content: `Analyze the CONTENT of this security document. DO NOT extract metadata, titles, or filenames.
 
-Document: "${document.filename}"
-Content (first 20,000 characters):
+Document name (DO NOT EXTRACT THIS): "${document.filename}"
+
+DOCUMENT CONTENT TO ANALYZE:
 ${sampleText}
 
-Extract ALL entities that are relevant to security, threats, incidents, or monitoring. Include:
-- Organizations mentioned (both threat actors and victims)
-- Specific people, locations, systems
-- Domains, IPs, email addresses
-- Any infrastructure or technology mentioned
+Extract ONLY entities from the document content above that are:
+- Named individuals discussed in security contexts (not just document authors)
+- Specific organizations involved in incidents or threats
+- Actual locations mentioned in security events
+- Real infrastructure, domains, IPs, emails involved
+- Specific vehicles or assets with identifiers
 
-For relationships, note when entities appear together in the same security context.
+SKIP:
+- The document title/filename itself
+- Generic category terms
+- Software/application names unless they're attack targets
+- Author/creator metadata
+- Template or form field names
 
-Be thorough - extract all security-relevant entities, not just those in active incidents.`
+For relationships, note ONLY when entities appear together in the same security incident or context within the content.`
           }
         ],
         tools: [
@@ -455,6 +476,51 @@ Be thorough - extract all security-relevant entities, not just those in active i
       
       console.log(`AI extracted ${entities.length} entities and ${relationships.length} relationships`);
 
+      // Filter out false positives - document metadata and generic terms
+      const documentTitleWords = document.filename
+        .toLowerCase()
+        .replace(/\.[^.]+$/, '') // Remove extension
+        .split(/[\s_-]+/);
+      
+      const filteredEntities = entities.filter((entity: any) => {
+        const nameLower = entity.name.toLowerCase();
+        
+        // Skip if entity name appears in document filename
+        if (documentTitleWords.some((word: string) => word.length > 3 && nameLower.includes(word))) {
+          console.log(`Filtering out filename match: ${entity.name}`);
+          return false;
+        }
+        
+        // Skip generic terms and software names
+        const genericTerms = [
+          'document', 'report', 'file', 'attachment', 'pdf', 'word', 'excel',
+          'microsoft', 'office', 'page', 'section', 'appendix', 'exhibit',
+          'table', 'figure', 'chart', 'graph', 'image', 'photo', 'template',
+          'form', 'worksheet', 'spreadsheet', 'presentation', 'slide'
+        ];
+        
+        if (genericTerms.some(term => nameLower === term || nameLower.endsWith(term))) {
+          console.log(`Filtering out generic term: ${entity.name}`);
+          return false;
+        }
+        
+        // Skip single words that are too short (likely not real entities)
+        if (!entity.name.includes(' ') && entity.name.length < 3) {
+          console.log(`Filtering out too short: ${entity.name}`);
+          return false;
+        }
+        
+        // Skip if entity name is just numbers (unless it's phone/IP type)
+        if (/^\d+$/.test(entity.name) && !['phone', 'ip_address'].includes(entity.type)) {
+          console.log(`Filtering out number-only: ${entity.name}`);
+          return false;
+        }
+        
+        return true;
+      });
+      
+      console.log(`After filtering: ${filteredEntities.length} entities (removed ${entities.length - filteredEntities.length})`);
+
       // Check for existing suggestions to avoid duplicates
       const { data: existingSuggestions } = await supabase
         .from('entity_suggestions')
@@ -467,7 +533,7 @@ Be thorough - extract all security-relevant entities, not just those in active i
       );
 
       // Convert to entity suggestions with matching (lowered threshold to 0.6 for better recall)
-      for (const entity of entities) {
+      for (const entity of filteredEntities) {
         if (entity.confidence < 0.6) continue;
         
         const key = `${entity.name.toLowerCase()}:${entity.type}`;
