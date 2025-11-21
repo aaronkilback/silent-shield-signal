@@ -126,9 +126,10 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
           const flightSegments = parsed.segments?.filter((s: any) => s.type === "flight") || [];
           const hotelSegments = parsed.segments?.filter((s: any) => s.type === "hotel") || [];
           
-          console.log("Parsed data:", parsed);
-          console.log("Flight segments:", flightSegments);
-          console.log("Hotel segments:", hotelSegments);
+          console.log("=== ITINERARY PARSING DEBUG ===");
+          console.log("Full parsed data:", JSON.stringify(parsed, null, 2));
+          console.log("Flight segments:", JSON.stringify(flightSegments, null, 2));
+          console.log("Hotel segments:", JSON.stringify(hotelSegments, null, 2));
           
           // Determine trip type and locations
           let tripType = "international";
@@ -150,12 +151,28 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
             const isRoundTrip = lastFlight.destination_city === firstFlight.origin_city ||
                                lastFlight.destination_airport_code === firstFlight.origin_airport_code;
             
+            console.log("First flight:", {
+              origin: firstFlight.origin_city,
+              originCode: firstFlight.origin_airport_code,
+              destination: firstFlight.destination_city,
+              destCode: firstFlight.destination_airport_code
+            });
+            console.log("Last flight:", {
+              origin: lastFlight.origin_city,
+              originCode: lastFlight.origin_airport_code,
+              destination: lastFlight.destination_city,
+              destCode: lastFlight.destination_airport_code
+            });
+            console.log("Is round trip?", isRoundTrip);
+            
             if (isRoundTrip) {
               // For round trips, destination is where they're going TO (first flight destination)
               destinationCity = firstFlight.destination_city || "";
+              console.log("Round trip detected - using first flight destination:", destinationCity);
             } else {
               // For one-way or multi-city, use last flight destination
               destinationCity = lastFlight.destination_city || "";
+              console.log("One-way/multi-city - using last flight destination:", destinationCity);
             }
             
             // Verify with hotel location if available
@@ -202,6 +219,12 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
           }
           
           // Fill form fields
+          console.log("=== FINAL VALUES ===");
+          console.log("Origin:", originCity, originCountry);
+          console.log("Destination:", destinationCity, destinationCountry);
+          console.log("Trip type:", tripType);
+          console.log("===================");
+          
           (form.elements.namedItem("origin_city") as HTMLInputElement).value = originCity;
           (form.elements.namedItem("origin_country") as HTMLInputElement).value = originCountry;
           (form.elements.namedItem("destination_city") as HTMLInputElement).value = destinationCity;
