@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Archive, Download, FileText, RefreshCw } from "lucide-react";
+import { Archive, Download, FileText, RefreshCw, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ import { useState } from "react";
 export const ArchivalDocumentsList = () => {
   const queryClient = useQueryClient();
   const [reprocessing, setReprocessing] = useState<string | null>(null);
+  const [processingIntel, setProcessingIntel] = useState<string | null>(null);
 
   const { data: documents, isLoading } = useQuery({
     queryKey: ['archival-documents'],
@@ -75,6 +76,45 @@ export const ArchivalDocumentsList = () => {
       toast.error(`Failed to reprocess: ${error.message}`);
     } finally {
       setReprocessing(null);
+    }
+  };
+
+  const handleProcessIntelligence = async (documentId: string, filename: string) => {
+    setProcessingIntel(documentId);
+    toast.info(`🔍 Analyzing security intelligence in ${filename}...`);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('process-security-report', {
+        body: { documentId }
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        const { results } = data;
+        const messages = [];
+        if (results.entity_suggestions_created > 0) messages.push(`${results.entity_suggestions_created} entities`);
+        if (results.signals_created > 0) messages.push(`${results.signals_created} signals`);
+        if (results.incidents_created > 0) messages.push(`${results.incidents_created} incidents`);
+        
+        toast.success(`✨ Extracted: ${messages.join(', ') || 'No intelligence data found'}`);
+        
+        // Show risk assessment if available
+        if (data.risk_assessment?.overall_risk) {
+          toast.info(`Risk Level: ${data.risk_assessment.overall_risk}`);
+        }
+      }
+
+      // Refresh all relevant data
+      queryClient.invalidateQueries({ queryKey: ['archival-documents'] });
+      queryClient.invalidateQueries({ queryKey: ['signals'] });
+      queryClient.invalidateQueries({ queryKey: ['incidents'] });
+      queryClient.invalidateQueries({ queryKey: ['pending-entity-suggestions-count'] });
+    } catch (error: any) {
+      console.error('Intelligence processing error:', error);
+      toast.error(`Failed to process intelligence: ${error.message}`);
+    } finally {
+      setProcessingIntel(null);
     }
   };
 
@@ -158,6 +198,15 @@ export const ArchivalDocumentsList = () => {
                     </div>
 
                     <div className="flex gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleProcessIntelligence(doc.id, doc.filename)}
+                        disabled={processingIntel === doc.id}
+                        title="Extract security intelligence (signals, entities, incidents)"
+                      >
+                        <Brain className={`w-4 h-4 ${processingIntel === doc.id ? 'animate-spin' : ''}`} />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="sm"
