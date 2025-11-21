@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import { 
   ArrowLeft, Save, Plus, Trash2, Upload, Download, 
   FileText, Image as ImageIcon, Video, Music, File,
-  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X
+  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X, MapPin
 } from "lucide-react";
 import { format } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
@@ -37,6 +37,9 @@ const InvestigationDetail = () => {
   const [newPersonCompany, setNewPersonCompany] = useState("");
   const [suggestedReferences, setSuggestedReferences] = useState<any[]>([]);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  const [newLocationName, setNewLocationName] = useState("");
+  const [newLocationAddress, setNewLocationAddress] = useState("");
+  const [newLocationDescription, setNewLocationDescription] = useState("");
   
   // Local state for form fields
   const [localFileNumber, setLocalFileNumber] = useState("");
@@ -148,6 +151,24 @@ const InvestigationDetail = () => {
       return data;
     },
     enabled: !!investigation
+  });
+
+  const { data: locations = [] } = useQuery({
+    queryKey: ['investigation-locations', id],
+    queryFn: async () => {
+      // Fetch locations from investigation metadata
+      const { data, error } = await supabase
+        .from('investigations')
+        .select('id')
+        .eq('id', id)
+        .single();
+      
+      if (error) throw error;
+      
+      // For now, return empty array - locations will be stored in a new structure
+      return [];
+    },
+    enabled: !!id
   });
 
   const updateInvestigation = async (field: string, value: any) => {
@@ -427,6 +448,95 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
     }
   };
 
+  const convertPersonToEntity = async (person: any) => {
+    if (!user) return;
+
+    try {
+      // Create entity from person
+      const { data: entity, error: entityError } = await supabase
+        .from('entities')
+        .insert({
+          name: person.name,
+          type: 'person',
+          created_by: user.id,
+          attributes: {
+            phone: person.phone,
+            position: person.position,
+            company: person.company,
+            investigation_status: person.status,
+            source_investigation: investigation?.file_number
+          }
+        })
+        .select()
+        .single();
+
+      if (entityError) throw entityError;
+
+      // Add entity ID to investigation's correlated entities
+      const currentEntityIds = investigation?.correlated_entity_ids || [];
+      if (!currentEntityIds.includes(entity.id)) {
+        const { error: updateError } = await supabase
+          .from('investigations')
+          .update({ 
+            correlated_entity_ids: [...currentEntityIds, entity.id] 
+          })
+          .eq('id', id);
+
+        if (updateError) throw updateError;
+      }
+
+      queryClient.invalidateQueries({ queryKey: ['investigation', id] });
+      toast.success(`${person.name} converted to entity`);
+      navigate(`/entities?entity=${entity.id}`);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to convert person to entity");
+    }
+  };
+
+  const addLocation = async () => {
+    if (!newLocationName.trim() || !id) return;
+
+    try {
+      // For now, create location as entity directly
+      const { data: entity, error } = await supabase
+        .from('entities')
+        .insert({
+          name: newLocationName,
+          type: 'location',
+          description: newLocationDescription,
+          current_location: newLocationAddress,
+          created_by: user?.id,
+          attributes: {
+            source_investigation: investigation?.file_number
+          }
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Add to investigation's correlated entities
+      const currentEntityIds = investigation?.correlated_entity_ids || [];
+      const { error: updateError } = await supabase
+        .from('investigations')
+        .update({ 
+          correlated_entity_ids: [...currentEntityIds, entity.id] 
+        })
+        .eq('id', id);
+
+      if (updateError) throw updateError;
+
+      setNewLocationName("");
+      setNewLocationAddress("");
+      setNewLocationDescription("");
+      queryClient.invalidateQueries({ queryKey: ['investigation', id] });
+      queryClient.invalidateQueries({ queryKey: ['investigation-locations', id] });
+      toast.success("Location added as entity");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to add location");
+    }
+  };
+
   const downloadInvestigationReport = async () => {
     if (!investigation) return;
 
@@ -700,6 +810,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="persons">Persons</TabsTrigger>
+            <TabsTrigger value="locations">Locations</TabsTrigger>
             <TabsTrigger value="entries">Entries</TabsTrigger>
             <TabsTrigger value="attachments">Attachments</TabsTrigger>
             <TabsTrigger value="references">Cross-References</TabsTrigger>
@@ -908,6 +1019,14 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                       <span className="text-sm text-muted-foreground">{person.position}</span>
                       <span className="text-sm text-muted-foreground">{person.company}</span>
                       <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => convertPersonToEntity(person)}
+                      >
+                        <Users className="w-4 h-4 mr-2" />
+                        To Entity
+                      </Button>
+                      <Button 
                         variant="ghost" 
                         size="icon"
                         onClick={() => deletePerson(person.id)}
@@ -916,6 +1035,62 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                       </Button>
                     </div>
                   ))}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="locations" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <MapPin className="w-5 h-5" />
+                  Locations of Interest
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-3 gap-2">
+                  <Input 
+                    placeholder="Location Name"
+                    value={newLocationName}
+                    onChange={(e) => setNewLocationName(e.target.value)}
+                  />
+                  <Input 
+                    placeholder="Address"
+                    value={newLocationAddress}
+                    onChange={(e) => setNewLocationAddress(e.target.value)}
+                  />
+                  <div className="flex gap-2">
+                    <Input 
+                      placeholder="Description"
+                      value={newLocationDescription}
+                      onChange={(e) => setNewLocationDescription(e.target.value)}
+                      className="flex-1"
+                    />
+                    <Button onClick={addLocation} size="icon">
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {investigation?.correlated_entity_ids && investigation.correlated_entity_ids.length > 0 ? (
+                    <div className="text-sm text-muted-foreground">
+                      <p>Locations are tracked as entities. {investigation.correlated_entity_ids.length} entities linked to this investigation.</p>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        className="mt-2"
+                        onClick={() => navigate('/entities')}
+                      >
+                        View All Entities
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center p-4 border rounded-lg">
+                      No locations added yet. Add locations above to track them as entities.
+                    </p>
+                  )}
                 </div>
               </CardContent>
             </Card>
