@@ -75,15 +75,15 @@ serve(async (req) => {
 
     console.log('Processing document:', filename, mimeType);
 
-    // Check file size before processing (20MB limit)
+    // Check file size before processing (15MB limit due to memory constraints)
     const estimatedSize = (file.length * 3) / 4; // Base64 to bytes approximation
-    const MAX_SIZE = 20 * 1024 * 1024; // 20MB
+    const MAX_SIZE = 15 * 1024 * 1024; // 15MB
     
     if (estimatedSize > MAX_SIZE) {
       console.error(`File too large: ${(estimatedSize / 1024 / 1024).toFixed(2)}MB`);
       return new Response(
         JSON.stringify({ 
-          error: `File too large (${(estimatedSize / 1024 / 1024).toFixed(1)}MB). Maximum size is 20MB. Please use the Archival Upload feature for larger documents.`
+          error: `File too large (${(estimatedSize / 1024 / 1024).toFixed(1)}MB). Maximum size is 15MB due to processing memory limits. Please use the Archival Upload feature for larger documents.`
         }),
         { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -106,12 +106,9 @@ serve(async (req) => {
     if (mimeType === 'text/plain' || mimeType === 'text/csv' || mimeType === 'text/markdown' || filename.endsWith('.txt') || filename.endsWith('.csv') || filename.endsWith('.md')) {
       text = new TextDecoder().decode(binaryData);
     } else if (mimeType === 'application/pdf' || filename.endsWith('.pdf')) {
-      const pdfText = new TextDecoder().decode(binaryData);
-      text = pdfText.replace(/[^\x20-\x7E\n]/g, ' ').trim();
-      
-      if (!text || text.length < 50) {
-        text = `PDF document: ${filename}. Raw content length: ${binaryData.length} bytes. Manual review recommended.`;
-      }
+      // For PDFs, avoid full text extraction to prevent memory issues
+      // Just create a basic signal with metadata
+      text = `PDF document uploaded: ${filename}. Size: ${(binaryData.length / 1024).toFixed(1)}KB. Use Archival Upload for full content extraction.`;
     } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || filename.endsWith('.docx')) {
       const docxText = new TextDecoder().decode(binaryData);
       text = docxText.replace(/[^\x20-\x7E\n]/g, ' ').trim();
@@ -271,12 +268,17 @@ serve(async (req) => {
     // Check if it's a memory error
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     const isMemoryError = errorMessage.toLowerCase().includes('memory') || 
-                          errorMessage.toLowerCase().includes('out of range');
+                          errorMessage.toLowerCase().includes('out of range') ||
+                          errorMessage.toLowerCase().includes('out of memory');
+    
+    if (isMemoryError) {
+      console.error('Memory limit exceeded during document processing');
+    }
     
     return new Response(
       JSON.stringify({ 
         error: isMemoryError 
-          ? 'File too large to process. Please use the Archival Upload feature for large documents or reduce file size.' 
+          ? 'Document too large to process in memory. Please use the Archival Upload feature for large documents (supports up to 100MB with advanced processing).' 
           : errorMessage 
       }),
       { 
