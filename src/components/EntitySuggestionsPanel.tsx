@@ -7,14 +7,29 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle, XCircle, Users, AlertCircle } from "lucide-react";
+import { CheckCircle, XCircle, Users, AlertCircle, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
+import { useNavigate } from "react-router-dom";
 
 export const EntitySuggestionsPanel = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [selectedSuggestion, setSelectedSuggestion] = useState<string | null>(null);
+
+  const getSourceLink = (sourceType: string, sourceId: string) => {
+    switch (sourceType) {
+      case 'signal':
+        return `/signals`;
+      case 'archival_document':
+        return `/signals?tab=archival`;
+      case 'investigation':
+        return `/investigations/${sourceId}`;
+      default:
+        return null;
+    }
+  };
 
   const { data: suggestions, isLoading } = useQuery({
     queryKey: ['entity-suggestions'],
@@ -198,7 +213,7 @@ export const EntitySuggestionsPanel = () => {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <ScrollArea className="h-[500px] pr-4">
+        <ScrollArea className="h-[calc(100vh-28rem)] min-h-[300px] pr-4">
           {!suggestions || suggestions.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-[200px] text-muted-foreground">
               <CheckCircle className="w-12 h-12 mb-2 opacity-50" />
@@ -224,9 +239,25 @@ export const EntitySuggestionsPanel = () => {
                         </div>
                       )}
 
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <AlertCircle className="w-3 h-3" />
-                        <span>Confidence: {(suggestion.confidence * 100).toFixed(0)}%</span>
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-2">
+                          <AlertCircle className="w-3 h-3" />
+                          <span>Confidence: {(suggestion.confidence * 100).toFixed(0)}%</span>
+                        </div>
+                        {getSourceLink(suggestion.source_type, suggestion.source_id) && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 gap-1 px-2 text-xs"
+                            onClick={() => {
+                              const link = getSourceLink(suggestion.source_type, suggestion.source_id);
+                              if (link) navigate(link);
+                            }}
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            View Source
+                          </Button>
+                        )}
                       </div>
                     </div>
 
