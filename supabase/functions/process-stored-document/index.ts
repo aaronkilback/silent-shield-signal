@@ -470,11 +470,12 @@ For relationships, note ONLY when entities appear together in the same security 
     if (!toolCall) {
       console.log('No tool call in AI response');
     } else {
-      const extractedData = JSON.parse(toolCall.function.arguments);
-      const entities = extractedData.entities || [];
-      const relationships = extractedData.relationships || [];
-      
-      console.log(`AI extracted ${entities.length} entities and ${relationships.length} relationships`);
+      try {
+        const extractedData = JSON.parse(toolCall.function.arguments);
+        const entities = extractedData.entities || [];
+        const relationships = extractedData.relationships || [];
+        
+        console.log(`AI extracted ${entities.length} entities and ${relationships.length} relationships`);
 
       // Filter out false positives - document metadata and generic terms
       const documentTitleWords = document.filename
@@ -483,6 +484,12 @@ For relationships, note ONLY when entities appear together in the same security 
         .split(/[\s_-]+/);
       
       const filteredEntities = entities.filter((entity: any) => {
+        // Safety check
+        if (!entity.name || typeof entity.name !== 'string') {
+          console.log(`Filtering out invalid entity: ${JSON.stringify(entity)}`);
+          return false;
+        }
+        
         const nameLower = entity.name.toLowerCase();
         
         // Skip if entity name appears in document filename
@@ -589,6 +596,10 @@ For relationships, note ONLY when entities appear together in the same security 
             }
           })
           .eq('id', documentId);
+      }
+      } catch (processingError) {
+        console.error('Error processing entities:', processingError);
+        console.error('Error details:', processingError instanceof Error ? processingError.message : 'Unknown error');
       }
     }
 
