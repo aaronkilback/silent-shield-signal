@@ -59,6 +59,21 @@ export const AutomationSettings = () => {
       <Card className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div className="space-y-1">
+            <Label>Auto Entity Creation</Label>
+            <p className="text-sm text-muted-foreground">
+              Automatically create entities from scans (only high confidence ≥80%)
+            </p>
+          </div>
+          <Switch
+            checked={settings.autoEscalation}
+            onCheckedChange={(checked) => setSettings({ ...settings, autoEscalation: checked })}
+          />
+        </div>
+
+        <Separator />
+
+        <div className="flex items-center justify-between">
+          <div className="space-y-1">
             <Label>Auto Escalation</Label>
             <p className="text-sm text-muted-foreground">
               Automatically escalate incidents based on priority rules
