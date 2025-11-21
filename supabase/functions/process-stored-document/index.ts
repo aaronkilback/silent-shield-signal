@@ -27,6 +27,12 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    if (!LOVABLE_API_KEY) {
+      console.error('LOVABLE_API_KEY not configured');
+      throw new Error('LOVABLE_API_KEY not configured');
+    }
+
     // Get document details
     const { data: document, error: docError } = await supabase
       .from('archival_documents')
@@ -80,32 +86,50 @@ serve(async (req) => {
     
     // Extract text based on file type
     if (document.file_type.includes('text') || document.file_type.includes('json')) {
-      // Read first 100KB of text files
-      const arrayBuffer = await fileData.slice(0, 100 * 1024).arrayBuffer();
+      // Read text files
+      const arrayBuffer = await fileData.arrayBuffer();
       textContent = new TextDecoder().decode(arrayBuffer);
     } else if (document.file_type === 'application/pdf') {
-      // For PDFs, extract and clean text (first 100KB of content)
-      const arrayBuffer = await fileData.slice(0, 100 * 1024).arrayBuffer();
-      const rawText = new TextDecoder('utf-8', { fatal: false }).decode(arrayBuffer);
+      // For PDFs, extract text streams (PDF text objects start with "BT" and end with "ET")
+      console.log('Extracting text from PDF...');
       
-      // Better PDF text extraction: keep letters, numbers, spaces, and basic punctuation
-      textContent = rawText
-        .replace(/[\x00-\x1F\x7F-\xFF]/g, ' ') // Remove control chars and high bytes
-        .replace(/\s+/g, ' ') // Collapse whitespace
-        .replace(/[^\w\s\-.,!?@()]/g, ' ') // Keep only word chars, spaces, and basic punctuation
-        .trim();
+      const arrayBuffer = await fileData.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+      const pdfString = new TextDecoder('latin1').decode(uint8Array);
       
-      console.log(`Extracted ${textContent.length} characters from PDF (cleaned)`);
+      // Extract text between BT (Begin Text) and ET (End Text) markers
+      const textMatches = pdfString.match(/BT(.*?)ET/gs);
+      if (textMatches && textMatches.length > 0) {
+        // Extract actual text content (strings in parentheses or angle brackets)
+        let extractedText = '';
+        for (const match of textMatches) {
+          // Extract strings in parentheses: (text)
+          const parenStrings = match.match(/\((.*?)\)/g);
+          if (parenStrings) {
+            extractedText += parenStrings.map(s => s.slice(1, -1)).join(' ') + ' ';
+          }
+          // Extract strings in angle brackets: <hex>
+          const hexStrings = match.match(/<([0-9A-Fa-f]+)>/g);
+          if (hexStrings) {
+            for (const hex of hexStrings) {
+              const hexContent = hex.slice(1, -1);
+              try {
+                const bytes = hexContent.match(/.{2}/g)?.map(h => parseInt(h, 16)) || [];
+                extractedText += new TextDecoder().decode(new Uint8Array(bytes)) + ' ';
+              } catch {}
+            }
+          }
+        }
+        textContent = extractedText.replace(/\\r|\\n|\\t/g, ' ').replace(/\s+/g, ' ').trim();
+        console.log(`Extracted ${textContent.length} characters from PDF text streams`);
+      } else {
+        // Fallback: basic text extraction
+        textContent = pdfString.replace(/[\x00-\x1F\x7F-\xFF]/g, ' ').replace(/\s+/g, ' ').trim();
+        console.log(`Fallback: extracted ${textContent.length} characters`);
+      }
     }
 
-    console.log(`Text content ready for AI analysis`);
-
-    // Use AI to extract entities
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      console.error('LOVABLE_API_KEY not configured');
-      throw new Error('LOVABLE_API_KEY not configured');
-    }
+    console.log(`Text content ready for AI analysis (${textContent.length} chars)`);
 
     const entitySuggestions: Array<{
       suggested_name: string;
@@ -154,7 +178,7 @@ serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'google/gemini-2.5-pro', // Use more powerful model for better extraction
         messages: [
           {
             role: 'system',
