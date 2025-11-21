@@ -36,6 +36,20 @@ export const EntitySuggestionsPanel = () => {
       const suggestion = suggestions?.find(s => s.id === suggestionId);
       if (!suggestion) throw new Error('Suggestion not found');
 
+      // Check for duplicates before creating
+      const { data: duplicateCheck } = await supabase.functions.invoke('detect-duplicates', {
+        body: {
+          type: 'entity',
+          content: suggestion.suggested_name,
+          autoCheck: false
+        }
+      });
+
+      if (duplicateCheck?.hasDuplicates && duplicateCheck.duplicates?.length > 0) {
+        const duplicateNames = duplicateCheck.duplicates.map((d: any) => d.name).join(', ');
+        throw new Error(`Duplicate entities found: ${duplicateNames}. Please merge instead.`);
+      }
+
       // Create the entity
       const { data: newEntity, error: createError } = await supabase
         .from('entities')
@@ -83,9 +97,13 @@ export const EntitySuggestionsPanel = () => {
       toast.success('Entity created and correlated');
       setSelectedSuggestion(null);
     },
-    onError: (error) => {
+    onError: (error: any) => {
       console.error('Error approving suggestion:', error);
-      toast.error('Failed to create entity');
+      if (error.message?.includes('Duplicate entities found')) {
+        toast.error(error.message, { duration: 5000 });
+      } else {
+        toast.error('Failed to create entity');
+      }
     }
   });
 
