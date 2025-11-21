@@ -28,15 +28,42 @@ serve(async (req) => {
       throw new Error("File path is required");
     }
 
-    console.log("Parsing document from storage:", filePath);
+    console.log("Downloading file from storage:", filePath);
 
-    // Call the existing parse-document function
+    // Download the file from storage
+    const { data: fileData, error: downloadError } = await supabaseClient
+      .storage
+      .from("travel-documents")
+      .download(filePath);
+
+    if (downloadError) {
+      console.error("Download error:", downloadError);
+      throw new Error(`Failed to download file: ${downloadError.message}`);
+    }
+
+    console.log("File downloaded, size:", fileData.size);
+
+    // Convert file to base64
+    const arrayBuffer = await fileData.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    let binary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < uint8Array.length; i += chunkSize) {
+      const chunk = uint8Array.subarray(i, Math.min(i + chunkSize, uint8Array.length));
+      binary += String.fromCharCode.apply(null, Array.from(chunk));
+    }
+    const base64 = btoa(binary);
+
+    console.log("Calling parse-document function");
+
+    // Call parse-document with base64 file
     const { data: parseData, error: parseError } = await supabaseClient.functions.invoke(
       "parse-document",
       {
         body: {
-          bucket: "travel-documents",
-          path: filePath,
+          file: base64,
+          filename: filePath,
+          mimeType: "application/pdf",
         },
       }
     );
@@ -46,7 +73,10 @@ serve(async (req) => {
       throw new Error(`Failed to parse document: ${parseError.message}`);
     }
 
-    console.log("Document parsed, extracted text length:", parseData.text?.length || 0);
+    console.log("Document parsed successfully");
+
+    // Extract the text from the signal response
+    const extractedText = parseData?.success ? parseData.message : "";
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
@@ -71,7 +101,7 @@ serve(async (req) => {
           },
           {
             role: "user",
-            content: `Extract all travel details from this itinerary text:\n\n${parseData.text}`,
+            content: `Extract all travel details from this itinerary. Look for traveler name, departure and return dates, flight numbers, cities and countries of origin and destination, and any hotel information.\n\nDocument content:\n${extractedText}`,
           },
         ],
         tools: [
