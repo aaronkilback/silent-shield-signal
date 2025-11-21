@@ -50,26 +50,102 @@ serve(async (req) => {
     }
 
     console.log(`Performing OSINT web search for: ${entity.name}`);
+    
+    // Extract additional search parameters from entity details
+    const attributes = entity.attributes || {};
+    const contactInfo = attributes.contact_info || {};
+    const socialMedia = contactInfo.social_media || {};
+    const location = entity.current_location || '';
+    const associations = entity.associations || [];
+    const threatIndicators = entity.threat_indicators || [];
 
     let contentCreated = 0;
     let signalsCreated = 0;
 
-    // Search queries to perform
-    const searchQueries = [
+    // Build comprehensive search queries using all available entity information
+    const searchQueries: string[] = [
+      // Basic name searches
       `"${entity.name}"`,
       `"${entity.name}" news`,
-      `"${entity.name}" social media`,
-      `site:facebook.com "${entity.name}"`,
-      `site:linkedin.com "${entity.name}"`,
-      `site:twitter.com "${entity.name}"`,
     ];
+
+    // Add location-based searches if available
+    if (location) {
+      searchQueries.push(`"${entity.name}" "${location}"`);
+      searchQueries.push(`"${entity.name}" location:"${location}"`);
+    }
+
+    // Add social media searches with handles if available
+    if (socialMedia.facebook) {
+      searchQueries.push(`site:facebook.com "${socialMedia.facebook}"`);
+      searchQueries.push(`site:facebook.com "${entity.name}"`);
+    } else {
+      searchQueries.push(`site:facebook.com "${entity.name}"`);
+    }
+
+    if (socialMedia.linkedin) {
+      searchQueries.push(`site:linkedin.com "${socialMedia.linkedin}"`);
+      searchQueries.push(`site:linkedin.com "${entity.name}"`);
+    } else {
+      searchQueries.push(`site:linkedin.com "${entity.name}"`);
+    }
+
+    if (socialMedia.twitter) {
+      searchQueries.push(`site:twitter.com "${socialMedia.twitter}"`);
+      searchQueries.push(`site:x.com "${socialMedia.twitter}"`);
+    }
+
+    if (socialMedia.instagram) {
+      searchQueries.push(`site:instagram.com "${socialMedia.instagram}"`);
+    }
+
+    // Add email and phone searches if available
+    if (contactInfo.email && Array.isArray(contactInfo.email)) {
+      contactInfo.email.forEach((email: string) => {
+        if (email) searchQueries.push(`"${email}"`);
+      });
+    }
+
+    if (contactInfo.phone && Array.isArray(contactInfo.phone)) {
+      contactInfo.phone.forEach((phone: string) => {
+        if (phone) searchQueries.push(`"${phone}"`);
+      });
+    }
 
     // Add aliases to searches
     if (entity.aliases && entity.aliases.length > 0) {
-      entity.aliases.forEach((alias: string) => {
+      entity.aliases.slice(0, 3).forEach((alias: string) => {
         searchQueries.push(`"${alias}"`);
+        if (location) {
+          searchQueries.push(`"${alias}" "${location}"`);
+        }
       });
     }
+
+    // Add association-based searches
+    if (associations.length > 0) {
+      associations.slice(0, 2).forEach((assoc: string) => {
+        searchQueries.push(`"${entity.name}" "${assoc}"`);
+      });
+    }
+
+    // Add threat indicator searches for security context
+    if (threatIndicators.length > 0) {
+      threatIndicators.slice(0, 2).forEach((indicator: string) => {
+        searchQueries.push(`"${entity.name}" "${indicator}"`);
+      });
+    }
+
+    // Add entity type specific searches
+    if (entity.type === 'person') {
+      searchQueries.push(`"${entity.name}" profile`);
+      searchQueries.push(`"${entity.name}" biography`);
+    } else if (entity.type === 'organization') {
+      searchQueries.push(`"${entity.name}" company`);
+      searchQueries.push(`"${entity.name}" business`);
+    }
+
+    console.log(`Generated ${searchQueries.length} targeted search queries using entity details`);
 
     for (const query of searchQueries) {
       try {

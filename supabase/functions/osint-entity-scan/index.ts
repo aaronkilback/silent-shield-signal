@@ -80,17 +80,42 @@ serve(async (req) => {
       console.log(`Scanning entity: ${entity.name} (${entity.type})`);
 
       try {
-        // PART 1: Perform web searches
-        const searchQueries = [
+        // Extract entity details for targeted searching
+        const attributes = entity.attributes || {};
+        const contactInfo = attributes.contact_info || {};
+        const socialMedia = contactInfo.social_media || {};
+        const location = entity.current_location || '';
+        
+        // PART 1: Perform targeted web searches using entity details
+        const searchQueries: string[] = [
           `"${entity.name}"`,
           `"${entity.name}" news`,
-          `site:facebook.com "${entity.name}"`,
-          `site:linkedin.com "${entity.name}"`,
         ];
 
+        // Add location-specific searches
+        if (location) {
+          searchQueries.push(`"${entity.name}" "${location}"`);
+        }
+
+        // Add social media searches with handles
+        if (socialMedia.facebook) {
+          searchQueries.push(`site:facebook.com "${socialMedia.facebook}"`);
+        } else {
+          searchQueries.push(`site:facebook.com "${entity.name}"`);
+        }
+
+        if (socialMedia.linkedin) {
+          searchQueries.push(`site:linkedin.com "${socialMedia.linkedin}"`);
+        } else {
+          searchQueries.push(`site:linkedin.com "${entity.name}"`);
+        }
+
+        // Add first alias if available
         if (entity.aliases && entity.aliases.length > 0) {
           searchQueries.push(`"${entity.aliases[0]}"`);
         }
+
+        console.log(`Generated ${searchQueries.length} targeted searches for ${entity.name}`);
 
         for (const query of searchQueries.slice(0, 3)) { // Limit to 3 searches per entity
           console.log(`Web search: ${query}`);
