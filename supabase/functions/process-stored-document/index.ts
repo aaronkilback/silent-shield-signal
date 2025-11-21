@@ -158,25 +158,30 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: 'You are an expert entity extraction system for security and intelligence documents. Extract all relevant entities with high precision.'
+            content: 'You are an expert entity extraction system for security intelligence documents. Extract ONLY real-world entities mentioned in security incidents, threats, or events. DO NOT extract document metadata, titles, dates, or filenames.'
           },
           {
             role: 'user',
-            content: `Extract entities from this document: "${document.filename}"
+            content: `Extract security-relevant entities from this document: "${document.filename}"
 
 Document content:
 ${sampleText}
 
-Find all relevant entities including:
-- Person names (executives, employees, suspects, witnesses)
-- Organizations (companies, agencies, groups)
-- Locations (addresses, cities, facilities)
-- Infrastructure (systems, networks, assets)
-- Threat indicators (malware, vulnerabilities, attack vectors)
-- Contact information (emails, phones)
-- Technical identifiers (domains, IPs, URLs)
+IMPORTANT RULES:
+- ONLY extract entities that are part of actual security incidents or threats mentioned in the content
+- DO NOT extract: document titles, dates, filenames, report names, generic phrases
+- DO NOT extract the organization name if it's just the report author
+- Focus on: threat actors, victims, suspicious individuals, compromised systems, attack targets, locations of incidents
 
-Provide context snippets showing where each entity appears.`
+Find entities like:
+- Person names (suspects, threat actors, victims - NOT report authors)
+- Organizations (targets, threat groups - NOT the reporting organization)
+- Locations (incident locations, attack origins)
+- Infrastructure (compromised systems, targeted networks)
+- Threat indicators (malware names, attack tools)
+- Technical identifiers (suspicious domains, IPs, emails used in attacks)
+
+Provide context showing WHERE in the incident description each entity appears.`
           }
         ],
         tools: [
@@ -184,7 +189,7 @@ Provide context snippets showing where each entity appears.`
             type: "function",
             function: {
               name: "extract_entities",
-              description: "Extract entities from the document",
+              description: "Extract security-relevant entities from incident reports",
               parameters: {
                 type: "object",
                 properties: {
@@ -207,7 +212,7 @@ Provide context snippets showing where each entity appears.`
                         },
                         context: { 
                           type: "string",
-                          description: "Short snippet showing where this entity appears in the document"
+                          description: "Short snippet showing where this entity appears in the incident description"
                         }
                       },
                       required: ["name", "type", "confidence", "context"]
@@ -249,10 +254,28 @@ Provide context snippets showing where each entity appears.`
       
       console.log(`AI extracted ${entities.length} entities`);
 
-      // Convert to entity suggestions
+      // Check for existing suggestions to avoid duplicates
+      const { data: existingSuggestions } = await supabase
+        .from('entity_suggestions')
+        .select('suggested_name, suggested_type')
+        .eq('source_type', 'archival_document')
+        .in('status', ['pending', 'approved']);
+      
+      const existingSet = new Set(
+        (existingSuggestions || []).map(s => `${s.suggested_name.toLowerCase()}:${s.suggested_type}`)
+      );
+
+      // Convert to entity suggestions, filtering duplicates and low confidence
       for (const entity of entities) {
         // Skip low confidence entities
-        if (entity.confidence < 0.6) continue;
+        if (entity.confidence < 0.7) continue;
+        
+        // Skip if already suggested
+        const key = `${entity.name.toLowerCase()}:${entity.type}`;
+        if (existingSet.has(key)) {
+          console.log(`Skipping duplicate: ${entity.name}`);
+          continue;
+        }
         
         entitySuggestions.push({
           suggested_name: entity.name,
