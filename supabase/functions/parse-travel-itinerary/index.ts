@@ -238,7 +238,17 @@ Be very thorough - extract all information present.`,
     }
 
     const travelData = JSON.parse(toolCall.function.arguments);
-    console.log("Successfully extracted:", travelData.traveler_name, "to", travelData.destination_city);
+    
+    // Log all extracted data for debugging
+    console.log("=== EXTRACTED TRAVEL DATA ===");
+    console.log(JSON.stringify(travelData, null, 2));
+    console.log("Traveler:", travelData.traveler_name);
+    console.log("Trip:", travelData.trip_name);
+    console.log("Dates:", travelData.departure_date, "to", travelData.return_date);
+    console.log("Route:", travelData.origin_city, "->", travelData.destination_city);
+    console.log("Flights:", travelData.flight_numbers);
+    console.log("Hotel:", travelData.hotel_name, "at", travelData.hotel_address);
+    console.log("============================");
 
     return new Response(
       JSON.stringify({ success: true, data: travelData }),
