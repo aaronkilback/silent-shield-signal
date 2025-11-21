@@ -26,6 +26,7 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
   const [selectedTraveler, setSelectedTraveler] = useState("");
   const [monitoringEnabled, setMonitoringEnabled] = useState(true);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
 
   const { data: travelers } = useQuery({
     queryKey: ["travelers"],
@@ -92,6 +93,98 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
     },
   });
 
+  const parseItinerary = async (file: File) => {
+    setIsParsing(true);
+    try {
+      // Upload file temporarily for parsing
+      const fileExt = file.name.split(".").pop();
+      const fileName = `temp-${crypto.randomUUID()}.${fileExt}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from("travel-documents")
+        .upload(fileName, file);
+
+      if (uploadError) throw uploadError;
+
+      // Parse with AI
+      const { data, error } = await supabase.functions.invoke("parse-travel-itinerary", {
+        body: { filePath: fileName },
+      });
+
+      if (error) throw error;
+
+      if (data?.success && data?.data) {
+        const parsed = data.data;
+        
+        // Auto-fill form fields
+        const form = document.getElementById("itinerary-form") as HTMLFormElement;
+        if (form) {
+          (form.elements.namedItem("trip_name") as HTMLInputElement).value = parsed.trip_name || "";
+          (form.elements.namedItem("trip_type") as HTMLSelectElement).value = parsed.trip_type || "international";
+          
+          // Format dates for datetime-local input (YYYY-MM-DDTHH:MM)
+          if (parsed.departure_date) {
+            const depDate = new Date(parsed.departure_date);
+            (form.elements.namedItem("departure_date") as HTMLInputElement).value = 
+              depDate.toISOString().slice(0, 16);
+          }
+          if (parsed.return_date) {
+            const retDate = new Date(parsed.return_date);
+            (form.elements.namedItem("return_date") as HTMLInputElement).value = 
+              retDate.toISOString().slice(0, 16);
+          }
+          
+          (form.elements.namedItem("origin_city") as HTMLInputElement).value = parsed.origin_city || "";
+          (form.elements.namedItem("origin_country") as HTMLInputElement).value = parsed.origin_country || "";
+          (form.elements.namedItem("destination_city") as HTMLInputElement).value = parsed.destination_city || "";
+          (form.elements.namedItem("destination_country") as HTMLInputElement).value = parsed.destination_country || "";
+          (form.elements.namedItem("hotel_name") as HTMLInputElement).value = parsed.hotel_name || "";
+          (form.elements.namedItem("hotel_address") as HTMLInputElement).value = parsed.hotel_address || "";
+          
+          // Handle flight numbers as comma-separated
+          if (parsed.flight_numbers && parsed.flight_numbers.length > 0) {
+            (form.elements.namedItem("flight_numbers") as HTMLInputElement).value = parsed.flight_numbers.join(", ");
+          }
+          
+          if (parsed.notes) {
+            (form.elements.namedItem("notes") as HTMLTextAreaElement).value = parsed.notes;
+          }
+        }
+
+        // Try to find matching traveler
+        if (parsed.traveler_name && travelers) {
+          const matchedTraveler = travelers.find(t => 
+            t.name.toLowerCase().includes(parsed.traveler_name.toLowerCase()) ||
+            parsed.traveler_name.toLowerCase().includes(t.name.toLowerCase())
+          );
+          if (matchedTraveler) {
+            setSelectedTraveler(matchedTraveler.id);
+          }
+        }
+
+        toast.success("Itinerary parsed successfully! Review and submit.");
+      }
+
+      // Clean up temporary file
+      await supabase.storage.from("travel-documents").remove([fileName]);
+    } catch (error) {
+      console.error("Parse error:", error);
+      toast.error("Failed to parse itinerary. Please fill manually.");
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    setUploadedFile(file);
+    
+    // Auto-parse PDF files
+    if (file && file.type === "application/pdf") {
+      await parseItinerary(file);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -105,7 +198,7 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
           <DialogTitle>Create Travel Itinerary</DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form id="itinerary-form" onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="trip_name">Trip Name *</Label>
@@ -198,18 +291,24 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="itinerary_file">Upload Itinerary Document</Label>
+            <Label htmlFor="itinerary_file">Upload Itinerary (PDF auto-fills form)</Label>
             <div className="flex items-center gap-2">
               <Input
                 id="itinerary_file"
                 type="file"
                 accept=".pdf,.doc,.docx"
-                onChange={(e) => setUploadedFile(e.target.files?.[0] || null)}
+                onChange={handleFileChange}
+                disabled={isParsing}
               />
               {uploadedFile && (
                 <span className="text-sm text-muted-foreground">{uploadedFile.name}</span>
               )}
             </div>
+            {isParsing && (
+              <p className="text-sm text-muted-foreground animate-pulse">
+                Parsing document with AI...
+              </p>
+            )}
           </div>
 
           <div className="flex items-center justify-between">
@@ -235,8 +334,8 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={createMutation.isPending}>
-              {createMutation.isPending ? "Creating..." : "Create Itinerary"}
+            <Button type="submit" disabled={createMutation.isPending || isParsing}>
+              {isParsing ? "Parsing..." : createMutation.isPending ? "Creating..." : "Create Itinerary"}
             </Button>
           </div>
         </form>

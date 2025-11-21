@@ -107,3 +107,6 @@ verify_jwt = true
 
 [functions.monitor-travel-risks]
 verify_jwt = false
+
+[functions.parse-travel-itinerary]
+verify_jwt = false
