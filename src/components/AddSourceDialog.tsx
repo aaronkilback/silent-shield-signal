@@ -84,9 +84,8 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
         .insert({
           name: name.trim(),
           type: type.trim(),
-          monitor_type: monitorType || null,
-          config_json: parsedConfig,
-          is_active: true,
+          config: parsedConfig,
+          status: 'active',
         });
 
       if (error) throw error;
