@@ -69,21 +69,47 @@ Users can manually report bugs via:
 
 ## 📊 Error Types Tracked
 
-### Critical (Auto-reported)
+### Critical (Auto-reported + Screenshots)
 - Database constraint violations
 - Authentication failures
 - Data corruption issues
-- Component crashes
+- Component crashes (with automatic screenshot capture)
 
-### High (Auto-reported)
+### High (Auto-reported + Screenshots)
 - Failed CRUD operations
 - Source management failures
 - Document processing errors
 
-### Medium (Manual)
+### Medium (Manual + Optional Screenshots)
 - UI glitches
 - Performance issues
 - Unexpected behavior
+
+## 🖼️ Screenshot Functionality
+
+### Automatic Screenshots
+- Component crashes automatically capture page screenshot
+- Stored securely in `bug-screenshots` storage bucket
+- Linked to bug reports for visual context
+
+### Manual Screenshots
+- "Capture Screenshot" button in bug report dialog
+- Users can attach multiple screenshots
+- Screenshots viewable in bug reports list
+- Click to view full-size image
+
+## 📍 Where Bug Reports Go
+
+Bug reports are stored in:
+- **Database Table**: `bug_reports`
+- **Fields Captured**:
+  - Title, description, severity
+  - User ID and timestamp
+  - Page URL and browser info
+  - Screenshots (array of URLs)
+  - Status (open, in_progress, resolved, closed)
+
+**Access**: Navigate to `/bug-reports` or click the "Bugs" button in the main navigation (Admin/Analyst access only).
 
 ## 🔍 Recent Fixes Applied
 

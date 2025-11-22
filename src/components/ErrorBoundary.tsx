@@ -19,6 +19,8 @@ interface State {
   isReporting: boolean;
 }
 
+import { reportError } from "@/lib/errorReporting";
+
 export class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
     super(props);
@@ -62,6 +64,39 @@ export class ErrorBoundary extends Component<Props, State> {
       const componentStack = errorInfo?.componentStack || 'Not available';
       const context = this.props.context || window.location.pathname;
 
+      // Capture screenshot for automatic error reports
+      let screenshotUrl: string | null = null;
+      try {
+        const html2canvas = (await import('html2canvas')).default;
+        const canvas = await html2canvas(document.body, {
+          allowTaint: true,
+          useCORS: true,
+          logging: false,
+        });
+        
+        const blob = await new Promise<Blob>((resolve) => {
+          canvas.toBlob((blob) => resolve(blob!), 'image/png');
+        });
+        
+        const timestamp = Date.now();
+        const filename = `error-${timestamp}.png`;
+        
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('bug-screenshots')
+          .upload(filename, blob, {
+            contentType: 'image/png',
+          });
+        
+        if (!uploadError) {
+          const { data: { publicUrl } } = supabase.storage
+            .from('bug-screenshots')
+            .getPublicUrl(filename);
+          screenshotUrl = publicUrl;
+        }
+      } catch (screenshotError) {
+        console.error('Failed to capture screenshot:', screenshotError);
+      }
+
       await supabase.from('bug_reports').insert({
         user_id: user?.id || null,
         title: `[Auto] ${error.name}: ${error.message.substring(0, 100)}`,
@@ -69,6 +104,7 @@ export class ErrorBoundary extends Component<Props, State> {
         severity: 'high',
         page_url: window.location.href,
         browser_info: navigator.userAgent,
+        screenshots: screenshotUrl ? [screenshotUrl] : null,
       });
     } catch (err) {
       console.error('Failed to report error:', err);
