@@ -101,6 +101,54 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_monitoring_status",
+      description: "Check monitoring scan status and history. Use this when users ask if monitors are working, about scan failures, or system health.",
+      parameters: {
+        type: "object",
+        properties: {
+          hours: {
+            type: "number",
+            description: "Number of hours to look back (default 24)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_system_health",
+      description: "Get overall system health metrics including automation performance, error rates, and throughput. Use when troubleshooting system issues.",
+      parameters: {
+        type: "object",
+        properties: {
+          days: {
+            type: "number",
+            description: "Number of days to analyze (default 7)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "diagnose_issues",
+      description: "Analyze recent errors and failed scans to identify problems. Use when troubleshooting or when users report issues.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Number of recent errors to analyze (default 20)",
+          },
+        },
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -169,6 +217,124 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       return data;
     }
 
+    case "get_monitoring_status": {
+      const hours = args.hours || 24;
+      const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+      
+      const { data, error } = await supabaseClient
+        .from("monitoring_history")
+        .select("*")
+        .gte("scan_started_at", cutoff)
+        .order("scan_started_at", { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+
+      // Analyze the results
+      const bySource = data.reduce((acc: any, scan: any) => {
+        if (!acc[scan.source_name]) {
+          acc[scan.source_name] = { total: 0, completed: 0, failed: 0, running: 0 };
+        }
+        acc[scan.source_name].total++;
+        if (scan.status === "completed") acc[scan.source_name].completed++;
+        if (scan.status === "failed") acc[scan.source_name].failed++;
+        if (scan.status === "running") acc[scan.source_name].running++;
+        return acc;
+      }, {});
+
+      return {
+        summary: bySource,
+        total_scans: data.length,
+        recent_scans: data.slice(0, 10),
+      };
+    }
+
+    case "get_system_health": {
+      const days = args.days || 7;
+      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+      const { data: metrics, error: metricsError } = await supabaseClient
+        .from("automation_metrics")
+        .select("*")
+        .gte("metric_date", cutoff)
+        .order("metric_date", { ascending: false });
+
+      if (metricsError) throw metricsError;
+
+      const { data: activeIncidents, error: incidentsError } = await supabaseClient
+        .from("incidents")
+        .select("id, status, priority")
+        .in("status", ["open", "investigating"])
+        .limit(100);
+
+      if (incidentsError) throw incidentsError;
+
+      const { data: recentSignals, error: signalsError } = await supabaseClient
+        .from("signals")
+        .select("id, created_at, status")
+        .gte("created_at", cutoff)
+        .limit(1000);
+
+      if (signalsError) throw signalsError;
+
+      // Calculate totals
+      const totals = metrics.reduce((acc: any, m: any) => {
+        acc.signals_processed += m.signals_processed || 0;
+        acc.incidents_created += m.incidents_created || 0;
+        acc.osint_scans += m.osint_scans_completed || 0;
+        acc.alerts_sent += m.alerts_sent || 0;
+        return acc;
+      }, { signals_processed: 0, incidents_created: 0, osint_scans: 0, alerts_sent: 0 });
+
+      return {
+        metrics: totals,
+        active_incidents_count: activeIncidents.length,
+        signals_last_7_days: recentSignals.length,
+        average_scans_per_day: Math.round(totals.osint_scans / days),
+        latest_metrics: metrics[0],
+      };
+    }
+
+    case "diagnose_issues": {
+      const limit = args.limit || 20;
+
+      // Get failed scans
+      const { data: failedScans, error: scanError } = await supabaseClient
+        .from("monitoring_history")
+        .select("*")
+        .eq("status", "failed")
+        .order("scan_started_at", { ascending: false })
+        .limit(limit);
+
+      if (scanError) throw scanError;
+
+      // Get sources with errors
+      const { data: errorSources, error: sourceError } = await supabaseClient
+        .from("sources")
+        .select("name, status, error_message, last_ingested_at")
+        .not("error_message", "is", null)
+        .limit(20);
+
+      if (sourceError) throw sourceError;
+
+      // Analyze patterns
+      const errorPatterns: { [key: string]: number } = {};
+      failedScans.forEach((scan: any) => {
+        const source = scan.source_name;
+        errorPatterns[source] = (errorPatterns[source] || 0) + 1;
+      });
+
+      return {
+        failed_scans: failedScans,
+        error_sources: errorSources,
+        error_patterns: errorPatterns,
+        total_errors: failedScans.length,
+        recommendation: failedScans.length > 10
+          ? "High error rate detected. Check rate limits and API configurations."
+          : "System appears healthy with minimal errors.",
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
@@ -211,6 +377,22 @@ You have access to tools to query the database for:
 - Active incidents
 - Investigation files
 - Client accounts
+- System monitoring status and health
+- Error diagnostics and troubleshooting
+
+TROUBLESHOOTING CAPABILITIES:
+When users ask about system issues, monitoring problems, or "why isn't X working":
+1. Use get_monitoring_status to check if scans are running
+2. Use get_system_health to view overall system performance
+3. Use diagnose_issues to identify specific errors and patterns
+4. Provide clear explanations of what's working and what's not
+5. Offer specific recommendations to fix issues
+
+Common issues to look for:
+- Rate limiting (429 errors from social media monitors)
+- Failed scans or sources with errors
+- Low scan frequency or missing data
+- Stale data (no recent scans)
 
 When users ask about specific data:
 1. Use the appropriate tool to fetch the information
@@ -223,8 +405,10 @@ Available pages:
 - [View Entities](/entities) - Tracked entities and people
 - [View Investigations](/investigations) - Investigation files
 - [View Clients](/clients) - Client accounts
+- [View Monitoring Sources](/monitoring-sources) - Configure monitoring
 
-Be conversational and helpful. When showing data, format it clearly with bullet points or structured text.`,
+Be conversational and helpful. When showing data, format it clearly with bullet points or structured text.
+When troubleshooting, be specific about what you found and how to fix it.`,
           },
           ...messages,
         ],
@@ -325,7 +509,7 @@ Be conversational and helpful. When showing data, format it clearly with bullet 
         messages: [
           {
             role: "system",
-            content: `You are a helpful security intelligence assistant. Use plain, conversational language. Provide navigation links when relevant using markdown format: [Link Text](/path).`,
+            content: `You are a helpful security intelligence assistant with troubleshooting capabilities. Use plain, conversational language. Provide navigation links when relevant using markdown format: [Link Text](/path). When diagnosing issues, be specific and actionable.`,
           },
           ...messages,
         ],
