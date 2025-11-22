@@ -18,16 +18,39 @@ type Message = {
 
 export const DashboardAIAssistant = () => {
   const navigate = useNavigate();
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Just ask me anything - for example, try asking me to find a specific person or view recent signals.",
-    },
-  ]);
+  const STORAGE_KEY = "fortress-ai-chat-history";
+  
+  // Load messages from localStorage or use default
+  const [messages, setMessages] = useState<Message[]>(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch (e) {
+      console.error("Failed to load chat history:", e);
+    }
+    return [
+      {
+        role: "assistant",
+        content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Just ask me anything - for example, try asking me to find a specific person or view recent signals.",
+      },
+    ];
+  });
+  
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [agentId, setAgentId] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Save messages to localStorage whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+    } catch (e) {
+      console.error("Failed to save chat history:", e);
+    }
+  }, [messages]);
 
   const conversation = useConversation({
     onConnect: () => {
@@ -230,13 +253,33 @@ export const DashboardAIAssistant = () => {
     await conversation.endSession();
   };
 
+  const clearHistory = () => {
+    const defaultMessage: Message = {
+      role: "assistant",
+      content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Just ask me anything - for example, try asking me to find a specific person or view recent signals.",
+    };
+    setMessages([defaultMessage]);
+    localStorage.removeItem(STORAGE_KEY);
+    toast.success("Chat history cleared");
+  };
+
   return (
     <Card className="w-full">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-primary" />
-          AI Security Assistant
-        </CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-primary" />
+            AI Security Assistant
+          </CardTitle>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearHistory}
+            className="text-xs"
+          >
+            Clear History
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         <Tabs defaultValue="text" className="w-full">
