@@ -100,10 +100,26 @@ ${learningContext}
 
 Extract:
 1. ENTITIES - Named people, organizations, locations, assets, infrastructure
-2. SIGNALS - Security-relevant events, threats, risks
+   - CRITICAL: Identify media organizations, publications, news outlets (newspapers, magazines, online media)
+   - Examples: The Narwhal, CBC, Reuters, local news publications
+   - Political groups, activist organizations, community groups
+   - Companies, government agencies, NGOs
+
+2. SIGNALS - Security-relevant events, threats, risks, AND reputational/media concerns
+   - Traditional security: threats, theft, protests, violence, sabotage, cyber incidents
+   - Media & Reputational: negative media coverage, criticism, controversy, public backlash
+   - Environmental: pollution complaints, environmental damage, flaring issues, emissions concerns
+   - Community Impact: community complaints, health concerns, quality of life impacts, local opposition
+   - Regulatory/Legal: investigations, violations, lawsuits, regulatory actions
+   
+   SEVERITY GUIDANCE:
+   - HIGH (80+): Major negative media coverage, significant community backlash, environmental violations, serious health concerns
+   - MEDIUM (50-79): Moderate criticism, ongoing concerns, emerging issues
+   - LOW (20-49): Minor mentions, general commentary
+
 3. ENTITY MENTIONS - Where entities appear in the document
 
-Be precise and only extract information explicitly stated. Match entity names to existing entities when possible.`
+Be thorough in identifying reputational and environmental risks, not just traditional security threats. Match entity names to existing entities when possible.`
           },
           {
             role: 'user',
@@ -151,7 +167,7 @@ Extract all entities, signals, and their relationships.`
                         description: { type: "string" },
                         signal_type: { 
                           type: "string",
-                          enum: ["theft", "protest", "threat", "surveillance", "sabotage", "violence", "cyber", "data_exposure", "wildlife", "wildfire", "weather", "health", "regulatory", "legal", "operational"]
+                          enum: ["theft", "protest", "threat", "surveillance", "sabotage", "violence", "cyber", "data_exposure", "wildlife", "wildfire", "weather", "health", "regulatory", "legal", "operational", "media", "reputational", "environmental", "community_impact"]
                         },
                         severity_score: { type: "integer", minimum: 0, maximum: 100 },
                         relevance_score: { type: "number", minimum: 0, maximum: 1 },
