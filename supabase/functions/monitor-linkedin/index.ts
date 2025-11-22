@@ -23,7 +23,7 @@ serve(async (req) => {
 
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, organization, industry');
+      .select('id, name, organization, industry, monitoring_keywords');
 
     if (clientsError) throw clientsError;
 
@@ -37,12 +37,19 @@ serve(async (req) => {
         // Add initial delay to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 3000));
         
-        const searchQuery = encodeURIComponent(`site:linkedin.com "${client.name}" (breach OR security OR attack OR incident)`);
+        // Build search query with client keywords
+        const keywords = client.monitoring_keywords && client.monitoring_keywords.length > 0
+          ? client.monitoring_keywords.slice(0, 3).join(' OR ')
+          : '(breach OR security OR attack OR incident)';
+        
+        const searchQuery = `site:linkedin.com "${client.name}" ${keywords}`;
+        console.log(`LinkedIn search for ${client.name}: ${searchQuery}`);
+        
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
         
         const response = await fetch(
-          `https://www.google.com/search?q=${searchQuery}&num=10`,
+          `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}&num=10`,
           {
             headers: {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -63,43 +70,59 @@ serve(async (req) => {
         }
 
         const html = await response.text();
+        const textLower = html.toLowerCase();
         
-        // Parse and ingest for AI processing
-        const resultMatches = html.matchAll(/<div class="g"[^>]*>(.*?)<\/div>/gs);
+        // Check if any client keywords are in the results
+        let foundKeywords: string[] = [];
+        if (client.monitoring_keywords && client.monitoring_keywords.length > 0) {
+          foundKeywords = client.monitoring_keywords.filter((kw: string) => 
+            textLower.includes(kw.toLowerCase())
+          );
+        }
         
-        for (const match of Array.from(resultMatches).slice(0, 5)) {
-          const text = match[1]
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/&[^;]+;/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
+        if (foundKeywords.length > 0 || textLower.includes(client.name.toLowerCase())) {
+          console.log(`✓ KEYWORD MATCH on LinkedIn for ${client.name}: ${foundKeywords.join(', ') || 'client name'}`);
           
-          if (text.length > 30) {
-            // Create ingested document for AI analysis
-            const { data: doc, error: docError } = await supabase
-              .from('ingested_documents')
-              .insert({
-                title: `LinkedIn mention: ${client.name}`,
-                raw_text: text,
-                metadata: {
-                  source: 'linkedin',
-                  client_id: client.id,
-                  client_name: client.name,
-                  search_query: searchQuery
-                }
-              })
-              .select()
-              .single();
+          // Parse and ingest for AI processing
+          const resultMatches = html.matchAll(/<div class="g"[^>]*>(.*?)<\/div>/gs);
+          
+          for (const match of Array.from(resultMatches).slice(0, 5)) {
+            const text = match[1]
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/&[^;]+;/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+            
+            if (text.length > 30) {
+              // Create ingested document for AI analysis
+              const { data: doc, error: docError } = await supabase
+                .from('ingested_documents')
+                .insert({
+                  title: `LinkedIn mention: ${client.name}`,
+                  raw_text: text,
+                  metadata: {
+                    source: 'linkedin',
+                    client_id: client.id,
+                    client_name: client.name,
+                    search_query: searchQuery,
+                    matched_keywords: foundKeywords
+                  }
+                })
+                .select()
+                .single();
 
-            if (!docError && doc) {
-              // Invoke intelligence processing
-              await supabase.functions.invoke('process-intelligence-document', {
-                body: { documentId: doc.id }
-              });
-              signalsCreated++;
-              console.log(`Ingested LinkedIn content for AI analysis: ${client.name}`);
+              if (!docError && doc) {
+                // Invoke intelligence processing
+                await supabase.functions.invoke('process-intelligence-document', {
+                  body: { documentId: doc.id }
+                });
+                signalsCreated++;
+                console.log(`✓ Ingested LinkedIn content for ${client.name} (keywords: ${foundKeywords.join(', ')})`);
+              }
             }
           }
+        } else {
+          console.log(`- No keyword matches found for ${client.name}`);
         }
 
         console.log(`Processed LinkedIn mentions for ${client.name}`);

@@ -328,85 +328,109 @@ Respond ONLY with valid JSON.`
       }
     }
 
-    // Match signal to clients using AI-powered contextual matching
+    // Match signal to clients using keyword and AI-powered matching
     let clientId: string | null = null;
+    let matchedKeywords: string[] = [];
+    
     const { data: clients } = await supabase
       .from('clients')
-      .select('id, name, organization, industry, locations, high_value_assets');
+      .select('id, name, organization, industry, locations, high_value_assets, monitoring_keywords');
     
     if (clients && clients.length > 0) {
-      const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+      const textLower = signalText.toLowerCase();
       
-      // Build client context for AI matching
-      const clientsContext = clients.map(c => ({
-        id: c.id,
-        name: c.name,
-        organization: c.organization,
-        industry: c.industry,
-        locations: c.locations,
-        assets: c.high_value_assets
-      }));
+      // CRITICAL: First check explicit keyword matches
+      for (const client of clients) {
+        // Check client name
+        if (textLower.includes(client.name.toLowerCase())) {
+          clientId = client.id;
+          matchedKeywords.push(`client_name:${client.name}`);
+          console.log(`✓ KEYWORD MATCH via client name: ${client.name}`);
+          break;
+        }
+        
+        // Check monitoring keywords
+        if (client.monitoring_keywords && Array.isArray(client.monitoring_keywords)) {
+          const foundKeywords = client.monitoring_keywords.filter((keyword: string) => 
+            textLower.includes(keyword.toLowerCase())
+          );
+          
+          if (foundKeywords.length > 0) {
+            clientId = client.id;
+            matchedKeywords = foundKeywords;
+            console.log(`✓ KEYWORD MATCH for ${client.name}: ${foundKeywords.join(', ')}`);
+            break;
+          }
+        }
+      }
       
-      try {
-        const matchResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-2.5-flash',
-            messages: [
-              {
-                role: 'system',
-                content: `You are a client matching specialist. Match security signals to clients based on:
+      // If no keyword match, try AI matching as fallback
+      if (!clientId) {
+        console.log('No keyword match found, trying AI matching...');
+        
+        const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+        
+        // Build client context for AI matching
+        const clientsContext = clients.map(c => ({
+          id: c.id,
+          name: c.name,
+          organization: c.organization,
+          industry: c.industry,
+          locations: c.locations,
+          assets: c.high_value_assets,
+          keywords: c.monitoring_keywords
+        }));
+        
+        try {
+          const matchResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'google/gemini-2.5-flash',
+              messages: [
+                {
+                  role: 'system',
+                  content: `You are a client matching specialist. Match security signals to clients based on:
 - Direct mentions of client names or organizations
+- Monitoring keywords configured for each client
 - Industry relevance (e.g., pipeline activism → energy companies)
 - Geographic overlap (locations mentioned)
 - Asset relevance (e.g., "CGL" or "Coastal GasLink" → pipeline assets)
 - Project connections (e.g., LNG projects → energy sector)
 
 Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": null} if no match.`
-              },
-              {
-                role: 'user',
-                content: `Signal content:\n${signalText.substring(0, 2000)}\n\nAvailable clients:\n${JSON.stringify(clientsContext, null, 2)}\n\nWhich client does this signal relate to?`
-              }
-            ],
-            max_completion_tokens: 150
-          }),
-        });
+                },
+                {
+                  role: 'user',
+                  content: `Signal content:\n${signalText.substring(0, 2000)}\n\nAvailable clients:\n${JSON.stringify(clientsContext, null, 2)}\n\nWhich client does this signal relate to?`
+                }
+              ],
+              max_completion_tokens: 150
+            }),
+          });
 
-        if (matchResponse.ok) {
-          const matchData = await matchResponse.json();
-          let matchContent = matchData.choices?.[0]?.message?.content || '';
-          
-          // Strip markdown if present
-          if (matchContent.startsWith('```')) {
-            matchContent = matchContent.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+          if (matchResponse.ok) {
+            const matchData = await matchResponse.json();
+            let matchContent = matchData.choices?.[0]?.message?.content || '';
+            
+            // Strip markdown if present
+            if (matchContent.startsWith('```')) {
+              matchContent = matchContent.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+            }
+            
+            const matchResult = JSON.parse(matchContent);
+            if (matchResult.client_id) {
+              clientId = matchResult.client_id;
+              const matchedClient = clients.find(c => c.id === clientId);
+              matchedKeywords.push('ai_contextual_match');
+              console.log(`Signal matched to client via AI: ${matchedClient?.name}`);
+            }
           }
-          
-          const matchResult = JSON.parse(matchContent);
-          if (matchResult.client_id) {
-            clientId = matchResult.client_id;
-            const matchedClient = clients.find(c => c.id === clientId);
-            console.log(`Signal matched to client via AI: ${matchedClient?.name}`);
-          }
-        }
-      } catch (error) {
-        console.error('AI client matching failed, falling back to simple matching:', error);
-        
-        // Fallback to simple name matching
-        const textLower = signalText.toLowerCase();
-        for (const client of clients) {
-          const clientName = client.name.toLowerCase();
-          const orgName = client.organization?.toLowerCase() || '';
-          
-          if (textLower.includes(clientName) || (orgName && textLower.includes(orgName))) {
-            clientId = client.id;
-            console.log(`Signal matched to client via fallback: ${client.name}`);
-            break;
-          }
+        } catch (error) {
+          console.error('AI client matching failed:', error);
         }
       }
     }
@@ -417,7 +441,10 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
       .insert({
         source_id: sourceId,
         client_id: clientId,
-        raw_json: signalRaw,
+        raw_json: {
+          ...signalRaw,
+          matched_keywords: matchedKeywords.length > 0 ? matchedKeywords : undefined
+        },
         normalized_text: classification.normalized_text,
         entity_tags: classification.entity_tags,
         location: classification.location,
@@ -435,7 +462,8 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
       throw insertError;
     }
 
-    console.log('Signal ingested:', signal.id);
+    console.log(`Signal ingested: ${signal.id}${matchedKeywords.length > 0 ? ` (keywords: ${matchedKeywords.join(', ')})` : ''}`);
+
     
     // Calculate and store content hash for duplicate detection
     const encoder = new TextEncoder();
