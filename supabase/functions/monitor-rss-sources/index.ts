@@ -114,16 +114,17 @@ serve(async (req) => {
 
     // Process each RSS source
     for (const source of rssSources) {
-      scannedSourceNames.push(source.name);
       try {
         // Access the config column (not config_json)
         const feedUrl = source.config?.url || source.config?.feed_url;
         
         if (!feedUrl) {
-          console.log(`No URL configured for source: ${source.name}`);
+          // Skip sources without URLs - don't add to scanned list
+          console.log(`Skipping ${source.name}: No URL configured`);
           continue;
         }
 
+        scannedSourceNames.push(source.name);
         console.log(`Fetching RSS feed: ${source.name} from ${feedUrl}`);
         
         const response = await fetch(feedUrl, {
