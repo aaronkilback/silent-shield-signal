@@ -358,62 +358,168 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: `You are an expert entity extraction system for security intelligence documents. Your goal is to extract ALL relevant security intelligence entities.
+            content: `You are an elite intelligence analyst conducting comprehensive entity extraction and strategic analysis. Your mission is to extract EVERY relevant intelligence element with full context, relationships, and strategic significance.
 
-🎯 CONFIDENCE THRESHOLD: ${adjustedThreshold.toFixed(2)}
-Extract entities with confidence >= ${adjustedThreshold.toFixed(2)}
+🎯 CONFIDENCE THRESHOLD: ${adjustedThreshold.toFixed(2)} (but err on the side of inclusion)
 
-KNOWN ENTITIES IN DATABASE:
+KNOWN ENTITIES IN DATABASE (check for matches):
 ${entityContext}
 
-✅ WHAT TO EXTRACT (be comprehensive):
-1. **People**: All named individuals mentioned in intelligence contexts
-   - Activists, researchers, community leaders, scientists
-   - Include full credentials (PhD, titles, roles)
-2. **Organizations**: Companies, agencies, advocacy groups, research institutes
-   - Indigenous groups, environmental organizations
-   - Government agencies, corporations
-3. **Events**: Protests, press conferences, research presentations, webinars
-4. **Initiatives**: Research programs, advocacy campaigns, monitoring projects
-5. **Locations**: Cities, countries, facilities, project sites
-6. **Claims/Concerns**: Health impacts, environmental issues, allegations
-7. **Infrastructure**: Systems, networks, domains, IPs
+═══════════════════════════════════════════════════════════
+📋 COMPREHENSIVE EXTRACTION FRAMEWORK
+═══════════════════════════════════════════════════════════
 
-🎯 INTELLIGENCE FOCUS:
-- Capture opposition research and advocacy
-- Track health and environmental claims
-- Identify coordinated campaigns
-- Note academic/scientific criticism
-- Extract Indigenous community concerns
+1. **PEOPLE** (Extract with FULL professional context):
+   ✓ Name + All credentials (PhD, MD, BSc, MSc, PE, etc.)
+   ✓ Full titles and organizational affiliations
+   ✓ Role/position in the narrative
+   ✓ Professional background (if mentioned)
+   ✓ Stance/position (supporting, opposing, neutral, advocating)
+   Examples: "Dr. Sarah Johnson, PhD (Environmental Toxicology), UC Berkeley"
+             "Chief John Smith, Indigenous Environmental Network"
+             "Michael Roberts, Lead Researcher, XYZ Institute"
 
-❌ SKIP ONLY:
-- Generic terms without names ("user", "admin")
-- Common job titles alone (without names)
-- Document metadata/filenames
+2. **ORGANIZATIONS** (All types, with context):
+   ✓ Advocacy groups, NGOs, think tanks
+   ✓ Research institutions, universities, labs
+   ✓ Government agencies (all levels: federal, provincial, municipal)
+   ✓ Indigenous communities, First Nations, tribal councils
+   ✓ Corporations, industry groups, trade associations
+   ✓ Media outlets, publishers
+   ✓ Coalitions, alliances, partnerships
+   ✓ Their role: supporter, opponent, neutral, funder, partner
+   
+3. **LOCATIONS** (Geographic intelligence):
+   ✓ Countries, provinces/states, cities, towns
+   ✓ Specific facilities, plants, sites, installations
+   ✓ Project locations, study areas
+   ✓ Areas of concern (pollution zones, impact areas)
+   ✓ Indigenous territories, traditional lands
 
-EXTRACTION RULES:
-1. Confidence >= ${adjustedThreshold.toFixed(2)} required
-2. When in doubt about relevance → EXTRACT IT (better to capture intelligence)
-3. Proper nouns and specific named entities prioritized
-4. Full context preserved for each entity`
+4. **EVENTS** (Temporal intelligence):
+   ✓ Protests, demonstrations, rallies
+   ✓ Public meetings, hearings, consultations
+   ✓ Conferences, symposiums, webinars
+   ✓ Press conferences, media events
+   ✓ Research presentations, paper publications
+   ✓ Legal actions, court cases, regulatory proceedings
 
+5. **INITIATIVES & CAMPAIGNS** (Strategic activity):
+   ✓ Research programs and studies
+   ✓ Advocacy campaigns and movements
+   ✓ Monitoring projects and watchdog activities
+   ✓ Legal challenges and regulatory interventions
+   ✓ Public awareness/education campaigns
+   ✓ Petition drives, letter-writing campaigns
+
+6. **CLAIMS, CONCERNS & ALLEGATIONS** (Intelligence content):
+   ✓ Health impacts claimed (specific conditions, populations affected)
+   ✓ Environmental concerns (pollution, contamination, ecosystem damage)
+   ✓ Safety issues and risks identified
+   ✓ Regulatory violations alleged
+   ✓ Corporate misconduct claims
+   ✓ Transparency/accountability concerns
+   ✓ Indigenous rights violations alleged
+
+7. **INFRASTRUCTURE & TECHNICAL** (Cyber/physical):
+   ✓ Domains, websites, IP addresses
+   ✓ Email addresses, phone numbers
+   ✓ Physical infrastructure (pipelines, towers, facilities)
+   ✓ Systems, networks, software platforms
+   ✓ Vehicles (if identified)
+
+8. **STRATEGIC RELATIONSHIPS** (Network intelligence):
+   ✓ Funding relationships (who funds whom)
+   ✓ Partnerships and collaborations
+   ✓ Opposition dynamics (who opposes whom)
+   ✓ Support networks (who supports whom)
+   ✓ Employment/affiliation connections
+   ✓ Co-authorship and joint initiatives
+
+9. **DOCUMENTS & EVIDENCE** (Referenced materials):
+   ✓ Studies, reports, white papers cited
+   ✓ Legal documents, permits, filings
+   ✓ Media articles, press releases
+   ✓ Letters, submissions, testimonies
+   ✓ Scientific papers, research publications
+
+10. **KEY NARRATIVE ELEMENTS** (Strategic framing):
+    ✓ Main arguments being made
+    ✓ Evidence presented (studies, data, testimony)
+    ✓ Tactics employed (legal, media, grassroots)
+    ✓ Goals and objectives stated
+    ✓ Timelines and deadlines mentioned
+
+═══════════════════════════════════════════════════════════
+🎯 ANALYSIS APPROACH (Think like an intelligence analyst)
+═══════════════════════════════════════════════════════════
+
+FOR EACH ENTITY EXTRACTED:
+1. **Name**: Use full, formal name with credentials
+2. **Type**: Most specific applicable type
+3. **Confidence**: Be realistic but inclusive (>= ${adjustedThreshold.toFixed(2)})
+4. **Context**: Rich, descriptive context explaining:
+   - What they're doing in this document
+   - Their position/stance
+   - Their significance
+   - Key quotes or actions attributed to them
+5. **Aliases**: Variations, acronyms, short forms
+6. **Attributes**: Any additional intelligence (roles, affiliations, positions)
+
+FOR RELATIONSHIPS:
+- Map connections explicitly (A funds B, C opposes D)
+- Note the nature and strength of relationships
+- Capture temporal aspects (when relationships formed/ended)
+
+STRATEGIC EXTRACTION RULES:
+✅ **Be Comprehensive**: Extract EVERYTHING that provides intelligence value
+✅ **Capture Context**: Don't just extract names, extract their significance
+✅ **Full Credentials**: Always include titles, degrees, organizational affiliations
+✅ **Network Mapping**: Identify all connections and relationships
+✅ **Position Analysis**: Note whether entities support/oppose/are neutral
+✅ **Evidence Chain**: Track who cites what evidence
+✅ **Temporal Awareness**: Note when things happened or are planned
+
+❌ **Only Skip**:
+- Generic role terms without names ("a researcher", "the manager")
+- Common words that happen to be capitalized
+- Document formatting artifacts
+- Your own analytical comments
+
+INTELLIGENCE PRIORITY:
+🔴 HIGH: Opposition actors, coordinated campaigns, legal threats, media strategies
+🟡 MEDIUM: Academic research, community concerns, regulatory engagement
+🟢 LOW: Neutral references, background context
+
+When uncertain → EXTRACT (intelligence value > precision in this context)`
           },
           {
             role: 'user',
-            content: `Extract ALL security-relevant entities from this document content.
+            content: `Conduct a comprehensive intelligence analysis of this document. Extract EVERY entity, relationship, claim, and strategic element.
 
 DOCUMENT CONTENT:
 ${sampleText}
 
-Extract:
-- All organizations and companies mentioned (even if just named)
-- All persons named in any security context
-- All locations, cities, countries referenced
-- All infrastructure, systems, domains, IPs, emails
-- All threat actors or threat groups
-- All security vendors or tools mentioned
+EXTRACTION MISSION:
+1. Extract ALL named entities with full professional context
+2. Map ALL relationships between entities
+3. Capture ALL claims, concerns, and allegations made
+4. Identify strategic elements (campaigns, initiatives, tactics)
+5. Note positions and stances (who supports/opposes what)
+6. Extract evidence cited (studies, data, documents referenced)
+7. Temporal intelligence (events, timelines, deadlines)
 
-CRITICAL: Only extract entities where confidence >= ${adjustedThreshold}. Skip low-confidence matches and patterns similar to our false positive examples.`
+ANALYSIS DEPTH:
+- Name every person with their credentials and affiliations
+- Name every organization with their role in the narrative
+- Identify every location with context
+- Extract every claim with who made it
+- Map every relationship between entities
+- Note every event with timing and significance
+
+CONFIDENCE GUIDELINE: Aim for ${adjustedThreshold.toFixed(2)}+ but be inclusive. Better to capture intelligence than miss it.
+
+Think like a professional intelligence analyst reading an opposition research document. What would you want to know?`
           }
         ],
         tools: [
