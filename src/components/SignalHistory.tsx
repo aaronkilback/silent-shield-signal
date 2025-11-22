@@ -7,7 +7,7 @@ import { History, Clock, AlertCircle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { SignalDetailDialog } from "./SignalDetailDialog";
-import { SignalFalsePositiveButton } from "./SignalFalsePositiveButton";
+import { SignalFeedback } from "./SignalFeedback";
 
 // Helper to decode HTML entities and clean text
 const cleanSignalText = (text: string): string => {
@@ -263,10 +263,9 @@ export const SignalHistory = () => {
                       <span className="text-xs text-muted-foreground font-medium">
                         {((signal.confidence || 0) * 100).toFixed(0)}%
                       </span>
-                      <SignalFalsePositiveButton
+                      <SignalFeedback
                         signalId={signal.id}
-                        currentStatus={signal.status}
-                        onSuccess={loadSignals}
+                        onFeedbackChange={loadSignals}
                       />
                     </div>
                   </div>
