@@ -137,17 +137,35 @@ serve(async (req) => {
           const fullContent = `${title}\n\n${description}`.toLowerCase();
 
           try {
-            // Check if any client is directly mentioned for immediate signal creation
-            let directClientMatch = null;
+            // CRITICAL: Check if content matches ANY client's keywords
+            let matchedClient = null;
+            let matchedKeywords: string[] = [];
+            
             for (const client of clients || []) {
+              // Check direct client name match
               if (fullContent.includes(client.name.toLowerCase())) {
-                directClientMatch = client;
+                matchedClient = client;
+                matchedKeywords.push(`client_name:${client.name}`);
                 break;
+              }
+              
+              // Check monitoring keywords
+              if (client.monitoring_keywords && client.monitoring_keywords.length > 0) {
+                const foundKeywords = client.monitoring_keywords.filter((keyword: string) => 
+                  fullContent.includes(keyword.toLowerCase())
+                );
+                
+                if (foundKeywords.length > 0) {
+                  matchedClient = client;
+                  matchedKeywords = foundKeywords;
+                  console.log(`✓ KEYWORD MATCH for ${client.name}: ${foundKeywords.join(', ')}`);
+                  break;
+                }
               }
             }
 
-            // If direct match, create signal immediately
-            if (directClientMatch) {
+            // Only process if we have a matched client
+            if (matchedClient) {
               let category = 'news';
               let severity = 'low';
 
@@ -165,7 +183,7 @@ serve(async (req) => {
               const { error: signalError } = await supabase
                 .from('signals')
                 .insert({
-                  client_id: directClientMatch.id,
+                  client_id: matchedClient.id,
                   normalized_text: `News: ${title}`,
                   category,
                   severity,
@@ -174,41 +192,45 @@ serve(async (req) => {
                     source: 'news',
                     url: link,
                     description,
-                    search_query: query
+                    search_query: query,
+                    matched_keywords: matchedKeywords
                   },
                   status: 'new',
-                  confidence: 0.7
+                  confidence: 0.8
                 });
 
               if (!signalError) {
                 signalsCreated++;
-                console.log(`Created immediate signal for ${directClientMatch.name}: ${title}`);
+                console.log(`✓ CREATED SIGNAL for ${matchedClient.name}: ${title.substring(0, 60)}... (matched: ${matchedKeywords.join(', ')})`);
               }
-            }
 
-            // Ingest document for AI analysis (whether or not there's a direct match)
-            const { error: ingestError } = await supabase
-              .from('ingested_documents')
-              .insert({
-                title: title,
-                raw_text: `${title}\n\n${description}`,
-                metadata: {
-                  url: link,
-                  source_type: 'news',
-                  source_name: 'Google News',
-                  search_query: query,
-                  direct_client_match: directClientMatch?.name || null
-                },
-                processing_status: 'pending'
-              });
+              // Ingest for deeper AI analysis
+              const { error: ingestError } = await supabase
+                .from('ingested_documents')
+                .insert({
+                  title: title,
+                  raw_text: `${title}\n\n${description}`,
+                  metadata: {
+                    url: link,
+                    source_type: 'news',
+                    source_name: 'Google News',
+                    search_query: query,
+                    matched_client: matchedClient.name,
+                    matched_keywords: matchedKeywords
+                  },
+                  processing_status: 'pending'
+                });
 
-            if (!ingestError) {
-              documentsIngested++;
-              
-              // Trigger AI processing in background
-              supabase.functions.invoke('process-intelligence-document', {
-                body: { document_id: null, content: `${title}\n\n${description}`, metadata: { url: link } }
-              }).catch(err => console.error('Failed to trigger processing:', err));
+              if (!ingestError) {
+                documentsIngested++;
+                
+                // Trigger AI processing in background
+                supabase.functions.invoke('process-intelligence-document', {
+                  body: { document_id: null, content: `${title}\n\n${description}`, metadata: { url: link } }
+                }).catch(err => console.error('Failed to trigger processing:', err));
+              }
+            } else {
+              console.log(`- No keyword match for: ${title.substring(0, 60)}...`);
             }
           } catch (error) {
             console.error(`Error processing news item:`, error);
