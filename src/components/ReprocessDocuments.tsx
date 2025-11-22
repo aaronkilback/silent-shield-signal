@@ -88,22 +88,25 @@ export const ReprocessDocuments = () => {
       { duration: 6000 }
     );
 
-    // Set up polling to check progress
+    // Set up polling to check progress by counting document_entity_mentions
     const pollInterval = setInterval(async () => {
-      const { data: docs } = await supabase
-        .from('archival_documents')
-        .select('id, entity_mentions')
-        .in('id', documentIds);
+      // Count how many documents have entity mentions created
+      const { data: mentionCounts } = await supabase
+        .from('document_entity_mentions')
+        .select('document_id', { count: 'exact', head: false })
+        .in('document_id', documentIds);
 
-      if (docs) {
-        const processed = docs.filter(d => d.entity_mentions && d.entity_mentions.length > 0).length;
+      if (mentionCounts) {
+        // Get unique document IDs that have been processed
+        const processedDocs = new Set(mentionCounts.map(m => m.document_id));
+        const processed = processedDocs.size;
         setProcessedCount(processed);
 
-        if (processed === total) {
+        if (processed >= total) {
           clearInterval(pollInterval);
           setProcessing(false);
           toast.success(
-            `✅ All ${total} documents processed! Go to Entity Management to review entity suggestions.`,
+            `✅ All ${total} documents processed! Check Entity Management or Signals for extracted intelligence.`,
             { duration: 10000 }
           );
           refetch();
