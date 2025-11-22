@@ -56,6 +56,34 @@ serve(async (req) => {
 
     console.log('Starting security news monitoring scan...');
 
+    // Fetch active news sources from database
+    const { data: newsSources, error: sourcesError } = await supabase
+      .from('sources')
+      .select('*')
+      .eq('status', 'active')
+      .or('type.eq.api_feed,type.eq.rss')
+      .contains('config', { monitor_type: 'news' });
+
+    if (sourcesError) {
+      console.error('Error fetching news sources:', sourcesError);
+    }
+
+    const activeSourcesCount = newsSources?.length || 0;
+    console.log(`Found ${activeSourcesCount} active news sources in database`);
+
+    // Update history with actual sources count
+    if (historyEntry) {
+      await supabase
+        .from('monitoring_history')
+        .update({
+          scan_metadata: { 
+            sources_configured: activeSourcesCount,
+            source_names: newsSources?.map(s => s.name) || []
+          }
+        })
+        .eq('id', historyEntry.id);
+    }
+
     // Get all clients
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
