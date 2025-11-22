@@ -100,26 +100,62 @@ ${learningContext}
 
 Extract:
 1. ENTITIES - Named people, organizations, locations, assets, infrastructure
-   - CRITICAL: Identify media organizations, publications, news outlets (newspapers, magazines, online media)
-   - Examples: The Narwhal, CBC, Reuters, local news publications
-   - Political groups, activist organizations, community groups
-   - Companies, government agencies, NGOs
+   
+   PEOPLE TO CAPTURE:
+   - Political figures: Prime Ministers, Ministers, MPs, government officials (with titles)
+   - Corporate executives: CEOs, Presidents, Directors (with titles)
+   - Journalists, reporters, authors
+   - Community leaders, activists
+   
+   ORGANIZATIONS TO CAPTURE:
+   - CRITICAL: Media organizations (The Narwhal, CBC News, Reuters, local newspapers, online publications)
+   - Government agencies and offices (Major Projects Office, ministries, departments)
+   - Companies and corporations
+   - NGOs, activist groups, community organizations
+   - Indigenous groups and First Nations
+   
+   INFRASTRUCTURE/PROJECTS:
+   - LNG facilities, pipelines, transmission lines
+   - Energy projects, resource extraction sites
+   - Major infrastructure projects
 
-2. SIGNALS - Security-relevant events, threats, risks, AND reputational/media concerns
-   - Traditional security: threats, theft, protests, violence, sabotage, cyber incidents
-   - Media & Reputational: negative media coverage, criticism, controversy, public backlash
-   - Environmental: pollution complaints, environmental damage, flaring issues, emissions concerns
-   - Community Impact: community complaints, health concerns, quality of life impacts, local opposition
-   - Regulatory/Legal: investigations, violations, lawsuits, regulatory actions
+2. SIGNALS - Identify ALL security, reputational, regulatory, and environmental concerns
+   
+   OPPOSITION & CRITICISM (HIGH PRIORITY):
+   - Look for: "condemn", "criticize", "oppose", "opponents", "protest", "backlash", "controversy"
+   - Fast-tracking of controversial projects
+   - Community opposition to industrial projects
+   - Environmental group criticism
+   - Indigenous opposition or concerns
+   
+   MEDIA COVERAGE PATTERNS:
+   - Negative headlines about your client or projects
+   - Investigative journalism pieces
+   - Exposés of environmental damage
+   - Critical opinion pieces
+   - Social media controversies
+   
+   ENVIRONMENTAL & HEALTH:
+   - Pollution, emissions, flaring complaints
+   - Health concerns from industrial activity
+   - Environmental damage allegations
+   - Wildlife impacts, climate concerns
+   
+   REGULATORY & POLITICAL:
+   - Government fast-tracking or approval shortcuts
+   - Regulatory investigations
+   - Legal challenges, lawsuits
+   - Policy changes affecting operations
    
    SEVERITY GUIDANCE:
-   - HIGH (80+): Major negative media coverage, significant community backlash, environmental violations, serious health concerns
-   - MEDIUM (50-79): Moderate criticism, ongoing concerns, emerging issues
-   - LOW (20-49): Minor mentions, general commentary
+   - CRITICAL (90-100): Major scandal, significant legal action, severe environmental damage
+   - HIGH (70-89): Widespread negative coverage, strong opposition, regulatory violations
+   - MEDIUM (40-69): Moderate criticism, emerging concerns, local complaints
+   - LOW (20-39): Minor mentions, general commentary
 
 3. ENTITY MENTIONS - Where entities appear in the document
 
-Be thorough in identifying reputational and environmental risks, not just traditional security threats. Match entity names to existing entities when possible.`
+CRITICAL: Be aggressive in detecting opposition, criticism, and controversy. These are HIGH-VALUE signals even if not traditional security threats.`
           },
           {
             role: 'user',
