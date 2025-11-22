@@ -87,7 +87,7 @@ ${JSON.stringify(rejectedPatterns?.features || {}, null, 2)}
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'google/gemini-2.5-pro',
         messages: [
           {
             role: 'system',
@@ -107,9 +107,11 @@ Extract:
    - Journalists, reporters, authors
    - Community leaders, activists
    - **ACTIVISTS & ORGANIZERS**: Named individuals described as activists, organizers, protesters, campaigners
-   - **LEADERSHIP TITLES**: Anyone with President, Director, Spokesperson, Leader, Chief titles
-   - Examples: Deborah GOOD, Wil MARSDEN, Drew HARRIS, Melissa LEM
-   - Include their organizational affiliations when mentioned
+   - **RESEARCHERS & ACADEMICS**: Scientists, PhDs, researchers with their credentials (PhD, MD, etc.)
+   - **LEADERSHIP TITLES**: Anyone with President, Director, Spokesperson, Leader, Chief, Principal Scientist titles
+   - Examples: Kelsey BILSBACK (PhD, Principal Scientist), Sebastian ROWLAND (PhD, Scientist), Dr. Melissa LEM (CAPE President)
+   - **CRITICAL**: Always include their full title/credentials AND organizational affiliation
+   - Format: "Name (Credentials, Title, Organization)"
    
    ORGANIZATIONS TO CAPTURE:
    - CRITICAL: Media organizations (The Narwhal, CBC News, Reuters, local newspapers, online publications)
@@ -152,9 +154,13 @@ Extract:
    
    ENVIRONMENTAL & HEALTH:
    - Pollution, emissions, flaring complaints
+   - **HEALTH RESEARCH**: Studies linking industrial activity to health impacts
+   - **SPECIFIC CLAIMS**: Methane emissions health impacts, LNG flaring health concerns
+   - Research presentations, webinars, academic studies critical of projects
    - Health concerns from industrial activity
    - Environmental damage allegations
    - Wildlife impacts, climate concerns
+   - Any "health initiative" or research program targeting your operations
    
    REGULATORY & POLITICAL:
    - Government fast-tracking or approval shortcuts
@@ -170,7 +176,15 @@ Extract:
 
 3. ENTITY MENTIONS - Where entities appear in the document
 
-CRITICAL: Be aggressive in detecting opposition, criticism, and controversy. These are HIGH-VALUE signals even if not traditional security threats.`
+CRITICAL: Be aggressive in detecting opposition, criticism, and controversy. These are HIGH-VALUE signals even if not traditional security threats.
+
+EXTRACTION THOROUGHNESS:
+- Extract EVERY named person with their full credentials and organizational affiliations
+- Don't skip over academic titles (PhD, MD), professional titles (Scientist, Researcher), or leadership positions
+- When organizations have initiatives or programs mentioned, extract those as separate entities
+- Health claims, research findings, and scientific criticism are ALWAYS high-priority signals
+- Webinars, conferences, and research presentations opposing your operations are signals
+- Look for connections: if Person A from Organization B presents Research C at Event D, extract all four entities and create a signal`
           },
           {
             role: 'user',
@@ -199,7 +213,7 @@ Extract all entities, signals, and their relationships.`
                         name: { type: "string" },
                         type: { 
                           type: "string",
-                          enum: ["person", "organization", "location", "infrastructure", "domain", "ip_address", "email", "phone", "vehicle", "asset", "project", "route"]
+                          enum: ["person", "organization", "location", "infrastructure", "domain", "ip_address", "email", "phone", "vehicle", "asset", "project", "route", "research_initiative"]
                         },
                         confidence: { type: "number", minimum: 0, maximum: 1 },
                         matched_entity_id: { type: "string" },
