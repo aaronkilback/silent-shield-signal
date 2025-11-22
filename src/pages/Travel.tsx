@@ -4,11 +4,22 @@ import { TravelersList } from "@/components/travel/TravelersList";
 import { ItinerariesList } from "@/components/travel/ItinerariesList";
 import { TravelAlertsPanel } from "@/components/travel/TravelAlertsPanel";
 import { TravelersMap } from "@/components/travel/TravelersMap";
-import { Plane, Users, AlertTriangle, MapPin } from "lucide-react";
+import { Plane, Users, AlertTriangle, MapPin, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { Header } from "@/components/Header";
+import { useAuth } from "@/hooks/useAuth";
+import { useNavigate } from "react-router-dom";
 
 export default function Travel() {
   const [activeTab, setActiveTab] = useState("travelers");
+  const { user, loading } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!loading && !user) {
+      navigate("/auth");
+    }
+  }, [user, loading, navigate]);
 
   // Archive completed itineraries on page load
   useEffect(() => {
@@ -23,8 +34,22 @@ export default function Travel() {
     archiveCompletedItineraries();
   }, []);
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return null;
+  }
+
   return (
-    <div className="container mx-auto py-6 space-y-6">
+    <div className="min-h-screen bg-background">
+      <Header />
+      <main className="container mx-auto px-6 py-8 space-y-6">
       <div>
         <h1 className="text-3xl font-bold">Travel Management</h1>
         <p className="text-muted-foreground">
@@ -68,6 +93,7 @@ export default function Travel() {
           <TravelersMap />
         </TabsContent>
       </Tabs>
+      </main>
     </div>
   );
 }
