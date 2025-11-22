@@ -42,36 +42,28 @@ Deno.serve(async (req) => {
         .eq('source_type', 'archival_document');
     }
 
-    // Process documents in background to avoid timeout
+    // Trigger individual processing jobs without waiting
     const processDocuments = async () => {
-      let successful = 0;
-      let failed = 0;
-
-      for (const docId of documentIds) {
+      console.log('Triggering parallel processing jobs for all documents...');
+      
+      const promises = documentIds.map(async (docId, index) => {
         try {
-          console.log(`Processing document ${successful + failed + 1}/${documentIds.length}: ${docId}`);
+          console.log(`Triggering processing job ${index + 1}/${documentIds.length}: ${docId}`);
           
-          // Use stored document processor (downloads files and extracts text)
-          const { data, error } = await supabase.functions.invoke('process-stored-document', {
+          // Fire and forget - don't wait for response
+          supabase.functions.invoke('process-stored-document', {
             body: { documentId: docId }
-          });
-
-          if (error || data?.error) {
-            console.error(`Failed to process document ${docId}:`, error || data?.error);
-            failed++;
-          } else {
-            successful++;
-          }
-
-          // Small delay between requests to avoid rate limits
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          }).catch(err => console.error(`Failed to trigger processing for ${docId}:`, err));
+          
+          // Small delay to avoid overwhelming the system
+          await new Promise(resolve => setTimeout(resolve, 100));
         } catch (error) {
-          console.error(`Error processing document ${docId}:`, error);
-          failed++;
+          console.error(`Error triggering processing for ${docId}:`, error);
         }
-      }
-
-      console.log(`Batch processing complete: ${successful} successful, ${failed} failed`);
+      });
+      
+      await Promise.all(promises);
+      console.log(`Triggered ${documentIds.length} processing jobs`);
     };
 
     // Start background processing without blocking response
