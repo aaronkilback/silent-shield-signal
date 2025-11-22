@@ -3,6 +3,7 @@ import { SignalHistory } from "@/components/SignalHistory";
 import { UnifiedDocumentUpload } from "@/components/UnifiedDocumentUpload";
 import { ArchivalDocumentsList } from "@/components/ArchivalDocumentsList";
 import { ReprocessDocuments } from "@/components/ReprocessDocuments";
+import { DashboardClientSelector } from "@/components/DashboardClientSelector";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
@@ -42,6 +43,8 @@ const Signals = () => {
             Intelligence signals and archival document management
           </p>
         </div>
+
+        <DashboardClientSelector />
 
         <Tabs defaultValue="signals" className="space-y-6">
           <TabsList className="grid w-full grid-cols-3">
