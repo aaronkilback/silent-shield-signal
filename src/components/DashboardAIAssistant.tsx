@@ -219,7 +219,7 @@ export const DashboardAIAssistant = () => {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Sparkles className="w-5 h-5 text-primary" />
-          AI Security Assistant (Gemini 3 Pro)
+          AI Security Assistant
         </CardTitle>
       </CardHeader>
       <CardContent>
