@@ -142,20 +142,34 @@ serve(async (req) => {
         }
       }
     } else if (type === 'entity') {
-      // Fuzzy entity name matching
+      // Improved fuzzy entity name matching with type consideration
       const { data: entities } = await supabase
         .from('entities')
-        .select('id, name, aliases')
+        .select('id, name, aliases, type')
         .eq('is_active', true);
 
       if (entities && entities.length > 0) {
-        const contentLower = content.toLowerCase();
+        const contentLower = content.toLowerCase().trim();
+        
+        // First pass: exact or very high similarity matches
         for (const entity of entities) {
           const names = [entity.name, ...(entity.aliases || [])];
           for (const name of names) {
-            const similarity = calculateSimilarity(contentLower, name.toLowerCase());
+            const nameLower = name.toLowerCase().trim();
             
-            if (similarity > 0.80) {
+            // Check for exact match
+            if (contentLower === nameLower) {
+              duplicates.push({
+                ...entity,
+                matched_name: name,
+                similarity_score: 1.0
+              });
+              break;
+            }
+            
+            // Check for high similarity (85%+)
+            const similarity = calculateSimilarity(contentLower, nameLower);
+            if (similarity > 0.85) {
               duplicates.push({
                 ...entity,
                 matched_name: name,
@@ -165,6 +179,28 @@ serve(async (req) => {
             }
           }
         }
+        
+        // If no high matches, check for moderate similarity (75%+) only for same entity type
+        if (duplicates.length === 0) {
+          for (const entity of entities) {
+            const names = [entity.name, ...(entity.aliases || [])];
+            for (const name of names) {
+              const similarity = calculateSimilarity(contentLower, name.toLowerCase().trim());
+              
+              if (similarity > 0.75) {
+                duplicates.push({
+                  ...entity,
+                  matched_name: name,
+                  similarity_score: similarity
+                });
+                break;
+              }
+            }
+          }
+        }
+        
+        // Sort by similarity score descending
+        duplicates.sort((a, b) => b.similarity_score - a.similarity_score);
       }
     }
 

@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle, XCircle, Users, AlertCircle, ExternalLink } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { CheckCircle, XCircle, Users, AlertCircle, ExternalLink, GitMerge } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
@@ -17,6 +18,8 @@ export const EntitySuggestionsPanel = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [selectedSuggestion, setSelectedSuggestion] = useState<string | null>(null);
+  const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
+  const [selectedEntityForMerge, setSelectedEntityForMerge] = useState<string>("");
 
   const getSourceLink = (sourceType: string, sourceId: string) => {
     switch (sourceType) {
@@ -46,12 +49,26 @@ export const EntitySuggestionsPanel = () => {
     refetchInterval: 30000 // Refetch every 30 seconds
   });
 
+  const { data: entities } = useQuery({
+    queryKey: ['entities'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('entities')
+        .select('id, name, type')
+        .eq('is_active', true)
+        .order('name');
+      
+      if (error) throw error;
+      return data;
+    }
+  });
+
   const approveMutation = useMutation({
     mutationFn: async ({ suggestionId, attributes }: { suggestionId: string; attributes?: any }) => {
       const suggestion = suggestions?.find(s => s.id === suggestionId);
       if (!suggestion) throw new Error('Suggestion not found');
 
-      // Check for duplicates before creating
+      // Check for duplicates before creating with improved detection
       const { data: duplicateCheck } = await supabase.functions.invoke('detect-duplicates', {
         body: {
           type: 'entity',
@@ -60,9 +77,11 @@ export const EntitySuggestionsPanel = () => {
         }
       });
 
-      if (duplicateCheck?.hasDuplicates && duplicateCheck.duplicates?.length > 0) {
-        const duplicateNames = duplicateCheck.duplicates.map((d: any) => d.name).join(', ');
-        throw new Error(`Duplicate entities found: ${duplicateNames}. Please merge instead.`);
+      if (duplicateCheck?.isDuplicate && duplicateCheck.duplicates?.length > 0) {
+        const duplicateNames = duplicateCheck.duplicates
+          .map((d: any) => `${d.name} (${Math.round(d.similarity_score * 100)}% match)`)
+          .join(', ');
+        throw new Error(`Potential duplicate entities found: ${duplicateNames}. Please use Merge instead or verify this is unique.`);
       }
 
       // Create the entity
@@ -196,12 +215,24 @@ export const EntitySuggestionsPanel = () => {
           .update({ aliases: newAliases })
           .eq('id', targetEntityId);
       }
+
+      // Send feedback to learning system
+      await supabase.functions.invoke('process-feedback', {
+        body: {
+          objectType: 'entity_suggestion',
+          objectId: suggestionId,
+          feedback: 'merged',
+          userId: user?.id
+        }
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['entity-suggestions'] });
       queryClient.invalidateQueries({ queryKey: ['entities'] });
-      toast.success('Entity merged');
+      toast.success('Entity merged successfully');
       setSelectedSuggestion(null);
+      setMergeDialogOpen(false);
+      setSelectedEntityForMerge("");
     },
     onError: () => {
       toast.error('Failed to merge entity');
@@ -282,7 +313,7 @@ export const EntitySuggestionsPanel = () => {
                       </div>
                     </div>
 
-                    <div className="flex gap-2 flex-shrink-0">
+                    <div className="flex gap-2 flex-shrink-0 flex-wrap">
                       <Button
                         size="sm"
                         variant="default"
@@ -292,6 +323,19 @@ export const EntitySuggestionsPanel = () => {
                       >
                         <CheckCircle className="w-4 h-4 mr-1" />
                         Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          setSelectedSuggestion(suggestion.id);
+                          setMergeDialogOpen(true);
+                        }}
+                        disabled={mergeMutation.isPending}
+                        className="flex-1 sm:flex-none"
+                      >
+                        <GitMerge className="w-4 h-4 mr-1" />
+                        Merge
                       </Button>
                       <Button
                         size="sm"
@@ -311,6 +355,57 @@ export const EntitySuggestionsPanel = () => {
           )}
         </ScrollArea>
       </CardContent>
+
+      <Dialog open={mergeDialogOpen} onOpenChange={setMergeDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Merge Entity Suggestion</DialogTitle>
+            <DialogDescription>
+              Select an existing entity to merge this suggestion with. The suggested name will be added as an alias.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4">
+            <Select value={selectedEntityForMerge} onValueChange={setSelectedEntityForMerge}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select an entity to merge with..." />
+              </SelectTrigger>
+              <SelectContent>
+                {entities?.map((entity) => (
+                  <SelectItem key={entity.id} value={entity.id}>
+                    {entity.name} ({entity.type})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setMergeDialogOpen(false);
+                setSelectedEntityForMerge("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (selectedSuggestion && selectedEntityForMerge) {
+                  mergeMutation.mutate({
+                    suggestionId: selectedSuggestion,
+                    targetEntityId: selectedEntityForMerge
+                  });
+                }
+              }}
+              disabled={!selectedEntityForMerge || mergeMutation.isPending}
+            >
+              Merge Entity
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 };
