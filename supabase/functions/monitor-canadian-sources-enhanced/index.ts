@@ -79,7 +79,8 @@ serve(async (req) => {
         for (const client of clients) {
           const match = calculateRelevance(client, content, 'RCMP Gazette');
           
-          if (match.score >= (client.monitoring_config?.min_relevance_score || 50)) {
+          // Lower threshold to catch more potential signals (was 50)
+          if (match.score >= (client.monitoring_config?.min_relevance_score || 35)) {
             await createSignal(supabaseClient, {
               client_id: client.id,
               source: 'RCMP Gazette',
@@ -114,7 +115,8 @@ serve(async (req) => {
         for (const client of clients) {
           const match = calculateRelevance(client, content, 'BC Energy Regulator');
           
-          if (match.score >= (client.monitoring_config?.min_relevance_score || 50)) {
+          // Lower threshold to catch more potential signals (was 50)
+          if (match.score >= (client.monitoring_config?.min_relevance_score || 35)) {
             await createSignal(supabaseClient, {
               client_id: client.id,
               source: 'BC Energy Regulator',

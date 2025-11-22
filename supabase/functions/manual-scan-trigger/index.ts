@@ -18,27 +18,6 @@ Deno.serve(async (req) => {
 
     console.log('Manual scan trigger initiated');
 
-    // Get all active sources grouped by monitor type
-    const { data: sources, error: sourcesError } = await supabaseClient
-      .from('sources')
-      .select('*')
-      .eq('is_active', true)
-      .order('monitor_type');
-
-    if (sourcesError) {
-      throw sourcesError;
-    }
-
-    console.log(`Found ${sources?.length || 0} active sources`);
-
-    // Group sources by monitor type
-    const sourcesByMonitor = sources?.reduce((acc, source) => {
-      const type = source.monitor_type || 'unassigned';
-      if (!acc[type]) acc[type] = [];
-      acc[type].push(source);
-      return acc;
-    }, {} as Record<string, any[]>) || {};
-
     // List of available monitors
     const monitors = [
       'monitor-canadian-sources-enhanced',
@@ -67,8 +46,7 @@ Deno.serve(async (req) => {
         
         const { data, error } = await supabaseClient.functions.invoke(monitor, {
           body: { 
-            manual_trigger: true,
-            sources: sourcesByMonitor[monitor] || []
+            manual_trigger: true
           }
         });
 

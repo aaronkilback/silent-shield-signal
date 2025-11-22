@@ -100,15 +100,22 @@ serve(async (req) => {
     const searchQueries: string[] = [];
     for (const client of clients || []) {
       if (client.monitoring_keywords && client.monitoring_keywords.length > 0) {
-        searchQueries.push(...client.monitoring_keywords.slice(0, 3));
+        // Take more keywords per client
+        searchQueries.push(...client.monitoring_keywords.slice(0, 5));
       }
+      // Add client name as search query
+      searchQueries.push(client.name);
     }
 
-    // Add general security topics
-    searchQueries.push('security breach', 'cyber attack', 'ransomware', 'data leak');
+    // Add more general security and business topics
+    searchQueries.push(
+      'security breach', 'cyber attack', 'ransomware', 'data leak',
+      'environmental protest', 'corporate controversy', 'regulatory fine',
+      'activist campaign', 'supply chain disruption'
+    );
 
-    // Use Google News RSS feed with client-specific queries
-    for (const query of searchQueries.slice(0, 10)) {
+    // Use Google News RSS feed with client-specific queries - process more queries
+    for (const query of searchQueries.slice(0, 20)) { // Increased from 10 to 20
       try {
         const feedUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}+when:1d&hl=en-US&gl=US&ceid=US:en`;
         const response = await fetch(feedUrl);
@@ -117,7 +124,7 @@ serve(async (req) => {
         const xmlText = await response.text();
         const items = xmlText.match(/<item>(.*?)<\/item>/gs) || [];
         
-        for (const item of items.slice(0, 3)) {
+        for (const item of items.slice(0, 5)) { // Increased from 3 to 5
           const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/);
           const descMatch = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/);
           const linkMatch = item.match(/<link>(.*?)<\/link>/);
@@ -127,9 +134,59 @@ serve(async (req) => {
           const title = titleMatch[1];
           const description = descMatch[1];
           const link = linkMatch ? linkMatch[1] : '';
+          const fullContent = `${title}\n\n${description}`.toLowerCase();
 
           try {
-            // Ingest document for AI analysis
+            // Check if any client is directly mentioned for immediate signal creation
+            let directClientMatch = null;
+            for (const client of clients || []) {
+              if (fullContent.includes(client.name.toLowerCase())) {
+                directClientMatch = client;
+                break;
+              }
+            }
+
+            // If direct match, create signal immediately
+            if (directClientMatch) {
+              let category = 'news';
+              let severity = 'low';
+
+              if (SECURITY_KEYWORDS.some(kw => fullContent.includes(kw))) {
+                category = 'cybersecurity';
+                severity = 'medium';
+              } else if (REPUTATIONAL_KEYWORDS.some(kw => fullContent.includes(kw))) {
+                category = 'reputation';
+                severity = 'medium';
+              } else if (DEAL_KEYWORDS.some(kw => fullContent.includes(kw))) {
+                category = 'business_intelligence';
+                severity = 'low';
+              }
+
+              const { error: signalError } = await supabase
+                .from('signals')
+                .insert({
+                  client_id: directClientMatch.id,
+                  normalized_text: `News: ${title}`,
+                  category,
+                  severity,
+                  location: 'Google News',
+                  raw_json: {
+                    source: 'news',
+                    url: link,
+                    description,
+                    search_query: query
+                  },
+                  status: 'new',
+                  confidence: 0.7
+                });
+
+              if (!signalError) {
+                signalsCreated++;
+                console.log(`Created immediate signal for ${directClientMatch.name}: ${title}`);
+              }
+            }
+
+            // Ingest document for AI analysis (whether or not there's a direct match)
             const { error: ingestError } = await supabase
               .from('ingested_documents')
               .insert({
@@ -139,7 +196,8 @@ serve(async (req) => {
                   url: link,
                   source_type: 'news',
                   source_name: 'Google News',
-                  search_query: query
+                  search_query: query,
+                  direct_client_match: directClientMatch?.name || null
                 },
                 processing_status: 'pending'
               });
@@ -153,7 +211,7 @@ serve(async (req) => {
               }).catch(err => console.error('Failed to trigger processing:', err));
             }
           } catch (error) {
-            console.error(`Error ingesting news item:`, error);
+            console.error(`Error processing news item:`, error);
           }
         }
       } catch (error) {
@@ -161,7 +219,7 @@ serve(async (req) => {
       }
     }
 
-    console.log(`News monitoring complete. Ingested ${documentsIngested} documents for AI analysis.`);
+    console.log(`News monitoring complete. Created ${signalsCreated} immediate signals. Ingested ${documentsIngested} documents for AI analysis.`);
 
     // Update monitoring history on success
     if (historyEntry) {
@@ -170,10 +228,12 @@ serve(async (req) => {
         .update({
           status: 'completed',
           scan_completed_at: new Date().toISOString(),
-          signals_created: documentsIngested,
+          signals_created: signalsCreated + documentsIngested,
           scan_metadata: { 
             sources: ['News API', 'Google News'],
-            clients_scanned: clients?.length || 0
+            clients_scanned: clients?.length || 0,
+            immediate_signals: signalsCreated,
+            documents_ingested: documentsIngested
           }
         })
         .eq('id', historyEntry.id);
@@ -183,7 +243,7 @@ serve(async (req) => {
       JSON.stringify({ 
         success: true, 
         clients_scanned: clients?.length || 0,
-          signals_created: documentsIngested,
+          signals_created: signalsCreated + documentsIngested,
         source: 'security-news'
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
