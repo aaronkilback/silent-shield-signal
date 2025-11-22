@@ -42,7 +42,7 @@ serve(async (req) => {
   );
 
   // Create monitoring history entry
-  const { data: historyEntry } = await supabaseClient
+  const { data: historyEntry, error: historyError } = await supabaseClient
     .from('monitoring_history')
     .insert({
       source_name: 'RSS Sources',
@@ -50,6 +50,16 @@ serve(async (req) => {
     })
     .select()
     .single();
+
+  if (historyError || !historyEntry) {
+    console.error('Failed to create monitoring history entry:', historyError);
+    return new Response(JSON.stringify({ 
+      error: 'Failed to initialize monitoring'
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
   try {
     console.log('Starting RSS sources monitoring scan');
@@ -61,7 +71,10 @@ serve(async (req) => {
       .eq('type', 'url_feed')
       .eq('status', 'active');
 
-    if (sourcesError) throw sourcesError;
+    if (sourcesError) {
+      console.error('Error fetching RSS sources:', sourcesError);
+      throw new Error(`Failed to fetch RSS sources: ${sourcesError.message}`);
+    }
 
     if (!rssSources || rssSources.length === 0) {
       console.log('No active RSS sources found');
@@ -90,7 +103,10 @@ serve(async (req) => {
       .from('clients')
       .select('*');
 
-    if (clientsError) throw clientsError;
+    if (clientsError) {
+      console.error('Error fetching clients:', clientsError);
+      throw new Error(`Failed to fetch clients: ${clientsError.message}`);
+    }
 
     let totalSignals = 0;
     let totalItems = 0;
@@ -100,7 +116,8 @@ serve(async (req) => {
     for (const source of rssSources) {
       scannedSourceNames.push(source.name);
       try {
-        const feedUrl = source.config_json?.url || source.config_json?.feed_url;
+        // Access the config column (not config_json)
+        const feedUrl = source.config?.url || source.config?.feed_url;
         
         if (!feedUrl) {
           console.log(`No URL configured for source: ${source.name}`);
@@ -110,11 +127,12 @@ serve(async (req) => {
         console.log(`Fetching RSS feed: ${source.name} from ${feedUrl}`);
         
         const response = await fetch(feedUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 OSINT Monitor' }
+          headers: { 'User-Agent': 'Mozilla/5.0 OSINT Monitor' },
+          signal: AbortSignal.timeout(30000) // 30 second timeout
         });
 
         if (!response.ok) {
-          console.error(`Failed to fetch ${source.name}: ${response.status}`);
+          console.error(`Failed to fetch ${source.name}: ${response.status} ${response.statusText}`);
           continue;
         }
 
@@ -198,21 +216,28 @@ serve(async (req) => {
   } catch (error) {
     console.error('RSS monitoring error:', error);
     
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    
-    if (historyEntry) {
-      await supabaseClient
-        .from('monitoring_history')
-        .update({
-          status: 'failed',
-          scan_completed_at: new Date().toISOString(),
-          error_message: errorMessage
-        })
-        .eq('id', historyEntry.id);
+    // Provide detailed error message
+    let errorMessage = 'Unknown error';
+    if (error instanceof Error) {
+      errorMessage = error.message;
+      console.error('Error stack:', error.stack);
+    } else {
+      errorMessage = String(error);
     }
+    
+    // Update monitoring history with error
+    await supabaseClient
+      .from('monitoring_history')
+      .update({
+        status: 'failed',
+        scan_completed_at: new Date().toISOString(),
+        error_message: errorMessage
+      })
+      .eq('id', historyEntry.id);
 
     return new Response(JSON.stringify({ 
-      error: errorMessage 
+      error: errorMessage,
+      details: error instanceof Error ? error.stack : undefined
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
