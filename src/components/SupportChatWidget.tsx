@@ -3,8 +3,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { MessageCircle, X, Send, Loader2 } from 'lucide-react';
+import { MessageCircle, X, Send, Loader2, Bug } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
+import { BugReportDialog } from './BugReportDialog';
 
 type Message = {
   role: 'user' | 'assistant';
@@ -16,11 +17,12 @@ export default function SupportChatWidget() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: 'Hi! I\'m your SOC platform assistant. How can I help you today?',
+      content: 'Hi! I\'m your SOC platform assistant with access to our complete knowledge base. I can help you with:\n\n• Platform features and how-to guides\n• Troubleshooting common issues\n• Understanding signals, incidents, and entities\n• Configuring automation and OSINT sources\n• Reporting bugs or issues\n\nWhat would you like to know?',
     },
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isBugDialogOpen, setIsBugDialogOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -230,7 +232,19 @@ export default function SupportChatWidget() {
               </div>
             </ScrollArea>
 
-            <form onSubmit={handleSubmit} className="p-4 border-t">
+            <form onSubmit={handleSubmit} className="p-4 border-t space-y-2">
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsBugDialogOpen(true)}
+                  className="flex-shrink-0"
+                >
+                  <Bug className="h-4 w-4 mr-1" />
+                  Report Bug
+                </Button>
+              </div>
               <div className="flex gap-2">
                 <Input
                   value={input}
@@ -251,6 +265,11 @@ export default function SupportChatWidget() {
           </CardContent>
         </Card>
       )}
+
+      <BugReportDialog 
+        open={isBugDialogOpen} 
+        onOpenChange={setIsBugDialogOpen}
+      />
     </>
   );
 }
