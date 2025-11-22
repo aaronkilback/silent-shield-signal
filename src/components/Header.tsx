@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss, Plane, Bug } from "lucide-react";
+import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss, Plane, Bug, Database } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -60,6 +60,14 @@ export const Header = () => {
               >
                 <Radio className="w-4 h-4 mr-2" />
                 Signals
+              </Button>
+              <Button
+                onClick={() => navigate("/sources")}
+                variant={location.pathname === "/sources" ? "default" : "ghost"}
+                size="sm"
+              >
+                <Database className="w-4 h-4 mr-2" />
+                Sources
               </Button>
               <Button
                 onClick={() => navigate("/incidents")}
