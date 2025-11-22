@@ -113,6 +113,10 @@ Extract:
    - Companies and corporations
    - NGOs, activist groups, community organizations
    - Indigenous groups and First Nations
+   - **ADVOCACY GROUPS**: Professional associations, environmental groups, health organizations
+   - **OPPOSITION GROUPS**: Anti-industry campaigns, protesters, environmental coalitions
+   - Examples: Canadian Association of Physicians for the Environment, Sierra Club, Greenpeace
+   - Any organization mentioned as "led by", "organized by", "represented by"
    
    INFRASTRUCTURE/PROJECTS:
    - LNG facilities, pipelines, transmission lines
