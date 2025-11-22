@@ -272,7 +272,7 @@ serve(async (req) => {
     console.log(`Loaded ${existingEntities?.length || 0} existing entities for matching`);
 
     // Fetch learning context from adaptive adjuster
-    let adjustedThreshold = 0.3;
+    let adjustedThreshold = 0.4; // Lower threshold for intelligence reports (not too conservative)
     let learningGuidance = '';
     let falsePositiveNames: Array<{ name: string; count: number }> = [];
     let falsePositiveTypes: Array<{ type: string; count: number }> = [];
@@ -281,7 +281,8 @@ serve(async (req) => {
     try {
       const { data: adjusterData } = await supabase.functions.invoke('adaptive-confidence-adjuster');
       if (adjusterData?.success) {
-        adjustedThreshold = adjusterData.recommendations.recommended_threshold;
+        // Use the adaptive threshold but cap it at 0.5 to not be too restrictive for intel reports
+        adjustedThreshold = Math.min(0.5, adjusterData.recommendations.recommended_threshold);
         learningGuidance = adjusterData.recommendations.learning_guidance || '';
         falsePositiveNames = adjusterData.recommendations.false_positive_patterns?.top_names || [];
         falsePositiveTypes = adjusterData.recommendations.false_positive_patterns?.top_types || [];
@@ -289,7 +290,7 @@ serve(async (req) => {
         console.log(`Using adjusted threshold: ${adjustedThreshold} with ${falsePositiveNames.length} known FP patterns`);
       }
     } catch (e) {
-      console.warn('Could not fetch adaptive threshold, using default:', e);
+      console.warn('Could not fetch adaptive threshold, using default 0.4:', e);
     }
 
     // Get false positive examples to teach AI what NOT to extract
@@ -357,53 +358,44 @@ serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: `You are an expert entity extraction system for security intelligence. Extract security-relevant entities from documents.
+            content: `You are an expert entity extraction system for security intelligence documents. Your goal is to extract ALL relevant security intelligence entities.
 
-🎯 ADAPTIVE LEARNING (${rejectedSuggestions?.length || 0} rejected entities analyzed)
-${learningGuidance}
-
-⚠️ CONFIDENCE THRESHOLD: ${adjustedThreshold.toFixed(2)}
-Only extract entities with confidence >= ${adjustedThreshold.toFixed(2)}
-
-🚫 DO NOT EXTRACT THESE NAMES (frequently rejected):
-${falsePositiveNames.slice(0, 15).map(({ name, count }) => `  ✗ "${name}" (rejected ${count}x)`).join('\n') || '  (No patterns yet)'}
-
-🚫 AVOID THESE ENTITY TYPES (high false positive rates):
-${falsePositiveTypes.slice(0, 8).map(({ type, count }) => `  ✗ ${type} (${count} false positives)`).join('\n') || '  (No patterns yet)'}
-
-🚫 BE CAUTIOUS WITH THESE CONTEXT PHRASES:
-${falsePositivePhrases.slice(0, 15).map(({ phrase }) => `  ✗ "${phrase}"`).join('\n') || '  (No patterns yet)'}
-
-❌ REJECTED EXAMPLES (learn from these):
-${(rejectedSuggestions || []).slice(0, 5).map(ex => 
-  `  ✗ "${ex.suggested_name}" (${ex.suggested_type}, conf: ${ex.confidence?.toFixed(2) || 'N/A'})\n     Context: "${ex.context?.substring(0, 120) || 'N/A'}..."`
-).join('\n\n')}
+🎯 CONFIDENCE THRESHOLD: ${adjustedThreshold.toFixed(2)}
+Extract entities with confidence >= ${adjustedThreshold.toFixed(2)}
 
 KNOWN ENTITIES IN DATABASE:
 ${entityContext}
 
-✅ WHAT TO EXTRACT:
-1. Organizations: Companies, agencies, threat groups (specific names only)
-2. Persons: Named individuals with clear identification
-3. Locations: Cities, countries, facilities, addresses
-4. Infrastructure: Systems, networks, servers, databases
-5. Domains/IPs/Emails: Technical identifiers
-6. Vehicles: With license plates or identifiers
+✅ WHAT TO EXTRACT (be comprehensive):
+1. **People**: All named individuals mentioned in intelligence contexts
+   - Activists, researchers, community leaders, scientists
+   - Include full credentials (PhD, titles, roles)
+2. **Organizations**: Companies, agencies, advocacy groups, research institutes
+   - Indigenous groups, environmental organizations
+   - Government agencies, corporations
+3. **Events**: Protests, press conferences, research presentations, webinars
+4. **Initiatives**: Research programs, advocacy campaigns, monitoring projects
+5. **Locations**: Cities, countries, facilities, project sites
+6. **Claims/Concerns**: Health impacts, environmental issues, allegations
+7. **Infrastructure**: Systems, networks, domains, IPs
 
-❌ DO NOT EXTRACT:
-- Generic terms ("user", "admin", "system")
-- Software names unless attack targets
-- Common job titles without names
-- Document filenames
-- Any name matching the rejected patterns above
-- Terms with context phrases flagged above
+🎯 INTELLIGENCE FOCUS:
+- Capture opposition research and advocacy
+- Track health and environmental claims
+- Identify coordinated campaigns
+- Note academic/scientific criticism
+- Extract Indigenous community concerns
 
-STRICT RULES:
-1. Confidence MUST be >= ${adjustedThreshold.toFixed(2)}
-2. If name appears in rejected list → DO NOT EXTRACT
-3. If context contains flagged phrases → Require >= ${Math.min(0.95, adjustedThreshold + 0.2).toFixed(2)} confidence
-4. When uncertain → DO NOT EXTRACT (false negatives better than false positives)
-5. Proper nouns only, no generic terms`
+❌ SKIP ONLY:
+- Generic terms without names ("user", "admin")
+- Common job titles alone (without names)
+- Document metadata/filenames
+
+EXTRACTION RULES:
+1. Confidence >= ${adjustedThreshold.toFixed(2)} required
+2. When in doubt about relevance → EXTRACT IT (better to capture intelligence)
+3. Proper nouns and specific named entities prioritized
+4. Full context preserved for each entity`
 
           },
           {

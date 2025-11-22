@@ -32,73 +32,6 @@ Deno.serve(async (req) => {
 
     console.log(`Starting batch processing of ${documentIds.length} documents`);
 
-    // First, create ingested_documents records from archival_documents
-    for (const docId of documentIds) {
-      try {
-        // Get archival document
-        const { data: archivalDoc } = await supabase
-          .from('archival_documents')
-          .select('*')
-          .eq('id', docId)
-          .single();
-
-        if (!archivalDoc) {
-          console.error(`Archival document not found: ${docId}`);
-          continue;
-        }
-
-        // Download and extract text content
-        const { data: fileData } = await supabase.storage
-          .from('archival-documents')
-          .download(archivalDoc.storage_path);
-
-        if (!fileData) {
-          console.error(`Could not download file: ${archivalDoc.filename}`);
-          continue;
-        }
-
-        // For PDFs, we'll store a reference and let the processor handle extraction
-        // Create ingested_document record
-        const { data: ingestedDoc, error: insertError } = await supabase
-          .from('ingested_documents')
-          .insert({
-            title: archivalDoc.filename,
-            raw_text: archivalDoc.content_text || '',
-            content_hash: archivalDoc.content_hash,
-            processing_status: 'pending',
-            metadata: {
-              archival_document_id: archivalDoc.id,
-              storage_path: archivalDoc.storage_path,
-              file_type: archivalDoc.file_type
-            }
-          })
-          .select()
-          .single();
-
-        if (insertError || !ingestedDoc) {
-          console.error(`Failed to create ingested document for ${docId}:`, insertError);
-          continue;
-        }
-
-        console.log(`Created ingested document ${ingestedDoc.id} for archival doc ${docId}`);
-
-      } catch (error) {
-        console.error(`Error preparing document ${docId}:`, error);
-      }
-    }
-
-    // Now get all pending ingested documents for this batch
-    const { data: ingestedDocs } = await supabase
-      .from('ingested_documents')
-      .select('id, metadata')
-      .eq('processing_status', 'pending')
-      .in('metadata->>archival_document_id', documentIds);
-
-    const ingestedDocIds = ingestedDocs?.map(d => d.id) || [];
-
-    let successful = 0;
-    let failed = 0;
-
     // Clear existing suggestions if requested
     if (clearExistingSuggestions && documentIds.length > 0) {
       console.log('Clearing existing entity suggestions...');
@@ -114,12 +47,12 @@ Deno.serve(async (req) => {
       let successful = 0;
       let failed = 0;
 
-      for (const docId of ingestedDocIds) {
+      for (const docId of documentIds) {
         try {
-          console.log(`Processing document ${successful + failed + 1}/${ingestedDocIds.length}: ${docId}`);
+          console.log(`Processing document ${successful + failed + 1}/${documentIds.length}: ${docId}`);
           
-          // Use intelligence document processor for aggressive extraction
-          const { data, error } = await supabase.functions.invoke('process-intelligence-document', {
+          // Use stored document processor (downloads files and extracts text)
+          const { data, error } = await supabase.functions.invoke('process-stored-document', {
             body: { documentId: docId }
           });
 
@@ -148,7 +81,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         message: 'Batch processing started',
-        totalDocuments: ingestedDocIds.length,
+        totalDocuments: documentIds.length,
         status: 'processing'
       }),
       { 
