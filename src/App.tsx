@@ -21,6 +21,7 @@ import InvestigationDetail from "./pages/InvestigationDetail";
 import Travel from "./pages/Travel";
 import KnowledgeBase from "./pages/KnowledgeBase";
 import BugReports from "./pages/BugReports";
+import MonitoringSources from "./pages/MonitoringSources";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -42,6 +43,7 @@ const App = () => (
               <Route path="/incidents" element={<Incidents />} />
               <Route path="/signals" element={<Signals />} />
               <Route path="/sources" element={<Sources />} />
+              <Route path="/monitoring-sources" element={<MonitoringSources />} />
               <Route path="/entities" element={<Entities />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/investigations" element={<Investigations />} />
