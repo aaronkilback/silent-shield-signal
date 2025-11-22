@@ -24,12 +24,16 @@ export const DashboardAIAssistant = () => {
   const [messages, setMessages] = useState<Message[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
+      console.log("Loading chat history from localStorage:", stored ? "found" : "empty");
       if (stored) {
-        return JSON.parse(stored);
+        const parsed = JSON.parse(stored);
+        console.log("Loaded", parsed.length, "messages from localStorage");
+        return parsed;
       }
     } catch (e) {
       console.error("Failed to load chat history:", e);
     }
+    console.log("Using default welcome message");
     return [
       {
         role: "assistant",
@@ -46,6 +50,7 @@ export const DashboardAIAssistant = () => {
   // Save messages to localStorage whenever they change
   useEffect(() => {
     try {
+      console.log("Saving", messages.length, "messages to localStorage");
       localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
     } catch (e) {
       console.error("Failed to save chat history:", e);
