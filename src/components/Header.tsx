@@ -53,23 +53,6 @@ export const Header = () => {
                 <Home className="w-4 h-4 mr-2" />
                 Dashboard
               </Button>
-              {/* Temporarily hidden */}
-              {/* <Button
-                onClick={() => navigate("/clients")}
-                variant={location.pathname === "/clients" ? "default" : "ghost"}
-                size="sm"
-              >
-                <Building2 className="w-4 h-4 mr-2" />
-                Clients
-              </Button> */}
-              <Button
-                onClick={() => navigate("/incidents")}
-                variant={location.pathname === "/incidents" ? "default" : "ghost"}
-                size="sm"
-              >
-                <AlertTriangle className="w-4 h-4 mr-2" />
-                Incidents
-              </Button>
               <Button
                 onClick={() => navigate("/signals")}
                 variant={location.pathname === "/signals" ? "default" : "ghost"}
@@ -79,12 +62,28 @@ export const Header = () => {
                 Signals
               </Button>
               <Button
-                onClick={() => navigate("/sources")}
-                variant={location.pathname === "/sources" ? "default" : "ghost"}
+                onClick={() => navigate("/incidents")}
+                variant={location.pathname === "/incidents" ? "default" : "ghost"}
                 size="sm"
               >
-                <Rss className="w-4 h-4 mr-2" />
-                Sources
+                <AlertTriangle className="w-4 h-4 mr-2" />
+                Incidents
+              </Button>
+              <Button
+                onClick={() => navigate("/investigations")}
+                variant={location.pathname.startsWith("/investigation") ? "default" : "ghost"}
+                size="sm"
+              >
+                <ClipboardList className="w-4 h-4 mr-2" />
+                Investigations
+              </Button>
+              <Button
+                onClick={() => navigate("/travel")}
+                variant={location.pathname === "/travel" ? "default" : "ghost"}
+                size="sm"
+              >
+                <Plane className="w-4 h-4 mr-2" />
+                Travel
               </Button>
               <Button
                 onClick={() => navigate("/entities")}
@@ -112,20 +111,12 @@ export const Header = () => {
                 Reports
               </Button>
               <Button
-                onClick={() => navigate("/investigations")}
-                variant={location.pathname.startsWith("/investigation") ? "default" : "ghost"}
+                onClick={() => navigate("/clients")}
+                variant={location.pathname === "/clients" ? "default" : "ghost"}
                 size="sm"
               >
-                <ClipboardList className="w-4 h-4 mr-2" />
-                Investigations
-              </Button>
-              <Button
-                onClick={() => navigate("/travel")}
-                variant={location.pathname === "/travel" ? "default" : "ghost"}
-                size="sm"
-              >
-                <Plane className="w-4 h-4 mr-2" />
-                Travel
+                <Building2 className="w-4 h-4 mr-2" />
+                Clients
               </Button>
               <Button
                 onClick={() => navigate("/bug-reports")}
