@@ -2,12 +2,15 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
-import { History, Clock, AlertCircle } from "lucide-react";
+import { History, Clock, AlertCircle, Trash2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { SignalDetailDialog } from "./SignalDetailDialog";
 import { SignalFeedback } from "./SignalFeedback";
+import { toast } from "sonner";
 
 // Helper to decode HTML entities and clean text
 const cleanSignalText = (text: string): string => {
@@ -60,6 +63,8 @@ export const SignalHistory = () => {
   const [loading, setLoading] = useState(true);
   const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [selectedSignalIds, setSelectedSignalIds] = useState<Set<string>>(new Set());
+  const [isDeleting, setIsDeleting] = useState(false);
   const { selectedClientId } = useClientSelection();
 
   useEffect(() => {
@@ -165,11 +170,60 @@ export const SignalHistory = () => {
     }
   };
 
-  const handleSignalClick = (signal: Signal) => {
+  const handleSignalClick = async (signal: Signal, e: React.MouseEvent) => {
+    // Don't open dialog if clicking checkbox
+    if ((e.target as HTMLElement).closest('[role="checkbox"]')) {
+      return;
+    }
+    
     setSelectedSignal(signal);
     setDialogOpen(true);
+    
     if (!signal.is_read) {
-      markAsRead(signal.id);
+      await markAsRead(signal.id);
+    }
+  };
+
+  const handleSelectSignal = (signalId: string) => {
+    setSelectedSignalIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(signalId)) {
+        newSet.delete(signalId);
+      } else {
+        newSet.add(signalId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedSignalIds.size === signals.length) {
+      setSelectedSignalIds(new Set());
+    } else {
+      setSelectedSignalIds(new Set(signals.map(s => s.id)));
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedSignalIds.size === 0) return;
+    
+    setIsDeleting(true);
+    try {
+      const { error } = await supabase
+        .from('signals')
+        .delete()
+        .in('id', Array.from(selectedSignalIds));
+
+      if (error) throw error;
+
+      toast.success(`Deleted ${selectedSignalIds.size} signal${selectedSignalIds.size > 1 ? 's' : ''}`);
+      setSelectedSignalIds(new Set());
+      loadSignals();
+    } catch (error) {
+      console.error('Error deleting signals:', error);
+      toast.error('Failed to delete signals');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -226,13 +280,39 @@ export const SignalHistory = () => {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <History className="w-5 h-5" />
-          Signal History
-        </CardTitle>
-        <CardDescription>
-          Recent signals processed by the autonomous system
-        </CardDescription>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <History className="w-5 h-5" />
+              Signal History
+            </CardTitle>
+            <CardDescription>
+              Recent signals processed by the autonomous system
+            </CardDescription>
+          </div>
+          {signals.length > 0 && (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSelectAll}
+              >
+                {selectedSignalIds.size === signals.length ? 'Deselect All' : 'Select All'}
+              </Button>
+              {selectedSignalIds.size > 0 && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleDeleteSelected}
+                  disabled={isDeleting}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete ({selectedSignalIds.size})
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
       </CardHeader>
       <CardContent>
         {signals.length === 0 ? (
@@ -246,42 +326,50 @@ export const SignalHistory = () => {
               {signals.map((signal) => (
                 <div
                   key={signal.id}
-                  className={`p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer ${!signal.is_read ? 'bg-primary/5 border-primary/20' : ''}`}
-                  onClick={() => handleSignalClick(signal)}
+                  className={`p-4 border rounded-lg hover:bg-muted/50 transition-colors ${!signal.is_read ? 'bg-primary/5 border-primary/20' : ''}`}
                 >
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {!signal.is_read && (
-                        <Badge variant="default" className="h-5 px-2 text-xs">New</Badge>
-                      )}
-                      <Badge variant={getSeverityColor(signal.severity)} className="h-5 px-2 text-xs">
-                        {signal.severity}
-                      </Badge>
-                      <Badge variant="outline" className="h-5 px-2 text-xs">{signal.category}</Badge>
+                  <div className="flex items-start gap-3">
+                    <Checkbox
+                      checked={selectedSignalIds.has(signal.id)}
+                      onCheckedChange={() => handleSelectSignal(signal.id)}
+                      className="mt-1"
+                    />
+                    <div className="flex-1 cursor-pointer" onClick={(e) => handleSignalClick(signal, e)}>
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {!signal.is_read && (
+                            <Badge variant="default" className="h-5 px-2 text-xs">New</Badge>
+                          )}
+                          <Badge variant={getSeverityColor(signal.severity)} className="h-5 px-2 text-xs">
+                            {signal.severity}
+                          </Badge>
+                          <Badge variant="outline" className="h-5 px-2 text-xs">{signal.category}</Badge>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <span className="text-xs text-muted-foreground font-medium">
+                            {((signal.confidence || 0) * 100).toFixed(0)}%
+                          </span>
+                          <SignalFeedback
+                            signalId={signal.id}
+                            onFeedbackChange={loadSignals}
+                          />
+                        </div>
+                      </div>
+                      
+                      <p className="text-sm leading-relaxed mb-3 line-clamp-3">
+                        {cleanSignalText(signal.normalized_text)}
+                      </p>
+                      
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5" />
+                          {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
+                        </span>
+                        {signal.sources && (
+                          <span className="font-medium">{signal.sources.name}</span>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className="text-xs text-muted-foreground font-medium">
-                        {((signal.confidence || 0) * 100).toFixed(0)}%
-                      </span>
-                      <SignalFeedback
-                        signalId={signal.id}
-                        onFeedbackChange={loadSignals}
-                      />
-                    </div>
-                  </div>
-                  
-                  <p className="text-sm leading-relaxed mb-3 line-clamp-3">
-                    {cleanSignalText(signal.normalized_text)}
-                  </p>
-                  
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5" />
-                      {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
-                    </span>
-                    {signal.sources && (
-                      <span className="font-medium">{signal.sources.name}</span>
-                    )}
                   </div>
                 </div>
               ))}
