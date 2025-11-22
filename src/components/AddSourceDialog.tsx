@@ -57,10 +57,12 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
 
   const addSourceMutation = useMutation({
     mutationFn: async () => {
-      // Validate inputs
-      const validation = sourceSchema.safeParse({ name, type, config_json: configJson });
-      if (!validation.success) {
-        throw new Error(validation.error.issues[0].message);
+      // Validate required fields
+      if (!name.trim()) {
+        throw new Error("Source name is required");
+      }
+      if (!type.trim()) {
+        throw new Error("Source type is required");
       }
 
       let parsedConfig = null;
@@ -68,7 +70,7 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
         try {
           parsedConfig = JSON.parse(configJson);
         } catch (e) {
-          throw new Error("Invalid JSON configuration");
+          throw new Error("Invalid JSON configuration - please check your syntax");
         }
       }
 
@@ -79,16 +81,22 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
         parsedConfig = { url: url.trim() };
       }
 
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("sources")
         .insert({
           name: name.trim(),
           type: type.trim(),
           config: parsedConfig,
           status: 'active',
-        });
+        })
+        .select();
 
-      if (error) throw error;
+      if (error) {
+        console.error("Supabase error:", error);
+        throw new Error(`Database error: ${error.message}`);
+      }
+
+      return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sources"] });
@@ -102,7 +110,7 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
     },
     onError: (error) => {
       console.error("Error adding source:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to add source");
+      toast.error(error instanceof Error ? error.message : "Failed to add source. Please try again.");
     },
   });
 
