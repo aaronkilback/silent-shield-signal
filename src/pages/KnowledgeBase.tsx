@@ -11,6 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import ReactMarkdown from "react-markdown";
+import { KnowledgeBaseExport } from "@/components/KnowledgeBaseExport";
 
 const KnowledgeBase = () => {
   const { user, loading } = useAuth();
@@ -87,6 +88,7 @@ const KnowledgeBase = () => {
               Browse documentation, guides, and troubleshooting articles
             </p>
           </div>
+          <KnowledgeBaseExport />
         </div>
 
         <div className="flex gap-2 items-center">
