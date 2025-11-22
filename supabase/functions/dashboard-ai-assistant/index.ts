@@ -41,16 +41,197 @@ Fortress is a comprehensive security intelligence platform that provides:
 - Investigation management and documentation
 - Learning systems that adapt based on feedback
 
+YOU HAVE ACCESS TO SEARCH TOOLS - USE THEM PROACTIVELY:
+When users ask about specific information, ALWAYS search for it using the available tools and provide direct links to relevant pages.
+
+AVAILABLE TOOLS:
+- get_recent_signals: Get latest security signals
+- get_active_incidents: Get active incidents
+- search_entities: Search for entities by name
+- search_signals: Search signals by keyword
+- search_investigations: Search investigations by file number or content
+- search_knowledge_base: Search knowledge base articles
+- search_clients: Search client records
+- get_entity_details: Get detailed entity information
+- get_monitoring_stats: Get monitoring performance metrics
+- trigger_manual_scan: Trigger a manual source scan
+- get_client_risk_summary: Get client risk summaries
+
+PROVIDING LINKS:
+When you find relevant information, ALWAYS provide clickable links using this format:
+- Signals: [Signal Title](/signals) - link to signals page, mention the specific signal
+- Incidents: [Incident Title](/incidents) - link to incidents page, mention the specific incident  
+- Entities: [Entity Name](/entities) - link to entities page, mention the specific entity
+- Investigations: [File Number](/investigations) - link to investigations page, mention the specific investigation
+- Clients: [Client Name](/clients) - link to clients page, mention the specific client
+- Knowledge Base: [Article Title](/knowledge-base) - link to knowledge base
+
 COMMUNICATION STYLE:
 - Use plain, conversational language - NO code, NO technical syntax
+- Always search for and link to relevant platform information when users ask questions
+- Be proactive - if a user asks about threats, search for recent signals and link to them
 - Explain concepts clearly without programming terminology
-- Be concise, actionable, and security-focused
-- Provide guidance on threat assessment, security best practices, and how to use the platform effectively
-- When discussing data or systems, describe them in business terms, not technical implementation`,
+- Be concise, actionable, and security-focused`,
           },
           ...messages,
         ],
         stream: true,
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "get_recent_signals",
+              description: "Retrieve the most recent security signals from the system",
+              parameters: {
+                type: "object",
+                properties: {
+                  limit: { type: "number", description: "Number of signals to return (default 10)" }
+                }
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "search_signals",
+              description: "Search for signals by keyword in title or description",
+              parameters: {
+                type: "object",
+                properties: {
+                  query: { type: "string", description: "Search keyword" },
+                  limit: { type: "number", description: "Number of results (default 10)" }
+                },
+                required: ["query"]
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "get_active_incidents",
+              description: "Get currently active security incidents",
+              parameters: {
+                type: "object",
+                properties: {
+                  limit: { type: "number", description: "Number of incidents to return (default 10)" }
+                }
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "search_entities",
+              description: "Search for entities by name or alias",
+              parameters: {
+                type: "object",
+                properties: {
+                  query: { type: "string", description: "Search query" },
+                  limit: { type: "number", description: "Number of results (default 10)" }
+                },
+                required: ["query"]
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "search_investigations",
+              description: "Search investigations by file number or synopsis",
+              parameters: {
+                type: "object",
+                properties: {
+                  query: { type: "string", description: "Search keyword" },
+                  limit: { type: "number", description: "Number of results (default 10)" }
+                },
+                required: ["query"]
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "search_knowledge_base",
+              description: "Search knowledge base articles",
+              parameters: {
+                type: "object",
+                properties: {
+                  query: { type: "string", description: "Search keyword" },
+                  limit: { type: "number", description: "Number of results (default 10)" }
+                },
+                required: ["query"]
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "search_clients",
+              description: "Search client records by name or industry",
+              parameters: {
+                type: "object",
+                properties: {
+                  query: { type: "string", description: "Search keyword" },
+                  limit: { type: "number", description: "Number of results (default 10)" }
+                },
+                required: ["query"]
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "get_entity_details",
+              description: "Get detailed information about a specific entity",
+              parameters: {
+                type: "object",
+                properties: {
+                  entityId: { type: "string", description: "Entity ID" }
+                },
+                required: ["entityId"]
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "get_monitoring_stats",
+              description: "Get recent monitoring performance statistics",
+              parameters: { type: "object", properties: {} }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "trigger_manual_scan",
+              description: "Trigger a manual scan of a monitoring source",
+              parameters: {
+                type: "object",
+                properties: {
+                  source: { 
+                    type: "string", 
+                    description: "Source to scan (news, social, darkweb, linkedin, instagram, etc.)",
+                    enum: ["news", "social", "darkweb", "linkedin", "instagram", "facebook", "pastebin"]
+                  }
+                }
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "get_client_risk_summary",
+              description: "Get risk summary for all monitored clients",
+              parameters: {
+                type: "object",
+                properties: {
+                  limit: { type: "number", description: "Number of clients (default 5)" }
+                }
+              }
+            }
+          }
+        ],
+        tool_choice: "auto",
       }),
     });
 

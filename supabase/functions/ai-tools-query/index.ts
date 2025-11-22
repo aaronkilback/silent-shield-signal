@@ -96,6 +96,51 @@ serve(async (req) => {
         result = clients;
         break;
 
+      case "search_investigations":
+        const invQuery = parameters?.query || "";
+        const { data: investigations } = await supabase
+          .from("investigations")
+          .select("id, file_number, synopsis, file_status, created_at, client_id, clients(name)")
+          .or(`file_number.ilike.%${invQuery}%,synopsis.ilike.%${invQuery}%`)
+          .order("created_at", { ascending: false })
+          .limit(parameters?.limit || 10);
+        result = investigations;
+        break;
+
+      case "search_knowledge_base":
+        const kbQuery = parameters?.query || "";
+        const { data: articles } = await supabase
+          .from("knowledge_base_articles")
+          .select("id, title, summary, category_id, tags, created_at, view_count")
+          .eq("is_published", true)
+          .or(`title.ilike.%${kbQuery}%,content.ilike.%${kbQuery}%,tags.cs.{${kbQuery}}`)
+          .order("created_at", { ascending: false })
+          .limit(parameters?.limit || 10);
+        result = articles;
+        break;
+
+      case "search_clients":
+        const clientQuery = parameters?.query || "";
+        const { data: clientResults } = await supabase
+          .from("clients")
+          .select("id, name, industry, status, contact_email, locations, signals(count), incidents(count)")
+          .or(`name.ilike.%${clientQuery}%,industry.ilike.%${clientQuery}%`)
+          .order("name", { ascending: true })
+          .limit(parameters?.limit || 10);
+        result = clientResults;
+        break;
+
+      case "search_signals":
+        const sigQuery = parameters?.query || "";
+        const { data: signalResults } = await supabase
+          .from("signals")
+          .select("id, title, description, severity, confidence, received_at, status, source, client_id, clients(name)")
+          .or(`title.ilike.%${sigQuery}%,description.ilike.%${sigQuery}%`)
+          .order("received_at", { ascending: false })
+          .limit(parameters?.limit || 10);
+        result = signalResults;
+        break;
+
       default:
         result = { error: "Unknown tool" };
     }
