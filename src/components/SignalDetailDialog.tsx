@@ -18,6 +18,12 @@ interface SignalDetailDialogProps {
   onSignalUpdated?: () => void;
 }
 
+const decodeHtmlEntities = (text: string): string => {
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = text;
+  return textarea.value;
+};
+
 export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated }: SignalDetailDialogProps) => {
   const [createEntityOpen, setCreateEntityOpen] = useState(false);
   const [selectedText, setSelectedText] = useState("");
@@ -27,6 +33,8 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
   const [correlatedSignals, setCorrelatedSignals] = useState<any[]>([]);
   
   if (!signal) return null;
+
+  const decodedText = signal.normalized_text ? decodeHtmlEntities(signal.normalized_text) : signal.normalized_text;
 
   // Fetch correlation data when dialog opens
   useEffect(() => {
@@ -96,7 +104,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
     const text = selection?.toString().trim();
     if (text && text.length > 0) {
       setSelectedText(text);
-      setSelectionContext(signal.normalized_text || "");
+      setSelectionContext(decodedText || "");
     }
   };
 
@@ -176,7 +184,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                 Signal Overview
               </h3>
               <div className="bg-muted p-4 rounded-lg space-y-2">
-                <p className="font-medium">{signal.normalized_text}</p>
+                <p className="font-medium">{decodedText}</p>
                 <div className="flex flex-wrap gap-2 mt-2">
                   <Badge variant={getSeverityColor(signal.severity) as any}>
                     {signal.severity?.toUpperCase()}
