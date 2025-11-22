@@ -43,7 +43,7 @@ const Signals = () => {
           </p>
         </div>
 
-        <Tabs defaultValue="upload" className="space-y-6">
+        <Tabs defaultValue="signals" className="space-y-6">
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="upload">Upload Documents</TabsTrigger>
             <TabsTrigger value="signals">Signal Feed</TabsTrigger>
