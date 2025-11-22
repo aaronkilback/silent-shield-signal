@@ -69,56 +69,67 @@ export const ReprocessDocuments = () => {
     const total = documents.length;
     const documentIds = documents.map(d => d.id);
 
-    // Start the processing - don't await so user can navigate away
-    supabase.functions.invoke('process-documents-batch', {
-      body: { 
-        documentIds,
-        clearExistingSuggestions: processAll
-      }
-    }).then(({ error }) => {
+    console.log('Starting batch processing for', documentIds.length, 'documents');
+
+    try {
+      // Start the processing
+      const { data, error } = await supabase.functions.invoke('process-documents-batch', {
+        body: { 
+          documentIds,
+          clearExistingSuggestions: processAll
+        }
+      });
+
+      console.log('Batch processing response:', { data, error });
+
       if (error) {
         console.error('Error starting batch processing:', error);
         toast.error(`Failed to start processing: ${error.message}`);
         setProcessing(false);
+        return;
       }
-    });
 
-    toast.success(
-      `🚀 Processing ${total} documents on the server. You can navigate away - processing will continue!`,
-      { duration: 6000 }
-    );
+      toast.success(
+        `🚀 Processing ${total} documents on the server. You can navigate away - processing will continue!`,
+        { duration: 6000 }
+      );
 
-    // Set up polling to check progress by counting document_entity_mentions
-    const pollInterval = setInterval(async () => {
-      // Count how many documents have entity mentions created
-      const { data: mentionCounts } = await supabase
-        .from('document_entity_mentions')
-        .select('document_id', { count: 'exact', head: false })
-        .in('document_id', documentIds);
+      // Set up polling to check progress by counting document_entity_mentions
+      const pollInterval = setInterval(async () => {
+        // Count how many documents have entity mentions created
+        const { data: mentionCounts } = await supabase
+          .from('document_entity_mentions')
+          .select('document_id', { count: 'exact', head: false })
+          .in('document_id', documentIds);
 
-      if (mentionCounts) {
-        // Get unique document IDs that have been processed
-        const processedDocs = new Set(mentionCounts.map(m => m.document_id));
-        const processed = processedDocs.size;
-        setProcessedCount(processed);
+        if (mentionCounts) {
+          // Get unique document IDs that have been processed
+          const processedDocs = new Set(mentionCounts.map(m => m.document_id));
+          const processed = processedDocs.size;
+          setProcessedCount(processed);
 
-        if (processed >= total) {
-          clearInterval(pollInterval);
-          setProcessing(false);
-          toast.success(
-            `✅ All ${total} documents processed! Check Entity Management or Signals for extracted intelligence.`,
-            { duration: 10000 }
-          );
-          refetch();
+          if (processed >= total) {
+            clearInterval(pollInterval);
+            setProcessing(false);
+            toast.success(
+              `✅ All ${total} documents processed! Check Entity Management or Signals for extracted intelligence.`,
+              { duration: 10000 }
+            );
+            refetch();
+          }
         }
-      }
-    }, 5000); // Check every 5 seconds
+      }, 5000); // Check every 5 seconds
 
-    // Stop polling after 10 minutes
-    setTimeout(() => {
-      clearInterval(pollInterval);
+      // Stop polling after 10 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        setProcessing(false);
+      }, 600000);
+    } catch (err) {
+      console.error('Exception during batch processing:', err);
+      toast.error(`Failed to start processing: ${err instanceof Error ? err.message : 'Unknown error'}`);
       setProcessing(false);
-    }, 600000);
+    }
   };
 
   return (
