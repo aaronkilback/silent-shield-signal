@@ -401,8 +401,33 @@ Extract all entities, signals, and their relationships.`
 
     // Process signals - create one per matched client
     for (const signal of intelligence.signals || []) {
+      // Generate content hash for deduplication
+      const contentToHash = `${signal.title || ''}|${signal.description || ''}`;
+      const encoder = new TextEncoder();
+      const data = encoder.encode(contentToHash);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const contentHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
       // Create signal for each matched client
       for (const clientMatch of clientMatches) {
+        // Check for existing signal with same content hash (within 7 days)
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        
+        const { data: existingSignal } = await supabase
+          .from('signals')
+          .select('id')
+          .eq('content_hash', contentHash)
+          .eq('client_id', clientMatch.clientId)
+          .gte('created_at', sevenDaysAgo.toISOString())
+          .single();
+
+        if (existingSignal) {
+          console.log(`Skipping duplicate signal for client ${clientMatch.clientName}: ${signal.title}`);
+          continue; // Skip this duplicate
+        }
+
         const { data: newSignal, error: signalError } = await supabase
           .from('signals')
           .insert({
@@ -412,6 +437,7 @@ Extract all entities, signals, and their relationships.`
             severity_score: signal.severity_score,
             relevance_score: signal.relevance_score || 0.7,
             normalized_text: signal.description,
+            content_hash: contentHash,
             severity: signal.severity_score >= 80 ? 'critical' : 
                       signal.severity_score >= 50 ? 'high' : 
                       signal.severity_score >= 20 ? 'medium' : 'low',
