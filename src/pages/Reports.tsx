@@ -5,7 +5,9 @@ import { SecurityBulletinGenerator } from "@/components/SecurityBulletinGenerato
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
-import { Loader2, FileText } from "lucide-react";
+import { Loader2, FileText, Target } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 
 const Reports = () => {
   const { user, loading } = useAuth();
@@ -33,14 +35,22 @@ const Reports = () => {
     <div className="min-h-screen bg-background">
       <Header />
       <main className="container mx-auto px-6 py-8 space-y-6">
-        <div className="flex items-center gap-3 mb-8">
-          <div className="p-3 rounded-lg bg-primary/10">
-            <FileText className="w-6 h-6 text-primary" />
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center gap-3">
+            <div className="p-3 rounded-lg bg-primary/10">
+              <FileText className="w-6 h-6 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold text-foreground">Reports</h1>
+              <p className="text-muted-foreground">Generate and export security intelligence reports</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-3xl font-bold text-foreground">Reports</h1>
-            <p className="text-muted-foreground">Generate and export security intelligence reports</p>
-          </div>
+          <Link to="/benchmark">
+            <Button variant="outline">
+              <Target className="w-4 h-4 mr-2" />
+              Benchmark Extraction
+            </Button>
+          </Link>
         </div>
 
         <div className="grid grid-cols-1 gap-6">
