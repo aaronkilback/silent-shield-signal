@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
+import { reportError } from "@/lib/errorReporting";
 
 const sourceSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
@@ -134,7 +135,16 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
     },
     onError: (error) => {
       console.error("Error adding source:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to add source. Please try again.");
+      const errorMessage = error instanceof Error ? error.message : "Failed to add source. Please try again.";
+      toast.error(errorMessage);
+      
+      reportError({
+        title: "Source Addition Failed",
+        description: `Failed to add new OSINT source: ${name}`,
+        severity: "high",
+        error: error instanceof Error ? error : new Error(String(error)),
+        context: "Source Management - Add Source"
+      });
     },
   });
 
