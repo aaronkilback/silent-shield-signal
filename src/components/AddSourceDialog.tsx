@@ -57,6 +57,16 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
 
   const addSourceMutation = useMutation({
     mutationFn: async () => {
+      console.log("Starting source addition...");
+      
+      // Check authentication
+      const { data: { user } } = await supabase.auth.getUser();
+      console.log("Current user:", user?.id);
+      
+      if (!user) {
+        throw new Error("You must be logged in to add sources");
+      }
+
       // Validate required fields
       if (!name.trim()) {
         throw new Error("Source name is required");
@@ -81,6 +91,13 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
         parsedConfig = { url: url.trim() };
       }
 
+      console.log("Attempting to insert source:", {
+        name: name.trim(),
+        type: type.trim(),
+        monitor_type: monitorType || null,
+        has_config: !!parsedConfig
+      });
+
       const { data, error } = await supabase
         .from("sources")
         .insert({
@@ -93,10 +110,16 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
         .select();
 
       if (error) {
-        console.error("Supabase error:", error);
-        throw new Error(`Database error: ${error.message}`);
+        console.error("Supabase error details:", {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code
+        });
+        throw new Error(`Database error: ${error.message}${error.hint ? ' - ' + error.hint : ''}`);
       }
 
+      console.log("Source added successfully:", data);
       return data;
     },
     onSuccess: () => {
