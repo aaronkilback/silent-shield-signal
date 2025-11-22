@@ -34,11 +34,14 @@ export const SignalIngestForm = () => {
         body.text = text.trim();
       }
 
-      const { error } = await supabase.functions.invoke("ingest-signal", {
+      const { data, error } = await supabase.functions.invoke("ingest-signal", {
         body,
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error("Ingest signal error:", error);
+        throw new Error(error.message || "Failed to ingest signal");
+      }
 
       toast.success(url.trim() ? "Website scanned and signals created" : "Signal ingested successfully");
       setText("");
@@ -46,7 +49,25 @@ export const SignalIngestForm = () => {
       setUrl("");
     } catch (error) {
       console.error("Error ingesting signal:", error);
-      toast.error("Failed to ingest signal");
+      const errorMessage = error instanceof Error ? error.message : "Failed to ingest signal";
+      toast.error(errorMessage);
+      
+      // Auto-report critical errors
+      if (error instanceof Error && error.message.includes("database")) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          await supabase.from('bug_reports').insert({
+            user_id: user?.id || null,
+            title: `[Auto] Signal Ingest Failed: ${error.message.substring(0, 80)}`,
+            description: `**Error during signal ingestion:**\n${error.message}\n\n**Stack:**\n\`\`\`\n${error.stack || 'Not available'}\n\`\`\``,
+            severity: 'high',
+            page_url: window.location.href,
+            browser_info: navigator.userAgent,
+          });
+        } catch (reportError) {
+          console.error("Failed to auto-report error:", reportError);
+        }
+      }
     } finally {
       setLoading(false);
     }

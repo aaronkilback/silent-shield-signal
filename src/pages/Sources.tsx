@@ -11,6 +11,8 @@ import { toast } from "sonner";
 import { AddSourceDialog } from "@/components/AddSourceDialog";
 import { EditSourceDialog } from "@/components/EditSourceDialog";
 import { SourcesList } from "@/components/SourcesList";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { reportError } from "@/lib/errorReporting";
 
 const Sources = () => {
   const { user, loading } = useAuth();
@@ -55,6 +57,14 @@ const Sources = () => {
     onError: (error) => {
       console.error("Error updating source:", error);
       toast.error("Failed to update source");
+      
+      reportError({
+        title: "Source Update Failed",
+        description: "Failed to toggle source active status",
+        severity: "medium",
+        error: error instanceof Error ? error : new Error(String(error)),
+        context: "Source Management"
+      });
     },
   });
 
@@ -74,6 +84,14 @@ const Sources = () => {
     onError: (error) => {
       console.error("Error deleting source:", error);
       toast.error("Failed to delete source");
+      
+      reportError({
+        title: "Source Deletion Failed",
+        description: "Failed to delete OSINT source",
+        severity: "medium",
+        error: error instanceof Error ? error : new Error(String(error)),
+        context: "Source Management"
+      });
     },
   });
 
@@ -114,23 +132,25 @@ const Sources = () => {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {sources && sources.length > 0 ? (
-              <SourcesList
-                sources={sources}
-                onToggleActive={(id, isActive) =>
-                  toggleActiveMutation.mutate({ id, isActive })
-                }
-                onDelete={(id) => deleteMutation.mutate(id)}
-                onEdit={(source) => {
-                  setEditingSource(source);
-                  setIsEditDialogOpen(true);
-                }}
-              />
-            ) : (
-              <div className="text-center py-8 text-muted-foreground">
-                No sources configured yet. Add your first source to get started.
-              </div>
-            )}
+            <ErrorBoundary context="Sources List">
+              {sources && sources.length > 0 ? (
+                <SourcesList
+                  sources={sources}
+                  onToggleActive={(id, isActive) =>
+                    toggleActiveMutation.mutate({ id, isActive })
+                  }
+                  onDelete={(id) => deleteMutation.mutate(id)}
+                  onEdit={(source) => {
+                    setEditingSource(source);
+                    setIsEditDialogOpen(true);
+                  }}
+                />
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  No sources configured yet. Add your first source to get started.
+                </div>
+              )}
+            </ErrorBoundary>
           </CardContent>
         </Card>
       </main>

@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 const Signals = () => {
   const { user, loading } = useAuth();
@@ -50,16 +51,22 @@ const Signals = () => {
           </TabsList>
 
           <TabsContent value="upload" className="space-y-6">
-            <UnifiedDocumentUpload />
+            <ErrorBoundary context="Document Upload">
+              <UnifiedDocumentUpload />
+            </ErrorBoundary>
           </TabsContent>
 
           <TabsContent value="signals" className="space-y-6">
-            <SignalHistory />
+            <ErrorBoundary context="Signal History">
+              <SignalHistory />
+            </ErrorBoundary>
           </TabsContent>
 
           <TabsContent value="documents" className="space-y-6">
-            <ReprocessDocuments />
-            <ArchivalDocumentsList />
+            <ErrorBoundary context="Document Library">
+              <ReprocessDocuments />
+              <ArchivalDocumentsList />
+            </ErrorBoundary>
           </TabsContent>
         </Tabs>
       </main>

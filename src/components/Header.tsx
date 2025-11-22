@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss, Plane } from "lucide-react";
+import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss, Plane, Bug } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -126,6 +126,14 @@ export const Header = () => {
               >
                 <Plane className="w-4 h-4 mr-2" />
                 Travel
+              </Button>
+              <Button
+                onClick={() => navigate("/bug-reports")}
+                variant={location.pathname === "/bug-reports" ? "default" : "ghost"}
+                size="sm"
+              >
+                <Bug className="w-4 h-4 mr-2" />
+                Bugs
               </Button>
             </nav>
             <EntityNotifications />
