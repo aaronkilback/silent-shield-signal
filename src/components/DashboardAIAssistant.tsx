@@ -8,6 +8,8 @@ import { Send, Sparkles, Loader2, Mic, MicOff } from "lucide-react";
 import { toast } from "sonner";
 import { useConversation } from "@11labs/react";
 import { supabase } from "@/integrations/supabase/client";
+import { useNavigate } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
 
 type Message = {
   role: "user" | "assistant";
@@ -15,10 +17,11 @@ type Message = {
 };
 
 export const DashboardAIAssistant = () => {
+  const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
-      content: "Hello! I'm your Fortress AI security assistant powered by Gemini 3 Pro. I can help you analyze threats, understand signals, manage incidents, and make informed security decisions. What would you like to know?",
+      content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Just ask me anything - for example, try asking me to find a specific person or view recent signals.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -250,15 +253,46 @@ export const DashboardAIAssistant = () => {
                     key={index}
                     className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
                   >
-                    <div
-                      className={`max-w-[80%] rounded-lg p-3 ${
-                        message.role === "user"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted"
-                      }`}
-                    >
-                      <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                    </div>
+                     <div
+                       className={`max-w-[80%] rounded-lg p-3 ${
+                         message.role === "user"
+                           ? "bg-primary text-primary-foreground"
+                           : "bg-muted"
+                       }`}
+                     >
+                       <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
+                         <ReactMarkdown
+                           components={{
+                             a: ({ node, href, children, ...props }) => {
+                               const handleClick = (e: React.MouseEvent) => {
+                                 e.preventDefault();
+                                 if (href?.startsWith('/')) {
+                                   navigate(href);
+                                   toast.success("Navigating to " + href);
+                                 } else if (href) {
+                                   window.open(href, '_blank', 'noopener,noreferrer');
+                                 }
+                               };
+                               return (
+                                 <a
+                                   href={href}
+                                   onClick={handleClick}
+                                   className="text-primary hover:underline cursor-pointer font-medium"
+                                   {...props}
+                                 >
+                                   {children}
+                                 </a>
+                               );
+                             },
+                             p: ({ node, children, ...props }) => (
+                               <p className="mb-2 last:mb-0" {...props}>{children}</p>
+                             ),
+                           }}
+                         >
+                           {message.content}
+                         </ReactMarkdown>
+                       </div>
+                     </div>
                   </div>
                 ))}
                 {isLoading && messages[messages.length - 1]?.role === "user" && (
