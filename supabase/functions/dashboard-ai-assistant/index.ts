@@ -41,30 +41,122 @@ Fortress is a comprehensive security intelligence platform that provides:
 - Investigation management and documentation
 - Learning systems that adapt based on feedback
 
-KEY CAPABILITIES YOU CAN HELP WITH:
-1. Analyzing current threats, signals, and incidents
-2. Explaining patterns in security events and entity mentions
-3. Providing security recommendations based on monitored intelligence
-4. Interpreting monitoring history and automation metrics
-5. Suggesting investigation approaches and next steps
-6. Explaining risk levels and threat indicators
-7. Helping configure monitoring parameters and escalation rules
-8. Clarifying platform features and autonomous system behavior
+YOU HAVE ACCESS TO REAL-TIME DATA via tools. Use them proactively when users ask questions about:
+- Current threats, signals, or incidents
+- Entity information or searches
+- Monitoring statistics and performance
+- Client risk assessments
 
-AVAILABLE DATA:
-- Clients: Organizations being monitored with specific threat profiles
-- Signals: Raw intelligence from various sources (news, social media, OSINT, etc.)
-- Incidents: Escalated security events requiring attention
-- Entities: People, organizations, locations being tracked
-- Investigations: Detailed security investigation files
-- Monitoring Sources: RSS feeds, APIs, and OSINT sources
-- Travel Data: Itineraries and travel risk assessments
+AVAILABLE TOOLS:
+- get_recent_signals: Get the latest security signals (limit optional)
+- get_active_incidents: Get currently active incidents (limit optional)
+- search_entities: Search for entities by name or alias (query required)
+- get_entity_details: Get detailed info about a specific entity (entityId required)
+- get_monitoring_stats: Get recent monitoring performance metrics
+- trigger_manual_scan: Trigger a manual scan of a source (source optional: news, social, darkweb, etc.)
+- get_client_risk_summary: Get risk summary for all clients (limit optional)
 
-Be concise, actionable, and security-focused. When users ask questions, consider the platform's capabilities and provide specific, practical guidance. If you need more context about their specific data (like current signals or incidents), suggest they provide that information or check the relevant section of the platform.`,
+Be concise, actionable, and security-focused. When users ask questions about current state, USE THE TOOLS to get real data. Don't just give general advice - show them actual signals, incidents, or entity information from their system.`,
           },
           ...messages,
         ],
         stream: true,
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "get_recent_signals",
+              description: "Retrieve the most recent security signals from the system",
+              parameters: {
+                type: "object",
+                properties: {
+                  limit: { type: "number", description: "Number of signals to return (default 10)" }
+                }
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "get_active_incidents",
+              description: "Get currently active security incidents",
+              parameters: {
+                type: "object",
+                properties: {
+                  limit: { type: "number", description: "Number of incidents to return (default 10)" }
+                }
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "search_entities",
+              description: "Search for entities by name or alias",
+              parameters: {
+                type: "object",
+                properties: {
+                  query: { type: "string", description: "Search query" },
+                  limit: { type: "number", description: "Number of results (default 10)" }
+                },
+                required: ["query"]
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "get_entity_details",
+              description: "Get detailed information about a specific entity",
+              parameters: {
+                type: "object",
+                properties: {
+                  entityId: { type: "string", description: "Entity ID" }
+                },
+                required: ["entityId"]
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "get_monitoring_stats",
+              description: "Get recent monitoring performance statistics",
+              parameters: { type: "object", properties: {} }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "trigger_manual_scan",
+              description: "Trigger a manual scan of a monitoring source",
+              parameters: {
+                type: "object",
+                properties: {
+                  source: { 
+                    type: "string", 
+                    description: "Source to scan (news, social, darkweb, linkedin, instagram, etc.)",
+                    enum: ["news", "social", "darkweb", "linkedin", "instagram", "facebook", "pastebin"]
+                  }
+                }
+              }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "get_client_risk_summary",
+              description: "Get risk summary for all monitored clients",
+              parameters: {
+                type: "object",
+                properties: {
+                  limit: { type: "number", description: "Number of clients (default 5)" }
+                }
+              }
+            }
+          }
+        ],
+        tool_choice: "auto",
       }),
     });
 
