@@ -255,7 +255,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                                 {formatDistanceToNow(new Date(relSignal.created_at), { addSuffix: true })}
                               </span>
                             </div>
-                            <p className="line-clamp-2">{relSignal.normalized_text}</p>
+                            <p className="line-clamp-2">{relSignal.normalized_text ? decodeHtmlEntities(relSignal.normalized_text) : relSignal.normalized_text}</p>
                           </div>
                         ))}
                         {correlatedSignals.length > 3 && (
@@ -295,7 +295,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                       Strategic Context
                     </h3>
                     <div className="bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg border border-blue-200 dark:border-blue-900">
-                      <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{aiAnalysis.strategic_context}</p>
+                      <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(aiAnalysis.strategic_context)}</p>
                     </div>
                   </div>
                 )}
@@ -308,7 +308,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                       Threat Correlation
                     </h3>
                     <div className="bg-purple-50 dark:bg-purple-950/20 p-4 rounded-lg border border-purple-200 dark:border-purple-900">
-                      <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{aiAnalysis.threat_correlation}</p>
+                      <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(aiAnalysis.threat_correlation)}</p>
                       {patternAnalysis?.recent_signals_analyzed > 0 && (
                         <p className="text-xs text-muted-foreground mt-2">
                           Analyzed {patternAnalysis.recent_signals_analyzed} recent signals from the last 30 days
@@ -326,7 +326,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                       Campaign Assessment
                     </h3>
                     <div className="bg-orange-50 dark:bg-orange-950/20 p-4 rounded-lg border border-orange-200 dark:border-orange-900">
-                      <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{aiAnalysis.campaign_assessment}</p>
+                      <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(aiAnalysis.campaign_assessment)}</p>
                     </div>
                   </div>
                 )}
@@ -339,7 +339,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                       Sector Implications
                     </h3>
                     <div className="bg-green-50 dark:bg-green-950/20 p-4 rounded-lg border border-green-200 dark:border-green-900">
-                      <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{aiAnalysis.sector_implications}</p>
+                      <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(aiAnalysis.sector_implications)}</p>
                     </div>
                   </div>
                 )}
@@ -380,7 +380,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                     {aiDecision.reasoning && (
                       <div>
                         <p className="text-sm text-muted-foreground mb-1">Reasoning</p>
-                        <p className="text-sm bg-muted p-3 rounded-lg">{aiDecision.reasoning}</p>
+                        <p className="text-sm bg-muted p-3 rounded-lg">{decodeHtmlEntities(aiDecision.reasoning)}</p>
                       </div>
                     )}
 
@@ -391,7 +391,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                           {aiDecision.containment_actions.map((action: string, i: number) => (
                             <li key={i} className="flex items-start gap-2">
                               <span className="text-primary">•</span>
-                              <span>{action}</span>
+                              <span>{decodeHtmlEntities(action)}</span>
                             </li>
                           ))}
                         </ul>
@@ -405,7 +405,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                           {aiDecision.remediation_steps.map((step: string, i: number) => (
                             <li key={i} className="flex items-start gap-2">
                               <span className="font-bold">{i + 1}.</span>
-                              <span>{step}</span>
+                              <span>{decodeHtmlEntities(step)}</span>
                             </li>
                           ))}
                         </ul>
@@ -415,7 +415,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                     {aiDecision.estimated_impact && (
                       <div>
                         <p className="text-sm text-muted-foreground mb-1">Estimated Impact</p>
-                        <p className="text-sm bg-muted p-3 rounded-lg">{aiDecision.estimated_impact}</p>
+                        <p className="text-sm bg-muted p-3 rounded-lg">{decodeHtmlEntities(aiDecision.estimated_impact)}</p>
                       </div>
                     )}
                   </div>
@@ -430,7 +430,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                     Website Intelligence Analysis
                   </h3>
                   <div className="bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg border border-blue-200 dark:border-blue-900">
-                    <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{urlAnalysis}</p>
+                    <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(urlAnalysis)}</p>
                   </div>
                   {signal.raw_json?.url && (
                     <div className="mt-2 text-xs text-muted-foreground">
