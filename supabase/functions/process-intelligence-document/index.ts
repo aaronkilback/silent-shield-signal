@@ -56,6 +56,68 @@ serve(async (req) => {
       .map(e => `${e.name} (${e.type})${e.aliases?.length ? ` aka ${e.aliases.join(', ')}` : ''}`)
       .join('\n');
 
+    // Fetch all active clients and their keywords
+    const { data: clients } = await supabase
+      .from('clients')
+      .select('id, name, monitoring_keywords, competitor_names, high_value_assets')
+      .eq('status', 'active');
+
+    // Match document against client keywords
+    function matchClientKeywords(text: string, clients: any[]) {
+      const lowerText = text.toLowerCase();
+      const matches: Array<{ clientId: string; clientName: string; matchedKeywords: string[] }> = [];
+      
+      for (const client of clients || []) {
+        const matchedKeywords: string[] = [];
+        const allKeywords = [
+          ...(client.monitoring_keywords || []),
+          ...(client.competitor_names || []),
+          ...(client.high_value_assets || [])
+        ];
+        
+        for (const keyword of allKeywords) {
+          if (lowerText.includes(keyword.toLowerCase())) {
+            matchedKeywords.push(keyword);
+          }
+        }
+        
+        if (matchedKeywords.length > 0) {
+          matches.push({
+            clientId: client.id,
+            clientName: client.name,
+            matchedKeywords
+          });
+        }
+      }
+      
+      return matches;
+    }
+
+    const clientMatches = matchClientKeywords(document.raw_text || '', clients || []);
+    
+    // Skip processing if no client keywords match
+    if (clientMatches.length === 0) {
+      console.log('No client keyword matches found, skipping document');
+      await supabase
+        .from('ingested_documents')
+        .update({
+          processing_status: 'completed',
+          processed_at: new Date().toISOString(),
+          error_message: 'No client keyword matches'
+        })
+        .eq('id', documentId);
+      
+      return new Response(
+        JSON.stringify({
+          success: true,
+          results: { message: 'No client keyword matches', skipped: true }
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    console.log(`Matched ${clientMatches.length} client(s):`, clientMatches.map(m => m.clientName).join(', '));
+
     // Fetch learning profiles
     const { data: approvedPatterns } = await supabase
       .from('learning_profiles')
@@ -337,63 +399,71 @@ Extract all entities, signals, and their relationships.`
       }
     }
 
-    // Process signals
+    // Process signals - create one per matched client
     for (const signal of intelligence.signals || []) {
-      // Create signal
-      const { data: newSignal, error: signalError } = await supabase
-        .from('signals')
-        .insert({
-          title: signal.title,
-          description: signal.description,
-          signal_type: signal.signal_type,
-          severity_score: signal.severity_score,
-          relevance_score: signal.relevance_score || 0.7,
-          normalized_text: signal.description,
-          severity: signal.severity_score >= 80 ? 'critical' : 
-                    signal.severity_score >= 50 ? 'high' : 
-                    signal.severity_score >= 20 ? 'medium' : 'low',
-          location: signal.location,
-          status: 'new',
-          is_test: false
-        })
-        .select('id')
-        .single();
-
-      if (!signalError && newSignal) {
-        results.signals_created++;
-
-        // Link signal to document
-        await supabase
-          .from('signal_documents')
+      // Create signal for each matched client
+      for (const clientMatch of clientMatches) {
+        const { data: newSignal, error: signalError } = await supabase
+          .from('signals')
           .insert({
-            signal_id: newSignal.id,
-            document_id: documentId
-          });
+            title: signal.title,
+            description: signal.description,
+            signal_type: signal.signal_type,
+            severity_score: signal.severity_score,
+            relevance_score: signal.relevance_score || 0.7,
+            normalized_text: signal.description,
+            severity: signal.severity_score >= 80 ? 'critical' : 
+                      signal.severity_score >= 50 ? 'high' : 
+                      signal.severity_score >= 20 ? 'medium' : 'low',
+            location: signal.location,
+            status: 'new',
+            is_test: false,
+            client_id: clientMatch.clientId,
+            raw_json: {
+              matched_keywords: clientMatch.matchedKeywords,
+              client_name: clientMatch.clientName,
+              source_metadata: document.metadata
+            }
+          })
+          .select('id')
+          .single();
 
-        // Link signal to entities
-        if (signal.related_entity_names) {
-          for (const entityName of signal.related_entity_names) {
-            const { data: entity } = await supabase
-              .from('entities')
-              .select('id')
-              .ilike('name', entityName)
-              .single();
+        if (!signalError && newSignal) {
+          results.signals_created++;
 
-            if (entity) {
-              await supabase.from('entity_mentions').insert({
-                entity_id: entity.id,
-                signal_id: newSignal.id,
-                confidence: 0.8
-              });
+          // Link signal to document
+          await supabase
+            .from('signal_documents')
+            .insert({
+              signal_id: newSignal.id,
+              document_id: documentId
+            });
+
+          // Link signal to entities
+          if (signal.related_entity_names) {
+            for (const entityName of signal.related_entity_names) {
+              const { data: entity } = await supabase
+                .from('entities')
+                .select('id')
+                .ilike('name', entityName)
+                .single();
+
+              if (entity) {
+                await supabase.from('entity_mentions').insert({
+                  entity_id: entity.id,
+                  signal_id: newSignal.id,
+                  confidence: 0.8
+                });
+              }
             }
           }
-        }
 
-        // Check for auto-escalation
-        if (signal.severity_score >= 80) {
-          await supabase.functions.invoke('check-incident-escalation', {
-            body: { signalId: newSignal.id }
-          });
+          // Check for auto-escalation
+          if (signal.severity_score >= 80) {
+            await supabase.functions.invoke('check-incident-escalation', {
+              body: { signalId: newSignal.id }
+            });
+          }
         }
       }
     }
