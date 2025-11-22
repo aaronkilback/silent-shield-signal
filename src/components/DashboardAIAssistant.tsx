@@ -18,7 +18,7 @@ export const DashboardAIAssistant = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
-      content: "Hello! I'm your Gemini 3 Pro security assistant. Ask me anything about threats, signals, or your security posture.",
+      content: "Hello! I'm your Fortress AI security assistant powered by Gemini 3 Pro. I can help you analyze threats, understand signals, manage incidents, and make informed security decisions. What would you like to know?",
     },
   ]);
   const [input, setInput] = useState("");
@@ -238,7 +238,7 @@ export const DashboardAIAssistant = () => {
                     disabled={conversation.status === "connected"}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Get your Agent ID from the ElevenLabs dashboard
+                    Create an agent in ElevenLabs dashboard with knowledge about security intelligence and threat monitoring. Use the system prompt from the elevenlabs-agent-config function.
                   </p>
                 </div>
 
