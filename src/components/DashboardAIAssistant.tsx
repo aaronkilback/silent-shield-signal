@@ -78,6 +78,7 @@ export const DashboardAIAssistant = () => {
   }, [messages]);
 
   const streamChat = async (userMessage: string) => {
+    console.log("streamChat called with:", userMessage);
     const newMessages = [...messages, { role: "user" as const, content: userMessage }];
     setMessages(newMessages);
     setIsLoading(true);
@@ -90,6 +91,7 @@ export const DashboardAIAssistant = () => {
     };
 
     try {
+      console.log("Fetching from edge function...");
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dashboard-ai-assistant`,
         {
@@ -101,6 +103,8 @@ export const DashboardAIAssistant = () => {
           body: JSON.stringify({ messages: newMessages }),
         }
       );
+
+      console.log("Response status:", response.status);
 
       if (response.status === 429) {
         toast.error("Rate limit exceeded. Please try again later.");
@@ -115,16 +119,22 @@ export const DashboardAIAssistant = () => {
       }
 
       if (!response.ok || !response.body) {
-        throw new Error("Failed to start stream");
+        const errorText = await response.text();
+        console.error("Response not ok:", response.status, errorText);
+        throw new Error(`Failed to start stream: ${response.status} ${errorText}`);
       }
 
+      console.log("Starting to read stream...");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let textBuffer = "";
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          console.log("Stream complete");
+          break;
+        }
         textBuffer += decoder.decode(value, { stream: true });
 
         let newlineIndex: number;
@@ -157,16 +167,22 @@ export const DashboardAIAssistant = () => {
       toast.error("Failed to get response. Please try again.");
       setMessages(newMessages);
     } finally {
+      console.log("streamChat complete, setting isLoading to false");
       setIsLoading(false);
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    console.log("Form submitted, input:", input, "isLoading:", isLoading);
+    if (!input.trim() || isLoading) {
+      console.log("Form submission blocked - empty input or loading");
+      return;
+    }
 
     const userMessage = input.trim();
     setInput("");
+    console.log("Calling streamChat with message:", userMessage);
     await streamChat(userMessage);
   };
 
