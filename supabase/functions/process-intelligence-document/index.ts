@@ -106,17 +106,23 @@ Extract:
    - Corporate executives: CEOs, Presidents, Directors (with titles)
    - Journalists, reporters, authors
    - Community leaders, activists
+   - **ACTIVISTS & ORGANIZERS**: Named individuals described as activists, organizers, protesters, campaigners
+   - **LEADERSHIP TITLES**: Anyone with President, Director, Spokesperson, Leader, Chief titles
+   - Examples: Deborah GOOD, Wil MARSDEN, Drew HARRIS, Melissa LEM
+   - Include their organizational affiliations when mentioned
    
    ORGANIZATIONS TO CAPTURE:
    - CRITICAL: Media organizations (The Narwhal, CBC News, Reuters, local newspapers, online publications)
    - Government agencies and offices (Major Projects Office, ministries, departments)
    - Companies and corporations
    - NGOs, activist groups, community organizations
-   - Indigenous groups and First Nations
+   - **INDIGENOUS GROUPS**: First Nations, Indigenous activists groups, traditional territories
+   - Examples: Lax'yip Firekeepers, Gitanyow activists, Gitxsan activists
    - **ADVOCACY GROUPS**: Professional associations, environmental groups, health organizations
+   - Examples: Canadian Association of Physicians for the Environment (CAPE), Dogwood BC, PSE Healthy Energy
    - **OPPOSITION GROUPS**: Anti-industry campaigns, protesters, environmental coalitions
-   - Examples: Canadian Association of Physicians for the Environment, Sierra Club, Greenpeace
-   - Any organization mentioned as "led by", "organized by", "represented by"
+   - Examples: Sierra Club, Greenpeace, local protest groups
+   - Any organization mentioned as "led by", "organized by", "represented by", "partnered with"
    
    INFRASTRUCTURE/PROJECTS:
    - LNG facilities, pipelines, transmission lines
@@ -128,9 +134,12 @@ Extract:
    OPPOSITION & CRITICISM (HIGH PRIORITY):
    - Look for: "condemn", "criticize", "oppose", "opponents", "protest", "backlash", "controversy"
    - Fast-tracking of controversial projects
+   - **PROTEST ACTIONS**: Road blocks, demonstrations, press conferences against projects
    - Community opposition to industrial projects
    - Environmental group criticism
    - Indigenous opposition or concerns
+   - **ALLEGATIONS**: "environmental racism", "foreign companies benefit", "colonial", anti-national interest claims
+   - Social media campaigns and amplification of opposition
    
    MEDIA COVERAGE PATTERNS:
    - Negative headlines about your client or projects
@@ -138,6 +147,8 @@ Extract:
    - Exposés of environmental damage
    - Critical opinion pieces
    - Social media controversies
+   - **EVENTS & WEBINARS**: Anti-industry events, advocacy webinars, protest press conferences
+   - Coordinated campaigns across multiple platforms
    
    ENVIRONMENTAL & HEALTH:
    - Pollution, emissions, flaring complaints
