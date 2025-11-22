@@ -204,6 +204,30 @@ const BugReports = () => {
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm whitespace-pre-wrap mb-4">{report.description}</p>
+                  
+                  {report.screenshots && report.screenshots.length > 0 && (
+                    <div className="mb-4">
+                      <p className="text-sm font-medium mb-2">Screenshots:</p>
+                      <div className="flex gap-2 flex-wrap">
+                        {report.screenshots.map((screenshot, idx) => (
+                          <a 
+                            key={idx}
+                            href={screenshot}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block"
+                          >
+                            <img 
+                              src={screenshot} 
+                              alt={`Screenshot ${idx + 1}`}
+                              className="w-32 h-32 object-cover rounded border hover:opacity-80 transition-opacity cursor-pointer"
+                            />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
                   <div className="text-xs text-muted-foreground space-y-1">
                     {report.page_url && (
                       <p>

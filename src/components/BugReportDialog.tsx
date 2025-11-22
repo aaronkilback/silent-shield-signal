@@ -7,7 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
+import { Loader2, Camera, X } from "lucide-react";
+import html2canvas from "html2canvas";
 
 interface BugReportDialogProps {
   open: boolean;
@@ -19,6 +20,64 @@ export const BugReportDialog = ({ open, onOpenChange }: BugReportDialogProps) =>
   const [description, setDescription] = useState("");
   const [severity, setSeverity] = useState<"low" | "medium" | "high" | "critical">("medium");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [screenshots, setScreenshots] = useState<string[]>([]);
+  const [isCapturing, setIsCapturing] = useState(false);
+
+  const captureScreenshot = async () => {
+    setIsCapturing(true);
+    try {
+      // Close the dialog temporarily to capture the page behind it
+      onOpenChange(false);
+      
+      // Wait a moment for the dialog to close
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Capture the entire page
+      const canvas = await html2canvas(document.body, {
+        allowTaint: true,
+        useCORS: true,
+        logging: false,
+      });
+      
+      // Reopen the dialog
+      onOpenChange(true);
+      
+      // Convert canvas to blob
+      const blob = await new Promise<Blob>((resolve) => {
+        canvas.toBlob((blob) => resolve(blob!), 'image/png');
+      });
+      
+      // Upload to Supabase storage
+      const timestamp = Date.now();
+      const filename = `screenshot-${timestamp}.png`;
+      
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('bug-screenshots')
+        .upload(filename, blob, {
+          contentType: 'image/png',
+        });
+      
+      if (uploadError) throw uploadError;
+      
+      // Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('bug-screenshots')
+        .getPublicUrl(filename);
+      
+      setScreenshots([...screenshots, publicUrl]);
+      toast.success("Screenshot captured");
+    } catch (error) {
+      console.error("Error capturing screenshot:", error);
+      toast.error("Failed to capture screenshot");
+      onOpenChange(true); // Make sure dialog reopens even on error
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
+  const removeScreenshot = (index: number) => {
+    setScreenshots(screenshots.filter((_, i) => i !== index));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,6 +106,7 @@ export const BugReportDialog = ({ open, onOpenChange }: BugReportDialogProps) =>
           severity,
           page_url: window.location.href,
           browser_info: navigator.userAgent,
+          screenshots: screenshots.length > 0 ? screenshots : null,
         });
 
       if (error) throw error;
@@ -55,6 +115,7 @@ export const BugReportDialog = ({ open, onOpenChange }: BugReportDialogProps) =>
       setTitle("");
       setDescription("");
       setSeverity("medium");
+      setScreenshots([]);
       onOpenChange(false);
     } catch (error) {
       console.error("Error submitting bug report:", error);
@@ -111,6 +172,54 @@ export const BugReportDialog = ({ open, onOpenChange }: BugReportDialogProps) =>
               required
               rows={8}
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Screenshots (Optional)</Label>
+            <div className="space-y-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={captureScreenshot}
+                disabled={isCapturing || isSubmitting}
+                className="w-full"
+              >
+                {isCapturing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Capturing...
+                  </>
+                ) : (
+                  <>
+                    <Camera className="w-4 h-4 mr-2" />
+                    Capture Screenshot
+                  </>
+                )}
+              </Button>
+              
+              {screenshots.length > 0 && (
+                <div className="space-y-2">
+                  {screenshots.map((screenshot, index) => (
+                    <div key={index} className="flex items-center gap-2 p-2 bg-muted rounded">
+                      <img 
+                        src={screenshot} 
+                        alt={`Screenshot ${index + 1}`}
+                        className="w-16 h-16 object-cover rounded"
+                      />
+                      <span className="text-sm flex-1">Screenshot {index + 1}</span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeScreenshot(index)}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="text-xs text-muted-foreground space-y-1">
