@@ -3,8 +3,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Sparkles, Loader2 } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Send, Sparkles, Loader2, Mic, MicOff } from "lucide-react";
 import { toast } from "sonner";
+import { useConversation } from "@11labs/react";
+import { supabase } from "@/integrations/supabase/client";
 
 type Message = {
   role: "user" | "assistant";
@@ -20,7 +23,26 @@ export const DashboardAIAssistant = () => {
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [agentId, setAgentId] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const conversation = useConversation({
+    onConnect: () => {
+      console.log("Voice conversation connected");
+      toast.success("Voice assistant connected");
+    },
+    onDisconnect: () => {
+      console.log("Voice conversation disconnected");
+      toast.info("Voice assistant disconnected");
+    },
+    onMessage: (message) => {
+      console.log("Voice message:", message);
+    },
+    onError: (error) => {
+      console.error("Voice error:", error);
+      toast.error("Voice assistant error: " + error.message);
+    },
+  });
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -119,6 +141,32 @@ export const DashboardAIAssistant = () => {
     await streamChat(userMessage);
   };
 
+  const startVoiceConversation = async () => {
+    if (!agentId.trim()) {
+      toast.error("Please enter an ElevenLabs Agent ID");
+      return;
+    }
+
+    try {
+      // Get signed URL from our edge function
+      const { data, error } = await supabase.functions.invoke("elevenlabs-agent-url", {
+        body: { agentId: agentId.trim() },
+      });
+
+      if (error) throw error;
+      if (!data?.signed_url) throw new Error("No signed URL received");
+
+      await conversation.startSession({ url: data.signed_url });
+    } catch (error) {
+      console.error("Error starting voice conversation:", error);
+      toast.error("Failed to start voice conversation");
+    }
+  };
+
+  const endVoiceConversation = async () => {
+    await conversation.endSession();
+  };
+
   return (
     <Card className="w-full">
       <CardHeader>
@@ -128,47 +176,109 @@ export const DashboardAIAssistant = () => {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="flex flex-col gap-4">
-          <ScrollArea ref={scrollRef} className="h-[400px] pr-4">
-            <div className="space-y-4">
-              {messages.map((message, index) => (
-                <div
-                  key={index}
-                  className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[80%] rounded-lg p-3 ${
-                      message.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted"
-                    }`}
-                  >
-                    <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                  </div>
-                </div>
-              ))}
-              {isLoading && messages[messages.length - 1]?.role === "user" && (
-                <div className="flex justify-start">
-                  <div className="bg-muted rounded-lg p-3">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  </div>
-                </div>
-              )}
-            </div>
-          </ScrollArea>
+        <Tabs defaultValue="text" className="w-full">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="text">Text Chat</TabsTrigger>
+            <TabsTrigger value="voice">Voice Agent</TabsTrigger>
+          </TabsList>
 
-          <form onSubmit={handleSubmit} className="flex gap-2">
-            <Input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about threats, signals, or security insights..."
-              disabled={isLoading}
-            />
-            <Button type="submit" disabled={isLoading || !input.trim()}>
-              <Send className="w-4 h-4" />
-            </Button>
-          </form>
-        </div>
+          <TabsContent value="text" className="space-y-4">
+            <ScrollArea ref={scrollRef} className="h-[400px] pr-4">
+              <div className="space-y-4">
+                {messages.map((message, index) => (
+                  <div
+                    key={index}
+                    className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                  >
+                    <div
+                      className={`max-w-[80%] rounded-lg p-3 ${
+                        message.role === "user"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted"
+                      }`}
+                    >
+                      <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                    </div>
+                  </div>
+                ))}
+                {isLoading && messages[messages.length - 1]?.role === "user" && (
+                  <div className="flex justify-start">
+                    <div className="bg-muted rounded-lg p-3">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+
+            <form onSubmit={handleSubmit} className="flex gap-2">
+              <Input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Ask about threats, signals, or security insights..."
+                disabled={isLoading}
+              />
+              <Button type="submit" disabled={isLoading || !input.trim()}>
+                <Send className="w-4 h-4" />
+              </Button>
+            </form>
+          </TabsContent>
+
+          <TabsContent value="voice" className="space-y-4">
+            <div className="flex flex-col items-center gap-4 py-8">
+              <div className="w-full max-w-md space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">ElevenLabs Agent ID</label>
+                  <Input
+                    value={agentId}
+                    onChange={(e) => setAgentId(e.target.value)}
+                    placeholder="Enter your Agent ID"
+                    disabled={conversation.status === "connected"}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Get your Agent ID from the ElevenLabs dashboard
+                  </p>
+                </div>
+
+                {conversation.status === "disconnected" ? (
+                  <Button 
+                    onClick={startVoiceConversation}
+                    className="w-full"
+                    size="lg"
+                  >
+                    <Mic className="w-4 h-4 mr-2" />
+                    Start Voice Conversation
+                  </Button>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                      {conversation.isSpeaking ? (
+                        <>
+                          <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+                          AI is speaking...
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="w-4 h-4 text-primary" />
+                          Listening...
+                        </>
+                      )}
+                    </div>
+                    <Button 
+                      onClick={endVoiceConversation}
+                      variant="destructive"
+                      className="w-full"
+                      size="lg"
+                    >
+                      <MicOff className="w-4 h-4 mr-2" />
+                      End Conversation
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
       </CardContent>
     </Card>
   );
