@@ -62,14 +62,6 @@ export const Header = () => {
                 Signals
               </Button>
               <Button
-                onClick={() => navigate("/sources")}
-                variant={location.pathname === "/sources" ? "default" : "ghost"}
-                size="sm"
-              >
-                <Database className="w-4 h-4 mr-2" />
-                Sources
-              </Button>
-              <Button
                 onClick={() => navigate("/incidents")}
                 variant={location.pathname === "/incidents" ? "default" : "ghost"}
                 size="sm"
@@ -109,6 +101,14 @@ export const Header = () => {
                     {pendingSuggestions}
                   </Badge>
                 )}
+              </Button>
+              <Button
+                onClick={() => navigate("/sources")}
+                variant={location.pathname === "/sources" ? "default" : "ghost"}
+                size="sm"
+              >
+                <Database className="w-4 h-4 mr-2" />
+                Sources
               </Button>
               <Button
                 onClick={() => navigate("/reports")}
