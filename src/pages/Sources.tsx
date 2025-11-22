@@ -2,9 +2,10 @@ import { Header } from "@/components/Header";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, Search } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -20,6 +21,7 @@ const Sources = () => {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingSource, setEditingSource] = useState<any>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -107,6 +109,15 @@ const Sources = () => {
     return null;
   }
 
+  const filteredSources = sources?.filter((source) => {
+    const searchLower = searchQuery.toLowerCase();
+    return (
+      source.name?.toLowerCase().includes(searchLower) ||
+      source.type?.toLowerCase().includes(searchLower) ||
+      source.status?.toLowerCase().includes(searchLower)
+    );
+  });
+
   return (
     <div className="min-h-screen bg-background">
       <Header />
@@ -124,6 +135,16 @@ const Sources = () => {
           </Button>
         </div>
 
+        <div className="relative max-w-md">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+          <Input
+            placeholder="Search sources by name, type, or status..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+
         <Card>
           <CardHeader>
             <CardTitle>Active Sources</CardTitle>
@@ -133,9 +154,9 @@ const Sources = () => {
           </CardHeader>
           <CardContent>
             <ErrorBoundary context="Sources List">
-              {sources && sources.length > 0 ? (
+              {filteredSources && filteredSources.length > 0 ? (
                 <SourcesList
-                  sources={sources}
+                  sources={filteredSources}
                   onToggleActive={(id, isActive) =>
                     toggleActiveMutation.mutate({ id, isActive })
                   }
@@ -145,6 +166,10 @@ const Sources = () => {
                     setIsEditDialogOpen(true);
                   }}
                 />
+              ) : searchQuery ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No sources match your search.
+                </div>
               ) : (
                 <div className="text-center py-8 text-muted-foreground">
                   No sources configured yet. Add your first source to get started.
