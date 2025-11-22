@@ -7,6 +7,7 @@ import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, 
 import { formatDistanceToNow } from "date-fns";
 import { useState, useEffect } from "react";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
+import { SignalFeedback } from "@/components/SignalFeedback";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -183,11 +184,15 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                   <Badge variant="outline">{signal.category}</Badge>
                   <Badge variant="secondary">{signal.status}</Badge>
                   {signal.confidence && (
-                    <Badge variant="outline">
-                      {Math.round(signal.confidence * 100)}% confidence
-                    </Badge>
-                  )}
-                </div>
+                  <Badge variant="outline">
+                    {Math.round(signal.confidence * 100)}% confidence
+                  </Badge>
+                )}
+                <SignalFeedback 
+                  signalId={signal.id}
+                  onFeedbackChange={() => onSignalUpdated?.()}
+                />
+              </div>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground mt-2">
                   <Clock className="w-3 h-3" />
                   {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
