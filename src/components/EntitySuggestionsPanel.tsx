@@ -20,6 +20,7 @@ export const EntitySuggestionsPanel = () => {
   const [selectedSuggestion, setSelectedSuggestion] = useState<string | null>(null);
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [selectedEntityForMerge, setSelectedEntityForMerge] = useState<string>("");
+  const [selectedSuggestions, setSelectedSuggestions] = useState<Set<string>>(new Set());
 
   const getSourceLink = (sourceType: string, sourceId: string) => {
     switch (sourceType) {
@@ -239,6 +240,45 @@ export const EntitySuggestionsPanel = () => {
     }
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: async (suggestionIds: string[]) => {
+      const { error } = await supabase
+        .from('entity_suggestions')
+        .delete()
+        .in('id', suggestionIds);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['entity-suggestions'] });
+      toast.success('Suggestions deleted');
+      setSelectedSuggestions(new Set());
+    },
+    onError: () => {
+      toast.error('Failed to delete suggestions');
+    }
+  });
+
+  const toggleSelection = (id: string) => {
+    setSelectedSuggestions(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedSuggestions.size === suggestions?.length) {
+      setSelectedSuggestions(new Set());
+    } else {
+      setSelectedSuggestions(new Set(suggestions?.map(s => s.id) || []));
+    }
+  };
+
   if (isLoading) {
     return (
       <Card>
@@ -263,6 +303,28 @@ export const EntitySuggestionsPanel = () => {
         <CardDescription>
           Review and approve new entities detected in signals and documents
         </CardDescription>
+        {selectedSuggestions.size > 0 && (
+          <div className="flex items-center gap-2 mt-4 p-3 bg-muted rounded-lg">
+            <span className="text-sm font-medium">
+              {selectedSuggestions.size} selected
+            </span>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => deleteMutation.mutate(Array.from(selectedSuggestions))}
+              disabled={deleteMutation.isPending}
+            >
+              Delete Selected
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setSelectedSuggestions(new Set())}
+            >
+              Clear
+            </Button>
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         <ScrollArea className="h-[calc(100vh-28rem)] min-h-[300px] pr-4">
@@ -273,10 +335,28 @@ export const EntitySuggestionsPanel = () => {
             </div>
           ) : (
             <div className="space-y-4">
+              {suggestions.length > 1 && (
+                <div className="flex items-center gap-2 p-2 border rounded-lg bg-muted/50">
+                  <input
+                    type="checkbox"
+                    checked={selectedSuggestions.size === suggestions.length}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 rounded border-border"
+                  />
+                  <span className="text-sm font-medium">Select All</span>
+                </div>
+              )}
               {suggestions.map((suggestion) => (
                 <div key={suggestion.id} className="p-4 border rounded-lg space-y-3">
                   <div className="flex flex-col gap-3">
-                    <div className="flex-1 min-w-0">
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedSuggestions.has(suggestion.id)}
+                        onChange={() => toggleSelection(suggestion.id)}
+                        className="w-4 h-4 mt-1 rounded border-border"
+                      />
+                      <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2 mb-2">
                         <h4 className="font-semibold break-words">{suggestion.suggested_name}</h4>
                         <Badge variant="outline">{suggestion.suggested_type}</Badge>
@@ -312,8 +392,9 @@ export const EntitySuggestionsPanel = () => {
                         )}
                       </div>
                     </div>
+                    </div>
 
-                    <div className="flex gap-2 flex-shrink-0 flex-wrap">
+                    <div className="flex gap-2 flex-shrink-0 flex-wrap ml-7">
                       <Button
                         size="sm"
                         variant="default"
