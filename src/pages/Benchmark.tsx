@@ -69,9 +69,9 @@ const Benchmark = () => {
 
       if (docError) throw docError;
 
-      // Process document
+      // Process document using intelligence processor (more aggressive extraction)
       const { data: processData, error: processError } = await supabase.functions
-        .invoke('process-stored-document', {
+        .invoke('process-intelligence-document', {
           body: { documentId: docData.id }
         });
 

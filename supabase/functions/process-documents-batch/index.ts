@@ -42,7 +42,8 @@ Deno.serve(async (req) => {
       try {
         console.log(`Processing document ${successful + failed + 1}/${documentIds.length}: ${docId}`);
         
-        const { data, error } = await supabase.functions.invoke('process-stored-document', {
+        // Use intelligence document processor for aggressive extraction
+        const { data, error } = await supabase.functions.invoke('process-intelligence-document', {
           body: { documentId: docId }
         });
 
