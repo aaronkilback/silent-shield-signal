@@ -133,7 +133,18 @@ serve(async (req) => {
         });
 
         if (!response.ok) {
-          console.error(`Failed to fetch ${source.name}: ${response.status} ${response.statusText}`);
+          const errorMsg = `${response.status} ${response.statusText}`;
+          console.error(`Failed to fetch ${source.name}: ${errorMsg}`);
+          
+          // Update source with error status
+          await supabaseClient
+            .from('sources')
+            .update({ 
+              error_message: errorMsg,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', source.id);
+          
           continue;
         }
 
@@ -142,6 +153,16 @@ serve(async (req) => {
         totalItems += items.length;
 
         console.log(`Found ${items.length} items in ${source.name}`);
+        
+        // Clear any previous error on successful fetch
+        await supabaseClient
+          .from('sources')
+          .update({ 
+            error_message: null,
+            last_ingested_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', source.id);
 
         // Process each RSS item - ingest for AI analysis
         for (const item of items.slice(0, 10)) {
@@ -179,7 +200,17 @@ serve(async (req) => {
           }
         }
       } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
         console.error(`Error processing RSS source ${source.name}:`, error);
+        
+        // Update source with error message
+        await supabaseClient
+          .from('sources')
+          .update({ 
+            error_message: errorMsg.slice(0, 500), // Limit error message length
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', source.id);
       }
     }
 
