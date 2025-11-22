@@ -78,7 +78,12 @@ export const CreateEntityDialog = ({
     associations: '',
     active_monitoring_enabled: false,
     current_location: '',
-    monitoring_radius_km: 10
+    monitoring_radius_km: 10,
+    address_street: '',
+    address_city: '',
+    address_province: '',
+    address_postal_code: '',
+    address_country: ''
   });
 
   // Auto-enrich when dialog opens with a prefilled name
@@ -196,7 +201,12 @@ export const CreateEntityDialog = ({
           attributes: enrichedContactInfo ? { contact_info: enrichedContactInfo } : null,
           active_monitoring_enabled: formData.active_monitoring_enabled,
           current_location: formData.current_location || null,
-          monitoring_radius_km: formData.monitoring_radius_km
+          monitoring_radius_km: formData.monitoring_radius_km,
+          address_street: formData.address_street || null,
+          address_city: formData.address_city || null,
+          address_province: formData.address_province || null,
+          address_postal_code: formData.address_postal_code || null,
+          address_country: formData.address_country || null
         }])
         .select()
         .single();
@@ -235,7 +245,12 @@ export const CreateEntityDialog = ({
         associations: '',
         active_monitoring_enabled: false,
         current_location: '',
-        monitoring_radius_km: 10
+        monitoring_radius_km: 10,
+        address_street: '',
+        address_city: '',
+        address_province: '',
+        address_postal_code: '',
+        address_country: ''
       });
       setEnrichedContactInfo(null);
     } catch (error: any) {
@@ -327,6 +342,54 @@ export const CreateEntityDialog = ({
               placeholder="Additional context about this entity..."
               rows={3}
             />
+          </div>
+
+          <div className="space-y-3">
+            <Label className="text-base font-semibold">Address</Label>
+            <div className="space-y-2">
+              <Input
+                id="address_street"
+                value={formData.address_street}
+                onChange={(e) => setFormData({ ...formData, address_street: e.target.value })}
+                placeholder="Street address"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Input
+                  id="address_city"
+                  value={formData.address_city}
+                  onChange={(e) => setFormData({ ...formData, address_city: e.target.value })}
+                  placeholder="City"
+                />
+              </div>
+              <div className="space-y-2">
+                <Input
+                  id="address_province"
+                  value={formData.address_province}
+                  onChange={(e) => setFormData({ ...formData, address_province: e.target.value })}
+                  placeholder="Province/State"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Input
+                  id="address_postal_code"
+                  value={formData.address_postal_code}
+                  onChange={(e) => setFormData({ ...formData, address_postal_code: e.target.value })}
+                  placeholder="Postal/Zip code"
+                />
+              </div>
+              <div className="space-y-2">
+                <Input
+                  id="address_country"
+                  value={formData.address_country}
+                  onChange={(e) => setFormData({ ...formData, address_country: e.target.value })}
+                  placeholder="Country"
+                />
+              </div>
+            </div>
           </div>
 
           <div className="space-y-2">
