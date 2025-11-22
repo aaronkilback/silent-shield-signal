@@ -40,7 +40,7 @@ export const DashboardAIAssistant = () => {
     },
     onError: (error) => {
       console.error("Voice error:", error);
-      toast.error("Voice assistant error: " + error.message);
+      toast.error("Voice assistant error: " + error);
     },
   });
 
@@ -156,7 +156,9 @@ export const DashboardAIAssistant = () => {
       if (error) throw error;
       if (!data?.signed_url) throw new Error("No signed URL received");
 
-      await conversation.startSession({ url: data.signed_url });
+      await conversation.startSession({
+        signedUrl: data.signed_url,
+      });
     } catch (error) {
       console.error("Error starting voice conversation:", error);
       toast.error("Failed to start voice conversation");
