@@ -149,7 +149,7 @@ serve(async (req) => {
             const content = `${item.title}\n\n${item.description}`;
             
             // Ingest document for AI to analyze relevance
-            const { error: ingestError } = await supabaseClient
+            const { data: insertedDoc, error: ingestError } = await supabaseClient
               .from('ingested_documents')
               .insert({
                 title: item.title,
@@ -162,21 +162,16 @@ serve(async (req) => {
                   published_date: item.pubDate
                 },
                 processing_status: 'pending'
-              });
+              })
+              .select()
+              .single();
 
-            if (!ingestError) {
+            if (!ingestError && insertedDoc) {
               totalSignals++;
               
-              // Trigger AI processing in background
+              // Trigger AI processing with correct documentId parameter
               supabaseClient.functions.invoke('process-intelligence-document', {
-                body: { 
-                  content: content,
-                  metadata: {
-                    url: item.link,
-                    source_type: 'rss',
-                    source_name: source.name
-                  }
-                }
+                body: { documentId: insertedDoc.id }
               }).catch(err => console.error('Failed to trigger processing:', err));
             }
           } catch (error) {
