@@ -175,38 +175,56 @@ export function MonitoringHistory() {
                       </p>
                       {scan.status === 'completed' && (
                         <>
-                          <p>
-                            Scanned {scan.items_scanned} source{scan.items_scanned !== 1 ? 's' : ''}
-                            {scan.signals_created > 0 && (
-                              <span className="text-success ml-2">
-                                • Created {scan.signals_created} signal{scan.signals_created !== 1 ? 's' : ''}
-                              </span>
+                          <div className="space-y-1">
+                            {scan.scan_metadata?.sources_configured !== undefined && (
+                              <p>
+                                <span className="font-medium">Sources configured:</span>{' '}
+                                {scan.scan_metadata.sources_configured}
+                              </p>
                             )}
-                          </p>
+                            {scan.items_scanned > 0 && (
+                              <p>
+                                <span className="font-medium">Items scanned:</span>{' '}
+                                {scan.items_scanned} item{scan.items_scanned !== 1 ? 's' : ''}
+                              </p>
+                            )}
+                            {scan.signals_created > 0 && (
+                              <p className="text-success">
+                                <span className="font-medium">Signals created:</span>{' '}
+                                {scan.signals_created} signal{scan.signals_created !== 1 ? 's' : ''}
+                              </p>
+                            )}
+                          </div>
                 {scan.scan_metadata && (
-                  <div className="text-xs space-y-1">
-                    {(scan.scan_metadata as any).sources && (
+                  <div className="text-xs space-y-1 mt-2">
+                    {scan.scan_metadata.source_names && scan.scan_metadata.source_names.length > 0 && (
                       <p>
-                        <span className="font-medium">Sources:</span>{' '}
-                        {(scan.scan_metadata as any).sources.join(', ')}
+                        <span className="font-medium">Source names:</span>{' '}
+                        {scan.scan_metadata.source_names.join(', ')}
                       </p>
                     )}
-                    {(scan.scan_metadata as any).platforms && (
+                    {scan.scan_metadata.sources && (
+                      <p>
+                        <span className="font-medium">Source types:</span>{' '}
+                        {scan.scan_metadata.sources.join(', ')}
+                      </p>
+                    )}
+                    {scan.scan_metadata.platforms && (
                       <p>
                         <span className="font-medium">Platforms:</span>{' '}
-                        {(scan.scan_metadata as any).platforms.join(', ')}
+                        {scan.scan_metadata.platforms.join(', ')}
                       </p>
                     )}
-                    {(scan.scan_metadata as any).check_types && (
+                    {scan.scan_metadata.check_types && (
                       <p>
                         <span className="font-medium">Checks:</span>{' '}
-                        {(scan.scan_metadata as any).check_types.join(', ')}
+                        {scan.scan_metadata.check_types.join(', ')}
                       </p>
                     )}
-                    {(scan.scan_metadata as any).source_type && (
+                    {scan.scan_metadata.source_type && (
                       <p>
                         <span className="font-medium">Type:</span>{' '}
-                        {(scan.scan_metadata as any).source_type}
+                        {scan.scan_metadata.source_type}
                       </p>
                     )}
                   </div>
