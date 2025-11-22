@@ -2292,6 +2292,7 @@ export type Database = {
           error_message: string | null
           id: string
           last_ingested_at: string | null
+          monitor_type: string | null
           name: string
           status: string | null
           type: string
@@ -2303,6 +2304,7 @@ export type Database = {
           error_message?: string | null
           id?: string
           last_ingested_at?: string | null
+          monitor_type?: string | null
           name: string
           status?: string | null
           type: string
@@ -2314,6 +2316,7 @@ export type Database = {
           error_message?: string | null
           id?: string
           last_ingested_at?: string | null
+          monitor_type?: string | null
           name?: string
           status?: string | null
           type?: string

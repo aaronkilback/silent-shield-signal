@@ -88,6 +88,7 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
           type: type.trim(),
           config: parsedConfig,
           status: 'active',
+          monitor_type: monitorType || null,
         })
         .select();
 
