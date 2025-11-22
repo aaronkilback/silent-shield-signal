@@ -17,7 +17,7 @@ export const SignalFeedback = ({
   const { toast } = useToast();
   const { session } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [currentFeedback, setCurrentFeedback] = useState<'positive' | 'negative' | null>(null);
+  const [currentFeedback, setCurrentFeedback] = useState<'relevant' | 'irrelevant' | null>(null);
 
   useEffect(() => {
     loadFeedback();
@@ -37,11 +37,11 @@ export const SignalFeedback = ({
       .maybeSingle();
 
     if (!error && data) {
-      setCurrentFeedback(data.feedback as 'positive' | 'negative');
+      setCurrentFeedback(data.feedback as 'relevant' | 'irrelevant');
     }
   };
 
-  const handleFeedback = async (feedback: 'positive' | 'negative') => {
+  const handleFeedback = async (feedback: 'relevant' | 'irrelevant') => {
     if (!session?.user?.id) {
       toast({
         title: "Authentication Required",
@@ -87,7 +87,7 @@ export const SignalFeedback = ({
             object_type: 'signal',
             feedback,
             user_id: session.user.id,
-            notes: feedback === 'positive' 
+            notes: feedback === 'relevant' 
               ? 'Signal is relevant and useful' 
               : 'Signal is not relevant or needs improvement'
           });
@@ -96,8 +96,8 @@ export const SignalFeedback = ({
 
         setCurrentFeedback(feedback);
         toast({
-          title: feedback === 'positive' ? "Marked as Relevant" : "Marked as Not Relevant",
-          description: feedback === 'positive' 
+          title: feedback === 'relevant' ? "Marked as Relevant" : "Marked as Not Relevant",
+          description: feedback === 'relevant' 
             ? "This helps improve signal detection accuracy" 
             : "This signal will be used to improve filtering",
         });
@@ -119,22 +119,22 @@ export const SignalFeedback = ({
   return (
     <div className="flex items-center gap-1">
       <Button
-        variant={currentFeedback === 'positive' ? 'default' : 'ghost'}
+        variant={currentFeedback === 'relevant' ? 'default' : 'ghost'}
         size="sm"
-        onClick={() => handleFeedback('positive')}
+        onClick={() => handleFeedback('relevant')}
         disabled={loading}
         className="h-8 px-2"
       >
-        <ThumbsUp className={`w-4 h-4 ${currentFeedback === 'positive' ? 'fill-current' : ''}`} />
+        <ThumbsUp className={`w-4 h-4 ${currentFeedback === 'relevant' ? 'fill-current' : ''}`} />
       </Button>
       <Button
-        variant={currentFeedback === 'negative' ? 'destructive' : 'ghost'}
+        variant={currentFeedback === 'irrelevant' ? 'destructive' : 'ghost'}
         size="sm"
-        onClick={() => handleFeedback('negative')}
+        onClick={() => handleFeedback('irrelevant')}
         disabled={loading}
         className="h-8 px-2"
       >
-        <ThumbsDown className={`w-4 h-4 ${currentFeedback === 'negative' ? 'fill-current' : ''}`} />
+        <ThumbsDown className={`w-4 h-4 ${currentFeedback === 'irrelevant' ? 'fill-current' : ''}`} />
       </Button>
     </div>
   );
