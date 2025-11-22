@@ -110,6 +110,17 @@ serve(async (req) => {
           })
           .eq('id', objectId);
       }
+    } else if (objectType === 'entity_suggestion') {
+      // Fetch the suggestion to update learning profiles
+      const { data: suggestion } = await supabase
+        .from('entity_suggestions')
+        .select('*')
+        .eq('id', objectId)
+        .single();
+
+      if (suggestion) {
+        await updateEntitySuggestionLearning(supabase, suggestion, feedback);
+      }
     }
 
     console.log(`Feedback processed successfully`);
@@ -130,6 +141,69 @@ serve(async (req) => {
     );
   }
 });
+
+async function updateEntitySuggestionLearning(supabase: any, suggestion: any, feedback: string) {
+  try {
+    // Extract features from the entity suggestion
+    const text = `${suggestion.suggested_name || ''} ${suggestion.context || ''} ${suggestion.suggested_type || ''}`.toLowerCase();
+    const words = text.split(/\s+/).filter(w => w.length > 3);
+    const keywords = [...new Set(words)].slice(0, 20);
+
+    // Add entity type and name patterns as features
+    const features: Record<string, number> = {};
+    keywords.forEach(kw => features[kw] = 1);
+    
+    // Add the entity type as a strong feature
+    if (suggestion.suggested_type) {
+      features[`type:${suggestion.suggested_type.toLowerCase()}`] = 2;
+    }
+
+    // Add name pattern features (length, word count, etc.)
+    const nameWords = (suggestion.suggested_name || '').split(/\s+/).length;
+    features[`name_words:${nameWords}`] = 1;
+
+    const profileType = feedback === 'approved' 
+      ? 'approved_entity_patterns' 
+      : 'rejected_entity_patterns';
+
+    // Get existing profile
+    const { data: existingProfile } = await supabase
+      .from('learning_profiles')
+      .select('*')
+      .eq('profile_type', profileType)
+      .single();
+
+    if (existingProfile) {
+      // Update existing
+      const currentFeatures = existingProfile.features || {};
+      Object.entries(features).forEach(([key, value]) => {
+        currentFeatures[key] = (currentFeatures[key] || 0) + value;
+      });
+
+      await supabase
+        .from('learning_profiles')
+        .update({
+          features: currentFeatures,
+          sample_count: (existingProfile.sample_count || 0) + 1,
+          last_updated: new Date().toISOString()
+        })
+        .eq('id', existingProfile.id);
+    } else {
+      // Create new
+      await supabase
+        .from('learning_profiles')
+        .insert({
+          profile_type: profileType,
+          features,
+          sample_count: 1
+        });
+    }
+
+    console.log(`Updated entity learning profile: ${profileType} for ${suggestion.suggested_name}`);
+  } catch (error: any) {
+    console.error('Error updating entity learning profiles:', error?.message);
+  }
+}
 
 async function updateLearningProfiles(supabase: any, objectType: string, objectId: string, feedback: string) {
   try {
