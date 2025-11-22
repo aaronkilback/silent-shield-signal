@@ -403,32 +403,39 @@ serve(async (req) => {
     }
 
     // === TWITTER/X MONITORING (via scraping) ===
-    // Using multiple nitter instances with fallback
+    // Using multiple nitter instances with robust fallback
     const nitterInstances = [
       'https://nitter.poast.org',
       'https://nitter.privacydev.net',
-      'https://nitter.net'
+      'https://nitter.net',
+      'https://nitter.1d4.us',
+      'https://nitter.kavin.rocks'
     ];
     
     const twitterKeywords = [
-      ...SECURITY_KEYWORDS.slice(0, 3),
-      ...ACTIVIST_KEYWORDS.slice(0, 2),
-      'data breach'
+      ...SECURITY_KEYWORDS.slice(0, 5), // More security keywords
+      ...ACTIVIST_KEYWORDS.slice(0, 3),  // More activist keywords
+      'data breach',
+      'scandal'
     ];
+
+    let twitterSuccessCount = 0;
+    let twitterFailCount = 0;
 
     for (const keyword of twitterKeywords) {
       // Add delay between keyword searches
-      await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
+      await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 1000));
       
       const searchQuery = encodeURIComponent(keyword);
       let response = null;
       let successfulInstance = null;
+      let html = null;
       
       // Try each nitter instance until one works
       for (const nitterUrl of nitterInstances) {
         try {
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 15000);
+          const timeout = setTimeout(() => controller.abort(), 12000);
           
           response = await fetch(
             `${nitterUrl}/search?f=tweets&q=${searchQuery}&since=&until=&near=`,
@@ -443,8 +450,10 @@ serve(async (req) => {
           ).finally(() => clearTimeout(timeout));
 
           if (response.ok) {
+            html = await response.text();
             successfulInstance = nitterUrl;
             console.log(`Twitter search successful via ${nitterUrl} for "${keyword}"`);
+            twitterSuccessCount++;
             break;
           }
         } catch (error) {
@@ -454,27 +463,25 @@ serve(async (req) => {
         }
       }
       
-      if (!response || !response.ok || !successfulInstance) {
-        console.log(`Twitter scrape failed for "${keyword}": all instances failed`);
+      if (!html || !successfulInstance) {
+        console.log(`Twitter scrape failed for "${keyword}": all ${nitterInstances.length} instances failed`);
+        twitterFailCount++;
         continue;
       }
       
       try {
-
-        const html = await response.text();
-        
         // Parse tweets from HTML (nitter has clean structure)
         const tweetMatches = html.matchAll(/<div class="tweet-content[^"]*"[^>]*>(.*?)<\/div>/gs);
         const tweets: { content: string; link: string }[] = [];
         
-        for (const match of Array.from(tweetMatches).slice(0, 5)) {
+        for (const match of Array.from(tweetMatches).slice(0, 8)) { // Get more tweets
           const content = match[1]
             .replace(/<[^>]+>/g, ' ')
             .replace(/&[^;]+;/g, ' ')
             .replace(/\s+/g, ' ')
             .trim();
           
-          if (content.length > 20) {
+          if (content.length > 15) { // Lower minimum content length
             tweets.push({
               content,
               link: `https://twitter.com/search?q=${searchQuery}`
@@ -484,34 +491,39 @@ serve(async (req) => {
 
         console.log(`Found ${tweets.length} tweets for "${keyword}"`);
 
-        // Match tweets against clients
+        // Match tweets against clients with more lenient matching
         for (const tweet of tweets) {
           for (const client of clients || []) {
             const clientName = client.name.toLowerCase();
+            const clientWords = clientName.split(' ');
             const tweetLower = tweet.content.toLowerCase();
             
-            const mentionsClient = tweetLower.includes(clientName);
+            // More flexible name matching
+            const mentionsClient = tweetLower.includes(clientName) || 
+              clientWords.some((word: string) => word.length > 3 && tweetLower.includes(word));
+            
             const industryMatch = client.industry && 
               INDUSTRY_THREATS[client.industry.toLowerCase()]?.some(term => 
                 tweetLower.includes(term.toLowerCase())
               );
 
-            if (mentionsClient || (industryMatch && tweetLower.includes(keyword.toLowerCase()))) {
+            // Lower threshold: create signal if client mentioned OR industry match with keyword
+            if (mentionsClient || industryMatch) {
               let category = 'social_media';
               let severity = 'low';
               
               if (SECURITY_KEYWORDS.some(kw => tweetLower.includes(kw.toLowerCase()))) {
                 category = 'cybersecurity';
-                severity = 'medium';
+                severity = mentionsClient ? 'medium' : 'low'; // Adjust based on direct mention
               } else if (ACTIVIST_KEYWORDS.some(kw => tweetLower.includes(kw.toLowerCase()))) {
                 category = 'reputation';
-                severity = 'medium';
+                severity = mentionsClient ? 'medium' : 'low';
               } else if (PHYSICAL_THREAT_KEYWORDS.some(kw => tweetLower.includes(kw.toLowerCase()))) {
                 category = 'physical';
-                severity = 'high';
+                severity = mentionsClient ? 'high' : 'medium';
               }
 
-              const signalText = `Twitter: ${tweet.content.substring(0, 200)}`;
+              const signalText = `Twitter: ${tweet.content.substring(0, 250)}`;
               
               const { error: signalError } = await supabase
                 .from('signals')
@@ -525,22 +537,23 @@ serve(async (req) => {
                     platform: 'twitter',
                     keyword,
                     link: tweet.link,
-                    content: tweet.content
+                    content: tweet.content,
+                    nitter_instance: successfulInstance
                   },
                   status: 'new',
-                  confidence: mentionsClient ? 0.8 : 0.5
+                  confidence: mentionsClient ? 0.75 : 0.45 // Adjust confidence based on match type
                 });
 
               if (!signalError) {
                 signalsCreated++;
-                console.log(`Created Twitter signal for ${client.name}: ${category}`);
+                console.log(`Created Twitter signal for ${client.name}: ${category} (${severity})`);
               }
             }
           }
         }
 
         // Rate limiting between searches
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 1500));
 
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
@@ -548,9 +561,11 @@ serve(async (req) => {
         } else {
           console.error(`Error scraping Twitter for "${keyword}":`, error);
         }
+        twitterFailCount++;
       }
     }
 
+    console.log(`Twitter monitoring: ${twitterSuccessCount} successful, ${twitterFailCount} failed searches`);
     console.log(`Social media monitoring complete. Created ${signalsCreated} signals.`);
 
     if (historyEntry) {
