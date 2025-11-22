@@ -429,6 +429,11 @@ export type Database = {
       entities: {
         Row: {
           active_monitoring_enabled: boolean | null
+          address_city: string | null
+          address_country: string | null
+          address_postal_code: string | null
+          address_province: string | null
+          address_street: string | null
           aliases: string[] | null
           associations: string[] | null
           attributes: Json | null
@@ -450,6 +455,11 @@ export type Database = {
         }
         Insert: {
           active_monitoring_enabled?: boolean | null
+          address_city?: string | null
+          address_country?: string | null
+          address_postal_code?: string | null
+          address_province?: string | null
+          address_street?: string | null
           aliases?: string[] | null
           associations?: string[] | null
           attributes?: Json | null
@@ -471,6 +481,11 @@ export type Database = {
         }
         Update: {
           active_monitoring_enabled?: boolean | null
+          address_city?: string | null
+          address_country?: string | null
+          address_postal_code?: string | null
+          address_province?: string | null
+          address_street?: string | null
           aliases?: string[] | null
           associations?: string[] | null
           attributes?: Json | null
