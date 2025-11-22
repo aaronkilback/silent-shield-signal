@@ -135,7 +135,9 @@ export const DashboardAIAssistant = () => {
           console.log("Stream complete");
           break;
         }
-        textBuffer += decoder.decode(value, { stream: true });
+        const chunk = decoder.decode(value, { stream: true });
+        console.log("Received chunk:", chunk);
+        textBuffer += chunk;
 
         let newlineIndex: number;
         while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
@@ -147,20 +149,31 @@ export const DashboardAIAssistant = () => {
           if (!line.startsWith("data: ")) continue;
 
           const jsonStr = line.slice(6).trim();
+          console.log("Parsed JSON string:", jsonStr);
           if (jsonStr === "[DONE]") break;
 
           try {
             const parsed = JSON.parse(jsonStr);
+            console.log("Parsed data:", parsed);
             const delta = parsed.choices?.[0]?.delta;
+            console.log("Delta:", delta);
             
             if (delta?.content) {
+              console.log("Adding content:", delta.content);
               updateAssistantMessage(assistantContent + delta.content);
             }
-          } catch {
+          } catch (e) {
+            console.error("JSON parse error:", e);
             textBuffer = line + "\n" + textBuffer;
             break;
           }
         }
+      }
+      
+      // Make sure we have a message even if empty
+      if (assistantContent === "") {
+        console.log("No content received, adding placeholder");
+        updateAssistantMessage("I'm having trouble generating a response. Please try again.");
       }
     } catch (error) {
       console.error("Chat error:", error);
