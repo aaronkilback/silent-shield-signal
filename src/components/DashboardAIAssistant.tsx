@@ -83,30 +83,10 @@ export const DashboardAIAssistant = () => {
     setIsLoading(true);
 
     let assistantContent = "";
-    let pendingToolCalls: any[] = [];
     
     const updateAssistantMessage = (content: string) => {
       assistantContent = content;
       setMessages([...newMessages, { role: "assistant", content: assistantContent }]);
-    };
-
-    const handleToolCall = async (toolCall: any) => {
-      const toolName = toolCall.function.name;
-      const parameters = JSON.parse(toolCall.function.arguments || "{}");
-      
-      console.log("Tool call:", toolName, parameters);
-      
-      // Call our backend tool executor
-      const { data, error } = await supabase.functions.invoke("ai-tools-query", {
-        body: { toolName, parameters },
-      });
-
-      if (error) {
-        console.error("Tool execution error:", error);
-        return { error: error.message };
-      }
-
-      return data.result;
     };
 
     try {
@@ -163,13 +143,7 @@ export const DashboardAIAssistant = () => {
             const parsed = JSON.parse(jsonStr);
             const delta = parsed.choices?.[0]?.delta;
             
-            if (delta?.tool_calls) {
-              // Handle tool calls
-              for (const toolCall of delta.tool_calls) {
-                const result = await handleToolCall(toolCall);
-                updateAssistantMessage(assistantContent + `\n\n[Fetched data: ${JSON.stringify(result, null, 2)}]`);
-              }
-            } else if (delta?.content) {
+            if (delta?.content) {
               updateAssistantMessage(assistantContent + delta.content);
             }
           } catch {
