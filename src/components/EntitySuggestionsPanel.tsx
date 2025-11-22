@@ -94,6 +94,16 @@ export const EntitySuggestionsPanel = () => {
 
       if (updateError) throw updateError;
 
+      // Send positive feedback to learning system
+      await supabase.functions.invoke('process-feedback', {
+        body: {
+          objectType: 'entity_suggestion',
+          objectId: suggestionId,
+          feedback: 'approved',
+          userId: user?.id
+        }
+      });
+
       // Trigger re-correlation for the source
       await supabase.functions.invoke('correlate-entities', {
         body: {
@@ -134,10 +144,21 @@ export const EntitySuggestionsPanel = () => {
         .eq('id', suggestionId);
 
       if (error) throw error;
+
+      // Send negative feedback to learning system
+      await supabase.functions.invoke('process-feedback', {
+        body: {
+          objectType: 'entity_suggestion',
+          objectId: suggestionId,
+          feedback: 'rejected',
+          notes: 'Rejected as duplicate or incorrect entity',
+          userId: user?.id
+        }
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['entity-suggestions'] });
-      toast.success('Suggestion rejected');
+      toast.success('Suggestion rejected - system will learn to avoid similar suggestions');
       setSelectedSuggestion(null);
     },
     onError: () => {
