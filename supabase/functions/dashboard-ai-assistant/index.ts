@@ -379,6 +379,28 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "import_report_images",
+      description: "Import images from a security report into Fortress storage. Use this when users want to save report images for reference or analysis.",
+      parameters: {
+        type: "object",
+        properties: {
+          report_id: {
+            type: "string",
+            description: "The UUID of the report containing images",
+          },
+          image_indices: {
+            type: "array",
+            items: { type: "number" },
+            description: "Array of image indices to import (0-based). Omit to import all images.",
+          },
+        },
+        required: ["report_id"],
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -1739,6 +1761,21 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
         return { success: false, message: "Report not found" };
       }
 
+      // Extract images from the report content if present
+      const images: any[] = [];
+      if (data.meta_json?.images) {
+        images.push(...data.meta_json.images);
+      }
+      
+      // Check sections for images
+      if (data.meta_json?.sections) {
+        Object.values(data.meta_json.sections).forEach((section: any) => {
+          if (section?.images) {
+            images.push(...section.images);
+          }
+        });
+      }
+
       return {
         success: true,
         report: {
@@ -1747,8 +1784,101 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
           period_start: data.period_start,
           period_end: data.period_end,
           generated_at: data.generated_at,
-          full_content: data.meta_json
+          full_content: data.meta_json,
+          images: images.length > 0 ? images : null,
+          image_count: images.length
         }
+      };
+    }
+
+    case "import_report_images": {
+      const { data: report, error: reportError } = await supabaseClient
+        .from("reports")
+        .select("meta_json")
+        .eq("id", args.report_id)
+        .single();
+
+      if (reportError) throw reportError;
+      if (!report) {
+        return { success: false, message: "Report not found" };
+      }
+
+      // Extract images
+      const allImages: any[] = [];
+      if (report.meta_json?.images) {
+        allImages.push(...report.meta_json.images);
+      }
+      if (report.meta_json?.sections) {
+        Object.values(report.meta_json.sections).forEach((section: any) => {
+          if (section?.images) {
+            allImages.push(...section.images);
+          }
+        });
+      }
+
+      if (allImages.length === 0) {
+        return { success: false, message: "No images found in this report" };
+      }
+
+      // Filter by indices if specified
+      const imagesToImport = args.image_indices 
+        ? args.image_indices.map((idx: number) => allImages[idx]).filter(Boolean)
+        : allImages;
+
+      if (imagesToImport.length === 0) {
+        return { success: false, message: "No valid images to import" };
+      }
+
+      const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
+      const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      const importedImages: any[] = [];
+
+      // Import each image to storage
+      for (let i = 0; i < imagesToImport.length; i++) {
+        const image = imagesToImport[i];
+        try {
+          // If image is base64, upload directly
+          if (image.data && image.data.startsWith('data:image')) {
+            const base64Data = image.data.split(',')[1];
+            const buffer = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+            const contentType = image.data.split(';')[0].split(':')[1];
+            const extension = contentType.split('/')[1];
+            
+            const fileName = `report-images/${args.report_id}/${Date.now()}-${i}.${extension}`;
+            
+            const { data: uploadData, error: uploadError } = await supabaseClient.storage
+              .from('entity-photos')
+              .upload(fileName, buffer, {
+                contentType,
+                upsert: false
+              });
+
+            if (uploadError) {
+              console.error("Upload error:", uploadError);
+              continue;
+            }
+
+            const { data: { publicUrl } } = supabaseClient.storage
+              .from('entity-photos')
+              .getPublicUrl(fileName);
+
+            importedImages.push({
+              original_index: args.image_indices ? args.image_indices[i] : i,
+              storage_path: fileName,
+              public_url: publicUrl,
+              caption: image.caption || null
+            });
+          }
+        } catch (err) {
+          console.error("Error importing image:", err);
+        }
+      }
+
+      return {
+        success: true,
+        message: `Successfully imported ${importedImages.length} of ${imagesToImport.length} images`,
+        imported_images: importedImages,
+        total_attempted: imagesToImport.length
       };
     }
 
@@ -1931,6 +2061,13 @@ When users ask about security reports, summaries, or generated intelligence:
 2. Use get_report_content to read the full content of a specific report
 3. Report types include: 'executive_intelligence', '72h-snapshot'
 4. Reports contain structured data in sections with analysis and recommendations
+5. Reports may contain images - display them inline when reviewing content
+6. Use import_report_images to save report images to Fortress storage when requested
+
+When displaying report images:
+- Show images inline using markdown: ![Caption](image_url)
+- Note the total image count
+- Offer to import images if they contain valuable intelligence
 
 OSINT SCANNING:
 When users want intelligence on a person or organization:
