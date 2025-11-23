@@ -486,6 +486,50 @@ export const DashboardAIAssistant = () => {
       return;
     }
 
+    // Handle "help" command locally
+    if (input.trim().toLowerCase() === 'help' && attachments.length === 0) {
+      const helpMessage: Message = {
+        role: "assistant",
+        content: `**What I Can Do:**
+🔍 **Search & Analysis**
+• Find entities, signals, incidents, investigations, clients
+• Analyze security reports and uploaded intelligence documents
+• Search the knowledge base for procedures and best practices
+• Cross-reference data across the entire platform
+
+🛠️ **System Operations**
+• Trigger OSINT scans on entities
+• Check monitoring status and system health
+• Detect and fix duplicate signals
+• Diagnose system issues and errors
+
+📊 **Data & Reporting**
+• Access database schema and edge functions
+• Explain feature implementation and architecture
+• Analyze signal quality and automation metrics
+• Read executive reports and 72-hour snapshots
+
+🎯 **Intelligence**
+• Analyze uploaded threat assessments
+• Extract entities from documents
+• Correlate threats with existing data
+• Monitor for related intelligence
+
+**Try asking me:**
+• "Find recent high-severity signals"
+• "Search for entity John Doe"
+• "What active incidents are there?"
+• "Analyze the latest security report"
+• "Trigger OSINT scan for [entity name]"
+• "Check system health"
+• "Explain how signals work"`,
+      };
+      
+      setMessages([...messages, { role: "user", content: input }, helpMessage]);
+      setInput("");
+      return;
+    }
+
     let userMessage = input.trim();
     
     // Upload files if present
@@ -608,7 +652,43 @@ export const DashboardAIAssistant = () => {
     
     const defaultMessage: Message = {
       role: "assistant",
-      content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Just ask me anything - for example, try asking me to find a specific person or view recent signals.",
+      content: `Hello! I'm your Fortress AI Assistant with comprehensive platform knowledge and tools.
+
+**What I Can Do:**
+🔍 **Search & Analysis**
+• Find entities, signals, incidents, investigations, clients
+• Analyze security reports and uploaded intelligence documents
+• Search the knowledge base for procedures and best practices
+• Cross-reference data across the entire platform
+
+🛠️ **System Operations**
+• Trigger OSINT scans on entities
+• Check monitoring status and system health
+• Detect and fix duplicate signals
+• Diagnose system issues and errors
+
+📊 **Data & Reporting**
+• Access database schema and edge functions
+• Explain feature implementation and architecture
+• Analyze signal quality and automation metrics
+• Read executive reports and 72-hour snapshots
+
+🎯 **Intelligence**
+• Analyze uploaded threat assessments
+• Extract entities from documents
+• Correlate threats with existing data
+• Monitor for related intelligence
+
+**Try asking me:**
+• "Find recent high-severity signals"
+• "Search for entity John Doe"
+• "What active incidents are there?"
+• "Analyze the latest security report"
+• "Trigger OSINT scan for [entity name]"
+• "Check system health"
+• "Explain how signals work"
+
+Type "help" anytime to see this again!`,
     };
     
     if (user) {
