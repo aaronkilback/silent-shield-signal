@@ -442,6 +442,37 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "create_entity",
+      description: "Create a new entity (person, organization, location) in the system. Use this when users mention entities that don't exist yet, or before triggering OSINT scans on new entities.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Entity name",
+          },
+          type: {
+            type: "string",
+            enum: ["person", "organization", "location", "vehicle", "ip_address", "domain", "phone", "email", "cryptocurrency_wallet"],
+            description: "Type of entity",
+          },
+          description: {
+            type: "string",
+            description: "Optional description of the entity",
+          },
+          aliases: {
+            type: "array",
+            items: { type: "string" },
+            description: "Optional alternative names or aliases",
+          },
+        },
+        required: ["name", "type"],
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -735,8 +766,8 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
         if (findError.code === 'PGRST116') {
           return { 
             success: false, 
-            message: `No entity found matching "${args.entity_name}". Please create this entity first in the [Entities](/entities) page, then I can perform an OSINT scan.`,
-            note: "OSINT scans require an existing entity in the system."
+            message: `Entity "${args.entity_name}" not found. I'll create it for you first, then perform the OSINT scan.`,
+            note: "Entities must exist in the system before scanning. Use create_entity first."
           };
         }
         throw new Error(`Failed to lookup entity: ${findError.message}`);
@@ -745,8 +776,8 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       if (!entity) {
         return { 
           success: false, 
-          message: `No entity found matching "${args.entity_name}". Please create the entity first using [Create Entity](/entities).`,
-          note: "OSINT scans require an existing entity in the system."
+          message: `Entity "${args.entity_name}" not found. I should create it first before scanning.`,
+          note: "Use create_entity tool to create the entity, then trigger_osint_scan."
         };
       }
 
@@ -1981,6 +2012,55 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       };
     }
 
+    case "create_entity": {
+      const { name, type, description, aliases } = args;
+      
+      // Check if entity already exists
+      const { data: existing } = await supabaseClient
+        .from("entities")
+        .select("id, name")
+        .ilike("name", name)
+        .limit(1)
+        .maybeSingle();
+      
+      if (existing) {
+        return {
+          success: false,
+          message: `Entity "${existing.name}" already exists with ID: ${existing.id}`,
+          entity_id: existing.id
+        };
+      }
+      
+      // Create the entity
+      const { data: newEntity, error } = await supabaseClient
+        .from("entities")
+        .insert({
+          name,
+          type,
+          description: description || null,
+          aliases: aliases || null,
+          is_active: true,
+          entity_status: 'active'
+        })
+        .select("id, name, type")
+        .single();
+      
+      if (error) {
+        console.error("Failed to create entity:", error);
+        return {
+          success: false,
+          message: `Failed to create entity: ${error.message}`
+        };
+      }
+      
+      return {
+        success: true,
+        message: `Created entity "${newEntity.name}" (${newEntity.type}) with ID: ${newEntity.id}`,
+        entity: newEntity,
+        next_step: "You can now trigger an OSINT scan on this entity to gather intelligence."
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -2373,9 +2453,21 @@ After analysis, mention:
 
 OSINT SCANNING:
 When users want intelligence on a person or organization:
-1. Check if entity exists using search_entities
-2. Check for existing signals using search_signals_by_entity
-3. If no signals, use trigger_osint_scan for comprehensive web search
+1. Use search_entities first to check if entity exists
+2. If entity doesn't exist:
+   a. Use create_entity to create it first (choose appropriate type: person, organization, location, etc.)
+   b. Wait for successful creation
+3. Then check for existing signals using search_signals_by_entity
+4. If no signals or entity is new, use trigger_osint_scan for comprehensive web search
+5. Present findings and suggest next steps
+
+ENTITY CREATION:
+When creating entities:
+- person: Individual people (executives, activists, targets of interest)
+- organization: Companies, groups, agencies
+- location: Physical places, addresses, regions
+- vehicle: Cars, planes, ships (if tracking physical assets)
+- For digital assets: ip_address, domain, email, phone, cryptocurrency_wallet
 
 CODE AND DATA ISSUES:
 When users ask about duplicates, data quality, or cleaning:
