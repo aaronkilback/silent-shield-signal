@@ -101,12 +101,13 @@ export const DashboardAIAssistant = () => {
     loadMessages();
   }, [user]);
 
-  // Save messages to database only when conversation is idle (not while typing)
+  // Save messages to database only after conversation completes
   useEffect(() => {
-    if (!user || isLoadingHistory || messages.length === 0) return;
+    if (!user || isLoadingHistory || messages.length === 0 || isLoading) return;
 
-    // Only save when not loading (after user has sent message and AI responded)
-    if (isLoading) return;
+    // Only save completed conversations (when AI is done responding)
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage.role !== 'assistant') return;
 
     const saveMessages = async () => {
       try {
@@ -135,8 +136,8 @@ export const DashboardAIAssistant = () => {
       }
     };
 
-    // Save after conversation is complete (long delay)
-    const timeoutId = setTimeout(saveMessages, 5000);
+    // Save after AI completes response
+    const timeoutId = setTimeout(saveMessages, 2000);
     
     return () => clearTimeout(timeoutId);
   }, [messages, user, isLoadingHistory, isLoading]);
@@ -186,18 +187,17 @@ export const DashboardAIAssistant = () => {
     },
   });
 
-  // Scroll to bottom when messages change (runs after DOM update but before paint)
+  // Scroll to bottom when messages change, but throttle during streaming
   useLayoutEffect(() => {
     if (scrollRef.current && !isLoadingHistory) {
-      // ScrollArea wraps content in a viewport div
       const viewport = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
       if (viewport) {
         viewport.scrollTop = viewport.scrollHeight;
       }
     }
-  }, [messages, isLoadingHistory]);
+  }, [messages.length, isLoadingHistory]); // Only run when message count changes, not on content updates
 
-  // Also scroll to bottom after initial load
+  // Scroll to bottom after initial load
   useEffect(() => {
     if (!isLoadingHistory && scrollRef.current) {
       setTimeout(() => {
