@@ -384,18 +384,24 @@ export const DashboardAIAssistant = () => {
     if (attachments.length > 0) {
       const uploadedUrls = await uploadFiles();
       if (uploadedUrls.length > 0) {
-        // Separate images from other files
+        // Format attachments for AI processing
         const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+        const pdfExtension = '.pdf';
         const formattedAttachments = uploadedUrls.map((url, idx) => {
           const fileName = attachments[idx].name;
           const fileExt = fileName.toLowerCase().substring(fileName.lastIndexOf('.'));
           
-          // Use image markdown format for images so AI can see them
+          // Images use image markdown
           if (imageExtensions.includes(fileExt)) {
             return `![${fileName}](${url})`;
           }
           
-          // For non-image files, provide context
+          // PDFs use special PDF markdown (Gemini can read these)
+          if (fileExt === pdfExtension) {
+            return `📄 PDF Document: ${fileName}\nURL: ${url}`;
+          }
+          
+          // Other files
           return `📎 File: ${fileName}\nURL: ${url}`;
         }).join('\n\n');
         

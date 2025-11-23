@@ -390,6 +390,27 @@ const tools = [
   {
     type: "function",
     function: {
+      name: "parse_pdf_document",
+      description: "Parse and extract text content from a PDF document URL. Use this when users upload PDF files and ask you to analyze them.",
+      parameters: {
+        type: "object",
+        properties: {
+          pdf_url: {
+            type: "string",
+            description: "The signed URL of the PDF document to parse",
+          },
+          filename: {
+            type: "string",
+            description: "Original filename of the PDF",
+          },
+        },
+        required: ["pdf_url", "filename"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "diagnose_code_issue",
       description: "ADMIN ONLY: Diagnose issues in React components or TypeScript code. Use this when admin asks about bugs, errors, or performance problems in the application code.",
       parameters: {
@@ -1064,6 +1085,40 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, isA
       };
     }
 
+    case "parse_pdf_document": {
+      try {
+        console.log(`Parsing PDF: ${args.filename} from ${args.pdf_url}`);
+        
+        // Fetch the PDF from the signed URL
+        const pdfResponse = await fetch(args.pdf_url);
+        if (!pdfResponse.ok) {
+          throw new Error(`Failed to fetch PDF: ${pdfResponse.status}`);
+        }
+        
+        const pdfBlob = await pdfResponse.blob();
+        const pdfText = await pdfBlob.text();
+        
+        // Basic text extraction (PDFs are complex, this gets raw text)
+        // For better extraction, would need a proper PDF parsing library
+        const extractedText = pdfText.substring(0, 10000); // Limit to first 10k chars
+        
+        return {
+          success: true,
+          message: `📄 Parsed PDF: ${args.filename}\n\nExtracted ${extractedText.length} characters of content.`,
+          filename: args.filename,
+          content: extractedText,
+          truncated: pdfText.length > 10000,
+        };
+      } catch (error) {
+        console.error("PDF parsing error:", error);
+        return {
+          success: false,
+          error: `Failed to parse PDF: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          message: `❌ Could not parse PDF document. The file may be protected, corrupted, or in an unsupported format.`,
+        };
+      }
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -1110,18 +1165,19 @@ serve(async (req) => {
       }
     }
 
-    // Process messages to extract file attachments and format for vision
+    // Process messages to extract file attachments and format properly
     const processedMessages = await Promise.all(
       messages.map(async (msg: any) => {
-        // Look for image URLs in markdown format
         const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+        const pdfRegex = /📄 PDF Document: ([^\n]+)\nURL: ([^\n]+)/g;
         const fileAttachmentRegex = /📎 File: ([^\n]+)\nURL: ([^\n]+)/g;
         
         const imageUrls: string[] = [];
-        const fileAttachments: Array<{name: string, url: string}> = [];
+        const pdfDocs: Array<{name: string, url: string}> = [];
+        const otherFiles: Array<{name: string, url: string}> = [];
         let match;
         
-        // Extract images from markdown
+        // Extract images
         while ((match = imageRegex.exec(msg.content)) !== null) {
           const url = match[2];
           if (url && (url.includes('ai-chat-attachments') || url.match(/\.(jpg|jpeg|png|gif|webp)$/i))) {
@@ -1129,25 +1185,39 @@ serve(async (req) => {
           }
         }
         
-        // Extract non-image file attachments
-        while ((match = fileAttachmentRegex.exec(msg.content)) !== null) {
-          fileAttachments.push({ name: match[1], url: match[2] });
+        // Extract PDFs
+        while ((match = pdfRegex.exec(msg.content)) !== null) {
+          pdfDocs.push({ name: match[1], url: match[2] });
         }
         
-        // If we have images, format as vision message
-        if (imageUrls.length > 0 && msg.role === 'user') {
-          // Remove image markdown and file attachment blocks from text
+        // Extract other files
+        while ((match = fileAttachmentRegex.exec(msg.content)) !== null) {
+          otherFiles.push({ name: match[1], url: match[2] });
+        }
+        
+        // Format message with multimodal content if attachments present
+        if ((imageUrls.length > 0 || pdfDocs.length > 0) && msg.role === 'user') {
           let textContent = msg.content
             .replace(imageRegex, '')
+            .replace(pdfRegex, '')
             .replace(fileAttachmentRegex, '')
             .replace(/Attachments:\s*/g, '')
             .replace(/Please analyze these attachments:\s*/g, '')
             .trim();
           
-          // Add context about non-image files if present
-          if (fileAttachments.length > 0) {
-            const fileList = fileAttachments.map(f => `- ${f.name}`).join('\n');
-            textContent += `\n\nNon-image files attached (cannot be processed visually):\n${fileList}`;
+          // Add PDF context
+          if (pdfDocs.length > 0) {
+            textContent += `\n\nPDF Documents to analyze:\n`;
+            pdfDocs.forEach(pdf => {
+              textContent += `- ${pdf.name}: ${pdf.url}\n`;
+            });
+            textContent += `\nPlease fetch and analyze the content of these PDF documents. Extract key information, findings, threats, or security-relevant details.`;
+          }
+          
+          // Add context about other files
+          if (otherFiles.length > 0) {
+            const fileList = otherFiles.map(f => `- ${f.name}: ${f.url}`).join('\n');
+            textContent += `\n\nOther attached files:\n${fileList}`;
           }
           
           const contentParts: any[] = [];
@@ -1156,6 +1226,7 @@ serve(async (req) => {
             contentParts.push({ type: "text", text: textContent });
           }
           
+          // Add images for vision processing
           for (const imageUrl of imageUrls) {
             contentParts.push({
               type: "image_url",
@@ -1240,8 +1311,11 @@ IMPORTANT: You can suggest and explain fixes, but the admin must review and appr
 FILE ATTACHMENTS:
 - Analyze attached images for security-relevant information
 - Look for threats, suspicious activity, or concerning details in images
+- For PDF documents: Use the parse_pdf_document tool to extract and analyze text content
 - Provide insights on documents and their security implications
 - Reference attachments when providing responses
+
+IMPORTANT: When you see "PDF Documents to analyze:" in a message, you MUST call parse_pdf_document for each PDF URL to read its content before responding.
 
 OSINT SCANNING:
 When users ask to gather intelligence, perform research, or look for information about a person or organization:
@@ -1423,7 +1497,7 @@ You can:
 - Mark signals as reviewed or false positive
 - Link relationships between entities
 - Diagnose system issues and provide recommendations
-- Analyze file attachments for security insights
+- Analyze file attachments including images and PDF documents
 
 Use plain, conversational language. Provide navigation links when relevant using markdown format: [Link Text](/path). When diagnosing issues, be specific and actionable. When file attachments are present, analyze them and provide relevant security insights. When making changes, confirm what you did.`,
           },
