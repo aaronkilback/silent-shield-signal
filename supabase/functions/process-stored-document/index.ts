@@ -322,11 +322,14 @@ serve(async (req) => {
       await supabase
         .from('archival_documents')
         .update({
+          content_text: textContent, // Store whatever text we have
           metadata: {
             ...document.metadata,
             entities_processed: true,
             processing_note: 'Document too short for analysis',
-            processed_at: new Date().toISOString()
+            processed_at: new Date().toISOString(),
+            text_extracted: true,
+            text_length: textContent.length
           }
         })
         .eq('id', documentId);
@@ -749,16 +752,19 @@ Think like a professional intelligence analyst reading an opposition research do
       }
     }
 
-    // Update document with entity mentions
+    // Update document with entity mentions AND extracted text content
     const entityNames = entitySuggestions.map(e => e.suggested_name);
     await supabase
       .from('archival_documents')
       .update({
+        content_text: textContent, // Store the extracted text for AI analysis
         entity_mentions: entityNames,
         metadata: {
           ...document.metadata,
           entities_processed: true,
-          entities_processed_at: new Date().toISOString()
+          entities_processed_at: new Date().toISOString(),
+          text_extracted: true,
+          text_length: textContent.length
         }
       })
       .eq('id', documentId);
