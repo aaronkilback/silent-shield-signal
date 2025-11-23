@@ -190,20 +190,22 @@ export const DashboardAIAssistant = () => {
   const streamChat = async (userMessage: string) => {
     console.log("streamChat called with:", userMessage);
     const newMessages = [...messages, { role: "user" as const, content: userMessage }];
-    // Add user message and empty assistant message immediately
-    setMessages([...newMessages, { role: "assistant", content: "" }]);
+    setMessages(newMessages);
     setIsLoading(true);
 
     let assistantContent = "";
+    let lastUpdateTime = 0;
+    const UPDATE_INTERVAL = 100; // Update UI every 100ms max
     
-    const updateAssistantMessage = (content: string) => {
+    const updateAssistantMessage = (content: string, force = false) => {
       assistantContent = content;
-      // Update only the last message (assistant) instead of recreating entire array
-      setMessages(prev => {
-        const updated = [...prev];
-        updated[updated.length - 1] = { role: "assistant", content: assistantContent };
-        return updated;
-      });
+      const now = Date.now();
+      
+      // Throttle updates to reduce lag
+      if (force || now - lastUpdateTime >= UPDATE_INTERVAL) {
+        lastUpdateTime = now;
+        setMessages([...newMessages, { role: "assistant", content: assistantContent }]);
+      }
     };
 
     try {
@@ -224,15 +226,13 @@ export const DashboardAIAssistant = () => {
 
       if (response.status === 429) {
         toast.error("Rate limit exceeded. Please try again later.");
-        // Remove the empty assistant message
-        setMessages(prev => prev.slice(0, -1));
+        setMessages(newMessages);
         return;
       }
 
       if (response.status === 402) {
         toast.error("Payment required. Please add funds to your workspace.");
-        // Remove the empty assistant message
-        setMessages(prev => prev.slice(0, -1));
+        setMessages(newMessages);
         return;
       }
 
@@ -291,13 +291,15 @@ export const DashboardAIAssistant = () => {
       // Make sure we have a message even if empty
       if (assistantContent === "") {
         console.log("No content received, adding placeholder");
-        updateAssistantMessage("I'm having trouble generating a response. Please try again.");
+        updateAssistantMessage("I'm having trouble generating a response. Please try again.", true);
+      } else {
+        // Force final update to ensure last content is shown
+        updateAssistantMessage(assistantContent, true);
       }
     } catch (error) {
       console.error("Chat error:", error);
       toast.error("Failed to get response. Please try again.");
-      // Remove the empty assistant message on error
-      setMessages(prev => prev.slice(0, -1));
+      setMessages(newMessages);
     } finally {
       console.log("streamChat complete, setting isLoading to false");
       setIsLoading(false);
