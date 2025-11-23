@@ -594,6 +594,18 @@ export const DashboardAIAssistant = () => {
   };
 
   const clearHistory = async () => {
+    // Show confirmation dialog
+    const confirmed = window.confirm(
+      "Clear conversation history?\n\n" +
+      "This will clear your chat messages but the AI will keep:\n" +
+      "✓ Full platform knowledge and tools\n" +
+      "✓ Access to all your data (entities, signals, incidents, etc.)\n" +
+      "✓ Ability to search and analyze\n\n" +
+      "Only the conversation messages will be cleared."
+    );
+    
+    if (!confirmed) return;
+    
     const defaultMessage: Message = {
       role: "assistant",
       content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Just ask me anything - for example, try asking me to find a specific person or view recent signals.",
@@ -626,7 +638,7 @@ export const DashboardAIAssistant = () => {
     
     setMessages([defaultMessage]);
     localStorage.removeItem(STORAGE_KEY);
-    toast.success("Chat history cleared");
+    toast.success("Conversation cleared - AI knowledge and tools intact");
   };
 
   return (
@@ -659,8 +671,9 @@ export const DashboardAIAssistant = () => {
             size="sm"
             onClick={clearHistory}
             className="text-xs"
+            title="Clear conversation messages only (AI keeps all platform knowledge and tools)"
           >
-            Clear History
+            Clear Conversation
           </Button>
         </div>
       </CardHeader>
