@@ -101,13 +101,9 @@ export const DashboardAIAssistant = () => {
     loadMessages();
   }, [user]);
 
-  // Save messages to database only after conversation completes
+  // Save messages to database with debounce
   useEffect(() => {
-    if (!user || isLoadingHistory || messages.length === 0 || isLoading) return;
-
-    // Only save completed conversations (when AI is done responding)
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage.role !== 'assistant') return;
+    if (!user || isLoadingHistory || messages.length === 0) return;
 
     const saveMessages = async () => {
       try {
@@ -136,11 +132,10 @@ export const DashboardAIAssistant = () => {
       }
     };
 
-    // Save after AI completes response
-    const timeoutId = setTimeout(saveMessages, 2000);
+    const timeoutId = setTimeout(saveMessages, 1000);
     
     return () => clearTimeout(timeoutId);
-  }, [messages, user, isLoadingHistory, isLoading]);
+  }, [messages, user, isLoadingHistory]);
 
   const conversation = useConversation({
     onConnect: () => {
@@ -187,27 +182,15 @@ export const DashboardAIAssistant = () => {
     },
   });
 
-  // Scroll to bottom when messages change, but throttle during streaming
-  useLayoutEffect(() => {
+  // Scroll to bottom on new messages
+  useEffect(() => {
     if (scrollRef.current && !isLoadingHistory) {
       const viewport = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
       if (viewport) {
         viewport.scrollTop = viewport.scrollHeight;
       }
     }
-  }, [messages.length, isLoadingHistory]); // Only run when message count changes, not on content updates
-
-  // Scroll to bottom after initial load
-  useEffect(() => {
-    if (!isLoadingHistory && scrollRef.current) {
-      setTimeout(() => {
-        const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
-        if (viewport) {
-          viewport.scrollTop = viewport.scrollHeight;
-        }
-      }, 200);
-    }
-  }, [isLoadingHistory]);
+  }, [messages, isLoadingHistory]);
 
   const streamChat = async (userMessage: string) => {
     console.log("streamChat called with:", userMessage);
@@ -396,9 +379,9 @@ export const DashboardAIAssistant = () => {
             return `![${fileName}](${url})`;
           }
           
-          // PDFs use special PDF markdown (Gemini can read these)
+          // PDFs use file markdown
           if (fileExt === pdfExtension) {
-            return `📄 PDF Document: ${fileName}\nURL: ${url}`;
+            return `📎 PDF: ${fileName}\nURL: ${url}`;
           }
           
           // Other files

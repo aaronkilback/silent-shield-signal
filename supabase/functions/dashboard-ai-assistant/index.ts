@@ -390,27 +390,6 @@ const tools = [
   {
     type: "function",
     function: {
-      name: "parse_pdf_document",
-      description: "Parse and extract text content from a PDF document URL. Use this when users upload PDF files and ask you to analyze them.",
-      parameters: {
-        type: "object",
-        properties: {
-          pdf_url: {
-            type: "string",
-            description: "The signed URL of the PDF document to parse",
-          },
-          filename: {
-            type: "string",
-            description: "Original filename of the PDF",
-          },
-        },
-        required: ["pdf_url", "filename"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
       name: "diagnose_code_issue",
       description: "ADMIN ONLY: Diagnose issues in React components or TypeScript code. Use this when admin asks about bugs, errors, or performance problems in the application code.",
       parameters: {
@@ -1085,39 +1064,6 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, isA
       };
     }
 
-    case "parse_pdf_document": {
-      try {
-        console.log(`Parsing PDF: ${args.filename} from ${args.pdf_url}`);
-        
-        // Fetch the PDF from the signed URL
-        const pdfResponse = await fetch(args.pdf_url);
-        if (!pdfResponse.ok) {
-          throw new Error(`Failed to fetch PDF: ${pdfResponse.status}`);
-        }
-        
-        const pdfBlob = await pdfResponse.blob();
-        const pdfText = await pdfBlob.text();
-        
-        // Basic text extraction (PDFs are complex, this gets raw text)
-        // For better extraction, would need a proper PDF parsing library
-        const extractedText = pdfText.substring(0, 10000); // Limit to first 10k chars
-        
-        return {
-          success: true,
-          message: `📄 Parsed PDF: ${args.filename}\n\nExtracted ${extractedText.length} characters of content.`,
-          filename: args.filename,
-          content: extractedText,
-          truncated: pdfText.length > 10000,
-        };
-      } catch (error) {
-        console.error("PDF parsing error:", error);
-        return {
-          success: false,
-          error: `Failed to parse PDF: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          message: `❌ Could not parse PDF document. The file may be protected, corrupted, or in an unsupported format.`,
-        };
-      }
-    }
 
     default:
       throw new Error(`Unknown tool: ${toolName}`);
@@ -1169,11 +1115,9 @@ serve(async (req) => {
     const processedMessages = await Promise.all(
       messages.map(async (msg: any) => {
         const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
-        const pdfRegex = /📄 PDF Document: ([^\n]+)\nURL: ([^\n]+)/g;
-        const fileAttachmentRegex = /📎 File: ([^\n]+)\nURL: ([^\n]+)/g;
+        const fileAttachmentRegex = /📎 [^:]+: ([^\n]+)\nURL: ([^\n]+)/g;
         
         const imageUrls: string[] = [];
-        const pdfDocs: Array<{name: string, url: string}> = [];
         const otherFiles: Array<{name: string, url: string}> = [];
         let match;
         
@@ -1185,39 +1129,24 @@ serve(async (req) => {
           }
         }
         
-        // Extract PDFs
-        while ((match = pdfRegex.exec(msg.content)) !== null) {
-          pdfDocs.push({ name: match[1], url: match[2] });
-        }
-        
         // Extract other files
         while ((match = fileAttachmentRegex.exec(msg.content)) !== null) {
           otherFiles.push({ name: match[1], url: match[2] });
         }
         
         // Format message with multimodal content if attachments present
-        if ((imageUrls.length > 0 || pdfDocs.length > 0) && msg.role === 'user') {
+        if (imageUrls.length > 0 && msg.role === 'user') {
           let textContent = msg.content
             .replace(imageRegex, '')
-            .replace(pdfRegex, '')
             .replace(fileAttachmentRegex, '')
             .replace(/Attachments:\s*/g, '')
             .replace(/Please analyze these attachments:\s*/g, '')
             .trim();
           
-          // Add PDF context
-          if (pdfDocs.length > 0) {
-            textContent += `\n\nPDF Documents to analyze:\n`;
-            pdfDocs.forEach(pdf => {
-              textContent += `- ${pdf.name}: ${pdf.url}\n`;
-            });
-            textContent += `\nPlease fetch and analyze the content of these PDF documents. Extract key information, findings, threats, or security-relevant details.`;
-          }
-          
           // Add context about other files
           if (otherFiles.length > 0) {
             const fileList = otherFiles.map(f => `- ${f.name}: ${f.url}`).join('\n');
-            textContent += `\n\nOther attached files:\n${fileList}`;
+            textContent += `\n\nAttached files:\n${fileList}`;
           }
           
           const contentParts: any[] = [];
