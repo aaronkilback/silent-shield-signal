@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -194,9 +194,18 @@ export const DashboardAIAssistant = () => {
     const newMessages = [...messages, { role: "user" as const, content: userMessage }];
     setMessages(newMessages);
     setIsLoading(true);
-    setStreamingContent("");
 
     let contentBuffer = "";
+    let pendingUpdate: NodeJS.Timeout | null = null;
+
+    const scheduleUpdate = () => {
+      if (pendingUpdate) return;
+      
+      pendingUpdate = setTimeout(() => {
+        setStreamingContent(contentBuffer);
+        pendingUpdate = null;
+      }, 50);
+    };
 
     try {
       console.log("Fetching from edge function...");
@@ -269,7 +278,7 @@ export const DashboardAIAssistant = () => {
             if (delta?.content) {
               console.log("Adding content:", delta.content);
               contentBuffer += delta.content;
-              setStreamingContent(contentBuffer);
+              scheduleUpdate();
             }
           } catch (e) {
             console.error("JSON parse error:", e);
@@ -280,6 +289,10 @@ export const DashboardAIAssistant = () => {
       }
       
       // Add final message to history
+      if (pendingUpdate) {
+        clearTimeout(pendingUpdate);
+      }
+      
       if (contentBuffer) {
         setMessages([...newMessages, { role: "assistant", content: contentBuffer }]);
       } else {
@@ -293,6 +306,10 @@ export const DashboardAIAssistant = () => {
       toast.error("Failed to get response. Please try again.");
       setMessages(newMessages);
       setStreamingContent("");
+      
+      if (pendingUpdate) {
+        clearTimeout(pendingUpdate);
+      }
     } finally {
       console.log("streamChat complete, setting isLoading to false");
       setIsLoading(false);
@@ -371,6 +388,56 @@ export const DashboardAIAssistant = () => {
     console.log("Calling streamChat with message:", userMessage);
     await streamChat(userMessage);
   };
+
+  const MessageList = useMemo(() => {
+    return messages.map((message, index) => (
+      <div
+        key={`${index}-${message.content.substring(0, 20)}`}
+        className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+      >
+        <div
+          className={`max-w-[80%] rounded-lg p-3 ${
+            message.role === "user"
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted"
+          }`}
+        >
+          <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
+            <ReactMarkdown
+              components={{
+                a: ({ node, href, children, ...props }) => {
+                  const handleClick = (e: React.MouseEvent) => {
+                    e.preventDefault();
+                    if (href?.startsWith('/')) {
+                      navigate(href);
+                      toast.success("Navigating to " + href);
+                    } else if (href) {
+                      window.open(href, '_blank', 'noopener,noreferrer');
+                    }
+                  };
+                  return (
+                    <a
+                      href={href}
+                      onClick={handleClick}
+                      className="text-primary hover:underline cursor-pointer font-medium"
+                      {...props}
+                    >
+                      {children}
+                    </a>
+                  );
+                },
+                p: ({ node, children, ...props }) => (
+                  <p className="mb-2 last:mb-0" {...props}>{children}</p>
+                ),
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
+          </div>
+        </div>
+      </div>
+    ));
+  }, [messages, navigate]);
 
   const startVoiceConversation = async () => {
     if (!agentId.trim()) {
@@ -456,54 +523,8 @@ export const DashboardAIAssistant = () => {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {messages.map((message, index) => (
-                  <div
-                    key={index}
-                    className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-                  >
-                     <div
-                       className={`max-w-[80%] rounded-lg p-3 ${
-                         message.role === "user"
-                           ? "bg-primary text-primary-foreground"
-                           : "bg-muted"
-                       }`}
-                     >
-                       <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
-                         <ReactMarkdown
-                           components={{
-                             a: ({ node, href, children, ...props }) => {
-                               const handleClick = (e: React.MouseEvent) => {
-                                 e.preventDefault();
-                                 if (href?.startsWith('/')) {
-                                   navigate(href);
-                                   toast.success("Navigating to " + href);
-                                 } else if (href) {
-                                   window.open(href, '_blank', 'noopener,noreferrer');
-                                 }
-                               };
-                               return (
-                                 <a
-                                   href={href}
-                                   onClick={handleClick}
-                                   className="text-primary hover:underline cursor-pointer font-medium"
-                                   {...props}
-                                 >
-                                   {children}
-                                 </a>
-                               );
-                             },
-                             p: ({ node, children, ...props }) => (
-                               <p className="mb-2 last:mb-0" {...props}>{children}</p>
-                             ),
-                           }}
-                         >
-                           {message.content}
-                         </ReactMarkdown>
-                       </div>
-                     </div>
-                  </div>
-                 ))}
-                 {streamingContent && (
+                  {MessageList}
+                  {streamingContent && (
                    <div className="flex justify-start">
                      <div className="max-w-[80%] rounded-lg p-3 bg-muted">
                        <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
