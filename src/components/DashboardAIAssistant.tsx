@@ -133,7 +133,12 @@ export const DashboardAIAssistant = () => {
 
     // Debounce saves to avoid too many database writes
     const timeoutId = setTimeout(saveMessages, 1000);
-    return () => clearTimeout(timeoutId);
+    
+    // Save immediately on unmount
+    return () => {
+      clearTimeout(timeoutId);
+      saveMessages();
+    };
   }, [messages, user, isLoadingHistory]);
 
   const conversation = useConversation({
