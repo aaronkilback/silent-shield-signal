@@ -31,6 +31,14 @@ export const DashboardAIAssistant = () => {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to bottom helper
+  const scrollToBottom = () => {
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, 100);
+  };
 
   // Load messages from database on mount
   useEffect(() => {
@@ -94,6 +102,8 @@ export const DashboardAIAssistant = () => {
         setMessages([defaultMessage]);
       } finally {
         setIsLoadingHistory(false);
+        // Scroll to bottom after loading history
+        scrollToBottom();
       }
     };
 
@@ -186,11 +196,12 @@ export const DashboardAIAssistant = () => {
     },
   });
 
+  // Auto-scroll when messages change
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (!isLoadingHistory) {
+      scrollToBottom();
     }
-  }, [messages]);
+  }, [messages, isLoadingHistory]);
 
   const streamChat = async (userMessage: string) => {
     console.log("streamChat called with:", userMessage);
@@ -518,6 +529,7 @@ export const DashboardAIAssistant = () => {
                     </div>
                   </div>
                 )}
+                <div ref={messagesEndRef} />
               </div>
               )}
             </ScrollArea>
