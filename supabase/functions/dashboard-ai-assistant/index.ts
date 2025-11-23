@@ -22,7 +22,7 @@ const tools = [
           },
           client_id: {
             type: "string",
-            description: "Filter by specific client ID",
+            description: "Filter by client - can be either a UUID or client name (will search by name)",
           },
         },
       },
@@ -202,7 +202,30 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
         .limit(args.limit || 10);
 
       if (args.client_id) {
-        query = query.eq("client_id", args.client_id);
+        // Check if it's a valid UUID format
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        
+        if (uuidRegex.test(args.client_id)) {
+          // It's a UUID, use directly
+          query = query.eq("client_id", args.client_id);
+        } else {
+          // It's likely a client name, look it up first
+          const { data: client, error: clientError } = await supabaseClient
+            .from("clients")
+            .select("id")
+            .ilike("name", `%${args.client_id}%`)
+            .limit(1)
+            .single();
+          
+          if (clientError || !client) {
+            return { 
+              message: `No client found matching "${args.client_id}"`,
+              signals: [] 
+            };
+          }
+          
+          query = query.eq("client_id", client.id);
+        }
       }
 
       const { data, error } = await query;
