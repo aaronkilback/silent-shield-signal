@@ -190,14 +190,20 @@ export const DashboardAIAssistant = () => {
   const streamChat = async (userMessage: string) => {
     console.log("streamChat called with:", userMessage);
     const newMessages = [...messages, { role: "user" as const, content: userMessage }];
-    setMessages(newMessages);
+    // Add user message and empty assistant message immediately
+    setMessages([...newMessages, { role: "assistant", content: "" }]);
     setIsLoading(true);
 
     let assistantContent = "";
     
     const updateAssistantMessage = (content: string) => {
       assistantContent = content;
-      setMessages([...newMessages, { role: "assistant", content: assistantContent }]);
+      // Update only the last message (assistant) instead of recreating entire array
+      setMessages(prev => {
+        const updated = [...prev];
+        updated[updated.length - 1] = { role: "assistant", content: assistantContent };
+        return updated;
+      });
     };
 
     try {
@@ -218,13 +224,15 @@ export const DashboardAIAssistant = () => {
 
       if (response.status === 429) {
         toast.error("Rate limit exceeded. Please try again later.");
-        setMessages(newMessages);
+        // Remove the empty assistant message
+        setMessages(prev => prev.slice(0, -1));
         return;
       }
 
       if (response.status === 402) {
         toast.error("Payment required. Please add funds to your workspace.");
-        setMessages(newMessages);
+        // Remove the empty assistant message
+        setMessages(prev => prev.slice(0, -1));
         return;
       }
 
@@ -288,7 +296,8 @@ export const DashboardAIAssistant = () => {
     } catch (error) {
       console.error("Chat error:", error);
       toast.error("Failed to get response. Please try again.");
-      setMessages(newMessages);
+      // Remove the empty assistant message on error
+      setMessages(prev => prev.slice(0, -1));
     } finally {
       console.log("streamChat complete, setting isLoading to false");
       setIsLoading(false);
