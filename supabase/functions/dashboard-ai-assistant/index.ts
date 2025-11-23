@@ -191,9 +191,10 @@ const tools = [
 
 // Execute tools by querying Supabase
 async function executeTool(toolName: string, args: any, supabaseClient: any) {
-  console.log(`Executing tool: ${toolName}`, args);
+  console.log(`Executing tool: ${toolName}`, JSON.stringify(args));
 
-  switch (toolName) {
+  try {
+    switch (toolName) {
     case "get_recent_signals": {
       let query = supabaseClient
         .from("signals")
@@ -404,9 +405,17 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
         .ilike("name", `%${args.entity_name}%`)
         .limit(5);
 
-      if (entityError) throw entityError;
+      if (entityError) {
+        console.error("Entity search error:", entityError);
+        throw new Error(`Failed to search entities: ${entityError.message}`);
+      }
+      
       if (!entities || entities.length === 0) {
-        return { message: `No entity found matching "${args.entity_name}"`, signals: [] };
+        return { 
+          success: false,
+          message: `No entity found matching "${args.entity_name}". You may need to create this entity first in the [Entities](/entities) page.`,
+          signals: [] 
+        };
       }
 
       // Get entity IDs
@@ -420,13 +429,18 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
         .order("detected_at", { ascending: false })
         .limit(args.limit || 20);
 
-      if (mentionsError) throw mentionsError;
+      if (mentionsError) {
+        console.error("Entity mentions search error:", mentionsError);
+        throw new Error(`Failed to search entity mentions: ${mentionsError.message}`);
+      }
 
       if (!mentions || mentions.length === 0) {
         return { 
+          success: true,
           entities: entities,
-          message: `Found entity "${entities[0].name}" but no signals mention this entity yet.`,
-          signals: [] 
+          message: `Found entity "${entities[0].name}" (${entities[0].type}) but no intelligence signals mention this entity yet. You can perform an OSINT scan to gather intelligence.`,
+          signals: [],
+          suggestion: `Try: "Perform an OSINT scan on ${entities[0].name}" to gather intelligence from the web.`
         };
       }
 
@@ -438,12 +452,17 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
         .in("id", signalIds)
         .order("received_at", { ascending: false });
 
-      if (signalsError) throw signalsError;
+      if (signalsError) {
+        console.error("Signals fetch error:", signalsError);
+        throw new Error(`Failed to fetch signals: ${signalsError.message}`);
+      }
 
       return {
+        success: true,
         entities: entities,
         entity_mentions_count: mentions.length,
         signals: signals || [],
+        message: `Found ${signals?.length || 0} signal(s) mentioning ${entities[0].name}`
       };
     }
 
@@ -456,7 +475,19 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
         .limit(1)
         .single();
 
-      if (findError || !entity) {
+      if (findError) {
+        console.error("Entity lookup error for OSINT scan:", findError);
+        if (findError.code === 'PGRST116') {
+          return { 
+            success: false, 
+            message: `No entity found matching "${args.entity_name}". Please create this entity first in the [Entities](/entities) page, then I can perform an OSINT scan.`,
+            note: "OSINT scans require an existing entity in the system."
+          };
+        }
+        throw new Error(`Failed to lookup entity: ${findError.message}`);
+      }
+      
+      if (!entity) {
         return { 
           success: false, 
           message: `No entity found matching "${args.entity_name}". Please create the entity first using [Create Entity](/entities).`,
@@ -468,49 +499,76 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
       const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
       
-      const scanResponse = await fetch(`${SUPABASE_URL}/functions/v1/osint-web-search`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ entity_id: entity.id })
-      });
+      console.log(`Triggering OSINT scan for entity: ${entity.name} (${entity.id})`);
+      
+      try {
+        const scanResponse = await fetch(`${SUPABASE_URL}/functions/v1/osint-web-search`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ entity_id: entity.id })
+        });
 
-      if (!scanResponse.ok) {
-        const errorText = await scanResponse.text();
-        console.error('OSINT scan failed:', errorText);
-        
-        // Check if it's a configuration error
-        if (errorText.includes('Google Search API not configured')) {
-          return {
-            success: false,
-            message: "OSINT scanning requires Google Search API configuration. Contact your administrator to configure GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_ENGINE_ID.",
-            entity: entity.name
+        if (!scanResponse.ok) {
+          const errorText = await scanResponse.text();
+          console.error('OSINT scan HTTP error:', scanResponse.status, errorText);
+          
+          // Check if it's a configuration error
+          if (errorText.includes('Google Search API not configured') || errorText.includes('GOOGLE_SEARCH')) {
+            return {
+              success: false,
+              message: `OSINT scanning requires Google Search API configuration. The system administrator needs to configure GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_ENGINE_ID in the backend settings.`,
+              entity: entity.name,
+              error_type: "configuration"
+            };
+          }
+          
+          if (scanResponse.status === 404) {
+            return {
+              success: false,
+              message: `The OSINT scan service is not available. Please contact your administrator.`,
+              entity: entity.name,
+              error_type: "service_unavailable"
+            };
+          }
+          
+          return { 
+            success: false, 
+            message: `OSINT scan failed for ${entity.name}. Status: ${scanResponse.status}. Details: ${errorText.substring(0, 200)}`,
+            entity: entity.name,
+            error_type: "scan_failed"
           };
         }
+
+        const result = await scanResponse.json();
+        console.log('OSINT scan result:', result);
         
-        return { 
-          success: false, 
-          message: `OSINT scan failed for ${entity.name}. Error: ${errorText}`,
-          entity: entity.name
+        return {
+          success: true,
+          message: `✅ OSINT scan completed successfully for ${entity.name}!\n\n📊 Results:\n- ${result.content_created || 0} intelligence items created\n- ${result.signals_created || 0} security signals generated\n\nView the intelligence in [Entity Content](/entities) or check [Signals](/signals) for any security concerns.`,
+          entity: entity.name,
+          content_created: result.content_created || 0,
+          signals_created: result.signals_created || 0
+        };
+      } catch (fetchError) {
+        console.error('OSINT scan fetch error:', fetchError);
+        return {
+          success: false,
+          message: `Failed to connect to OSINT scan service for ${entity.name}. Error: ${fetchError instanceof Error ? fetchError.message : 'Network error'}`,
+          entity: entity.name,
+          error_type: "network_error"
         };
       }
-
-      const result = await scanResponse.json();
-      
-      return {
-        success: true,
-        message: `OSINT scan completed for ${entity.name}. Created ${result.content_created} intelligence items and ${result.signals_created} signals.`,
-        entity: entity.name,
-        content_created: result.content_created,
-        signals_created: result.signals_created,
-        next_steps: "View the results in [Entity Content](/entities) or check [Signals](/signals) for any security concerns identified."
-      };
     }
 
     default:
       throw new Error(`Unknown tool: ${toolName}`);
+    }
+  } catch (error) {
+    console.error(`Tool execution error for ${toolName}:`, error);
+    throw error;
   }
 }
 
@@ -651,12 +709,17 @@ When troubleshooting, be specific about what you found and how to fix it.`,
               content: JSON.stringify(result),
             };
           } catch (error) {
-            console.error(`Tool execution error for ${toolCall.function.name}:`, error);
+            const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+            console.error(`Tool execution error for ${toolCall.function.name}:`, errorMessage, error);
             return {
               tool_call_id: toolCall.id,
               role: "tool",
               name: toolCall.function.name,
-              content: JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+              content: JSON.stringify({ 
+                success: false,
+                error: errorMessage,
+                error_details: error instanceof Error ? error.stack : String(error)
+              }),
             };
           }
         })
