@@ -196,15 +196,15 @@ export const DashboardAIAssistant = () => {
   });
 
   useEffect(() => {
-    if (scrollRef.current) {
-      // Use requestAnimationFrame to ensure DOM has updated
-      requestAnimationFrame(() => {
-        if (scrollRef.current) {
-          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-        }
-      });
-    }
-  }, [messages, isLoading]);
+    // Small delay to ensure DOM updates are complete
+    const scrollTimer = setTimeout(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    }, 50);
+    
+    return () => clearTimeout(scrollTimer);
+  }, [messages]);
 
   const streamChat = async (userMessage: string) => {
     console.log("streamChat called with:", userMessage);
@@ -217,13 +217,6 @@ export const DashboardAIAssistant = () => {
     const updateAssistantMessage = (content: string) => {
       assistantContent = content;
       setMessages([...newMessages, { role: "assistant", content: assistantContent }]);
-      
-      // Scroll to bottom during streaming
-      requestAnimationFrame(() => {
-        if (scrollRef.current) {
-          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-        }
-      });
     };
 
     try {
