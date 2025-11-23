@@ -401,6 +401,47 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "search_archival_documents",
+      description: "Search uploaded intelligence documents and reports (e.g., from 3Si, client reports, threat assessments). Use this when users ask about uploaded documents, intelligence reports they've shared, or want to find specific document content.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search query for filename or content",
+          },
+          client_id: {
+            type: "string",
+            description: "Optional: Filter by client UUID",
+          },
+          limit: {
+            type: "number",
+            description: "Number of documents to return (default 20)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_document_content",
+      description: "Get the full text content of an uploaded archival document. Use this to read and analyze the content of intelligence reports, threat assessments, and other uploaded documents.",
+      parameters: {
+        type: "object",
+        properties: {
+          document_id: {
+            type: "string",
+            description: "The UUID of the document to retrieve",
+          },
+        },
+        required: ["document_id"],
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -1882,6 +1923,64 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       };
     }
 
+    case "search_archival_documents": {
+      let query = supabaseClient
+        .from("archival_documents")
+        .select("id, filename, file_type, upload_date, summary, content_text, entity_mentions, tags, client_id, clients(name)")
+        .order("upload_date", { ascending: false })
+        .limit(args.limit || 20);
+
+      if (args.client_id) {
+        query = query.eq("client_id", args.client_id);
+      }
+
+      if (args.query) {
+        // Search in filename, summary, and content_text
+        query = query.or(`filename.ilike.%${args.query}%,summary.ilike.%${args.query}%,content_text.ilike.%${args.query}%`);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      return {
+        success: true,
+        documents: data,
+        count: data?.length || 0
+      };
+    }
+
+    case "get_document_content": {
+      const { data, error } = await supabaseClient
+        .from("archival_documents")
+        .select("*")
+        .eq("id", args.document_id)
+        .single();
+
+      if (error) throw error;
+      if (!data) {
+        return { success: false, message: "Document not found" };
+      }
+
+      return {
+        success: true,
+        document: {
+          id: data.id,
+          filename: data.filename,
+          file_type: data.file_type,
+          upload_date: data.upload_date,
+          date_of_document: data.date_of_document,
+          content_text: data.content_text,
+          summary: data.summary,
+          tags: data.tags,
+          entity_mentions: data.entity_mentions,
+          keywords: data.keywords,
+          correlated_entity_ids: data.correlated_entity_ids,
+          metadata: data.metadata,
+          client_id: data.client_id
+        }
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -2002,22 +2101,27 @@ KEY FEATURES & IMPLEMENTATION:
    - Tables: sources, monitoring_history, ingested_documents
    - Functions: monitor-news, monitor-social, monitor-threat-intel, monitor-darkweb, etc.
 
+7. **Archival Documents**: Intelligence document upload, storage, and entity extraction
+   - Tables: archival_documents, document_entity_mentions, document_hashes
+   - Functions: create-archival-record, process-stored-document, process-documents-batch
+
 DATABASE SCHEMA:
 40+ PostgreSQL tables with RLS policies. Core tables: signals, incidents, entities, clients, investigations, travelers, sources, monitoring_history, automation_metrics. All relationships mapped through foreign keys and junction tables (entity_mentions, incident_signals, etc.).
 
 YOUR CAPABILITIES:
 1. **Data Analysis**: Query all database tables for signals, incidents, entities, investigations, travelers, etc.
 2. **Security Reports**: Access and read security reports including executive intelligence summaries and 72-hour snapshots
-3. **Codebase Understanding**: Explain feature implementation, data flow, component architecture
-4. **System Architecture**: Describe technology stack, edge functions, automation, integrations
-5. **Database Schema**: Access table structures, relationships, RLS policies
-6. **Edge Functions**: List and explain all 50+ backend functions and their purposes
-7. **Issue Detection**: Find duplicate signals, orphaned records, data quality problems
-8. **Issue Resolution**: Fix duplicates, clean up data, improve quality
-9. **Knowledge Access**: Search documentation in knowledge base
-10. **Troubleshooting**: Debug system issues using monitoring status, health metrics, error diagnostics
-11. **OSINT Operations**: Trigger entity scans, gather intelligence
-12. **Feature Guidance**: Explain how features work and how they're implemented
+3. **Uploaded Documents**: Search and analyze intelligence documents uploaded by users (3Si reports, threat assessments, etc.)
+4. **Codebase Understanding**: Explain feature implementation, data flow, component architecture
+5. **System Architecture**: Describe technology stack, edge functions, automation, integrations
+6. **Database Schema**: Access table structures, relationships, RLS policies
+7. **Edge Functions**: List and explain all 50+ backend functions and their purposes
+8. **Issue Detection**: Find duplicate signals, orphaned records, data quality problems
+9. **Issue Resolution**: Fix duplicates, clean up data, improve quality
+10. **Knowledge Access**: Search documentation in knowledge base
+11. **Troubleshooting**: Debug system issues using monitoring status, health metrics, error diagnostics
+12. **OSINT Operations**: Trigger entity scans, gather intelligence
+13. **Feature Guidance**: Explain how features work and how they're implemented
 
 CRITICAL DISTINCTIONS:
 1. CLIENTS are organizations actively monitored by Fortress (customers)
@@ -2075,6 +2179,26 @@ STEP 3: Present the report content clearly:
 STEP 4: Ask if user wants to import any relevant images using import_report_images
 
 Report types available: 'executive_intelligence', '72h-snapshot'
+
+UPLOADED INTELLIGENCE DOCUMENTS - CRITICAL WORKFLOW:
+When users mention documents they've uploaded, intelligence reports from 3Si, threat assessments, or want to analyze uploaded content:
+- "document I uploaded" / "the document" / "this report" / "3Si report"
+- "intelligence document" / "threat assessment" / "security briefing"
+- "analyze the document" / "what's in the document" / "read this document"
+- "find information about" (when referring to uploaded content)
+
+IMMEDIATELY follow this workflow:
+STEP 1: Call search_archival_documents to find the document (use query to search by filename or content)
+STEP 2: Call get_document_content with the document_id from step 1
+STEP 3: Present the document analysis:
+   - Summarize key information, threats, entities, dates, events
+   - Extract important details from content_text
+   - Show entity mentions and correlations if available
+   - Note any tags or keywords
+STEP 4: Offer to:
+   - Cross-reference with existing entities using search_entities
+   - Search for related signals using get_recent_signals
+   - Create entities or correlate data if needed
 
 OSINT SCANNING:
 When users want intelligence on a person or organization:
