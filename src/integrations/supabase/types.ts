@@ -18,6 +18,7 @@ export type Database = {
         Row: {
           content: string
           created_at: string
+          deleted_at: string | null
           id: string
           role: string
           updated_at: string
@@ -26,6 +27,7 @@ export type Database = {
         Insert: {
           content: string
           created_at?: string
+          deleted_at?: string | null
           id?: string
           role: string
           updated_at?: string
@@ -34,6 +36,7 @@ export type Database = {
         Update: {
           content?: string
           created_at?: string
+          deleted_at?: string | null
           id?: string
           role?: string
           updated_at?: string
@@ -2538,6 +2541,10 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      restore_ai_messages: {
+        Args: { message_ids: string[] }
+        Returns: undefined
       }
     }
     Enums: {

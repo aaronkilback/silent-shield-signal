@@ -106,11 +106,12 @@ export const DashboardAIAssistant = () => {
       if (!user || isLoadingHistory || messages.length === 0) return;
 
       try {
-        // Delete all existing messages for this user
+        // Soft delete all existing messages for this user
         await supabase
           .from('ai_assistant_messages')
-          .delete()
-          .eq('user_id', user.id);
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('user_id', user.id)
+          .is('deleted_at', null);
 
         // Insert all current messages
         const messagesToInsert = messages.map(msg => ({
@@ -416,11 +417,12 @@ export const DashboardAIAssistant = () => {
     
     if (user) {
       try {
-        // Delete all messages from database
+        // Soft delete all messages by setting deleted_at timestamp
         await supabase
           .from('ai_assistant_messages')
-          .delete()
-          .eq('user_id', user.id);
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('user_id', user.id)
+          .is('deleted_at', null);
       } catch (error) {
         console.error("Failed to clear database history:", error);
       }
