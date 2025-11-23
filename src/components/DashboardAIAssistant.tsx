@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Send, Sparkles, Loader2, Mic, MicOff } from "lucide-react";
+import { Send, Sparkles, Loader2, Mic, MicOff, Paperclip, X } from "lucide-react";
 import { toast } from "sonner";
 import { useConversation } from "@11labs/react";
 import { supabase } from "@/integrations/supabase/client";
@@ -27,6 +27,9 @@ export const DashboardAIAssistant = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [agentId, setAgentId] = useState("");
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Load messages from database on mount
@@ -292,15 +295,74 @@ export const DashboardAIAssistant = () => {
     }
   };
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    setAttachments((prev) => [...prev, ...files]);
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const uploadFiles = async (): Promise<string[]> => {
+    if (attachments.length === 0) return [];
+    
+    setIsUploading(true);
+    const uploadedUrls: string[] = [];
+    
+    try {
+      for (const file of attachments) {
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${user?.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+        
+        const { data, error } = await supabase.storage
+          .from('ai-chat-attachments')
+          .upload(fileName, file, {
+            cacheControl: '3600',
+            upsert: false
+          });
+        
+        if (error) {
+          console.error("Upload error:", error);
+          toast.error(`Failed to upload ${file.name}`);
+          continue;
+        }
+        
+        const { data: { publicUrl } } = supabase.storage
+          .from('ai-chat-attachments')
+          .getPublicUrl(data.path);
+        
+        uploadedUrls.push(publicUrl);
+      }
+      
+      return uploadedUrls;
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     console.log("Form submitted, input:", input, "isLoading:", isLoading);
-    if (!input.trim() || isLoading) {
+    if ((!input.trim() && attachments.length === 0) || isLoading || isUploading) {
       console.log("Form submission blocked - empty input or loading");
       return;
     }
 
-    const userMessage = input.trim();
+    let userMessage = input.trim();
+    
+    // Upload files if present
+    if (attachments.length > 0) {
+      const uploadedUrls = await uploadFiles();
+      if (uploadedUrls.length > 0) {
+        const fileList = uploadedUrls.map((url, idx) => 
+          `[${attachments[idx].name}](${url})`
+        ).join('\n');
+        userMessage = userMessage ? `${userMessage}\n\nAttachments:\n${fileList}` : `Attachments:\n${fileList}`;
+      }
+      setAttachments([]);
+    }
+    
     setInput("");
     console.log("Calling streamChat with message:", userMessage);
     await streamChat(userMessage);
@@ -448,15 +510,49 @@ export const DashboardAIAssistant = () => {
               )}
             </ScrollArea>
 
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2 p-2 bg-muted rounded-lg">
+                {attachments.map((file, index) => (
+                  <div key={index} className="flex items-center gap-2 bg-background px-3 py-1 rounded-md text-sm">
+                    <span className="truncate max-w-[200px]">{file.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(index)}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <form onSubmit={handleSubmit} className="flex gap-2">
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+                multiple
+                className="hidden"
+                accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isLoading || isUploading}
+              >
+                <Paperclip className="w-4 h-4" />
+              </Button>
               <Input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Ask about threats, signals, or security insights..."
-                disabled={isLoading}
+                disabled={isLoading || isUploading}
               />
-              <Button type="submit" disabled={isLoading || !input.trim()}>
-                <Send className="w-4 h-4" />
+              <Button type="submit" disabled={isLoading || isUploading || (!input.trim() && attachments.length === 0)}>
+                {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </Button>
             </form>
           </TabsContent>
