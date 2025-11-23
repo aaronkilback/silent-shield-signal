@@ -589,6 +589,50 @@ serve(async (req) => {
 
     const supabaseClient = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
 
+    // Process messages to extract file attachments and format for vision
+    const processedMessages = await Promise.all(
+      messages.map(async (msg: any) => {
+        // Look for image URLs in markdown format
+        const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)|<img[^>]+src="([^"]+)"/g;
+        const markdownLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+        
+        const imageUrls: string[] = [];
+        let match;
+        
+        // Extract images from markdown/HTML
+        while ((match = imageRegex.exec(msg.content)) !== null) {
+          const url = match[2] || match[3];
+          if (url && (url.includes('ai-chat-attachments') || url.match(/\.(jpg|jpeg|png|gif|webp)$/i))) {
+            imageUrls.push(url);
+          }
+        }
+        
+        // If we have images, format as vision message
+        if (imageUrls.length > 0 && msg.role === 'user') {
+          const textContent = msg.content.replace(imageRegex, '').replace(markdownLinkRegex, '[$1]').trim();
+          const contentParts: any[] = [];
+          
+          if (textContent) {
+            contentParts.push({ type: "text", text: textContent });
+          }
+          
+          for (const imageUrl of imageUrls) {
+            contentParts.push({
+              type: "image_url",
+              image_url: { url: imageUrl }
+            });
+          }
+          
+          return {
+            role: msg.role,
+            content: contentParts.length > 0 ? contentParts : msg.content
+          };
+        }
+        
+        return msg;
+      })
+    );
+
     // First AI call with tools
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -618,6 +662,12 @@ You have access to tools to query the database for:
 - System monitoring status and health
 - Error diagnostics and troubleshooting
 - OSINT (Open Source Intelligence) scanning capabilities
+
+FILE ATTACHMENTS:
+- Analyze attached images for security-relevant information
+- Look for threats, suspicious activity, or concerning details in images
+- Provide insights on documents and their security implications
+- Reference attachments when providing responses
 
 OSINT SCANNING:
 When users ask to gather intelligence, perform research, or look for information about a person or organization:
@@ -664,7 +714,7 @@ Available pages:
 Be conversational and helpful. When showing data, format it clearly with bullet points or structured text.
 When troubleshooting, be specific about what you found and how to fix it.`,
           },
-          ...messages,
+          ...processedMessages,
         ],
         tools,
         tool_choice: "auto",
@@ -735,11 +785,11 @@ When troubleshooting, be specific about what you found and how to fix it.`,
         body: JSON.stringify({
           model: "google/gemini-2.5-flash",
           messages: [
-            {
-              role: "system",
-              content: `You are a helpful security intelligence assistant. Summarize the tool results in a clear, conversational way. Use markdown links for navigation: [Link Text](/path). Be concise and helpful.`,
-            },
-            ...messages,
+          {
+            role: "system",
+            content: `You are a helpful security intelligence assistant. Summarize the tool results in a clear, conversational way. Use markdown links for navigation: [Link Text](/path). Be concise and helpful. When file attachments are present, incorporate insights from them into your response.`,
+          },
+          ...processedMessages,
             firstMessage,
             ...toolResults,
           ],
@@ -768,9 +818,9 @@ When troubleshooting, be specific about what you found and how to fix it.`,
         messages: [
           {
             role: "system",
-            content: `You are a helpful security intelligence assistant with troubleshooting capabilities. Use plain, conversational language. Provide navigation links when relevant using markdown format: [Link Text](/path). When diagnosing issues, be specific and actionable.`,
+            content: `You are a helpful security intelligence assistant with troubleshooting capabilities. Use plain, conversational language. Provide navigation links when relevant using markdown format: [Link Text](/path). When diagnosing issues, be specific and actionable. When file attachments are present, analyze them and provide relevant security insights.`,
           },
-          ...messages,
+          ...processedMessages,
         ],
         stream: true,
       }),
