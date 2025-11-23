@@ -53,9 +53,13 @@ export const DashboardAIAssistant = () => {
           .from('ai_assistant_messages')
           .select('*')
           .eq('user_id', user.id)
+          .is('deleted_at', null)
           .order('created_at', { ascending: true });
 
-        if (error) throw error;
+        if (error) {
+          console.error("Error loading messages from database:", error);
+          throw error;
+        }
 
         if (dbMessages && dbMessages.length > 0) {
           const formattedMessages = dbMessages.map(msg => ({
@@ -63,7 +67,7 @@ export const DashboardAIAssistant = () => {
             content: msg.content
           }));
           setMessages(formattedMessages);
-          console.log(`Loaded ${formattedMessages.length} messages from database`);
+          console.log(`✅ Loaded ${formattedMessages.length} messages from database for user ${user.id}`);
         } else {
           const stored = localStorage.getItem(STORAGE_KEY);
           if (stored) {
@@ -104,7 +108,10 @@ export const DashboardAIAssistant = () => {
 
   // Helper function to save a new message to database immediately
   const saveMessageToDb = async (message: Message) => {
-    if (!user) return;
+    if (!user) {
+      console.warn("Cannot save message - no user logged in");
+      return;
+    }
     
     try {
       const { error } = await supabase
@@ -116,13 +123,14 @@ export const DashboardAIAssistant = () => {
         });
 
       if (error) {
-        console.error("Failed to save message:", error);
+        console.error("❌ Failed to save message:", error);
         toast.error("Failed to save message to history");
       } else {
-        console.log("Message saved to database:", message.role);
+        console.log(`✅ Message saved to database: ${message.role} for user ${user.id}`);
       }
     } catch (error) {
-      console.error("Failed to save message to database:", error);
+      console.error("❌ Exception saving message to database:", error);
+      toast.error("Failed to save message");
     }
   };
 
@@ -474,16 +482,26 @@ export const DashboardAIAssistant = () => {
     
     if (user) {
       try {
-        // Delete all messages from database
-        await supabase
+        // Soft delete all messages by setting deleted_at
+        const { error } = await supabase
           .from('ai_assistant_messages')
-          .delete()
-          .eq('user_id', user.id);
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('user_id', user.id)
+          .is('deleted_at', null);
+        
+        if (error) {
+          console.error("Failed to clear database history:", error);
+          toast.error("Failed to clear chat history from database");
+          return;
+        }
         
         // Save the default message
         await saveMessageToDb(defaultMessage);
+        console.log("Chat history cleared from database");
       } catch (error) {
         console.error("Failed to clear database history:", error);
+        toast.error("Failed to clear chat history");
+        return;
       }
     }
     
