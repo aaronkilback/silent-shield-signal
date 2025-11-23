@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ export const DashboardAIAssistant = () => {
   const STORAGE_KEY = "fortress-ai-chat-history";
   
   const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [agentId, setAgentId] = useState("");
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
@@ -30,8 +31,6 @@ export const DashboardAIAssistant = () => {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const saveTimeoutRef = useRef<NodeJS.Timeout>();
 
   // Load messages from database on mount
   useEffect(() => {
@@ -52,7 +51,6 @@ export const DashboardAIAssistant = () => {
           .from('ai_assistant_messages')
           .select('*')
           .eq('user_id', user.id)
-          .is('deleted_at', null)
           .order('created_at', { ascending: true });
 
         if (error) throw error;
@@ -102,50 +100,40 @@ export const DashboardAIAssistant = () => {
     loadMessages();
   }, [user]);
 
-  // Save messages to database with debounce - only when assistant responds
+  // Save messages to database whenever they change
   useEffect(() => {
-    if (!user || isLoadingHistory || messages.length === 0) return;
-    
-    // Only save when the last message is from assistant (response completed)
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage.role !== 'assistant') return;
+    const saveMessages = async () => {
+      if (!user || isLoadingHistory || messages.length === 0) return;
 
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
-
-    saveTimeoutRef.current = setTimeout(async () => {
       try {
-        const { count } = await supabase
+        // Delete all existing messages for this user
+        await supabase
           .from('ai_assistant_messages')
-          .select('*', { count: 'exact', head: true })
-          .eq('user_id', user.id)
-          .is('deleted_at', null);
+          .delete()
+          .eq('user_id', user.id);
 
-        const currentCount = count || 0;
-        
-        if (messages.length > currentCount) {
-          const newMessages = messages.slice(currentCount);
-          const messagesToInsert = newMessages.map(msg => ({
-            user_id: user.id,
-            role: msg.role,
-            content: msg.content
-          }));
+        // Insert all current messages
+        const messagesToInsert = messages.map(msg => ({
+          user_id: user.id,
+          role: msg.role,
+          content: msg.content
+        }));
 
-          await supabase
-            .from('ai_assistant_messages')
-            .insert(messagesToInsert);
+        const { error } = await supabase
+          .from('ai_assistant_messages')
+          .insert(messagesToInsert);
+
+        if (error) {
+          console.error("Failed to save messages:", error);
         }
       } catch (error) {
         console.error("Failed to save chat history:", error);
       }
-    }, 2000);
-
-    return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-      }
     };
+
+    // Debounce saves to avoid too many database writes
+    const timeoutId = setTimeout(saveMessages, 1000);
+    return () => clearTimeout(timeoutId);
   }, [messages, user, isLoadingHistory]);
 
   const conversation = useConversation({
@@ -193,17 +181,11 @@ export const DashboardAIAssistant = () => {
     },
   });
 
-  // Scroll to bottom on new messages - use requestAnimationFrame to avoid lag
-  useLayoutEffect(() => {
-    if (scrollRef.current && !isLoadingHistory) {
-      requestAnimationFrame(() => {
-        const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
-        if (viewport) {
-          viewport.scrollTop = viewport.scrollHeight;
-        }
-      });
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages.length, isLoadingHistory]);
+  }, [messages]);
 
   const streamChat = async (userMessage: string) => {
     console.log("streamChat called with:", userMessage);
@@ -346,18 +328,11 @@ export const DashboardAIAssistant = () => {
           continue;
         }
         
-        // Get signed URL with 1 hour expiry since bucket is private
-        const { data: urlData, error: urlError } = await supabase.storage
+        const { data: { publicUrl } } = supabase.storage
           .from('ai-chat-attachments')
-          .createSignedUrl(data.path, 3600);
+          .getPublicUrl(data.path);
         
-        if (urlError) {
-          console.error("URL generation error:", urlError);
-          toast.error(`Failed to get URL for ${file.name}`);
-          continue;
-        }
-        
-        uploadedUrls.push(urlData.signedUrl);
+        uploadedUrls.push(publicUrl);
       }
       
       return uploadedUrls;
@@ -368,50 +343,27 @@ export const DashboardAIAssistant = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const inputValue = inputRef.current?.value || "";
-    console.log("Form submitted, input:", inputValue, "isLoading:", isLoading);
-    if ((!inputValue.trim() && attachments.length === 0) || isLoading || isUploading) {
+    console.log("Form submitted, input:", input, "isLoading:", isLoading);
+    if ((!input.trim() && attachments.length === 0) || isLoading || isUploading) {
       console.log("Form submission blocked - empty input or loading");
       return;
     }
 
-    let userMessage = inputValue.trim();
+    let userMessage = input.trim();
     
     // Upload files if present
     if (attachments.length > 0) {
       const uploadedUrls = await uploadFiles();
       if (uploadedUrls.length > 0) {
-        // Format attachments for AI processing
-        const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
-        const pdfExtension = '.pdf';
-        const formattedAttachments = uploadedUrls.map((url, idx) => {
-          const fileName = attachments[idx].name;
-          const fileExt = fileName.toLowerCase().substring(fileName.lastIndexOf('.'));
-          
-          // Images use image markdown
-          if (imageExtensions.includes(fileExt)) {
-            return `![${fileName}](${url})`;
-          }
-          
-          // PDFs use file markdown
-          if (fileExt === pdfExtension) {
-            return `📎 PDF: ${fileName}\nURL: ${url}`;
-          }
-          
-          // Other files
-          return `📎 File: ${fileName}\nURL: ${url}`;
-        }).join('\n\n');
-        
-        userMessage = userMessage 
-          ? `${userMessage}\n\nAttachments:\n${formattedAttachments}` 
-          : `Please analyze these attachments:\n\n${formattedAttachments}`;
+        const fileList = uploadedUrls.map((url, idx) => 
+          `[${attachments[idx].name}](${url})`
+        ).join('\n');
+        userMessage = userMessage ? `${userMessage}\n\nAttachments:\n${fileList}` : `Attachments:\n${fileList}`;
       }
       setAttachments([]);
     }
     
-    if (inputRef.current) {
-      inputRef.current.value = "";
-    }
+    setInput("");
     console.log("Calling streamChat with message:", userMessage);
     await streamChat(userMessage);
   };
@@ -452,12 +404,11 @@ export const DashboardAIAssistant = () => {
     
     if (user) {
       try {
-        // Soft delete all messages by setting deleted_at timestamp
+        // Delete all messages from database
         await supabase
           .from('ai_assistant_messages')
-          .update({ deleted_at: new Date().toISOString() })
-          .eq('user_id', user.id)
-          .is('deleted_at', null);
+          .delete()
+          .eq('user_id', user.id);
       } catch (error) {
         console.error("Failed to clear database history:", error);
       }
@@ -595,17 +546,12 @@ export const DashboardAIAssistant = () => {
                 <Paperclip className="w-4 h-4" />
               </Button>
               <Input
-                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
                 placeholder="Ask about threats, signals, or security insights..."
                 disabled={isLoading || isUploading}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSubmit(e as any);
-                  }
-                }}
               />
-              <Button type="submit" disabled={isLoading || isUploading}>
+              <Button type="submit" disabled={isLoading || isUploading || (!input.trim() && attachments.length === 0)}>
                 {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </Button>
             </form>

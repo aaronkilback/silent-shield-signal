@@ -187,287 +187,11 @@ const tools = [
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "create_entity",
-      description: "Create a new entity (person, organization, location, etc.) in the system. Use this when users want to add a new entity to track.",
-      parameters: {
-        type: "object",
-        properties: {
-          name: {
-            type: "string",
-            description: "Name of the entity",
-          },
-          type: {
-            type: "string",
-            description: "Type of entity: person, organization, location, vehicle, or event",
-            enum: ["person", "organization", "location", "vehicle", "event"],
-          },
-          description: {
-            type: "string",
-            description: "Description of the entity",
-          },
-          aliases: {
-            type: "array",
-            items: { type: "string" },
-            description: "Alternative names or aliases",
-          },
-          risk_level: {
-            type: "string",
-            description: "Risk level: low, medium, high, or critical",
-            enum: ["low", "medium", "high", "critical"],
-          },
-        },
-        required: ["name", "type"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "update_entity",
-      description: "Update an existing entity's information. Use this when users want to modify entity details.",
-      parameters: {
-        type: "object",
-        properties: {
-          entity_id: {
-            type: "string",
-            description: "UUID of the entity to update",
-          },
-          updates: {
-            type: "object",
-            description: "Fields to update (name, description, risk_level, etc.)",
-          },
-        },
-        required: ["entity_id", "updates"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "create_incident",
-      description: "Create a new security incident. Use this when users report a security event that needs tracking.",
-      parameters: {
-        type: "object",
-        properties: {
-          title: {
-            type: "string",
-            description: "Title of the incident",
-          },
-          summary: {
-            type: "string",
-            description: "Summary of the incident",
-          },
-          priority: {
-            type: "string",
-            description: "Priority level: p1, p2, p3, or p4",
-            enum: ["p1", "p2", "p3", "p4"],
-          },
-          severity_level: {
-            type: "string",
-            description: "Severity: P1, P2, P3, or P4",
-          },
-          client_id: {
-            type: "string",
-            description: "UUID of the associated client (optional)",
-          },
-        },
-        required: ["title", "priority"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "update_incident",
-      description: "Update an incident's status or details. Use this when users want to acknowledge, contain, or resolve incidents.",
-      parameters: {
-        type: "object",
-        properties: {
-          incident_id: {
-            type: "string",
-            description: "UUID of the incident to update",
-          },
-          status: {
-            type: "string",
-            description: "New status: open, acknowledged, contained, or resolved",
-            enum: ["open", "acknowledged", "contained", "resolved"],
-          },
-          summary: {
-            type: "string",
-            description: "Updated summary (optional)",
-          },
-        },
-        required: ["incident_id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "create_investigation",
-      description: "Create a new investigation file. Use this when users want to start a formal investigation.",
-      parameters: {
-        type: "object",
-        properties: {
-          file_number: {
-            type: "string",
-            description: "Investigation file number",
-          },
-          synopsis: {
-            type: "string",
-            description: "Brief synopsis of the investigation",
-          },
-          client_id: {
-            type: "string",
-            description: "UUID of the associated client (optional)",
-          },
-          incident_id: {
-            type: "string",
-            description: "UUID of the associated incident (optional)",
-          },
-        },
-        required: ["file_number"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "update_signal_status",
-      description: "Mark a signal as reviewed or false positive. Use this when users want to dismiss or acknowledge signals.",
-      parameters: {
-        type: "object",
-        properties: {
-          signal_id: {
-            type: "string",
-            description: "UUID of the signal to update",
-          },
-          is_reviewed: {
-            type: "boolean",
-            description: "Mark as reviewed",
-          },
-          is_false_positive: {
-            type: "boolean",
-            description: "Mark as false positive",
-          },
-        },
-        required: ["signal_id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "link_entity_relationship",
-      description: "Create a relationship between two entities. Use this when users want to document connections between people or organizations.",
-      parameters: {
-        type: "object",
-        properties: {
-          entity_a_name: {
-            type: "string",
-            description: "Name of the first entity",
-          },
-          entity_b_name: {
-            type: "string",
-            description: "Name of the second entity",
-          },
-          relationship_type: {
-            type: "string",
-            description: "Type of relationship (e.g., 'works_for', 'associated_with', 'family')",
-          },
-          description: {
-            type: "string",
-            description: "Description of the relationship",
-          },
-        },
-        required: ["entity_a_name", "entity_b_name", "relationship_type"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "diagnose_code_issue",
-      description: "ADMIN ONLY: Diagnose issues in React components or TypeScript code. Use this when admin asks about bugs, errors, or performance problems in the application code.",
-      parameters: {
-        type: "object",
-        properties: {
-          component_name: {
-            type: "string",
-            description: "Name or path of the component/file to analyze",
-          },
-          issue_description: {
-            type: "string",
-            description: "Description of the issue or error",
-          },
-          error_message: {
-            type: "string",
-            description: "Any error messages or stack traces",
-          },
-        },
-        required: ["issue_description"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "suggest_schema_change",
-      description: "ADMIN ONLY: Suggest database schema changes or improvements. Use this when admin asks about database structure modifications.",
-      parameters: {
-        type: "object",
-        properties: {
-          table_name: {
-            type: "string",
-            description: "Name of the table to modify",
-          },
-          change_description: {
-            type: "string",
-            description: "What needs to be changed and why",
-          },
-          migration_sql: {
-            type: "string",
-            description: "Proposed SQL migration code",
-          },
-        },
-        required: ["change_description"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "analyze_application_logs",
-      description: "ADMIN ONLY: Analyze application logs and error patterns to identify systemic issues.",
-      parameters: {
-        type: "object",
-        properties: {
-          time_range: {
-            type: "string",
-            description: "Time range to analyze (e.g., 'last 24 hours', 'last week')",
-          },
-          error_type: {
-            type: "string",
-            description: "Specific error type to focus on",
-          },
-        },
-      },
-    },
-  },
 ];
 
 // Execute tools by querying Supabase
-async function executeTool(toolName: string, args: any, supabaseClient: any, isAdmin: boolean = false) {
+async function executeTool(toolName: string, args: any, supabaseClient: any) {
   console.log(`Executing tool: ${toolName}`, JSON.stringify(args));
-
-  // Admin-only tool protection
-  const adminOnlyTools = ['diagnose_code_issue', 'suggest_schema_change', 'analyze_application_logs'];
-  if (adminOnlyTools.includes(toolName) && !isAdmin) {
-    throw new Error(`Access denied: ${toolName} requires admin privileges`);
-  }
 
   try {
     switch (toolName) {
@@ -839,232 +563,6 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, isA
       }
     }
 
-    case "create_entity": {
-      const { data, error } = await supabaseClient
-        .from("entities")
-        .insert({
-          name: args.name,
-          type: args.type,
-          description: args.description,
-          aliases: args.aliases || [],
-          risk_level: args.risk_level || "low",
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      return {
-        success: true,
-        message: `✅ Created entity: ${data.name}\n\nView it here: [${data.name}](/entities)`,
-        entity: data,
-      };
-    }
-
-    case "update_entity": {
-      const { data, error } = await supabaseClient
-        .from("entities")
-        .update(args.updates)
-        .eq("id", args.entity_id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      return {
-        success: true,
-        message: `✅ Updated entity: ${data.name}`,
-        entity: data,
-      };
-    }
-
-    case "create_incident": {
-      const { data, error } = await supabaseClient
-        .from("incidents")
-        .insert({
-          title: args.title,
-          summary: args.summary,
-          priority: args.priority,
-          severity_level: args.severity_level || args.priority.toUpperCase(),
-          client_id: args.client_id || null,
-          status: "open",
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      return {
-        success: true,
-        message: `✅ Created incident: ${data.title}\n\nPriority: ${data.priority}\n\nView it here: [Incident ${data.title}](/incidents)`,
-        incident: data,
-      };
-    }
-
-    case "update_incident": {
-      const updates: any = {};
-      
-      if (args.status) {
-        updates.status = args.status;
-        if (args.status === "acknowledged") updates.acknowledged_at = new Date().toISOString();
-        if (args.status === "contained") updates.contained_at = new Date().toISOString();
-        if (args.status === "resolved") updates.resolved_at = new Date().toISOString();
-      }
-      
-      if (args.summary) updates.summary = args.summary;
-
-      const { data, error } = await supabaseClient
-        .from("incidents")
-        .update(updates)
-        .eq("id", args.incident_id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      return {
-        success: true,
-        message: `✅ Updated incident status to: ${data.status}`,
-        incident: data,
-      };
-    }
-
-    case "create_investigation": {
-      const { data, error } = await supabaseClient
-        .from("investigations")
-        .insert({
-          file_number: args.file_number,
-          synopsis: args.synopsis,
-          client_id: args.client_id || null,
-          incident_id: args.incident_id || null,
-          file_status: "open",
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      return {
-        success: true,
-        message: `✅ Created investigation file: ${data.file_number}\n\nView it here: [Investigation ${data.file_number}](/investigations)`,
-        investigation: data,
-      };
-    }
-
-    case "update_signal_status": {
-      const updates: any = {};
-      if (args.is_reviewed !== undefined) updates.is_reviewed = args.is_reviewed;
-      if (args.is_false_positive !== undefined) updates.is_false_positive = args.is_false_positive;
-
-      const { data, error } = await supabaseClient
-        .from("signals")
-        .update(updates)
-        .eq("id", args.signal_id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      return {
-        success: true,
-        message: `✅ Updated signal status`,
-        signal: data,
-      };
-    }
-
-    case "link_entity_relationship": {
-      // Find both entities
-      const { data: entityA, error: errorA } = await supabaseClient
-        .from("entities")
-        .select("id, name")
-        .ilike("name", `%${args.entity_a_name}%`)
-        .limit(1)
-        .single();
-
-      if (errorA) throw new Error(`Entity A not found: ${args.entity_a_name}`);
-
-      const { data: entityB, error: errorB } = await supabaseClient
-        .from("entities")
-        .select("id, name")
-        .ilike("name", `%${args.entity_b_name}%`)
-        .limit(1)
-        .single();
-
-      if (errorB) throw new Error(`Entity B not found: ${args.entity_b_name}`);
-
-      // Create relationship
-      const { data, error } = await supabaseClient
-        .from("entity_relationships")
-        .insert({
-          entity_a_id: entityA.id,
-          entity_b_id: entityB.id,
-          relationship_type: args.relationship_type,
-          description: args.description,
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      return {
-        success: true,
-        message: `✅ Linked relationship: ${entityA.name} → ${args.relationship_type} → ${entityB.name}`,
-        relationship: data,
-      };
-    }
-
-    case "diagnose_code_issue": {
-      // Admin-only diagnostic tool
-      const analysis = {
-        component: args.component_name || "Unknown",
-        issue: args.issue_description,
-        error: args.error_message || "No error message provided",
-      };
-
-      return {
-        success: true,
-        message: `🔍 Code Issue Analysis:\n\n**Component:** ${analysis.component}\n**Issue:** ${analysis.issue}\n\n**Diagnosis:**\nI've analyzed the issue. Here's what I found:\n\n1. **Root Cause:** The error suggests a problem with [specific area]\n2. **Affected Areas:** [list components/files]\n3. **Recommended Fix:** [specific steps]\n\n**Suggested Code Changes:**\n\`\`\`typescript\n// Add your fix here based on the issue\n\`\`\`\n\n⚠️ **Important:** This is a suggestion. Please review carefully before applying changes.`,
-        analysis,
-      };
-    }
-
-    case "suggest_schema_change": {
-      // Admin-only schema suggestion tool
-      return {
-        success: true,
-        message: `📊 Database Schema Suggestion:\n\n**Table:** ${args.table_name || 'Multiple tables'}\n**Proposed Change:** ${args.change_description}\n\n**Recommended SQL Migration:**\n\`\`\`sql\n${args.migration_sql || '-- Analyze the requirement and provide SQL here'}\n\`\`\`\n\n**Impact Analysis:**\n- Affects existing data: [Yes/No]\n- Requires backfill: [Yes/No]\n- Breaking change: [Yes/No]\n\n⚠️ **Critical:** Test in development environment before applying to production.\n\n**Steps to Apply:**\n1. Review the SQL carefully\n2. Test on development database\n3. Create backup of production data\n4. Apply migration during maintenance window`,
-        suggestion: {
-          table: args.table_name,
-          change: args.change_description,
-          sql: args.migration_sql,
-        },
-      };
-    }
-
-    case "analyze_application_logs": {
-      // Query recent monitoring history and bug reports for patterns
-      const { data: recentErrors } = await supabaseClient
-        .from("monitoring_history")
-        .select("*")
-        .eq("status", "error")
-        .order("created_at", { ascending: false })
-        .limit(50);
-
-      const { data: bugReports } = await supabaseClient
-        .from("bug_reports")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(20);
-
-      return {
-        success: true,
-        message: `📈 Application Log Analysis:\n\n**Error Patterns Found:**\n${recentErrors?.length || 0} recent errors in monitoring history\n${bugReports?.length || 0} bug reports\n\n**Common Issues:**\n${recentErrors?.slice(0, 5).map((e: any) => `- ${e.source_name}: ${e.error_message}`).join('\n') || 'No recent errors'}\n\n**Recommendations:**\n1. Review rate limiting for external APIs\n2. Check authentication token expiration\n3. Monitor database connection pool\n4. Review edge function timeouts\n\n**Health Status:** ${(recentErrors?.length || 0) > 10 ? '⚠️ Needs attention' : '✅ Healthy'}`,
-        errors: recentErrors,
-        bugs: bugReports,
-      };
-    }
-
-
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -1089,73 +587,35 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    // Get the authorization header to check user role
-    const authHeader = req.headers.get("Authorization");
     const supabaseClient = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
-    
-    // Check if user is admin
-    let isAdmin = false;
-    if (authHeader) {
-      const token = authHeader.replace("Bearer ", "");
-      const { data: { user } } = await supabaseClient.auth.getUser(token);
-      
-      if (user) {
-        const { data: roles } = await supabaseClient
-          .from('user_roles')
-          .select('role')
-          .eq('user_id', user.id)
-          .eq('role', 'admin')
-          .single();
-        
-        isAdmin = !!roles;
-      }
-    }
 
-    // Process messages to extract file attachments and format properly
+    // Process messages to extract file attachments and format for vision
     const processedMessages = await Promise.all(
       messages.map(async (msg: any) => {
-        const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
-        const fileAttachmentRegex = /📎 [^:]+: ([^\n]+)\nURL: ([^\n]+)/g;
+        // Look for image URLs in markdown format
+        const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)|<img[^>]+src="([^"]+)"/g;
+        const markdownLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
         
         const imageUrls: string[] = [];
-        const otherFiles: Array<{name: string, url: string}> = [];
         let match;
         
-        // Extract images
+        // Extract images from markdown/HTML
         while ((match = imageRegex.exec(msg.content)) !== null) {
-          const url = match[2];
+          const url = match[2] || match[3];
           if (url && (url.includes('ai-chat-attachments') || url.match(/\.(jpg|jpeg|png|gif|webp)$/i))) {
             imageUrls.push(url);
           }
         }
         
-        // Extract other files
-        while ((match = fileAttachmentRegex.exec(msg.content)) !== null) {
-          otherFiles.push({ name: match[1], url: match[2] });
-        }
-        
-        // Format message with multimodal content if attachments present
+        // If we have images, format as vision message
         if (imageUrls.length > 0 && msg.role === 'user') {
-          let textContent = msg.content
-            .replace(imageRegex, '')
-            .replace(fileAttachmentRegex, '')
-            .replace(/Attachments:\s*/g, '')
-            .replace(/Please analyze these attachments:\s*/g, '')
-            .trim();
-          
-          // Add context about other files
-          if (otherFiles.length > 0) {
-            const fileList = otherFiles.map(f => `- ${f.name}: ${f.url}`).join('\n');
-            textContent += `\n\nAttached files:\n${fileList}`;
-          }
-          
+          const textContent = msg.content.replace(imageRegex, '').replace(markdownLinkRegex, '[$1]').trim();
           const contentParts: any[] = [];
           
           if (textContent) {
             contentParts.push({ type: "text", text: textContent });
           }
           
-          // Add images for vision processing
           for (const imageUrl of imageUrls) {
             contentParts.push({
               type: "image_url",
@@ -1172,12 +632,6 @@ serve(async (req) => {
         return msg;
       })
     );
-
-    // Filter tools based on admin status
-    const adminOnlyTools = ['diagnose_code_issue', 'suggest_schema_change', 'analyze_application_logs'];
-    const availableTools = isAdmin 
-      ? tools 
-      : tools.filter(tool => !adminOnlyTools.includes(tool.function.name));
 
     // First AI call with tools
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -1198,9 +652,7 @@ CRITICAL DISTINCTIONS:
 2. ENTITIES are people/organizations mentioned in intelligence data
 3. When users ask about a person "of/at [organization]", search for the ENTITY (person), not the client
 
-You have access to tools to query AND MODIFY the database for:
-
-QUERY CAPABILITIES:
+You have access to tools to query the database for:
 - Recent security signals
 - Signals related to specific entities or people
 - Entity information (people, organizations, locations)
@@ -1211,40 +663,11 @@ QUERY CAPABILITIES:
 - Error diagnostics and troubleshooting
 - OSINT (Open Source Intelligence) scanning capabilities
 
-DATA MODIFICATION CAPABILITIES:
-- Create new entities (people, organizations, locations, vehicles, events)
-- Update existing entity information (descriptions, risk levels, aliases)
-- Create security incidents
-- Update incident status (acknowledge, contain, resolve)
-- Create investigation files
-- Update signal status (mark as reviewed, false positive)
-- Link relationships between entities
-
-${isAdmin ? `
-ADMIN-ONLY CAPABILITIES (CURRENT USER IS ADMIN):
-You have special administrative access to:
-- Diagnose and analyze system issues (bugs, errors, performance problems)
-- Suggest code fixes for React components
-- Recommend database schema changes
-- Propose new features and improvements
-
-When diagnosing issues:
-1. Identify the problem clearly
-2. Explain the root cause
-3. Suggest specific fixes with code examples
-4. Warn about potential side effects
-
-IMPORTANT: You can suggest and explain fixes, but the admin must review and approve all code/schema changes.
-` : ''}
-
 FILE ATTACHMENTS:
 - Analyze attached images for security-relevant information
 - Look for threats, suspicious activity, or concerning details in images
-- For PDF documents: Use the parse_pdf_document tool to extract and analyze text content
 - Provide insights on documents and their security implications
 - Reference attachments when providing responses
-
-IMPORTANT: When you see "PDF Documents to analyze:" in a message, you MUST call parse_pdf_document for each PDF URL to read its content before responding.
 
 OSINT SCANNING:
 When users ask to gather intelligence, perform research, or look for information about a person or organization:
@@ -1260,15 +683,6 @@ WHEN USERS ASK ABOUT A PERSON OR ORGANIZATION:
 - Action: Use search_entities to find "Lloyd Clark" (the person is the entity)
 - Then: Use search_signals_by_entity or trigger_osint_scan
 - DO NOT try to search by client unless they specifically ask about monitoring a client organization
-
-CREATING AND MODIFYING DATA:
-When users ask to:
-- "Add [entity name]" → Use create_entity
-- "Create an incident for [description]" → Use create_incident  
-- "Acknowledge incident [id]" → Use update_incident with status: acknowledged
-- "Mark signal as false positive" → Use update_signal_status
-- "Link [entity A] to [entity B]" → Use link_entity_relationship
-- "Start an investigation" → Use create_investigation
 
 TROUBLESHOOTING CAPABILITIES:
 When users ask about system issues, monitoring problems, or "why isn't X working":
@@ -1298,12 +712,11 @@ Available pages:
 - [View Monitoring Sources](/monitoring-sources) - Configure monitoring
 
 Be conversational and helpful. When showing data, format it clearly with bullet points or structured text.
-When troubleshooting, be specific about what you found and how to fix it.
-When making changes, confirm what you did and provide links to view the results.`,
+When troubleshooting, be specific about what you found and how to fix it.`,
           },
           ...processedMessages,
         ],
-        tools: availableTools,
+        tools,
         tool_choice: "auto",
       }),
     });
@@ -1338,7 +751,7 @@ When making changes, confirm what you did and provide links to view the results.
         firstMessage.tool_calls.map(async (toolCall: any) => {
           try {
             const args = JSON.parse(toolCall.function.arguments);
-            const result = await executeTool(toolCall.function.name, args, supabaseClient, isAdmin);
+            const result = await executeTool(toolCall.function.name, args, supabaseClient);
             return {
               tool_call_id: toolCall.id,
               role: "tool",
@@ -1374,21 +787,7 @@ When making changes, confirm what you did and provide links to view the results.
           messages: [
           {
             role: "system",
-            content: `You are a helpful security intelligence assistant with data modification capabilities. 
-
-You can:
-- Create and update entities, incidents, and investigations
-- Mark signals as reviewed or false positive
-- Link relationships between entities
-- Query system data and troubleshoot issues
-- Analyze file attachments for security insights
-${isAdmin ? `
-- ADMIN ACCESS: Diagnose code issues and suggest fixes
-- ADMIN ACCESS: Recommend database schema changes
-- ADMIN ACCESS: Analyze application logs and errors
-` : ''}
-
-Summarize the tool results in a clear, conversational way. Use markdown links for navigation: [Link Text](/path). Be concise and helpful. When file attachments are present, incorporate insights from them into your response. When making changes, confirm what you did and provide links to view the results.`,
+            content: `You are a helpful security intelligence assistant. Summarize the tool results in a clear, conversational way. Use markdown links for navigation: [Link Text](/path). Be concise and helpful. When file attachments are present, incorporate insights from them into your response.`,
           },
           ...processedMessages,
             firstMessage,
@@ -1419,16 +818,7 @@ Summarize the tool results in a clear, conversational way. Use markdown links fo
         messages: [
           {
             role: "system",
-            content: `You are a helpful security intelligence assistant with data modification and troubleshooting capabilities. 
-
-You can:
-- Create and update entities, incidents, and investigations
-- Mark signals as reviewed or false positive
-- Link relationships between entities
-- Diagnose system issues and provide recommendations
-- Analyze file attachments including images and PDF documents
-
-Use plain, conversational language. Provide navigation links when relevant using markdown format: [Link Text](/path). When diagnosing issues, be specific and actionable. When file attachments are present, analyze them and provide relevant security insights. When making changes, confirm what you did.`,
+            content: `You are a helpful security intelligence assistant with troubleshooting capabilities. Use plain, conversational language. Provide navigation links when relevant using markdown format: [Link Text](/path). When diagnosing issues, be specific and actionable. When file attachments are present, analyze them and provide relevant security insights.`,
           },
           ...processedMessages,
         ],
