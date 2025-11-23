@@ -31,6 +31,8 @@ export const DashboardAIAssistant = () => {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const saveTimeoutRef = useRef<NodeJS.Timeout>();
 
   // Load messages from database on mount
   useEffect(() => {
@@ -101,11 +103,19 @@ export const DashboardAIAssistant = () => {
     loadMessages();
   }, [user]);
 
-  // Save messages to database with debounce
+  // Save messages to database with debounce - only when assistant responds
   useEffect(() => {
     if (!user || isLoadingHistory || messages.length === 0) return;
+    
+    // Only save when the last message is from assistant (response completed)
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage.role !== 'assistant') return;
 
-    const saveMessages = async () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = setTimeout(async () => {
       try {
         const { count } = await supabase
           .from('ai_assistant_messages')
@@ -130,11 +140,13 @@ export const DashboardAIAssistant = () => {
       } catch (error) {
         console.error("Failed to save chat history:", error);
       }
-    };
+    }, 2000);
 
-    const timeoutId = setTimeout(saveMessages, 1000);
-    
-    return () => clearTimeout(timeoutId);
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
   }, [messages, user, isLoadingHistory]);
 
   const conversation = useConversation({
@@ -182,15 +194,17 @@ export const DashboardAIAssistant = () => {
     },
   });
 
-  // Scroll to bottom on new messages
-  useEffect(() => {
+  // Scroll to bottom on new messages - use requestAnimationFrame to avoid lag
+  useLayoutEffect(() => {
     if (scrollRef.current && !isLoadingHistory) {
-      const viewport = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
-      if (viewport) {
-        viewport.scrollTop = viewport.scrollHeight;
-      }
+      requestAnimationFrame(() => {
+        const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
+        if (viewport) {
+          viewport.scrollTop = viewport.scrollHeight;
+        }
+      });
     }
-  }, [messages, isLoadingHistory]);
+  }, [messages.length, isLoadingHistory]);
 
   const streamChat = async (userMessage: string) => {
     console.log("streamChat called with:", userMessage);
@@ -579,10 +593,17 @@ export const DashboardAIAssistant = () => {
                 <Paperclip className="w-4 h-4" />
               </Button>
               <Input
+                ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Ask about threats, signals, or security insights..."
                 disabled={isLoading || isUploading}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit(e as any);
+                  }
+                }}
               />
               <Button type="submit" disabled={isLoading || isUploading || (!input.trim() && attachments.length === 0)}>
                 {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
