@@ -170,6 +170,23 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "trigger_osint_scan",
+      description: "Trigger an OSINT (Open Source Intelligence) scan for a specific entity. This searches the web for information about the entity and creates intelligence content. Use this when users want to gather intelligence or perform research on a person or organization.",
+      parameters: {
+        type: "object",
+        properties: {
+          entity_name: {
+            type: "string",
+            description: "Name of the entity to scan",
+          },
+        },
+        required: ["entity_name"],
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -407,6 +424,68 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       };
     }
 
+    case "trigger_osint_scan": {
+      // Find the entity first
+      const { data: entity, error: findError } = await supabaseClient
+        .from("entities")
+        .select("id, name, type")
+        .ilike("name", `%${args.entity_name}%`)
+        .limit(1)
+        .single();
+
+      if (findError || !entity) {
+        return { 
+          success: false, 
+          message: `No entity found matching "${args.entity_name}". Please create the entity first using [Create Entity](/entities).`,
+          note: "OSINT scans require an existing entity in the system."
+        };
+      }
+
+      // Trigger the OSINT scan
+      const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
+      const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      
+      const scanResponse = await fetch(`${SUPABASE_URL}/functions/v1/osint-web-search`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ entity_id: entity.id })
+      });
+
+      if (!scanResponse.ok) {
+        const errorText = await scanResponse.text();
+        console.error('OSINT scan failed:', errorText);
+        
+        // Check if it's a configuration error
+        if (errorText.includes('Google Search API not configured')) {
+          return {
+            success: false,
+            message: "OSINT scanning requires Google Search API configuration. Contact your administrator to configure GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_ENGINE_ID.",
+            entity: entity.name
+          };
+        }
+        
+        return { 
+          success: false, 
+          message: `OSINT scan failed for ${entity.name}. Error: ${errorText}`,
+          entity: entity.name
+        };
+      }
+
+      const result = await scanResponse.json();
+      
+      return {
+        success: true,
+        message: `OSINT scan completed for ${entity.name}. Created ${result.content_created} intelligence items and ${result.signals_created} signals.`,
+        entity: entity.name,
+        content_created: result.content_created,
+        signals_created: result.signals_created,
+        next_steps: "View the results in [Entity Content](/entities) or check [Signals](/signals) for any security concerns identified."
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
@@ -452,6 +531,15 @@ You have access to tools to query the database for:
 - Client accounts
 - System monitoring status and health
 - Error diagnostics and troubleshooting
+- OSINT (Open Source Intelligence) scanning capabilities
+
+OSINT SCANNING:
+When users ask to gather intelligence, perform research, or look for information about a person or organization:
+1. First check if the entity exists in the system using search_entities
+2. If it exists, use trigger_osint_scan to perform a comprehensive web search
+3. The OSINT scan will search multiple sources including social media, news, and public records
+4. Results are automatically processed and added as entity content and signals
+5. If OSINT scanning is not configured, inform the user it requires Google Search API setup
 
 TROUBLESHOOTING CAPABILITIES:
 When users ask about system issues, monitoring problems, or "why isn't X working":
