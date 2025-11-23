@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -95,6 +95,12 @@ export const DashboardAIAssistant = () => {
         setMessages([defaultMessage]);
       } finally {
         setIsLoadingHistory(false);
+        // Scroll to bottom after history loads
+        setTimeout(() => {
+          if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+          }
+        }, 100);
       }
     };
 
@@ -131,8 +137,6 @@ export const DashboardAIAssistant = () => {
 
           if (error) {
             console.error("Failed to save messages:", error);
-          } else {
-            console.log(`Saved ${messagesToInsert.length} new messages`);
           }
         }
       } catch (error) {
@@ -140,14 +144,10 @@ export const DashboardAIAssistant = () => {
       }
     };
 
-    // Debounce saves to avoid too many database writes
-    const timeoutId = setTimeout(saveMessages, 1000);
+    // Longer debounce to reduce database writes and improve typing performance
+    const timeoutId = setTimeout(saveMessages, 3000);
     
-    // Save immediately on unmount
-    return () => {
-      clearTimeout(timeoutId);
-      saveMessages();
-    };
+    return () => clearTimeout(timeoutId);
   }, [messages, user, isLoadingHistory]);
 
   const conversation = useConversation({
@@ -195,16 +195,12 @@ export const DashboardAIAssistant = () => {
     },
   });
 
-  useEffect(() => {
-    // Small delay to ensure DOM updates are complete
-    const scrollTimer = setTimeout(() => {
-      if (scrollRef.current) {
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-      }
-    }, 50);
-    
-    return () => clearTimeout(scrollTimer);
-  }, [messages]);
+  // Scroll to bottom when messages change (runs after DOM update but before paint)
+  useLayoutEffect(() => {
+    if (scrollRef.current && !isLoadingHistory) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages, isLoadingHistory]);
 
   const streamChat = async (userMessage: string) => {
     console.log("streamChat called with:", userMessage);
