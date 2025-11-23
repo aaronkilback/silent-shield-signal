@@ -287,6 +287,61 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_database_schema",
+      description: "Get information about database tables, columns, relationships, and their purposes. Use when users ask about data structure, how features are implemented, or what data is stored.",
+      parameters: {
+        type: "object",
+        properties: {
+          table_name: {
+            type: "string",
+            description: "Optional: specific table name to get detailed column info for",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_edge_functions",
+      description: "List all available edge functions and their purposes. Use when users ask about backend functionality, automation, or how specific features work.",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "explain_feature",
+      description: "Explain how a specific platform feature works, its components, data flow, and implementation. Use when users ask how features are designed or implemented.",
+      parameters: {
+        type: "object",
+        properties: {
+          feature_name: {
+            type: "string",
+            description: "Name of the feature (e.g., 'signals', 'incidents', 'entities', 'travel', 'investigations', 'monitoring')",
+          },
+        },
+        required: ["feature_name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_system_architecture",
+      description: "Get overview of the platform's architecture, technology stack, and how components interact. Use when users ask about the overall system design or technical implementation.",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -1019,6 +1074,594 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       };
     }
 
+    case "get_database_schema": {
+      return {
+        success: true,
+        tables: [
+          { 
+            name: 'signals', 
+            description: 'Security intelligence signals from various OSINT sources',
+            key_columns: ['id', 'title', 'description', 'severity', 'status', 'client_id', 'received_at', 'confidence', 'content_hash', 'normalized_text'],
+            relationships: ['Links to clients, sources, incidents via incident_signals, entities via entity_mentions']
+          },
+          { 
+            name: 'incidents', 
+            description: 'Security incidents created from signals requiring investigation',
+            key_columns: ['id', 'title', 'status', 'priority', 'severity_level', 'opened_at', 'acknowledged_at', 'resolved_at', 'client_id', 'owner_user_id'],
+            relationships: ['Links to signals via incident_signals, entities via incident_entities, clients, users']
+          },
+          { 
+            name: 'entities', 
+            description: 'Tracked entities (people, organizations, locations) with OSINT monitoring',
+            key_columns: ['id', 'name', 'type', 'description', 'risk_level', 'threat_score', 'current_location', 'active_monitoring_enabled'],
+            relationships: ['Links to signals/incidents via entity_mentions, has entity_content, entity_photos, entity_relationships']
+          },
+          { 
+            name: 'entity_mentions', 
+            description: 'Links between entities and signals/incidents where they are mentioned',
+            key_columns: ['id', 'entity_id', 'signal_id', 'incident_id', 'confidence', 'context', 'detected_at'],
+            relationships: ['Many-to-many join table connecting entities to signals and incidents']
+          },
+          { 
+            name: 'entity_relationships', 
+            description: 'Relationships between entities (e.g., person works for organization)',
+            key_columns: ['id', 'entity_a_id', 'entity_b_id', 'relationship_type', 'strength', 'first_observed', 'last_observed'],
+            relationships: ['Self-referencing entities table creating a graph of relationships']
+          },
+          { 
+            name: 'entity_content', 
+            description: 'OSINT content found about entities (articles, social posts, etc.)',
+            key_columns: ['id', 'entity_id', 'content_type', 'url', 'title', 'content_text', 'sentiment', 'relevance_score'],
+            relationships: ['Belongs to entities, created by automated OSINT scans']
+          },
+          { 
+            name: 'entity_photos', 
+            description: 'Photos of entities collected from OSINT sources',
+            key_columns: ['id', 'entity_id', 'storage_path', 'source', 'caption'],
+            relationships: ['Belongs to entities, stored in Supabase Storage']
+          },
+          { 
+            name: 'clients', 
+            description: 'Client organizations being monitored by the platform',
+            key_columns: ['id', 'name', 'industry', 'status', 'locations', 'monitoring_keywords', 'threat_profile'],
+            relationships: ['Has many signals, incidents, investigations, travelers']
+          },
+          { 
+            name: 'investigations', 
+            description: 'Investigation case files with timeline and evidence',
+            key_columns: ['id', 'file_number', 'synopsis', 'recommendations', 'file_status', 'client_id', 'incident_id'],
+            relationships: ['Links to clients, incidents, has investigation_entries, investigation_persons, investigation_attachments']
+          },
+          { 
+            name: 'investigation_entries', 
+            description: 'Timeline entries in investigation files',
+            key_columns: ['id', 'investigation_id', 'entry_text', 'entry_timestamp', 'is_ai_generated'],
+            relationships: ['Belongs to investigations, chronological log']
+          },
+          { 
+            name: 'travelers', 
+            description: 'Personnel who travel and need risk monitoring',
+            key_columns: ['id', 'name', 'email', 'department', 'risk_level', 'is_active'],
+            relationships: ['Has many itineraries']
+          },
+          { 
+            name: 'itineraries', 
+            description: 'Travel itineraries with risk assessments',
+            key_columns: ['id', 'traveler_id', 'trip_name', 'destination_country', 'destination_city', 'departure_date', 'return_date', 'risk_level', 'monitoring_enabled'],
+            relationships: ['Belongs to travelers, AI-analyzed for risks']
+          },
+          { 
+            name: 'sources', 
+            description: 'OSINT data sources being monitored',
+            key_columns: ['id', 'name', 'type', 'url', 'status', 'scan_frequency', 'last_ingested_at'],
+            relationships: ['Produces signals, has monitoring_history']
+          },
+          { 
+            name: 'monitoring_history', 
+            description: 'History of automated monitoring scans',
+            key_columns: ['id', 'source_name', 'status', 'scan_started_at', 'scan_completed_at', 'items_scanned', 'signals_created'],
+            relationships: ['Tracks automation performance per source']
+          },
+          { 
+            name: 'knowledge_base_articles', 
+            description: 'Platform documentation and guides',
+            key_columns: ['id', 'title', 'content', 'summary', 'category_id', 'tags', 'is_published'],
+            relationships: ['Belongs to knowledge_base_categories, searchable content']
+          },
+          { 
+            name: 'archival_documents', 
+            description: 'Historical documents and intelligence reports',
+            key_columns: ['id', 'filename', 'content_text', 'summary', 'keywords', 'entity_mentions', 'date_of_document'],
+            relationships: ['Can be linked to entities, searchable content repository']
+          },
+          { 
+            name: 'automation_metrics', 
+            description: 'Performance metrics for automation and AI systems',
+            key_columns: ['id', 'metric_date', 'signals_processed', 'incidents_created', 'osint_scans_completed', 'false_positive_rate'],
+            relationships: ['Aggregated daily metrics for monitoring system health']
+          }
+        ],
+        message: args.table_name 
+          ? `Detailed schema information for ${args.table_name}. This table is part of the Fortress security intelligence platform's data model.`
+          : 'Complete database schema overview. Fortress uses PostgreSQL with Row Level Security (RLS) for data access control.'
+      };
+    }
+
+    case "list_edge_functions": {
+      return {
+        success: true,
+        functions: [
+          { 
+            name: 'ingest-signal', 
+            purpose: 'Ingest new security signals into the system from various sources',
+            triggers: 'API calls, manual uploads, monitoring functions',
+            processes: 'Validates, normalizes, hashes content, extracts entities, calculates severity'
+          },
+          { 
+            name: 'correlate-signals', 
+            purpose: 'Find and group related signals using content similarity',
+            triggers: 'Automatically after signal ingestion',
+            processes: 'Content hash matching, text normalization, grouping into correlation_groups'
+          },
+          { 
+            name: 'correlate-entities', 
+            purpose: 'Link entities to signals and incidents using NLP',
+            triggers: 'After signal/incident creation',
+            processes: 'Named entity recognition, keyword matching, creates entity_mentions'
+          },
+          { 
+            name: 'ai-decision-engine', 
+            purpose: 'AI-powered incident creation and escalation decisions',
+            triggers: 'When new signals arrive or patterns detected',
+            processes: 'Analyzes signal patterns, assesses threat level, creates incidents automatically'
+          },
+          { 
+            name: 'check-incident-escalation', 
+            purpose: 'Check if incidents need escalation based on rules and SLAs',
+            triggers: 'Scheduled (every 15 minutes)',
+            processes: 'Evaluates escalation_rules, checks SLA timers, triggers escalations'
+          },
+          { 
+            name: 'alert-delivery', 
+            purpose: 'Send alerts via email, Slack, Teams',
+            triggers: 'Incident creation, escalation, manual alerts',
+            processes: 'Formats messages, delivers to configured channels, tracks delivery status'
+          },
+          { 
+            name: 'monitor-news', 
+            purpose: 'Automated monitoring of news sources for relevant threats',
+            triggers: 'Scheduled (configurable frequency)',
+            processes: 'RSS feeds, news APIs, keyword matching, signal generation'
+          },
+          { 
+            name: 'monitor-social', 
+            purpose: 'Monitor social media platforms for entity mentions',
+            triggers: 'Scheduled scans',
+            processes: 'Twitter, LinkedIn, Facebook APIs, sentiment analysis'
+          },
+          { 
+            name: 'monitor-threat-intel', 
+            purpose: 'Ingest threat intelligence feeds',
+            triggers: 'Scheduled',
+            processes: 'CVE databases, threat feeds, indicator matching'
+          },
+          { 
+            name: 'monitor-darkweb', 
+            purpose: 'Scan dark web sources for credential leaks and threats',
+            triggers: 'Scheduled',
+            processes: 'Searches Tor, paste sites, breach databases'
+          },
+          { 
+            name: 'osint-entity-scan', 
+            purpose: 'Comprehensive OSINT scan for entity information',
+            triggers: 'Manual or scheduled for monitored entities',
+            processes: 'Multi-source web search, data collection, entity_content creation'
+          },
+          { 
+            name: 'scan-entity-content', 
+            purpose: 'Scan web content for specific entities',
+            triggers: 'Part of OSINT scans',
+            processes: 'Web scraping, content analysis, relevance scoring'
+          },
+          { 
+            name: 'scan-entity-photos', 
+            purpose: 'Find and collect photos of entities',
+            triggers: 'Part of OSINT scans',
+            processes: 'Image search APIs, face detection, storage in entity_photos'
+          },
+          { 
+            name: 'enrich-entity', 
+            purpose: 'Enrich entity data from multiple sources',
+            triggers: 'Manual enrichment requests',
+            processes: 'Combines data from APIs, public records, social profiles'
+          },
+          { 
+            name: 'parse-document', 
+            purpose: 'Extract text and entities from uploaded documents',
+            triggers: 'Document uploads',
+            processes: 'OCR, text extraction, NLP, creates ingested_documents and entity mentions'
+          },
+          { 
+            name: 'process-client-onboarding', 
+            purpose: 'Process new client onboarding data',
+            triggers: 'Client onboarding form submission',
+            processes: 'Creates monitoring keywords, risk profiles, initial entity setup'
+          },
+          { 
+            name: 'generate-report', 
+            purpose: 'Generate security reports (PDF/DOCX)',
+            triggers: 'Manual report requests',
+            processes: 'Queries data, formats report, generates PDF/DOCX'
+          },
+          { 
+            name: 'generate-executive-report', 
+            purpose: 'Generate executive-level summary reports',
+            triggers: 'Scheduled or manual',
+            processes: 'Aggregates metrics, creates executive summary, formats for leadership'
+          },
+          { 
+            name: 'dashboard-ai-assistant', 
+            purpose: 'AI assistant for platform interaction and queries',
+            triggers: 'User messages in dashboard',
+            processes: 'Natural language understanding, database queries, contextual responses'
+          },
+          { 
+            name: 'investigation-ai-assist', 
+            purpose: 'AI assistance for investigation writing',
+            triggers: 'Investigation page AI features',
+            processes: 'Expands notes, suggests next steps, writes synopses'
+          },
+          { 
+            name: 'parse-travel-itinerary', 
+            purpose: 'Parse and analyze travel itineraries',
+            triggers: 'Travel document upload',
+            processes: 'Extracts dates, locations, flights, assesses risks'
+          },
+          { 
+            name: 'monitor-travel-risks', 
+            purpose: 'Monitor risks for active travelers',
+            triggers: 'Scheduled for active itineraries',
+            processes: 'Checks threat intel, weather, civil unrest for traveler locations'
+          }
+        ],
+        message: 'Complete list of edge functions that power Fortress automation and AI capabilities. All functions are Deno-based and auto-deployed.'
+      };
+    }
+
+    case "explain_feature": {
+      const featureName = args.feature_name?.toLowerCase();
+      const featureExplanations: Record<string, any> = {
+        signals: {
+          description: 'Signals are raw security intelligence ingested from various OSINT sources (news, social media, threat intel, etc.). They represent potential security events or threats that need analysis.',
+          components: [
+            'Signal ingestion (ingest-signal function)',
+            'Signal correlation (correlate-signals function)',
+            'Entity detection (correlate-entities function)',
+            'Duplicate detection (detect-duplicates function)',
+            'Quality scoring and confidence calculation'
+          ],
+          data_flow: 'OSINT Source → Monitor Function → Ingest Signal → Normalize/Hash Content → Correlate with Existing → Extract Entities → Calculate Severity → Store in signals table → Trigger AI Decision Engine',
+          tables: ['signals', 'signal_correlation_groups', 'entity_mentions', 'signal_documents', 'incident_signals'],
+          key_functions: ['ingest-signal', 'correlate-signals', 'correlate-entities', 'detect-duplicates', 'ai-decision-engine'],
+          ui_pages: ['Signals page (/signals) - List view, filtering, detail dialogs', 'Dashboard - Recent signals widget'],
+          how_to_use: 'Signals are automatically created by monitoring functions. Users can view, filter, search, mark false positives, and manually create incidents from signals.'
+        },
+        incidents: {
+          description: 'Incidents are security events that require investigation, response, and tracking. Created automatically by AI or manually from signals.',
+          components: [
+            'AI-powered incident creation (ai-decision-engine)',
+            'Escalation rules engine (check-incident-escalation)',
+            'Alert delivery system (alert-delivery)',
+            'SLA tracking and timers',
+            'Status workflow (open → investigating → contained → resolved)',
+            'Priority system (p1/p2/p3/p4)'
+          ],
+          data_flow: 'Correlated Signals → AI Decision Engine → Create Incident → Link Signals/Entities → Check Escalation Rules → Send Alerts → Track Status Changes → Monitor SLA → Resolution',
+          tables: ['incidents', 'incident_signals', 'incident_entities', 'alerts', 'escalation_rules', 'incident_outcomes'],
+          key_functions: ['ai-decision-engine', 'check-incident-escalation', 'alert-delivery', 'incident-action'],
+          ui_pages: ['Incidents page (/incidents) - List, detail view, status updates', 'Dashboard - Active incidents count'],
+          how_to_use: 'Incidents are created automatically based on signal patterns. Users can assign owners, update status, add notes, link to investigations, and track resolution.'
+        },
+        entities: {
+          description: 'Entities are tracked people, organizations, or locations with comprehensive OSINT enrichment and relationship mapping.',
+          components: [
+            'Entity management and profiles',
+            'OSINT scanning (osint-entity-scan, osint-web-search)',
+            'Content collection (scan-entity-content)',
+            'Photo collection (scan-entity-photos)',
+            'Relationship mapping (entity_relationships)',
+            'Active monitoring with proximity alerts'
+          ],
+          data_flow: 'Create Entity → Set Monitoring Radius → Trigger OSINT Scan → Collect Web Content → Extract Photos → Detect Relationships → Link to Signals/Incidents → Track Mentions → Alert on Proximity',
+          tables: ['entities', 'entity_mentions', 'entity_relationships', 'entity_content', 'entity_photos', 'entity_suggestions'],
+          key_functions: ['osint-entity-scan', 'osint-web-search', 'scan-entity-content', 'scan-entity-photos', 'enrich-entity', 'cross-reference-entities', 'monitor-entity-proximity'],
+          ui_pages: [
+            'Entities page (/entities) - List view, search, create dialog',
+            'Entity detail dialog - Profile, content, photos, relationships, mentions',
+            'Entity unified profile - Comprehensive view'
+          ],
+          how_to_use: 'Create entities for people/orgs to track. Enable active monitoring. System automatically performs OSINT scans, collects intelligence, detects mentions in signals, and alerts on proximity to incidents.'
+        },
+        travel: {
+          description: 'Travel security monitoring tracks personnel traveling to potentially risky locations with real-time risk assessment and alerts.',
+          components: [
+            'Traveler management',
+            'Itinerary tracking with dates and locations',
+            'AI risk assessment (parse-travel-itinerary)',
+            'Real-time monitoring (monitor-travel-risks)',
+            'Travel alerts for destination risks',
+            'Map visualization of traveler locations'
+          ],
+          data_flow: 'Create Traveler → Add Itinerary (manual or upload) → AI Parse & Risk Assessment → Enable Monitoring → Monitor Risks Function Checks Threats → Generate Travel Alerts → Display on Map → Archive After Return',
+          tables: ['travelers', 'itineraries'],
+          key_functions: ['parse-travel-itinerary', 'monitor-travel-risks', 'archive-completed-itineraries'],
+          ui_pages: [
+            'Travel page (/travel) - Travelers list, itineraries list',
+            'Travel map - Geographic visualization',
+            'Travel alerts panel - Risk notifications'
+          ],
+          how_to_use: 'Add travelers and their itineraries (manually or upload PDF/DOCX). System performs AI risk assessment, monitors threats at destinations, and sends alerts for risks.'
+        },
+        investigations: {
+          description: 'Investigation case file management for documenting security investigations with timeline, persons, evidence, and AI writing assistance.',
+          components: [
+            'Investigation files with file numbers',
+            'Timeline entries (investigation_entries)',
+            'Person tracking (investigation_persons)',
+            'Document attachments (investigation_attachments)',
+            'AI writing assistance (investigation-ai-assist)',
+            'Cross-references to other cases',
+            'Entity correlation'
+          ],
+          data_flow: 'Create Investigation → Add Timeline Entries → Track Persons Involved → Upload Evidence → Use AI to Expand Notes/Write Synopsis → Link Entities → Add Recommendations → Generate Report',
+          tables: ['investigations', 'investigation_entries', 'investigation_persons', 'investigation_attachments'],
+          key_functions: ['investigation-ai-assist', 'suggest-investigation-references', 'generate-report'],
+          ui_pages: [
+            'Investigations page (/investigations) - List and search',
+            'Investigation detail page (/investigations/:id) - Full case file interface'
+          ],
+          how_to_use: 'Create investigation from incident or standalone. Add chronological entries, track people, upload evidence. Use AI assistant to expand notes, suggest next steps, write synopsis and recommendations.'
+        },
+        monitoring: {
+          description: 'Automated OSINT source monitoring continuously scans configured sources for security intelligence and generates signals.',
+          components: [
+            'Source configuration (sources table)',
+            'Multiple source types (RSS, news APIs, social media, threat intel, dark web)',
+            'Scheduled scanning based on frequency',
+            'Monitoring history tracking',
+            'Error detection and alerting',
+            '20+ specialized monitor functions'
+          ],
+          data_flow: 'Configure Source → Set Scan Frequency → Monitor Function Scheduled → Scan Source → Extract Data → Match Keywords → Generate Signals → Record History → Handle Errors',
+          tables: ['sources', 'monitoring_history', 'ingested_documents'],
+          key_functions: [
+            'monitor-news', 'monitor-social', 'monitor-threat-intel', 'monitor-darkweb',
+            'monitor-facebook', 'monitor-instagram', 'monitor-linkedin', 'monitor-twitter',
+            'monitor-pastebin', 'monitor-github', 'monitor-rss-sources', 'monitor-domains',
+            'monitor-earthquakes', 'monitor-wildfires', 'monitor-weather', 'monitor-canadian-sources',
+            'auto-orchestrator (coordinates all monitoring)'
+          ],
+          ui_pages: [
+            'Sources page (/sources) - List sources, add/edit',
+            'Monitoring Sources page (/monitoring-sources) - Detailed configuration',
+            'Dashboard - Monitoring status widget'
+          ],
+          how_to_use: 'Add sources (RSS feeds, social accounts, etc.), configure scan frequency and keywords. System automatically monitors sources on schedule, generates signals for matches, tracks performance in monitoring_history.'
+        },
+        automation: {
+          description: 'Comprehensive automation system that orchestrates all OSINT monitoring, signal processing, incident creation, and alerting without manual intervention.',
+          components: [
+            'Auto-orchestrator (master coordinator)',
+            'Scheduled edge functions',
+            'AI decision engine',
+            'Processing queue',
+            'Automation metrics tracking',
+            'Adaptive confidence adjustment',
+            'Learning profiles for ML improvements'
+          ],
+          data_flow: 'Auto-Orchestrator → Trigger Monitor Functions → Ingest Signals → Correlate → Entity Detection → AI Decision → Create Incidents → Check Escalation → Send Alerts → Record Metrics',
+          tables: ['monitoring_history', 'automation_metrics', 'processing_queue', 'learning_profiles'],
+          key_functions: [
+            'auto-orchestrator', 'adaptive-confidence-adjuster', 'process-feedback',
+            'generate-learning-context', 'all monitor-* functions'
+          ],
+          how_to_use: 'Automation runs continuously in background. Configure sources and keywords, set escalation rules, enable notifications. System handles rest automatically. Monitor performance via automation_metrics and system health tools.'
+        }
+      };
+      
+      const explanation = featureExplanations[featureName];
+      if (!explanation) {
+        return { 
+          success: false,
+          error: `Feature "${featureName}" not found. Available features: signals, incidents, entities, travel, investigations, monitoring, automation`
+        };
+      }
+      
+      return {
+        success: true,
+        feature: featureName,
+        ...explanation,
+        message: `Detailed explanation of how the ${featureName} feature works in Fortress`
+      };
+    }
+
+    case "get_system_architecture": {
+      return {
+        success: true,
+        overview: 'Fortress is a comprehensive security intelligence platform built on React/TypeScript frontend with Supabase (PostgreSQL + Edge Functions) backend. The platform automates OSINT collection, threat detection, incident management, and security operations.',
+        frontend: {
+          framework: 'React 18.3+ with TypeScript for type safety',
+          styling: 'Tailwind CSS with custom design system (index.css, tailwind.config.ts)',
+          routing: 'React Router v6 for page navigation',
+          state_management: [
+            'React Query (TanStack Query) for server state and caching',
+            'React hooks (useState, useContext, useReducer) for local state',
+            'Custom hooks in src/hooks/ for shared logic'
+          ],
+          ui_library: 'Shadcn UI components (src/components/ui/) - customizable Radix UI primitives',
+          key_pages: [
+            'Dashboard (/) - Overview, metrics, AI assistant',
+            'Signals (/signals) - Security intelligence feed',
+            'Incidents (/incidents) - Incident management',
+            'Entities (/entities) - Entity tracking and OSINT',
+            'Travel (/travel) - Travel security monitoring',
+            'Investigations (/investigations) - Case files',
+            'Reports (/reports) - Report generation',
+            'Knowledge Base (/knowledge-base) - Documentation',
+            'Sources (/sources) - OSINT source configuration',
+            'Clients (/clients) - Client management'
+          ],
+          key_components: [
+            'DashboardAIAssistant - AI chat interface',
+            'ThreatGlobe - 3D visualization (Three.js, React Three Fiber)',
+            'LocationsMap - Mapbox integration',
+            'SignalIngestForm - Manual signal creation',
+            'EntityUnifiedProfile - Comprehensive entity view',
+            'Various dialogs and forms for data management'
+          ]
+        },
+        backend: {
+          platform: 'Supabase - PostgreSQL database + Deno edge functions',
+          database: {
+            engine: 'PostgreSQL 15+ with pgvector extension',
+            security: 'Row Level Security (RLS) policies on all tables',
+            schema: '40+ tables for signals, incidents, entities, travel, investigations, etc.',
+            features: 'Full-text search, JSONB columns, triggers, functions',
+            realtime: 'Supabase Realtime for live updates on tables'
+          },
+          functions: {
+            runtime: 'Deno 1.x (JavaScript/TypeScript)',
+            deployment: 'Auto-deployed edge functions in supabase/functions/',
+            count: '50+ functions for monitoring, processing, AI, alerts',
+            examples: [
+              'monitor-* functions - Scheduled OSINT scanning',
+              'ingest-signal - Process incoming intelligence',
+              'ai-decision-engine - AI incident creation',
+              'alert-delivery - Multi-channel alerts',
+              'osint-entity-scan - Entity research',
+              'dashboard-ai-assistant - Conversational AI'
+            ]
+          },
+          storage: {
+            provider: 'Supabase Storage',
+            buckets: [
+              'entity-photos - Photos from OSINT (public)',
+              'investigation-files - Case evidence (private)',
+              'archival-documents - Historical docs (private)',
+              'travel-documents - Itineraries (public)',
+              'ai-chat-attachments - AI conversation files (private)'
+            ],
+            security: 'RLS policies control access per bucket'
+          },
+          auth: {
+            provider: 'Supabase Auth',
+            methods: ['Email/password', 'Magic links'],
+            roles: 'Custom app_role enum (admin, analyst, viewer) in user_roles table',
+            security: 'JWT tokens, RLS enforcement'
+          }
+        },
+        automation: {
+          orchestration: 'auto-orchestrator function coordinates all scheduled tasks',
+          monitoring: {
+            frequency: 'Configurable per source (5min to 24hr intervals)',
+            sources: [
+              'News RSS feeds',
+              'Social media (Twitter, LinkedIn, Facebook, Instagram)',
+              'Threat intelligence feeds',
+              'Dark web monitoring',
+              'GitHub repositories',
+              'Pastebin and paste sites',
+              'Weather, earthquakes, wildfires',
+              'Canadian government sources',
+              'Court registries'
+            ],
+            process: 'Monitor → Extract → Match Keywords → Generate Signals → Store'
+          },
+          correlation: {
+            signal_correlation: 'Groups similar signals using content hashing and NLP',
+            entity_correlation: 'Links entities to signals/incidents using NER and keyword matching',
+            ai_powered: 'Uses Lovable AI (Gemini models) for advanced pattern detection'
+          },
+          decision_engine: {
+            purpose: 'Automatically creates incidents from correlated signals',
+            logic: 'Analyzes severity, entity involvement, correlation confidence, threat patterns',
+            triggers: 'High-severity signals, entity proximity, pattern matching',
+            output: 'Incident creation with priority, status, linked signals/entities'
+          },
+          escalation: {
+            rules: 'Configurable escalation_rules with conditions and actions',
+            checking: 'check-incident-escalation runs every 15 minutes',
+            actions: 'Priority increase, status change, alert delivery, assignment',
+            sla: 'Tracks acknowledge/contain/resolve times against targets'
+          },
+          alerts: {
+            channels: ['Email (Resend API)', 'Slack webhooks', 'Microsoft Teams webhooks'],
+            triggers: 'Incident creation, escalation, entity mentions, travel risks',
+            templating: 'React-based email templates with JSX'
+          }
+        },
+        data_flow: {
+          ingest: 'OSINT Sources → Monitor Functions → Normalize/Hash → Store Signals → Record History',
+          process: 'Signals → Correlation → Entity Detection → Quality Scoring → Deduplication',
+          decide: 'Correlated Signals → AI Analysis → Pattern Matching → Incident Creation',
+          alert: 'Incidents → Escalation Check → Priority Assessment → Multi-channel Delivery',
+          enrich: 'Entities → OSINT Scan → Web Search → Content/Photos Collection → Relationship Detection'
+        },
+        integrations: {
+          ai: {
+            provider: 'Lovable AI Gateway',
+            models: [
+              'google/gemini-2.5-flash (primary - fast, cost-effective)',
+              'google/gemini-2.5-pro (complex reasoning)',
+              'google/gemini-2.5-flash-lite (classification)',
+              'openai/gpt-5-mini (alternative)'
+            ],
+            uses: [
+              'AI decision engine for incidents',
+              'Dashboard AI assistant',
+              'Investigation writing assistance',
+              'Entity enrichment and analysis',
+              'Travel risk assessment',
+              'Document parsing and entity extraction'
+            ]
+          },
+          maps: 'Mapbox GL JS for location visualization (incidents, entities, travelers)',
+          osint_apis: [
+            'Google Search API (entity OSINT)',
+            'News APIs',
+            'Social media APIs (Twitter, Facebook, LinkedIn)',
+            'Threat intel feeds',
+            'Weather/earthquake APIs'
+          ],
+          notifications: [
+            'Resend API for email delivery',
+            'Slack incoming webhooks',
+            'Microsoft Teams incoming webhooks'
+          ],
+          storage: 'Supabase Storage for files, photos, documents with RLS'
+        },
+        deployment: {
+          frontend: 'Lovable hosting (CDN, auto-deployment)',
+          backend: 'Supabase cloud (auto-scaling, multi-region)',
+          edge_functions: 'Deployed globally on Supabase edge network',
+          database: 'Managed PostgreSQL with automatic backups'
+        },
+        security: {
+          authentication: 'Supabase Auth with JWT tokens',
+          authorization: 'Row Level Security policies on all tables + custom roles',
+          data_encryption: 'At-rest and in-transit encryption',
+          api_security: 'API keys in environment variables, CORS configured',
+          secrets: 'Supabase secrets management for API keys'
+        },
+        performance: {
+          caching: 'React Query caching for API responses',
+          realtime: 'Supabase Realtime for live updates without polling',
+          optimization: 'Database indexes on frequently queried columns',
+          monitoring: 'automation_metrics table tracks system performance'
+        }
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -1101,35 +1744,83 @@ serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: `You are a helpful security intelligence assistant for the Fortress platform.
+            content: `You are the Fortress AI Assistant - an intelligent security operations assistant with comprehensive knowledge of the platform, its codebase, architecture, and all features.
+
+PLATFORM OVERVIEW:
+Fortress is a security intelligence and threat monitoring platform built on React/TypeScript frontend with Supabase (PostgreSQL + Edge Functions) backend. The platform automates OSINT collection, threat detection, incident management, entity tracking, travel security, and investigation management through 50+ edge functions and AI-powered automation.
+
+SYSTEM ARCHITECTURE:
+- Frontend: React + TypeScript + Tailwind CSS + Shadcn UI + React Query
+- Backend: Supabase PostgreSQL with Row Level Security + 50+ Deno edge functions
+- Automation: Auto-orchestrator coordinates monitoring, AI decision engine, escalation, alerts
+- AI: Lovable AI (Gemini models) for decision-making, assistance, analysis
+- Real-time: Supabase Realtime for live updates on tables
+- Storage: Supabase Storage with RLS for files/photos/documents
+
+KEY FEATURES & IMPLEMENTATION:
+1. **Signals**: Raw OSINT intelligence → correlation → entity detection → AI incident creation
+   - Tables: signals, signal_correlation_groups, entity_mentions
+   - Functions: ingest-signal, correlate-signals, correlate-entities, ai-decision-engine
+
+2. **Incidents**: Security events with escalation rules, SLA tracking, multi-channel alerts
+   - Tables: incidents, incident_signals, incident_entities, alerts, escalation_rules
+   - Functions: ai-decision-engine, check-incident-escalation, alert-delivery
+
+3. **Entities**: Tracked people/orgs/locations with automated OSINT enrichment
+   - Tables: entities, entity_mentions, entity_relationships, entity_content, entity_photos
+   - Functions: osint-entity-scan, scan-entity-content, scan-entity-photos, enrich-entity
+
+4. **Travel**: Risk assessment and monitoring for personnel in risky locations
+   - Tables: travelers, itineraries
+   - Functions: parse-travel-itinerary, monitor-travel-risks
+
+5. **Investigations**: Case file management with AI writing assistance
+   - Tables: investigations, investigation_entries, investigation_persons, investigation_attachments
+   - Functions: investigation-ai-assist, generate-report
+
+6. **Monitoring**: Automated scanning of 20+ OSINT sources (news, social, threat intel, dark web)
+   - Tables: sources, monitoring_history, ingested_documents
+   - Functions: monitor-news, monitor-social, monitor-threat-intel, monitor-darkweb, etc.
+
+DATABASE SCHEMA:
+40+ PostgreSQL tables with RLS policies. Core tables: signals, incidents, entities, clients, investigations, travelers, sources, monitoring_history, automation_metrics. All relationships mapped through foreign keys and junction tables (entity_mentions, incident_signals, etc.).
+
+YOUR CAPABILITIES:
+1. **Data Analysis**: Query all database tables for signals, incidents, entities, investigations, travelers, etc.
+2. **Codebase Understanding**: Explain feature implementation, data flow, component architecture
+3. **System Architecture**: Describe technology stack, edge functions, automation, integrations
+4. **Database Schema**: Access table structures, relationships, RLS policies
+5. **Edge Functions**: List and explain all 50+ backend functions and their purposes
+6. **Issue Detection**: Find duplicate signals, orphaned records, data quality problems
+7. **Issue Resolution**: Fix duplicates, clean up data, improve quality
+8. **Knowledge Access**: Search documentation in knowledge base
+9. **Troubleshooting**: Debug system issues using monitoring status, health metrics, error diagnostics
+10. **OSINT Operations**: Trigger entity scans, gather intelligence
+11. **Feature Guidance**: Explain how features work and how they're implemented
 
 CRITICAL DISTINCTIONS:
 1. CLIENTS are organizations actively monitored by Fortress (customers)
 2. ENTITIES are people/organizations mentioned in intelligence data
 3. When users ask about a person "of/at [organization]", search for the ENTITY (person), not the client
 
-You have access to tools to query the database for:
-- Recent security signals
-- Signals related to specific entities or people
-- Entity information (people, organizations, locations)
-- Active incidents
-- Investigation files
-- Client accounts
-- System monitoring status and health
-- Error diagnostics and troubleshooting
-- OSINT (Open Source Intelligence) scanning capabilities
-- Database issue analysis (duplicates, orphaned records, data quality)
-- Duplicate signal detection and fixing
-- Signal quality analysis
-- Knowledge base articles and documentation
+AVAILABLE PAGES & COMPONENTS:
+- Dashboard (/) - Overview with metrics, AI assistant, recent activity
+- Signals (/signals) - Signal list, filtering, detail dialogs, entity correlation
+- Incidents (/incidents) - Incident management, status updates, SLA tracking
+- Entities (/entities) - Entity profiles, relationships, OSINT content, photos
+- Travel (/travel) - Traveler list, itineraries, map, risk alerts
+- Investigations (/investigations) - Case files, timeline entries, AI assistance
+- Reports (/reports) - Report generation, executive summaries
+- Knowledge Base (/knowledge-base) - Documentation, articles, guides
+- Sources (/sources) - OSINT source management, monitoring config
+- Clients (/clients) - Client org management, risk profiles
 
-KNOWLEDGE BASE:
-When users ask questions about procedures, best practices, how to do something, or need guidance:
-1. Use search_knowledge_base to find relevant articles in the documentation
-2. Reference the articles when providing answers
-3. Include links to full articles using markdown: [Article Title](/knowledge-base/{id})
-4. Use get_knowledge_base_categories to help users browse available topics
-5. Summarize key points from articles but encourage users to read the full content for details
+WHEN USERS ASK ABOUT IMPLEMENTATION OR ARCHITECTURE:
+1. Use get_database_schema to show table structures and relationships
+2. Use list_edge_functions to explain backend functionality
+3. Use explain_feature to describe how specific features work
+4. Use get_system_architecture for overall technical design
+5. Provide specific code flow examples and data relationships
 
 FILE ATTACHMENTS:
 - Analyze attached images for security-relevant information
@@ -1137,59 +1828,33 @@ FILE ATTACHMENTS:
 - Provide insights on documents and their security implications
 - Reference attachments when providing responses
 
+KNOWLEDGE BASE:
+When users ask questions about procedures, best practices, or need guidance:
+1. Use search_knowledge_base to find relevant articles
+2. Reference articles with links: [Article Title](/knowledge-base/{id})
+3. Use get_knowledge_base_categories to browse available topics
+
 OSINT SCANNING:
-When users ask to gather intelligence, perform research, or look for information about a person or organization:
-1. First check if the entity exists in the system using search_entities
-2. If it exists, use search_signals_by_entity to check for existing signals
-3. If no signals exist, use trigger_osint_scan to perform a comprehensive web search
-4. The OSINT scan will search multiple sources including social media, news, and public records
-5. Results are automatically processed and added as entity content and signals
-6. If OSINT scanning is not configured, inform the user it requires Google Search API setup
+When users want intelligence on a person or organization:
+1. Check if entity exists using search_entities
+2. Check for existing signals using search_signals_by_entity
+3. If no signals, use trigger_osint_scan for comprehensive web search
 
-WHEN USERS ASK ABOUT A PERSON OR ORGANIZATION:
-- Example: "Find hazards for Lloyd Clark of Pink Mountain Outfitters"
-- Action: Use search_entities to find "Lloyd Clark" (the person is the entity)
-- Then: Use search_signals_by_entity or trigger_osint_scan
-- DO NOT try to search by client unless they specifically ask about monitoring a client organization
+CODE AND DATA ISSUES:
+When users ask about duplicates, data quality, or cleaning:
+1. Use analyze_database_issues to scan for problems
+2. Use fix_duplicate_signals to merge or remove duplicates
+3. Use analyze_signal_quality for metrics and low-confidence signals
+4. Always explain changes before modifying/deleting data
 
-TROUBLESHOOTING CAPABILITIES:
-When users ask about system issues, monitoring problems, or "why isn't X working":
+TROUBLESHOOTING:
+When users report system issues:
 1. Use get_monitoring_status to check if scans are running
-2. Use get_system_health to view overall system performance
-3. Use diagnose_issues to identify specific errors and patterns
-4. Provide clear explanations of what's working and what's not
-5. Offer specific recommendations to fix issues
+2. Use get_system_health to view overall performance
+3. Use diagnose_issues to identify errors and patterns
+4. Provide specific recommendations to fix issues
 
-Common issues to look for:
-- Rate limiting (429 errors from social media monitors)
-- Failed scans or sources with errors
-- Low scan frequency or missing data
-- Stale data (no recent scans)
-
-CODE AND DATA ISSUE FIXING:
-When users ask about duplicates, data quality issues, or want to clean up the database:
-1. Use analyze_database_issues to scan for problems (duplicates, orphaned records, data quality)
-2. Review the results and explain what was found
-3. For duplicate signals, use fix_duplicate_signals to merge or remove them
-4. For data quality, use analyze_signal_quality to get metrics and identify low-confidence signals
-5. Always explain what you're going to do before making changes that modify or delete data
-
-When users ask about specific data:
-1. Use the appropriate tool to fetch the information
-2. Summarize the results in a clear, conversational way
-3. Provide navigation links when relevant using markdown format: [Link Text](/path)
-
-Available pages:
-- [View Signals](/signals) - All security signals
-- [View Incidents](/incidents) - Incident management
-- [View Entities](/entities) - Tracked entities and people
-- [View Investigations](/investigations) - Investigation files
-- [View Clients](/clients) - Client accounts
-- [View Monitoring Sources](/monitoring-sources) - Configure monitoring
-- [Knowledge Base](/knowledge-base) - Documentation and guides
-
-Be conversational and helpful. When showing data, format it clearly with bullet points or structured text.
-When troubleshooting, be specific about what you found and how to fix it.`,
+Be conversational and helpful. Format data clearly with bullet points. Provide navigation links using markdown: [Link Text](/path). When troubleshooting, be specific and actionable. When explaining architecture, be detailed and technical.`,
           },
           ...processedMessages,
         ],
@@ -1264,7 +1929,7 @@ When troubleshooting, be specific about what you found and how to fix it.`,
           messages: [
           {
             role: "system",
-            content: `You are a helpful security intelligence assistant. Summarize the tool results in a clear, conversational way. Use markdown links for navigation: [Link Text](/path). Be concise and helpful. When file attachments are present, incorporate insights from them into your response.`,
+            content: `You are the Fortress AI Assistant. Summarize tool results in a clear, conversational way. Use markdown links: [Link Text](/path). Be concise and helpful. When file attachments are present, incorporate insights. When explaining architecture or implementation, be detailed and technical.`,
           },
           ...processedMessages,
             firstMessage,
@@ -1295,7 +1960,7 @@ When troubleshooting, be specific about what you found and how to fix it.`,
         messages: [
           {
             role: "system",
-            content: `You are a helpful security intelligence assistant with troubleshooting capabilities. Use plain, conversational language. Provide navigation links when relevant using markdown format: [Link Text](/path). When diagnosing issues, be specific and actionable. When file attachments are present, analyze them and provide relevant security insights.`,
+            content: `You are the Fortress AI Assistant with comprehensive platform knowledge. Use plain, conversational language. Provide navigation links: [Link Text](/path). When diagnosing issues, be specific and actionable. When file attachments are present, analyze them for security insights. When explaining architecture, be detailed and technical.`,
           },
           ...processedMessages,
         ],
