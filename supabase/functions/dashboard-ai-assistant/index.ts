@@ -342,6 +342,43 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_security_reports",
+      description: "Get security reports including executive intelligence summaries and 72-hour snapshots. Use this when users ask about security reports, summaries, or generated intelligence reports.",
+      parameters: {
+        type: "object",
+        properties: {
+          report_type: {
+            type: "string",
+            description: "Type of report to retrieve (e.g., 'executive_intelligence', '72h-snapshot', or omit for all types)",
+          },
+          limit: {
+            type: "number",
+            description: "Number of reports to return (default 10)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_report_content",
+      description: "Get the full content of a specific security report by ID. Use this to read the detailed content of a report.",
+      parameters: {
+        type: "object",
+        properties: {
+          report_id: {
+            type: "string",
+            description: "The UUID of the report to retrieve",
+          },
+        },
+        required: ["report_id"],
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -1662,6 +1699,59 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       };
     }
 
+    case "get_security_reports": {
+      let query = supabaseClient
+        .from("reports")
+        .select("id, type, period_start, period_end, generated_at, meta_json")
+        .order("generated_at", { ascending: false })
+        .limit(args.limit || 10);
+
+      if (args.report_type) {
+        query = query.eq("type", args.report_type);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      return {
+        reports: data.map((report: any) => ({
+          id: report.id,
+          type: report.type,
+          period_start: report.period_start,
+          period_end: report.period_end,
+          generated_at: report.generated_at,
+          summary: report.meta_json?.summary || 'No summary available',
+          sections: report.meta_json?.sections ? Object.keys(report.meta_json.sections) : []
+        })),
+        total: data.length
+      };
+    }
+
+    case "get_report_content": {
+      const { data, error } = await supabaseClient
+        .from("reports")
+        .select("*")
+        .eq("id", args.report_id)
+        .single();
+
+      if (error) throw error;
+      if (!data) {
+        return { success: false, message: "Report not found" };
+      }
+
+      return {
+        success: true,
+        report: {
+          id: data.id,
+          type: data.type,
+          period_start: data.period_start,
+          period_end: data.period_end,
+          generated_at: data.generated_at,
+          full_content: data.meta_json
+        }
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -1787,16 +1877,17 @@ DATABASE SCHEMA:
 
 YOUR CAPABILITIES:
 1. **Data Analysis**: Query all database tables for signals, incidents, entities, investigations, travelers, etc.
-2. **Codebase Understanding**: Explain feature implementation, data flow, component architecture
-3. **System Architecture**: Describe technology stack, edge functions, automation, integrations
-4. **Database Schema**: Access table structures, relationships, RLS policies
-5. **Edge Functions**: List and explain all 50+ backend functions and their purposes
-6. **Issue Detection**: Find duplicate signals, orphaned records, data quality problems
-7. **Issue Resolution**: Fix duplicates, clean up data, improve quality
-8. **Knowledge Access**: Search documentation in knowledge base
-9. **Troubleshooting**: Debug system issues using monitoring status, health metrics, error diagnostics
-10. **OSINT Operations**: Trigger entity scans, gather intelligence
-11. **Feature Guidance**: Explain how features work and how they're implemented
+2. **Security Reports**: Access and read security reports including executive intelligence summaries and 72-hour snapshots
+3. **Codebase Understanding**: Explain feature implementation, data flow, component architecture
+4. **System Architecture**: Describe technology stack, edge functions, automation, integrations
+5. **Database Schema**: Access table structures, relationships, RLS policies
+6. **Edge Functions**: List and explain all 50+ backend functions and their purposes
+7. **Issue Detection**: Find duplicate signals, orphaned records, data quality problems
+8. **Issue Resolution**: Fix duplicates, clean up data, improve quality
+9. **Knowledge Access**: Search documentation in knowledge base
+10. **Troubleshooting**: Debug system issues using monitoring status, health metrics, error diagnostics
+11. **OSINT Operations**: Trigger entity scans, gather intelligence
+12. **Feature Guidance**: Explain how features work and how they're implemented
 
 CRITICAL DISTINCTIONS:
 1. CLIENTS are organizations actively monitored by Fortress (customers)
@@ -1833,6 +1924,13 @@ When users ask questions about procedures, best practices, or need guidance:
 1. Use search_knowledge_base to find relevant articles
 2. Reference articles with links: [Article Title](/knowledge-base/{id})
 3. Use get_knowledge_base_categories to browse available topics
+
+SECURITY REPORTS:
+When users ask about security reports, summaries, or generated intelligence:
+1. Use get_security_reports to list available reports (filters by type if specified)
+2. Use get_report_content to read the full content of a specific report
+3. Report types include: 'executive_intelligence', '72h-snapshot'
+4. Reports contain structured data in sections with analysis and recommendations
 
 OSINT SCANNING:
 When users want intelligence on a person or organization:
