@@ -187,6 +187,206 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "create_entity",
+      description: "Create a new entity (person, organization, location, etc.) in the system. Use this when users want to add a new entity to track.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Name of the entity",
+          },
+          type: {
+            type: "string",
+            description: "Type of entity: person, organization, location, vehicle, or event",
+            enum: ["person", "organization", "location", "vehicle", "event"],
+          },
+          description: {
+            type: "string",
+            description: "Description of the entity",
+          },
+          aliases: {
+            type: "array",
+            items: { type: "string" },
+            description: "Alternative names or aliases",
+          },
+          risk_level: {
+            type: "string",
+            description: "Risk level: low, medium, high, or critical",
+            enum: ["low", "medium", "high", "critical"],
+          },
+        },
+        required: ["name", "type"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_entity",
+      description: "Update an existing entity's information. Use this when users want to modify entity details.",
+      parameters: {
+        type: "object",
+        properties: {
+          entity_id: {
+            type: "string",
+            description: "UUID of the entity to update",
+          },
+          updates: {
+            type: "object",
+            description: "Fields to update (name, description, risk_level, etc.)",
+          },
+        },
+        required: ["entity_id", "updates"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_incident",
+      description: "Create a new security incident. Use this when users report a security event that needs tracking.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: {
+            type: "string",
+            description: "Title of the incident",
+          },
+          summary: {
+            type: "string",
+            description: "Summary of the incident",
+          },
+          priority: {
+            type: "string",
+            description: "Priority level: p1, p2, p3, or p4",
+            enum: ["p1", "p2", "p3", "p4"],
+          },
+          severity_level: {
+            type: "string",
+            description: "Severity: P1, P2, P3, or P4",
+          },
+          client_id: {
+            type: "string",
+            description: "UUID of the associated client (optional)",
+          },
+        },
+        required: ["title", "priority"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_incident",
+      description: "Update an incident's status or details. Use this when users want to acknowledge, contain, or resolve incidents.",
+      parameters: {
+        type: "object",
+        properties: {
+          incident_id: {
+            type: "string",
+            description: "UUID of the incident to update",
+          },
+          status: {
+            type: "string",
+            description: "New status: open, acknowledged, contained, or resolved",
+            enum: ["open", "acknowledged", "contained", "resolved"],
+          },
+          summary: {
+            type: "string",
+            description: "Updated summary (optional)",
+          },
+        },
+        required: ["incident_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_investigation",
+      description: "Create a new investigation file. Use this when users want to start a formal investigation.",
+      parameters: {
+        type: "object",
+        properties: {
+          file_number: {
+            type: "string",
+            description: "Investigation file number",
+          },
+          synopsis: {
+            type: "string",
+            description: "Brief synopsis of the investigation",
+          },
+          client_id: {
+            type: "string",
+            description: "UUID of the associated client (optional)",
+          },
+          incident_id: {
+            type: "string",
+            description: "UUID of the associated incident (optional)",
+          },
+        },
+        required: ["file_number"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_signal_status",
+      description: "Mark a signal as reviewed or false positive. Use this when users want to dismiss or acknowledge signals.",
+      parameters: {
+        type: "object",
+        properties: {
+          signal_id: {
+            type: "string",
+            description: "UUID of the signal to update",
+          },
+          is_reviewed: {
+            type: "boolean",
+            description: "Mark as reviewed",
+          },
+          is_false_positive: {
+            type: "boolean",
+            description: "Mark as false positive",
+          },
+        },
+        required: ["signal_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "link_entity_relationship",
+      description: "Create a relationship between two entities. Use this when users want to document connections between people or organizations.",
+      parameters: {
+        type: "object",
+        properties: {
+          entity_a_name: {
+            type: "string",
+            description: "Name of the first entity",
+          },
+          entity_b_name: {
+            type: "string",
+            description: "Name of the second entity",
+          },
+          relationship_type: {
+            type: "string",
+            description: "Type of relationship (e.g., 'works_for', 'associated_with', 'family')",
+          },
+          description: {
+            type: "string",
+            description: "Description of the relationship",
+          },
+        },
+        required: ["entity_a_name", "entity_b_name", "relationship_type"],
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -563,6 +763,180 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       }
     }
 
+    case "create_entity": {
+      const { data, error } = await supabaseClient
+        .from("entities")
+        .insert({
+          name: args.name,
+          type: args.type,
+          description: args.description,
+          aliases: args.aliases || [],
+          risk_level: args.risk_level || "low",
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return {
+        success: true,
+        message: `✅ Created entity: ${data.name}\n\nView it here: [${data.name}](/entities)`,
+        entity: data,
+      };
+    }
+
+    case "update_entity": {
+      const { data, error } = await supabaseClient
+        .from("entities")
+        .update(args.updates)
+        .eq("id", args.entity_id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return {
+        success: true,
+        message: `✅ Updated entity: ${data.name}`,
+        entity: data,
+      };
+    }
+
+    case "create_incident": {
+      const { data, error } = await supabaseClient
+        .from("incidents")
+        .insert({
+          title: args.title,
+          summary: args.summary,
+          priority: args.priority,
+          severity_level: args.severity_level || args.priority.toUpperCase(),
+          client_id: args.client_id || null,
+          status: "open",
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return {
+        success: true,
+        message: `✅ Created incident: ${data.title}\n\nPriority: ${data.priority}\n\nView it here: [Incident ${data.title}](/incidents)`,
+        incident: data,
+      };
+    }
+
+    case "update_incident": {
+      const updates: any = {};
+      
+      if (args.status) {
+        updates.status = args.status;
+        if (args.status === "acknowledged") updates.acknowledged_at = new Date().toISOString();
+        if (args.status === "contained") updates.contained_at = new Date().toISOString();
+        if (args.status === "resolved") updates.resolved_at = new Date().toISOString();
+      }
+      
+      if (args.summary) updates.summary = args.summary;
+
+      const { data, error } = await supabaseClient
+        .from("incidents")
+        .update(updates)
+        .eq("id", args.incident_id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return {
+        success: true,
+        message: `✅ Updated incident status to: ${data.status}`,
+        incident: data,
+      };
+    }
+
+    case "create_investigation": {
+      const { data, error } = await supabaseClient
+        .from("investigations")
+        .insert({
+          file_number: args.file_number,
+          synopsis: args.synopsis,
+          client_id: args.client_id || null,
+          incident_id: args.incident_id || null,
+          file_status: "open",
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return {
+        success: true,
+        message: `✅ Created investigation file: ${data.file_number}\n\nView it here: [Investigation ${data.file_number}](/investigations)`,
+        investigation: data,
+      };
+    }
+
+    case "update_signal_status": {
+      const updates: any = {};
+      if (args.is_reviewed !== undefined) updates.is_reviewed = args.is_reviewed;
+      if (args.is_false_positive !== undefined) updates.is_false_positive = args.is_false_positive;
+
+      const { data, error } = await supabaseClient
+        .from("signals")
+        .update(updates)
+        .eq("id", args.signal_id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return {
+        success: true,
+        message: `✅ Updated signal status`,
+        signal: data,
+      };
+    }
+
+    case "link_entity_relationship": {
+      // Find both entities
+      const { data: entityA, error: errorA } = await supabaseClient
+        .from("entities")
+        .select("id, name")
+        .ilike("name", `%${args.entity_a_name}%`)
+        .limit(1)
+        .single();
+
+      if (errorA) throw new Error(`Entity A not found: ${args.entity_a_name}`);
+
+      const { data: entityB, error: errorB } = await supabaseClient
+        .from("entities")
+        .select("id, name")
+        .ilike("name", `%${args.entity_b_name}%`)
+        .limit(1)
+        .single();
+
+      if (errorB) throw new Error(`Entity B not found: ${args.entity_b_name}`);
+
+      // Create relationship
+      const { data, error } = await supabaseClient
+        .from("entity_relationships")
+        .insert({
+          entity_a_id: entityA.id,
+          entity_b_id: entityB.id,
+          relationship_type: args.relationship_type,
+          description: args.description,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return {
+        success: true,
+        message: `✅ Linked relationship: ${entityA.name} → ${args.relationship_type} → ${entityB.name}`,
+        relationship: data,
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -652,7 +1026,9 @@ CRITICAL DISTINCTIONS:
 2. ENTITIES are people/organizations mentioned in intelligence data
 3. When users ask about a person "of/at [organization]", search for the ENTITY (person), not the client
 
-You have access to tools to query the database for:
+You have access to tools to query AND MODIFY the database for:
+
+QUERY CAPABILITIES:
 - Recent security signals
 - Signals related to specific entities or people
 - Entity information (people, organizations, locations)
@@ -662,6 +1038,15 @@ You have access to tools to query the database for:
 - System monitoring status and health
 - Error diagnostics and troubleshooting
 - OSINT (Open Source Intelligence) scanning capabilities
+
+MODIFICATION CAPABILITIES:
+- Create new entities (people, organizations, locations, vehicles, events)
+- Update existing entity information (descriptions, risk levels, aliases)
+- Create security incidents
+- Update incident status (acknowledge, contain, resolve)
+- Create investigation files
+- Update signal status (mark as reviewed, false positive)
+- Link relationships between entities
 
 FILE ATTACHMENTS:
 - Analyze attached images for security-relevant information
@@ -683,6 +1068,15 @@ WHEN USERS ASK ABOUT A PERSON OR ORGANIZATION:
 - Action: Use search_entities to find "Lloyd Clark" (the person is the entity)
 - Then: Use search_signals_by_entity or trigger_osint_scan
 - DO NOT try to search by client unless they specifically ask about monitoring a client organization
+
+CREATING AND MODIFYING DATA:
+When users ask to:
+- "Add [entity name]" → Use create_entity
+- "Create an incident for [description]" → Use create_incident  
+- "Acknowledge incident [id]" → Use update_incident with status: acknowledged
+- "Mark signal as false positive" → Use update_signal_status
+- "Link [entity A] to [entity B]" → Use link_entity_relationship
+- "Start an investigation" → Use create_investigation
 
 TROUBLESHOOTING CAPABILITIES:
 When users ask about system issues, monitoring problems, or "why isn't X working":
@@ -712,7 +1106,8 @@ Available pages:
 - [View Monitoring Sources](/monitoring-sources) - Configure monitoring
 
 Be conversational and helpful. When showing data, format it clearly with bullet points or structured text.
-When troubleshooting, be specific about what you found and how to fix it.`,
+When troubleshooting, be specific about what you found and how to fix it.
+When making changes, confirm what you did and provide links to view the results.`,
           },
           ...processedMessages,
         ],
@@ -787,7 +1182,16 @@ When troubleshooting, be specific about what you found and how to fix it.`,
           messages: [
           {
             role: "system",
-            content: `You are a helpful security intelligence assistant. Summarize the tool results in a clear, conversational way. Use markdown links for navigation: [Link Text](/path). Be concise and helpful. When file attachments are present, incorporate insights from them into your response.`,
+            content: `You are a helpful security intelligence assistant with data modification capabilities. 
+
+You can:
+- Create and update entities, incidents, and investigations
+- Mark signals as reviewed or false positive
+- Link relationships between entities
+- Query system data and troubleshoot issues
+- Analyze file attachments for security insights
+
+Summarize the tool results in a clear, conversational way. Use markdown links for navigation: [Link Text](/path). Be concise and helpful. When file attachments are present, incorporate insights from them into your response. When making changes, confirm what you did and provide links to view the results.`,
           },
           ...processedMessages,
             firstMessage,
@@ -818,7 +1222,16 @@ When troubleshooting, be specific about what you found and how to fix it.`,
         messages: [
           {
             role: "system",
-            content: `You are a helpful security intelligence assistant with troubleshooting capabilities. Use plain, conversational language. Provide navigation links when relevant using markdown format: [Link Text](/path). When diagnosing issues, be specific and actionable. When file attachments are present, analyze them and provide relevant security insights.`,
+            content: `You are a helpful security intelligence assistant with data modification and troubleshooting capabilities. 
+
+You can:
+- Create and update entities, incidents, and investigations
+- Mark signals as reviewed or false positive
+- Link relationships between entities
+- Diagnose system issues and provide recommendations
+- Analyze file attachments for security insights
+
+Use plain, conversational language. Provide navigation links when relevant using markdown format: [Link Text](/path). When diagnosing issues, be specific and actionable. When file attachments are present, analyze them and provide relevant security insights. When making changes, confirm what you did.`,
           },
           ...processedMessages,
         ],
