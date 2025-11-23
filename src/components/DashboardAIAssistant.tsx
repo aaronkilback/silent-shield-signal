@@ -368,10 +368,24 @@ export const DashboardAIAssistant = () => {
     if (attachments.length > 0) {
       const uploadedUrls = await uploadFiles();
       if (uploadedUrls.length > 0) {
-        const fileList = uploadedUrls.map((url, idx) => 
-          `[${attachments[idx].name}](${url})`
-        ).join('\n');
-        userMessage = userMessage ? `${userMessage}\n\nAttachments:\n${fileList}` : `Attachments:\n${fileList}`;
+        // Separate images from other files
+        const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+        const formattedAttachments = uploadedUrls.map((url, idx) => {
+          const fileName = attachments[idx].name;
+          const fileExt = fileName.toLowerCase().substring(fileName.lastIndexOf('.'));
+          
+          // Use image markdown format for images so AI can see them
+          if (imageExtensions.includes(fileExt)) {
+            return `![${fileName}](${url})`;
+          }
+          
+          // For non-image files, provide context
+          return `📎 File: ${fileName}\nURL: ${url}`;
+        }).join('\n\n');
+        
+        userMessage = userMessage 
+          ? `${userMessage}\n\nAttachments:\n${formattedAttachments}` 
+          : `Please analyze these attachments:\n\n${formattedAttachments}`;
       }
       setAttachments([]);
     }
