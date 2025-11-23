@@ -527,7 +527,7 @@ export const DashboardAIAssistant = () => {
 • Search and track bug reports
 • Analyze edge function errors and logs
 • Diagnose issues with comprehensive root cause analysis
-• Suggest code fixes with implementation examples
+• Create fix proposals that can be approved and implemented
 • Provide testing and deployment guidance
 
 **Try asking me:**
@@ -544,7 +544,7 @@ export const DashboardAIAssistant = () => {
 • "Search for open bugs"
 • "Analyze edge function errors"
 • "Diagnose issue with [feature]"
-• "How do I fix [specific error]?"`,
+• "Create fix proposal for bug [id]"`,
       };
       
       setMessages([...messages, { role: "user", content: input }, helpMessage]);
