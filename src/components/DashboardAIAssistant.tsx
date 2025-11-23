@@ -517,6 +517,12 @@ export const DashboardAIAssistant = () => {
 • Correlate threats with existing data
 • Use client keywords to inform OSINT scans
 
+💡 **Platform Improvement**
+• Suggest improvements for monitoring, security, performance, features, UI
+• Analyze platform capabilities and identify gaps
+• Generate edge function templates for new features
+• Provide implementation guidance for enhancements
+
 **Try asking me:**
 • "Get client details for [client name]"
 • "Find recent high-severity signals"
@@ -524,7 +530,10 @@ export const DashboardAIAssistant = () => {
 • "What active incidents are there?"
 • "Analyze the latest security report"
 • "Check system health"
-• "Explain how signals work"`,
+• "Explain how signals work"
+• "Suggest improvements for monitoring"
+• "What can Fortress do and not do?"
+• "Generate a Reddit monitoring function"`,
       };
       
       setMessages([...messages, { role: "user", content: input }, helpMessage]);

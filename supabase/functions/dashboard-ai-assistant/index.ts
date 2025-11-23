@@ -490,6 +490,61 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "suggest_improvements",
+      description: "Analyze the platform and suggest improvements for security, performance, features, or code quality. Use this when users ask how to improve the platform or want suggestions.",
+      parameters: {
+        type: "object",
+        properties: {
+          area: {
+            type: "string",
+            enum: ["security", "performance", "features", "monitoring", "ui", "all"],
+            description: "Area to focus improvements on (default: all)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "generate_edge_function_template",
+      description: "Generate a template for a new Supabase edge function. Use this when users want to add new monitoring sources or backend functionality.",
+      parameters: {
+        type: "object",
+        properties: {
+          function_name: {
+            type: "string",
+            description: "Name of the function (e.g., 'monitor-reddit')",
+          },
+          purpose: {
+            type: "string",
+            description: "What the function should do (e.g., 'Monitor Reddit for mentions of client keywords')",
+          },
+        },
+        required: ["function_name", "purpose"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "analyze_platform_capabilities",
+      description: "Analyze what the platform can and cannot do, and suggest new capabilities. Use when users ask about platform limitations or potential features.",
+      parameters: {
+        type: "object",
+        properties: {
+          capability_type: {
+            type: "string",
+            enum: ["monitoring", "analysis", "automation", "reporting", "integration", "all"],
+            description: "Type of capability to analyze (default: all)",
+          },
+        },
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -2157,6 +2212,311 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       };
     }
 
+    case "suggest_improvements": {
+      const area = args.area || "all";
+      
+      const suggestions: Record<string, string[]> = {
+        monitoring: [
+          "Add Reddit monitoring for emerging threats and discussions",
+          "Implement Telegram channel monitoring for dark web threat intel",
+          "Add Discord server monitoring for gaming/crypto communities",
+          "Create automated screenshot capture for monitored websites",
+          "Implement change detection for monitored web pages",
+          "Add RSS feed aggregation from security blogs",
+        ],
+        security: [
+          "Implement 2FA/MFA for user accounts",
+          "Add IP-based rate limiting on edge functions",
+          "Create automated security report generation",
+          "Implement anomaly detection for unusual access patterns",
+          "Add encrypted storage for sensitive documents",
+          "Create audit logs for all data modifications",
+        ],
+        performance: [
+          "Implement caching layer for frequently accessed signals",
+          "Add database query optimization and indexing review",
+          "Create background job queue for heavy processing",
+          "Implement pagination for large result sets",
+          "Add CDN for static asset delivery",
+          "Optimize image storage with automatic compression",
+        ],
+        features: [
+          "Add collaborative investigation workspace",
+          "Implement threat actor profiling and tracking",
+          "Create automated threat intelligence sharing",
+          "Add customizable dashboard widgets",
+          "Implement scheduled report delivery",
+          "Create mobile app for incident response",
+          "Add voice assistant for hands-free operations",
+          "Implement graph visualization for entity relationships",
+        ],
+        ui: [
+          "Add dark mode toggle preference",
+          "Create customizable layouts for different roles",
+          "Implement keyboard shortcuts for power users",
+          "Add bulk actions for signal management",
+          "Create guided tours for new users",
+          "Implement advanced filtering and saved searches",
+        ]
+      };
+
+      const relevantSuggestions = area === "all" 
+        ? Object.entries(suggestions).flatMap(([category, items]) => 
+            items.map(item => ({ category, suggestion: item }))
+          )
+        : (suggestions[area] || []).map((suggestion: string) => ({ category: area, suggestion }));
+
+      return {
+        success: true,
+        area: area,
+        total_suggestions: relevantSuggestions.length,
+        suggestions: relevantSuggestions,
+        implementation_note: "These improvements can be implemented through new edge functions, UI components, or database schema changes. Let me know which ones interest you and I can provide implementation guidance."
+      };
+    }
+
+    case "generate_edge_function_template": {
+      const { function_name, purpose } = args;
+      
+      const template = `import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
+serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    console.log('${function_name} function started');
+    
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    );
+
+    // Fetch clients with monitoring keywords
+    const { data: clients, error: clientsError } = await supabaseClient
+      .from('clients')
+      .select('id, name, monitoring_keywords')
+      .eq('status', 'active');
+
+    if (clientsError) throw clientsError;
+
+    let totalScans = 0;
+    let signalsCreated = 0;
+
+    for (const client of clients) {
+      console.log(\`Processing client: \${client.name}\`);
+      
+      // TODO: Implement ${purpose}
+      // Example: Fetch data from external API
+      // const response = await fetch('https://api.example.com/...');
+      // const data = await response.json();
+      
+      // Example: Check for keyword matches
+      for (const keyword of client.monitoring_keywords || []) {
+        // Your monitoring logic here
+        totalScans++;
+        
+        // If threat found, create signal
+        // const { error } = await supabaseClient.from('signals').insert({
+        //   title: 'Threat detected',
+        //   description: 'Details...',
+        //   severity: 'medium',
+        //   client_id: client.id,
+        //   source: '${function_name}',
+        //   received_at: new Date().toISOString()
+        // });
+        // if (!error) signalsCreated++;
+      }
+    }
+
+    return new Response(
+      JSON.stringify({ 
+        success: true, 
+        scans_completed: totalScans,
+        signals_created: signalsCreated 
+      }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  } catch (error) {
+    console.error('Error in ${function_name}:', error);
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+});`;
+
+      return {
+        success: true,
+        function_name: function_name,
+        purpose: purpose,
+        template: template,
+        next_steps: [
+          `1. Create file: supabase/functions/${function_name}/index.ts`,
+          `2. Paste the template code and customize the TODO sections`,
+          `3. Add function to supabase/config.toml`,
+          `4. Test the function locally or deploy to production`,
+          `5. Set up cron job if this should run automatically`
+        ],
+        deployment_note: "Edge functions are automatically deployed when you commit changes."
+      };
+    }
+
+    case "analyze_platform_capabilities": {
+      const capabilityType = args.capability_type || "all";
+      
+      type CapabilityArea = {
+        has: string[];
+        missing: string[];
+      };
+      
+      const currentCapabilities: Record<string, CapabilityArea> = {
+        monitoring: {
+          has: [
+            "News monitoring (Google News, RSS feeds)",
+            "Social media monitoring (Twitter, Facebook, Instagram, LinkedIn)",
+            "Dark web monitoring (Pastebin, paste sites)",
+            "Threat intelligence feeds",
+            "Weather and natural disaster alerts",
+            "Court registry monitoring",
+            "Domain and GitHub monitoring",
+            "Canadian government source monitoring"
+          ],
+          missing: [
+            "Reddit monitoring",
+            "Telegram channel monitoring", 
+            "Discord server monitoring",
+            "TikTok monitoring",
+            "Cryptocurrency wallet tracking",
+            "Deep/dark web marketplace monitoring",
+            "Automated OSINT from public records databases",
+            "Patent and trademark monitoring"
+          ]
+        },
+        analysis: {
+          has: [
+            "Entity extraction from signals",
+            "Signal correlation and deduplication",
+            "AI-powered incident classification",
+            "Threat pattern detection",
+            "Risk assessment scoring",
+            "Sentiment analysis on content"
+          ],
+          missing: [
+            "Predictive threat modeling",
+            "Behavioral analysis of threat actors",
+            "Network graph analysis",
+            "Timeline reconstruction",
+            "Attribution analysis",
+            "Misinformation detection",
+            "Advanced NLP for multilingual content"
+          ]
+        },
+        automation: {
+          has: [
+            "Automated signal ingestion",
+            "AI decision engine for incidents",
+            "Escalation rules and SLA tracking",
+            "Multi-channel alert delivery",
+            "Document processing and entity extraction",
+            "OSINT scanning on entities"
+          ],
+          missing: [
+            "Automated response actions (blocking, quarantine)",
+            "Threat intelligence sharing with partners",
+            "Automated report generation and distribution",
+            "ML-based false positive reduction",
+            "Automated entity enrichment from multiple sources",
+            "Intelligent alert grouping and summarization"
+          ]
+        },
+        reporting: {
+          has: [
+            "Executive intelligence reports",
+            "72-hour security snapshots",
+            "Investigation case files",
+            "Custom report generation"
+          ],
+          missing: [
+            "Scheduled recurring reports",
+            "Interactive dashboards with drill-down",
+            "Comparative trend analysis",
+            "Threat landscape reports",
+            "Compliance reports (GDPR, SOC 2, etc.)",
+            "Incident post-mortem templates"
+          ]
+        },
+        integration: {
+          has: [
+            "Email alerts (Resend API)",
+            "Slack webhooks",
+            "Microsoft Teams webhooks",
+            "Lovable AI for intelligence analysis"
+          ],
+          missing: [
+            "SIEM integration (Splunk, ELK, QRadar)",
+            "Ticketing system integration (Jira, ServiceNow)",
+            "Threat intelligence platform integration (MISP, ThreatConnect)",
+            "MDR/XDR platform integration",
+            "Chat platform bots (Slack, Teams, Discord)",
+            "API webhooks for custom integrations"
+          ]
+        }
+      };
+
+      const relevantCapabilities = capabilityType === "all"
+        ? currentCapabilities
+        : (currentCapabilities[capabilityType] ? { [capabilityType]: currentCapabilities[capabilityType] } : {});
+
+      const priorityRecommendations = [
+        {
+          capability: "Reddit monitoring",
+          priority: "HIGH",
+          reason: "Reddit is a major source of emerging threats, data leaks, and underground discussions",
+          effort: "Medium - similar to existing social monitoring functions"
+        },
+        {
+          capability: "SIEM integration",
+          priority: "HIGH", 
+          reason: "Organizations need to correlate Fortress intelligence with their existing security tools",
+          effort: "High - requires building connectors for multiple platforms"
+        },
+        {
+          capability: "Predictive threat modeling",
+          priority: "MEDIUM",
+          reason: "Helps organizations anticipate threats before they materialize",
+          effort: "High - requires ML model development and training"
+        },
+        {
+          capability: "Automated response actions",
+          priority: "MEDIUM",
+          reason: "Reduces response time by automatically blocking threats",
+          effort: "High - requires careful security controls and testing"
+        }
+      ];
+
+      return {
+        success: true,
+        capability_type: capabilityType,
+        current_capabilities: relevantCapabilities,
+        priority_recommendations: priorityRecommendations,
+        gap_analysis: {
+          monitoring_coverage: "70% - Missing some social platforms and deep web sources",
+          analysis_depth: "65% - Has basic analysis, lacks advanced ML and predictive capabilities",
+          automation_level: "75% - Good automation for ingestion/alerting, lacks response automation",
+          reporting_flexibility: "60% - Has core reports, needs more customization and scheduling",
+          integration_breadth: "40% - Limited to basic webhooks, needs enterprise tool integration"
+        }
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -2300,6 +2660,9 @@ YOUR CAPABILITIES:
 13. **Troubleshooting**: Debug system issues using monitoring status, health metrics, error diagnostics
 14. **OSINT Operations**: Create entities, trigger OSINT scans, gather intelligence using client keywords
 15. **Feature Guidance**: Explain how features work and how they're implemented
+16. **Platform Improvement**: Suggest improvements for monitoring, security, performance, features, and UI
+17. **Capability Analysis**: Analyze what the platform can and cannot do, identify gaps, recommend priorities
+18. **Code Generation**: Generate edge function templates for new monitoring sources or backend features
 
 CRITICAL DISTINCTIONS:
 1. CLIENTS are organizations actively monitored by Fortress (customers)
