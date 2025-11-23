@@ -10,6 +10,7 @@ import { useConversation } from "@11labs/react";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
+import { useAuth } from "@/hooks/useAuth";
 
 type Message = {
   role: "user" | "assistant";
@@ -18,44 +19,119 @@ type Message = {
 
 export const DashboardAIAssistant = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const STORAGE_KEY = "fortress-ai-chat-history";
   
-  // Load messages from localStorage or use default
-  const [messages, setMessages] = useState<Message[]>(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      console.log("Loading chat history from localStorage:", stored ? "found" : "empty");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        console.log("Loaded", parsed.length, "messages from localStorage");
-        return parsed;
-      }
-    } catch (e) {
-      console.error("Failed to load chat history:", e);
-    }
-    console.log("Using default welcome message");
-    return [
-      {
-        role: "assistant",
-        content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Just ask me anything - for example, try asking me to find a specific person or view recent signals.",
-      },
-    ];
-  });
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      role: "assistant",
+      content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Just ask me anything - for example, try asking me to find a specific person or view recent signals.",
+    },
+  ]);
   
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [agentId, setAgentId] = useState("");
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Save messages to localStorage whenever they change
+  // Load messages from database on mount
   useEffect(() => {
-    try {
-      console.log("Saving", messages.length, "messages to localStorage");
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-    } catch (e) {
-      console.error("Failed to save chat history:", e);
-    }
-  }, [messages]);
+    const loadMessages = async () => {
+      if (!user) {
+        setIsLoadingHistory(false);
+        return;
+      }
+
+      try {
+        const { data: dbMessages, error } = await supabase
+          .from('ai_assistant_messages')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: true });
+
+        if (error) throw error;
+
+        if (dbMessages && dbMessages.length > 0) {
+          // Load from database
+          const formattedMessages = dbMessages.map(msg => ({
+            role: msg.role as "user" | "assistant",
+            content: msg.content
+          }));
+          setMessages(formattedMessages);
+          console.log(`Loaded ${formattedMessages.length} messages from database`);
+        } else {
+          // Try to migrate from localStorage if database is empty
+          const stored = localStorage.getItem(STORAGE_KEY);
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            console.log(`Migrating ${parsed.length} messages from localStorage to database`);
+            
+            // Insert all messages into database
+            const messagesToInsert = parsed.map((msg: Message) => ({
+              user_id: user.id,
+              role: msg.role,
+              content: msg.content
+            }));
+            
+            const { error: insertError } = await supabase
+              .from('ai_assistant_messages')
+              .insert(messagesToInsert);
+            
+            if (insertError) {
+              console.error("Failed to migrate messages:", insertError);
+            } else {
+              setMessages(parsed);
+              localStorage.removeItem(STORAGE_KEY);
+              console.log("Successfully migrated messages to database");
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load chat history:", error);
+      } finally {
+        setIsLoadingHistory(false);
+      }
+    };
+
+    loadMessages();
+  }, [user]);
+
+  // Save messages to database whenever they change
+  useEffect(() => {
+    const saveMessages = async () => {
+      if (!user || isLoadingHistory || messages.length === 0) return;
+
+      try {
+        // Delete all existing messages for this user
+        await supabase
+          .from('ai_assistant_messages')
+          .delete()
+          .eq('user_id', user.id);
+
+        // Insert all current messages
+        const messagesToInsert = messages.map(msg => ({
+          user_id: user.id,
+          role: msg.role,
+          content: msg.content
+        }));
+
+        const { error } = await supabase
+          .from('ai_assistant_messages')
+          .insert(messagesToInsert);
+
+        if (error) {
+          console.error("Failed to save messages:", error);
+        }
+      } catch (error) {
+        console.error("Failed to save chat history:", error);
+      }
+    };
+
+    // Debounce saves to avoid too many database writes
+    const timeoutId = setTimeout(saveMessages, 1000);
+    return () => clearTimeout(timeoutId);
+  }, [messages, user, isLoadingHistory]);
 
   const conversation = useConversation({
     onConnect: () => {
@@ -258,11 +334,24 @@ export const DashboardAIAssistant = () => {
     await conversation.endSession();
   };
 
-  const clearHistory = () => {
+  const clearHistory = async () => {
     const defaultMessage: Message = {
       role: "assistant",
       content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Just ask me anything - for example, try asking me to find a specific person or view recent signals.",
     };
+    
+    if (user) {
+      try {
+        // Delete all messages from database
+        await supabase
+          .from('ai_assistant_messages')
+          .delete()
+          .eq('user_id', user.id);
+      } catch (error) {
+        console.error("Failed to clear database history:", error);
+      }
+    }
+    
     setMessages([defaultMessage]);
     localStorage.removeItem(STORAGE_KEY);
     toast.success("Chat history cleared");
