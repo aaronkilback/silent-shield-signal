@@ -58,13 +58,13 @@ export const DashboardAIAssistant = () => {
 
       try {
         console.log(`🔄 Loading chat history for user ${user.id}`);
-        // Load only the most recent 100 messages to prevent performance issues
+        // Load the most recent 100 messages in chronological order
         const { data: dbMessages, error } = await supabase
           .from('ai_assistant_messages')
           .select('*')
           .eq('user_id', user.id)
           .is('deleted_at', null)
-          .order('created_at', { ascending: false })
+          .order('created_at', { ascending: true })
           .limit(100);
 
         if (error) {
@@ -76,13 +76,12 @@ export const DashboardAIAssistant = () => {
         }
 
         if (dbMessages && dbMessages.length > 0) {
-          // Reverse to get chronological order (oldest to newest)
-          const formattedMessages = dbMessages.reverse().map(msg => ({
+          const formattedMessages = dbMessages.map(msg => ({
             role: msg.role as "user" | "assistant",
             content: msg.content
           }));
           setMessages(formattedMessages);
-          console.log(`✅ Loaded ${formattedMessages.length} messages (most recent 100) for user ${user.id}`);
+          console.log(`✅ Loaded ${formattedMessages.length} messages for user ${user.id}`);
         } else {
           // Check localStorage for migration
           const stored = localStorage.getItem(STORAGE_KEY);
@@ -648,7 +647,7 @@ export const DashboardAIAssistant = () => {
           </TabsList>
 
           <TabsContent value="text" className="space-y-4">
-            <ScrollArea ref={scrollRef} className="h-[400px] pr-4">
+            <ScrollArea ref={scrollRef} className="h-[calc(100vh-400px)] min-h-[400px] max-h-[600px] pr-4">
               {isLoadingHistory ? (
                 <div className="flex items-center justify-center h-full">
                   <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
