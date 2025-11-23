@@ -58,12 +58,14 @@ export const DashboardAIAssistant = () => {
 
       try {
         console.log(`🔄 Loading chat history for user ${user.id}`);
+        // Load only the most recent 100 messages to prevent performance issues
         const { data: dbMessages, error } = await supabase
           .from('ai_assistant_messages')
           .select('*')
           .eq('user_id', user.id)
           .is('deleted_at', null)
-          .order('created_at', { ascending: true });
+          .order('created_at', { ascending: false })
+          .limit(100);
 
         if (error) {
           console.error("❌ Error loading messages from database:", error);
@@ -74,12 +76,13 @@ export const DashboardAIAssistant = () => {
         }
 
         if (dbMessages && dbMessages.length > 0) {
-          const formattedMessages = dbMessages.map(msg => ({
+          // Reverse to get chronological order (oldest to newest)
+          const formattedMessages = dbMessages.reverse().map(msg => ({
             role: msg.role as "user" | "assistant",
             content: msg.content
           }));
           setMessages(formattedMessages);
-          console.log(`✅ Loaded ${formattedMessages.length} messages for user ${user.id}`);
+          console.log(`✅ Loaded ${formattedMessages.length} messages (most recent 100) for user ${user.id}`);
         } else {
           // Check localStorage for migration
           const stored = localStorage.getItem(STORAGE_KEY);
