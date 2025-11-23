@@ -328,11 +328,18 @@ export const DashboardAIAssistant = () => {
           continue;
         }
         
-        const { data: { publicUrl } } = supabase.storage
+        // Get signed URL with 1 hour expiry since bucket is private
+        const { data: urlData, error: urlError } = await supabase.storage
           .from('ai-chat-attachments')
-          .getPublicUrl(data.path);
+          .createSignedUrl(data.path, 3600);
         
-        uploadedUrls.push(publicUrl);
+        if (urlError) {
+          console.error("URL generation error:", urlError);
+          toast.error(`Failed to get URL for ${file.name}`);
+          continue;
+        }
+        
+        uploadedUrls.push(urlData.signedUrl);
       }
       
       return uploadedUrls;
