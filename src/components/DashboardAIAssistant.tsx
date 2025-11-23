@@ -102,41 +102,29 @@ export const DashboardAIAssistant = () => {
     loadMessages();
   }, [user]);
 
-  // Save messages to database whenever they change
-  useEffect(() => {
-    const saveMessages = async () => {
-      if (!user || isLoadingHistory || messages.length === 0) return;
-
-      try {
-        // Delete all existing messages for this user
-        await supabase
-          .from('ai_assistant_messages')
-          .delete()
-          .eq('user_id', user.id);
-
-        // Insert all current messages
-        const messagesToInsert = messages.map(msg => ({
+  // Helper function to save a new message to database immediately
+  const saveMessageToDb = async (message: Message) => {
+    if (!user) return;
+    
+    try {
+      const { error } = await supabase
+        .from('ai_assistant_messages')
+        .insert({
           user_id: user.id,
-          role: msg.role,
-          content: msg.content
-        }));
+          role: message.role,
+          content: message.content
+        });
 
-        const { error } = await supabase
-          .from('ai_assistant_messages')
-          .insert(messagesToInsert);
-
-        if (error) {
-          console.error("Failed to save messages:", error);
-        }
-      } catch (error) {
-        console.error("Failed to save chat history:", error);
+      if (error) {
+        console.error("Failed to save message:", error);
+        toast.error("Failed to save message to history");
+      } else {
+        console.log("Message saved to database:", message.role);
       }
-    };
-
-    // Debounce saves to avoid too many database writes
-    const timeoutId = setTimeout(saveMessages, 1000);
-    return () => clearTimeout(timeoutId);
-  }, [messages, user, isLoadingHistory]);
+    } catch (error) {
+      console.error("Failed to save message to database:", error);
+    }
+  };
 
   const conversation = useConversation({
     onConnect: () => {
@@ -191,8 +179,13 @@ export const DashboardAIAssistant = () => {
 
   const streamChat = async (userMessage: string) => {
     console.log("streamChat called with:", userMessage);
-    const newMessages = [...messages, { role: "user" as const, content: userMessage }];
+    const userMsg = { role: "user" as const, content: userMessage };
+    const newMessages = [...messages, userMsg];
     setMessages(newMessages);
+    
+    // Save user message immediately
+    await saveMessageToDb(userMsg);
+    
     setIsLoading(true);
 
     let contentBuffer = "";
@@ -293,12 +286,18 @@ export const DashboardAIAssistant = () => {
         clearTimeout(pendingUpdate);
       }
       
+      let assistantMsg: Message;
       if (contentBuffer) {
-        setMessages([...newMessages, { role: "assistant", content: contentBuffer }]);
+        assistantMsg = { role: "assistant", content: contentBuffer };
+        setMessages([...newMessages, assistantMsg]);
       } else {
         console.log("No content received, adding placeholder");
-        setMessages([...newMessages, { role: "assistant", content: "I'm having trouble generating a response. Please try again." }]);
+        assistantMsg = { role: "assistant", content: "I'm having trouble generating a response. Please try again." };
+        setMessages([...newMessages, assistantMsg]);
       }
+      
+      // Save assistant message immediately
+      await saveMessageToDb(assistantMsg);
       
       setStreamingContent("");
     } catch (error) {
@@ -480,6 +479,9 @@ export const DashboardAIAssistant = () => {
           .from('ai_assistant_messages')
           .delete()
           .eq('user_id', user.id);
+        
+        // Save the default message
+        await saveMessageToDb(defaultMessage);
       } catch (error) {
         console.error("Failed to clear database history:", error);
       }
