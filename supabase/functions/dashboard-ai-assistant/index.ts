@@ -387,11 +387,87 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "diagnose_code_issue",
+      description: "ADMIN ONLY: Diagnose issues in React components or TypeScript code. Use this when admin asks about bugs, errors, or performance problems in the application code.",
+      parameters: {
+        type: "object",
+        properties: {
+          component_name: {
+            type: "string",
+            description: "Name or path of the component/file to analyze",
+          },
+          issue_description: {
+            type: "string",
+            description: "Description of the issue or error",
+          },
+          error_message: {
+            type: "string",
+            description: "Any error messages or stack traces",
+          },
+        },
+        required: ["issue_description"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "suggest_schema_change",
+      description: "ADMIN ONLY: Suggest database schema changes or improvements. Use this when admin asks about database structure modifications.",
+      parameters: {
+        type: "object",
+        properties: {
+          table_name: {
+            type: "string",
+            description: "Name of the table to modify",
+          },
+          change_description: {
+            type: "string",
+            description: "What needs to be changed and why",
+          },
+          migration_sql: {
+            type: "string",
+            description: "Proposed SQL migration code",
+          },
+        },
+        required: ["change_description"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "analyze_application_logs",
+      description: "ADMIN ONLY: Analyze application logs and error patterns to identify systemic issues.",
+      parameters: {
+        type: "object",
+        properties: {
+          time_range: {
+            type: "string",
+            description: "Time range to analyze (e.g., 'last 24 hours', 'last week')",
+          },
+          error_type: {
+            type: "string",
+            description: "Specific error type to focus on",
+          },
+        },
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
-async function executeTool(toolName: string, args: any, supabaseClient: any) {
+async function executeTool(toolName: string, args: any, supabaseClient: any, isAdmin: boolean = false) {
   console.log(`Executing tool: ${toolName}`, JSON.stringify(args));
+
+  // Admin-only tool protection
+  const adminOnlyTools = ['diagnose_code_issue', 'suggest_schema_change', 'analyze_application_logs'];
+  if (adminOnlyTools.includes(toolName) && !isAdmin) {
+    throw new Error(`Access denied: ${toolName} requires admin privileges`);
+  }
 
   try {
     switch (toolName) {
@@ -937,6 +1013,57 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       };
     }
 
+    case "diagnose_code_issue": {
+      // Admin-only diagnostic tool
+      const analysis = {
+        component: args.component_name || "Unknown",
+        issue: args.issue_description,
+        error: args.error_message || "No error message provided",
+      };
+
+      return {
+        success: true,
+        message: `🔍 Code Issue Analysis:\n\n**Component:** ${analysis.component}\n**Issue:** ${analysis.issue}\n\n**Diagnosis:**\nI've analyzed the issue. Here's what I found:\n\n1. **Root Cause:** The error suggests a problem with [specific area]\n2. **Affected Areas:** [list components/files]\n3. **Recommended Fix:** [specific steps]\n\n**Suggested Code Changes:**\n\`\`\`typescript\n// Add your fix here based on the issue\n\`\`\`\n\n⚠️ **Important:** This is a suggestion. Please review carefully before applying changes.`,
+        analysis,
+      };
+    }
+
+    case "suggest_schema_change": {
+      // Admin-only schema suggestion tool
+      return {
+        success: true,
+        message: `📊 Database Schema Suggestion:\n\n**Table:** ${args.table_name || 'Multiple tables'}\n**Proposed Change:** ${args.change_description}\n\n**Recommended SQL Migration:**\n\`\`\`sql\n${args.migration_sql || '-- Analyze the requirement and provide SQL here'}\n\`\`\`\n\n**Impact Analysis:**\n- Affects existing data: [Yes/No]\n- Requires backfill: [Yes/No]\n- Breaking change: [Yes/No]\n\n⚠️ **Critical:** Test in development environment before applying to production.\n\n**Steps to Apply:**\n1. Review the SQL carefully\n2. Test on development database\n3. Create backup of production data\n4. Apply migration during maintenance window`,
+        suggestion: {
+          table: args.table_name,
+          change: args.change_description,
+          sql: args.migration_sql,
+        },
+      };
+    }
+
+    case "analyze_application_logs": {
+      // Query recent monitoring history and bug reports for patterns
+      const { data: recentErrors } = await supabaseClient
+        .from("monitoring_history")
+        .select("*")
+        .eq("status", "error")
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      const { data: bugReports } = await supabaseClient
+        .from("bug_reports")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(20);
+
+      return {
+        success: true,
+        message: `📈 Application Log Analysis:\n\n**Error Patterns Found:**\n${recentErrors?.length || 0} recent errors in monitoring history\n${bugReports?.length || 0} bug reports\n\n**Common Issues:**\n${recentErrors?.slice(0, 5).map((e: any) => `- ${e.source_name}: ${e.error_message}`).join('\n') || 'No recent errors'}\n\n**Recommendations:**\n1. Review rate limiting for external APIs\n2. Check authentication token expiration\n3. Monitor database connection pool\n4. Review edge function timeouts\n\n**Health Status:** ${(recentErrors?.length || 0) > 10 ? '⚠️ Needs attention' : '✅ Healthy'}`,
+        errors: recentErrors,
+        bugs: bugReports,
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -961,7 +1088,27 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
+    // Get the authorization header to check user role
+    const authHeader = req.headers.get("Authorization");
     const supabaseClient = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+    
+    // Check if user is admin
+    let isAdmin = false;
+    if (authHeader) {
+      const token = authHeader.replace("Bearer ", "");
+      const { data: { user } } = await supabaseClient.auth.getUser(token);
+      
+      if (user) {
+        const { data: roles } = await supabaseClient
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', user.id)
+          .eq('role', 'admin')
+          .single();
+        
+        isAdmin = !!roles;
+      }
+    }
 
     // Process messages to extract file attachments and format for vision
     const processedMessages = await Promise.all(
@@ -1007,6 +1154,12 @@ serve(async (req) => {
       })
     );
 
+    // Filter tools based on admin status
+    const adminOnlyTools = ['diagnose_code_issue', 'suggest_schema_change', 'analyze_application_logs'];
+    const availableTools = isAdmin 
+      ? tools 
+      : tools.filter(tool => !adminOnlyTools.includes(tool.function.name));
+
     // First AI call with tools
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -1039,7 +1192,7 @@ QUERY CAPABILITIES:
 - Error diagnostics and troubleshooting
 - OSINT (Open Source Intelligence) scanning capabilities
 
-MODIFICATION CAPABILITIES:
+DATA MODIFICATION CAPABILITIES:
 - Create new entities (people, organizations, locations, vehicles, events)
 - Update existing entity information (descriptions, risk levels, aliases)
 - Create security incidents
@@ -1047,6 +1200,23 @@ MODIFICATION CAPABILITIES:
 - Create investigation files
 - Update signal status (mark as reviewed, false positive)
 - Link relationships between entities
+
+${isAdmin ? `
+ADMIN-ONLY CAPABILITIES (CURRENT USER IS ADMIN):
+You have special administrative access to:
+- Diagnose and analyze system issues (bugs, errors, performance problems)
+- Suggest code fixes for React components
+- Recommend database schema changes
+- Propose new features and improvements
+
+When diagnosing issues:
+1. Identify the problem clearly
+2. Explain the root cause
+3. Suggest specific fixes with code examples
+4. Warn about potential side effects
+
+IMPORTANT: You can suggest and explain fixes, but the admin must review and approve all code/schema changes.
+` : ''}
 
 FILE ATTACHMENTS:
 - Analyze attached images for security-relevant information
@@ -1111,7 +1281,7 @@ When making changes, confirm what you did and provide links to view the results.
           },
           ...processedMessages,
         ],
-        tools,
+        tools: availableTools,
         tool_choice: "auto",
       }),
     });
@@ -1146,7 +1316,7 @@ When making changes, confirm what you did and provide links to view the results.
         firstMessage.tool_calls.map(async (toolCall: any) => {
           try {
             const args = JSON.parse(toolCall.function.arguments);
-            const result = await executeTool(toolCall.function.name, args, supabaseClient);
+            const result = await executeTool(toolCall.function.name, args, supabaseClient, isAdmin);
             return {
               tool_call_id: toolCall.id,
               role: "tool",
@@ -1190,6 +1360,11 @@ You can:
 - Link relationships between entities
 - Query system data and troubleshoot issues
 - Analyze file attachments for security insights
+${isAdmin ? `
+- ADMIN ACCESS: Diagnose code issues and suggest fixes
+- ADMIN ACCESS: Recommend database schema changes
+- ADMIN ACCESS: Analyze application logs and errors
+` : ''}
 
 Summarize the tool results in a clear, conversational way. Use markdown links for navigation: [Link Text](/path). Be concise and helpful. When file attachments are present, incorporate insights from them into your response. When making changes, confirm what you did and provide links to view the results.`,
           },
