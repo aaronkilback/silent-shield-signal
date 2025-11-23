@@ -187,6 +187,70 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "analyze_database_issues",
+      description: "Analyze the database for common issues like duplicate signals, orphaned records, and data quality problems. Use this when users ask about database issues, duplicates, or system data integrity.",
+      parameters: {
+        type: "object",
+        properties: {
+          issue_type: {
+            type: "string",
+            enum: ["duplicates", "orphaned_records", "data_quality", "all"],
+            description: "Type of issue to analyze for (default: all)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "fix_duplicate_signals",
+      description: "Merge or remove duplicate signals identified in the system. Use after analyzing duplicates.",
+      parameters: {
+        type: "object",
+        properties: {
+          signal_ids: {
+            type: "array",
+            items: { type: "string" },
+            description: "Array of duplicate signal IDs to fix",
+          },
+          action: {
+            type: "string",
+            enum: ["merge", "mark_as_duplicate", "delete_duplicates"],
+            description: "Action to take on duplicates",
+          },
+          keep_signal_id: {
+            type: "string",
+            description: "ID of the signal to keep when merging (optional, uses first if not specified)",
+          },
+        },
+        required: ["signal_ids", "action"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "analyze_signal_quality",
+      description: "Analyze signal quality metrics and identify low-quality or potentially false positive signals. Use for data quality reviews.",
+      parameters: {
+        type: "object",
+        properties: {
+          days_back: {
+            type: "number",
+            description: "Number of days to analyze (default 7)",
+          },
+          min_confidence: {
+            type: "number",
+            description: "Minimum confidence threshold 0-1 (default 0.5)",
+          },
+        },
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -563,6 +627,252 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       }
     }
 
+    case "analyze_database_issues": {
+      const issueType = args.issue_type || "all";
+      const issues: any = { duplicate_signals: [], orphaned_records: [], data_quality: [] };
+
+      // Check for duplicate signals based on content hash
+      if (issueType === "duplicates" || issueType === "all") {
+        const { data: duplicates } = await supabaseClient
+          .from("signals")
+          .select("content_hash, id, title, created_at, confidence")
+          .not("content_hash", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(500);
+
+        if (duplicates) {
+          const hashMap = new Map();
+          duplicates.forEach((signal: any) => {
+            if (!hashMap.has(signal.content_hash)) {
+              hashMap.set(signal.content_hash, []);
+            }
+            hashMap.get(signal.content_hash).push(signal);
+          });
+
+          hashMap.forEach((signals, hash) => {
+            if (signals.length > 1) {
+              issues.duplicate_signals.push({
+                hash,
+                count: signals.length,
+                signals: signals.map((s: any) => ({ 
+                  id: s.id, 
+                  title: s.title, 
+                  created_at: s.created_at,
+                  confidence: s.confidence 
+                }))
+              });
+            }
+          });
+        }
+      }
+
+      // Check for orphaned records
+      if (issueType === "orphaned_records" || issueType === "all") {
+        const { data: orphanedMentions } = await supabaseClient
+          .from("entity_mentions")
+          .select("id, entity_id, signal_id, incident_id")
+          .is("signal_id", null)
+          .is("incident_id", null)
+          .limit(100);
+
+        if (orphanedMentions && orphanedMentions.length > 0) {
+          issues.orphaned_records.push({
+            type: "entity_mentions",
+            count: orphanedMentions.length,
+            details: "Entity mentions with no signal or incident reference",
+            sample_ids: orphanedMentions.slice(0, 5).map((m: any) => m.id)
+          });
+        }
+      }
+
+      // Check data quality
+      if (issueType === "data_quality" || issueType === "all") {
+        const { data: lowQuality } = await supabaseClient
+          .from("signals")
+          .select("id, title, confidence, status, created_at")
+          .lt("confidence", 0.3)
+          .eq("status", "new")
+          .order("created_at", { ascending: false })
+          .limit(50);
+
+        if (lowQuality && lowQuality.length > 0) {
+          issues.data_quality.push({
+            type: "low_confidence_signals",
+            count: lowQuality.length,
+            signals: lowQuality.slice(0, 10)
+          });
+        }
+
+        // Check for signals with missing data
+        const { data: incomplete } = await supabaseClient
+          .from("signals")
+          .select("id, title, description, category")
+          .or("description.is.null,category.is.null")
+          .order("created_at", { ascending: false })
+          .limit(20);
+
+        if (incomplete && incomplete.length > 0) {
+          issues.data_quality.push({
+            type: "incomplete_signals",
+            count: incomplete.length,
+            details: "Signals missing description or category"
+          });
+        }
+      }
+
+      return {
+        success: true,
+        issues,
+        summary: `Found ${issues.duplicate_signals.length} duplicate groups (${issues.duplicate_signals.reduce((sum: number, g: any) => sum + g.count, 0)} total duplicates), ${issues.orphaned_records.reduce((sum: number, r: any) => sum + r.count, 0)} orphaned records, ${issues.data_quality.reduce((sum: number, q: any) => sum + q.count, 0)} data quality issues`,
+        total_duplicate_signals: issues.duplicate_signals.reduce((sum: number, g: any) => sum + g.count, 0)
+      };
+    }
+
+    case "fix_duplicate_signals": {
+      const { signal_ids, action, keep_signal_id } = args;
+      
+      if (!signal_ids || signal_ids.length < 2) {
+        return { success: false, error: "Need at least 2 signal IDs to fix duplicates" };
+      }
+
+      if (action === "mark_as_duplicate") {
+        // Use the detect-duplicates function
+        try {
+          const { error: detectError } = await supabaseClient.functions.invoke("detect-duplicates", {
+            body: { signal_ids }
+          });
+
+          if (detectError) {
+            return { success: false, error: detectError.message };
+          }
+
+          return {
+            success: true,
+            message: `Marked ${signal_ids.length} signals as potential duplicates in duplicate_detections table`
+          };
+        } catch (error) {
+          return { 
+            success: false, 
+            error: `Failed to mark duplicates: ${error instanceof Error ? error.message : 'Unknown error'}` 
+          };
+        }
+      } else if (action === "delete_duplicates") {
+        const primaryId = keep_signal_id || signal_ids[0];
+        const toDelete = signal_ids.filter((id: string) => id !== primaryId);
+        
+        // Delete duplicate signals
+        const { error: deleteError } = await supabaseClient
+          .from("signals")
+          .delete()
+          .in("id", toDelete);
+
+        if (deleteError) {
+          return { success: false, error: deleteError.message };
+        }
+
+        return {
+          success: true,
+          message: `Deleted ${toDelete.length} duplicate signals, kept signal ${primaryId}`,
+          kept_signal_id: primaryId,
+          deleted_count: toDelete.length
+        };
+      } else if (action === "merge") {
+        const primaryId = keep_signal_id || signal_ids[0];
+        const otherIds = signal_ids.filter((id: string) => id !== primaryId);
+
+        // Update entity mentions to point to primary signal
+        const { error: mentionsError } = await supabaseClient
+          .from("entity_mentions")
+          .update({ signal_id: primaryId })
+          .in("signal_id", otherIds);
+
+        if (mentionsError) {
+          return { success: false, error: `Failed to update mentions: ${mentionsError.message}` };
+        }
+
+        // Update incident_signals references
+        const { error: incidentError } = await supabaseClient
+          .from("incident_signals")
+          .update({ signal_id: primaryId })
+          .in("signal_id", otherIds);
+
+        // Delete duplicate signals
+        const { error: deleteError } = await supabaseClient
+          .from("signals")
+          .delete()
+          .in("id", otherIds);
+
+        if (deleteError) {
+          return { success: false, error: `Failed to delete duplicates: ${deleteError.message}` };
+        }
+
+        return {
+          success: true,
+          message: `Merged ${signal_ids.length} signals into ${primaryId}. Updated entity mentions and incident references.`,
+          primary_signal_id: primaryId,
+          merged_count: otherIds.length
+        };
+      }
+
+      return { success: false, error: "Invalid action specified. Use 'merge', 'mark_as_duplicate', or 'delete_duplicates'" };
+    }
+
+    case "analyze_signal_quality": {
+      const daysBack = args.days_back || 7;
+      const minConfidence = args.min_confidence || 0.5;
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+
+      const { data: recentSignals, error: signalsError } = await supabaseClient
+        .from("signals")
+        .select("id, title, confidence, status, severity, created_at, source_id")
+        .gte("created_at", cutoffDate.toISOString())
+        .order("created_at", { ascending: false });
+
+      if (signalsError || !recentSignals) {
+        return { success: false, error: "Failed to fetch signals for analysis" };
+      }
+
+      const qualityMetrics = {
+        total_signals: recentSignals.length,
+        low_confidence: recentSignals.filter((s: any) => (s.confidence || 0) < minConfidence).length,
+        high_confidence: recentSignals.filter((s: any) => (s.confidence || 0) >= 0.8).length,
+        medium_confidence: recentSignals.filter((s: any) => (s.confidence || 0) >= minConfidence && (s.confidence || 0) < 0.8).length,
+        by_status: {} as any,
+        by_severity: {} as any,
+        avg_confidence: recentSignals.length > 0 
+          ? (recentSignals.reduce((sum: number, s: any) => sum + (s.confidence || 0), 0) / recentSignals.length).toFixed(3)
+          : 0
+      };
+
+      recentSignals.forEach((signal: any) => {
+        qualityMetrics.by_status[signal.status] = (qualityMetrics.by_status[signal.status] || 0) + 1;
+        if (signal.severity) {
+          qualityMetrics.by_severity[signal.severity] = (qualityMetrics.by_severity[signal.severity] || 0) + 1;
+        }
+      });
+
+      const lowQualitySignals = recentSignals
+        .filter((s: any) => (s.confidence || 0) < minConfidence)
+        .slice(0, 10)
+        .map((s: any) => ({
+          id: s.id,
+          title: s.title,
+          confidence: s.confidence,
+          created_at: s.created_at
+        }));
+
+      return {
+        success: true,
+        metrics: qualityMetrics,
+        low_quality_signals: lowQualitySignals,
+        analysis_period: `Last ${daysBack} days`,
+        quality_percentage: recentSignals.length > 0 
+          ? ((qualityMetrics.high_confidence / recentSignals.length) * 100).toFixed(1) + '%'
+          : '0%'
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -662,6 +972,9 @@ You have access to tools to query the database for:
 - System monitoring status and health
 - Error diagnostics and troubleshooting
 - OSINT (Open Source Intelligence) scanning capabilities
+- Database issue analysis (duplicates, orphaned records, data quality)
+- Duplicate signal detection and fixing
+- Signal quality analysis
 
 FILE ATTACHMENTS:
 - Analyze attached images for security-relevant information
@@ -697,6 +1010,14 @@ Common issues to look for:
 - Failed scans or sources with errors
 - Low scan frequency or missing data
 - Stale data (no recent scans)
+
+CODE AND DATA ISSUE FIXING:
+When users ask about duplicates, data quality issues, or want to clean up the database:
+1. Use analyze_database_issues to scan for problems (duplicates, orphaned records, data quality)
+2. Review the results and explain what was found
+3. For duplicate signals, use fix_duplicate_signals to merge or remove them
+4. For data quality, use analyze_signal_quality to get metrics and identify low-confidence signals
+5. Always explain what you're going to do before making changes that modify or delete data
 
 When users ask about specific data:
 1. Use the appropriate tool to fetch the information
