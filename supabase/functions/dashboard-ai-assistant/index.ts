@@ -2464,11 +2464,11 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
         body: JSON.stringify({
           model: "google/gemini-2.5-flash",
           messages: [
-          {
-            role: "system",
-            content: `You are the Fortress AI Assistant. Summarize tool results in a clear, conversational way. Use markdown links: [Link Text](/path). Be concise and helpful. When file attachments are present, incorporate insights. When explaining architecture or implementation, be detailed and technical.`,
-          },
-          ...processedMessages,
+            {
+              role: "system",
+              content: `You are the Fortress AI Assistant. Summarize tool results in a clear, conversational way. Use markdown links: [Link Text](/path). Be concise and helpful. When file attachments are present, incorporate insights. When explaining architecture or implementation, be detailed and technical.`,
+            },
+            ...processedMessages,
             firstMessage,
             ...toolResults,
           ],
