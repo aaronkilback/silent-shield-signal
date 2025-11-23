@@ -251,6 +251,42 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "search_knowledge_base",
+      description: "Search the knowledge base for articles, procedures, best practices, and documentation. Use this when users ask questions about how to do something, need guidance, or want to reference documentation.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search query for article title, content, or tags",
+          },
+          category_id: {
+            type: "string",
+            description: "Optional: Filter by specific category UUID",
+          },
+          limit: {
+            type: "number",
+            description: "Number of results to return (default 10)",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_knowledge_base_categories",
+      description: "Get all knowledge base categories to understand available topics and organization. Use when users want to browse or understand what documentation is available.",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -873,6 +909,116 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       };
     }
 
+    case "search_knowledge_base": {
+      const searchQuery = args.query;
+      const limit = args.limit || 10;
+      
+      let query = supabaseClient
+        .from("knowledge_base_articles")
+        .select(`
+          id,
+          title,
+          summary,
+          content,
+          tags,
+          created_at,
+          view_count,
+          helpful_count,
+          knowledge_base_categories(name, icon)
+        `)
+        .eq("is_published", true)
+        .order("helpful_count", { ascending: false })
+        .limit(limit);
+
+      // Filter by category if provided
+      if (args.category_id) {
+        query = query.eq("category_id", args.category_id);
+      }
+
+      // Search in title, summary, content, and tags
+      if (searchQuery) {
+        query = query.or(`title.ilike.%${searchQuery}%,summary.ilike.%${searchQuery}%,content.ilike.%${searchQuery}%,tags.cs.{${searchQuery}}`);
+      }
+
+      const { data: articles, error: searchError } = await query;
+
+      if (searchError) {
+        console.error("Knowledge base search error:", searchError);
+        return { 
+          success: false, 
+          error: `Failed to search knowledge base: ${searchError.message}` 
+        };
+      }
+
+      if (!articles || articles.length === 0) {
+        return {
+          success: true,
+          articles: [],
+          message: `No knowledge base articles found matching "${searchQuery}". Try browsing categories or using different keywords.`
+        };
+      }
+
+      return {
+        success: true,
+        articles: articles.map((article: any) => ({
+          id: article.id,
+          title: article.title,
+          summary: article.summary,
+          content: article.content?.substring(0, 500) + (article.content?.length > 500 ? "..." : ""),
+          category: article.knowledge_base_categories?.name,
+          tags: article.tags,
+          helpful_count: article.helpful_count,
+          view_count: article.view_count,
+          url: `/knowledge-base/${article.id}`
+        })),
+        count: articles.length,
+        message: `Found ${articles.length} article(s) matching "${searchQuery}"`
+      };
+    }
+
+    case "get_knowledge_base_categories": {
+      const { data: categories, error: categoriesError } = await supabaseClient
+        .from("knowledge_base_categories")
+        .select(`
+          id,
+          name,
+          description,
+          icon,
+          display_order,
+          knowledge_base_articles(count)
+        `)
+        .order("display_order", { ascending: true });
+
+      if (categoriesError) {
+        console.error("Categories fetch error:", categoriesError);
+        return { 
+          success: false, 
+          error: `Failed to fetch categories: ${categoriesError.message}` 
+        };
+      }
+
+      if (!categories || categories.length === 0) {
+        return {
+          success: true,
+          categories: [],
+          message: "No knowledge base categories found. The knowledge base may be empty."
+        };
+      }
+
+      return {
+        success: true,
+        categories: categories.map((cat: any) => ({
+          id: cat.id,
+          name: cat.name,
+          description: cat.description,
+          icon: cat.icon,
+          article_count: cat.knowledge_base_articles?.length || 0
+        })),
+        count: categories.length,
+        message: `Found ${categories.length} knowledge base categories`
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -975,6 +1121,15 @@ You have access to tools to query the database for:
 - Database issue analysis (duplicates, orphaned records, data quality)
 - Duplicate signal detection and fixing
 - Signal quality analysis
+- Knowledge base articles and documentation
+
+KNOWLEDGE BASE:
+When users ask questions about procedures, best practices, how to do something, or need guidance:
+1. Use search_knowledge_base to find relevant articles in the documentation
+2. Reference the articles when providing answers
+3. Include links to full articles using markdown: [Article Title](/knowledge-base/{id})
+4. Use get_knowledge_base_categories to help users browse available topics
+5. Summarize key points from articles but encourage users to read the full content for details
 
 FILE ATTACHMENTS:
 - Analyze attached images for security-relevant information
@@ -1031,6 +1186,7 @@ Available pages:
 - [View Investigations](/investigations) - Investigation files
 - [View Clients](/clients) - Client accounts
 - [View Monitoring Sources](/monitoring-sources) - Configure monitoring
+- [Knowledge Base](/knowledge-base) - Documentation and guides
 
 Be conversational and helpful. When showing data, format it clearly with bullet points or structured text.
 When troubleshooting, be specific about what you found and how to fix it.`,
