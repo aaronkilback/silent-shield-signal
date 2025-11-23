@@ -545,6 +545,124 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "search_bug_reports",
+      description: "Search bug reports submitted by users. Use this to find known issues, track bug status, or investigate reported problems.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search query for bug title or description",
+          },
+          status: {
+            type: "string",
+            enum: ["open", "in_progress", "resolved", "closed"],
+            description: "Filter by bug status",
+          },
+          severity: {
+            type: "string",
+            enum: ["low", "medium", "high", "critical"],
+            description: "Filter by severity level",
+          },
+          limit: {
+            type: "number",
+            description: "Number of results to return (default 20)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_bug_report_details",
+      description: "Get detailed information about a specific bug report including description, screenshots, browser info, and resolution status.",
+      parameters: {
+        type: "object",
+        properties: {
+          bug_id: {
+            type: "string",
+            description: "The UUID of the bug report",
+          },
+        },
+        required: ["bug_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "analyze_edge_function_errors",
+      description: "Analyze edge function logs to identify errors, failures, and potential issues. Use this to debug backend problems.",
+      parameters: {
+        type: "object",
+        properties: {
+          function_name: {
+            type: "string",
+            description: "Specific edge function to analyze (optional, analyzes all if not specified)",
+          },
+          hours_back: {
+            type: "number",
+            description: "How many hours of logs to analyze (default 24)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "diagnose_bug",
+      description: "Perform comprehensive bug diagnosis by analyzing symptoms, logs, related code, and suggesting root causes. Use when investigating a reported issue.",
+      parameters: {
+        type: "object",
+        properties: {
+          description: {
+            type: "string",
+            description: "Description of the bug or issue",
+          },
+          error_message: {
+            type: "string",
+            description: "Any error messages or stack traces (optional)",
+          },
+          affected_area: {
+            type: "string",
+            description: "Which part of the app is affected (e.g., 'signals page', 'monitoring', 'entity scan')",
+          },
+        },
+        required: ["description", "affected_area"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "suggest_code_fix",
+      description: "Analyze a bug and provide detailed code fix suggestions with explanations. Use after diagnosing the issue.",
+      parameters: {
+        type: "object",
+        properties: {
+          bug_description: {
+            type: "string",
+            description: "Description of the bug to fix",
+          },
+          root_cause: {
+            type: "string",
+            description: "Identified root cause of the issue",
+          },
+          affected_files: {
+            type: "array",
+            items: { type: "string" },
+            description: "List of files that need changes",
+          },
+        },
+        required: ["bug_description", "root_cause"],
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -2212,6 +2330,324 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       };
     }
 
+    case "search_bug_reports": {
+      let query = supabaseClient
+        .from("bug_reports")
+        .select("id, title, description, severity, status, created_at, page_url, user_id, profiles(name)")
+        .order("created_at", { ascending: false })
+        .limit(args.limit || 20);
+
+      if (args.query) {
+        query = query.or(`title.ilike.%${args.query}%,description.ilike.%${args.query}%`);
+      }
+
+      if (args.status) {
+        query = query.eq("status", args.status);
+      }
+
+      if (args.severity) {
+        query = query.eq("severity", args.severity);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      return {
+        success: true,
+        bugs: data,
+        count: data?.length || 0,
+        summary: {
+          open: data?.filter((b: any) => b.status === 'open').length || 0,
+          in_progress: data?.filter((b: any) => b.status === 'in_progress').length || 0,
+          resolved: data?.filter((b: any) => b.status === 'resolved').length || 0,
+          critical: data?.filter((b: any) => b.severity === 'critical').length || 0,
+          high: data?.filter((b: any) => b.severity === 'high').length || 0
+        }
+      };
+    }
+
+    case "get_bug_report_details": {
+      const { data, error } = await supabaseClient
+        .from("bug_reports")
+        .select("*, profiles(name, email)")
+        .eq("id", args.bug_id)
+        .single();
+
+      if (error) throw error;
+      if (!data) {
+        return { success: false, message: "Bug report not found" };
+      }
+
+      return {
+        success: true,
+        bug: {
+          id: data.id,
+          title: data.title,
+          description: data.description,
+          severity: data.severity,
+          status: data.status,
+          page_url: data.page_url,
+          browser_info: data.browser_info,
+          screenshots: data.screenshots,
+          created_at: data.created_at,
+          updated_at: data.updated_at,
+          resolved_at: data.resolved_at,
+          reporter: data.profiles
+        }
+      };
+    }
+
+    case "analyze_edge_function_errors": {
+      const hoursBack = args.hours_back || 24;
+      const startTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString();
+
+      let query = supabaseClient
+        .from("monitoring_history")
+        .select("source_name, status, error_message, scan_started_at, scan_completed_at, items_scanned, signals_created")
+        .eq("status", "error")
+        .gte("scan_started_at", startTime)
+        .order("scan_started_at", { ascending: false })
+        .limit(100);
+
+      if (args.function_name) {
+        query = query.eq("source_name", args.function_name);
+      }
+
+      const { data: errors, error } = await query;
+      if (error) throw error;
+
+      // Group errors by function and error message
+      const errorsByFunction: Record<string, any> = {};
+      errors?.forEach((err: any) => {
+        if (!errorsByFunction[err.source_name]) {
+          errorsByFunction[err.source_name] = {
+            function_name: err.source_name,
+            error_count: 0,
+            unique_errors: new Set(),
+            recent_errors: []
+          };
+        }
+        errorsByFunction[err.source_name].error_count++;
+        errorsByFunction[err.source_name].unique_errors.add(err.error_message);
+        if (errorsByFunction[err.source_name].recent_errors.length < 5) {
+          errorsByFunction[err.source_name].recent_errors.push({
+            message: err.error_message,
+            timestamp: err.scan_started_at
+          });
+        }
+      });
+
+      // Convert sets to arrays for JSON serialization
+      Object.values(errorsByFunction).forEach((func: any) => {
+        func.unique_errors = Array.from(func.unique_errors);
+      });
+
+      return {
+        success: true,
+        time_window: `Last ${hoursBack} hours`,
+        total_errors: errors?.length || 0,
+        functions_with_errors: Object.keys(errorsByFunction).length,
+        errors_by_function: Object.values(errorsByFunction),
+        recommendation: errors?.length === 0 
+          ? "No errors found in the specified time window."
+          : "Review the error messages above to identify patterns. Common issues include rate limiting, API failures, and invalid data."
+      };
+    }
+
+    case "diagnose_bug": {
+      const { description, error_message, affected_area } = args;
+
+      // Build diagnosis by analyzing related components
+      const diagnosis: any = {
+        bug_description: description,
+        affected_area: affected_area,
+        error_message: error_message || "No error message provided",
+        analysis: [],
+        potential_root_causes: [],
+        investigation_steps: [],
+        related_components: []
+      };
+
+      // Analyze based on affected area
+      const areaLower = affected_area.toLowerCase();
+
+      if (areaLower.includes("signal") || areaLower.includes("monitoring")) {
+        diagnosis.related_components = [
+          "Edge functions: monitor-* functions",
+          "Database: signals, monitoring_history tables",
+          "Frontend: Signals page, SignalDetailDialog",
+          "Functions: ingest-signal, correlate-signals"
+        ];
+        diagnosis.potential_root_causes = [
+          "Rate limiting on external APIs",
+          "Invalid or missing monitoring keywords",
+          "Database connection issues",
+          "Correlation algorithm timeout",
+          "Missing or malformed signal data"
+        ];
+        diagnosis.investigation_steps = [
+          "Check monitoring_history for failed scans",
+          "Review edge function logs for specific monitor function",
+          "Verify client monitoring keywords are valid",
+          "Check signal data structure and required fields",
+          "Test correlation function with sample data"
+        ];
+      } else if (areaLower.includes("entity") || areaLower.includes("osint")) {
+        diagnosis.related_components = [
+          "Edge functions: osint-entity-scan, scan-entity-content",
+          "Database: entities, entity_content, entity_mentions",
+          "Frontend: Entity pages, EntityDetailDialog",
+          "APIs: Google Search API"
+        ];
+        diagnosis.potential_root_causes = [
+          "Google Search API quota exceeded or key invalid",
+          "Entity name formatting issues",
+          "Network timeout during OSINT scan",
+          "Invalid entity type or missing required fields",
+          "Content parsing failures"
+        ];
+        diagnosis.investigation_steps = [
+          "Verify Google Search API key and quotas",
+          "Check entity data structure for required fields",
+          "Review osint-entity-scan logs for errors",
+          "Test entity scan with simple query",
+          "Verify entity_content table RLS policies"
+        ];
+      } else if (areaLower.includes("incident")) {
+        diagnosis.related_components = [
+          "Edge functions: ai-decision-engine, check-incident-escalation",
+          "Database: incidents, incident_signals, escalation_rules",
+          "Frontend: Incidents page, incident management",
+          "AI: Lovable AI decision making"
+        ];
+        diagnosis.potential_root_causes = [
+          "AI decision engine timeout or failure",
+          "Invalid escalation rule configuration",
+          "Missing incident priority or status",
+          "SLA calculation errors",
+          "Alert delivery failures"
+        ];
+        diagnosis.investigation_steps = [
+          "Check ai-decision-engine logs for errors",
+          "Review escalation rules configuration",
+          "Verify incident data completeness",
+          "Test alert delivery channels",
+          "Check SLA targets configuration"
+        ];
+      } else if (areaLower.includes("travel")) {
+        diagnosis.related_components = [
+          "Edge functions: monitor-travel-risks, parse-travel-itinerary",
+          "Database: travelers, itineraries",
+          "Frontend: Travel page, TravelersList, ItinerariesList",
+          "Maps: Mapbox integration"
+        ];
+        diagnosis.potential_root_causes = [
+          "Invalid itinerary file format",
+          "Mapbox token issues",
+          "Risk assessment API failures",
+          "Date parsing errors",
+          "Location geocoding failures"
+        ];
+        diagnosis.investigation_steps = [
+          "Verify itinerary file format and data",
+          "Check Mapbox token validity",
+          "Review travel risk monitoring logs",
+          "Test location geocoding",
+          "Validate date ranges and time zones"
+        ];
+      } else {
+        diagnosis.potential_root_causes = [
+          "Authentication issues",
+          "Database connection problems",
+          "Frontend state management errors",
+          "API rate limiting",
+          "Missing environment variables"
+        ];
+        diagnosis.investigation_steps = [
+          "Check browser console for errors",
+          "Verify user authentication status",
+          "Review edge function logs",
+          "Test API connectivity",
+          "Validate environment configuration"
+        ];
+      }
+
+      diagnosis.analysis.push(
+        `Analyzing ${affected_area} for: ${description}`,
+        error_message ? `Error message indicates issues with: ${error_message.substring(0, 100)}` : "No error message to analyze",
+        `Found ${diagnosis.related_components.length} related components`,
+        `Identified ${diagnosis.potential_root_causes.length} potential root causes`
+      );
+
+      return {
+        success: true,
+        diagnosis: diagnosis,
+        next_action: "Use analyze_edge_function_errors to check backend logs, or use get_database_schema to review data structure. Once root cause is confirmed, use suggest_code_fix for implementation guidance."
+      };
+    }
+
+    case "suggest_code_fix": {
+      const { bug_description, root_cause, affected_files } = args;
+
+      const fix: any = {
+        bug: bug_description,
+        root_cause: root_cause,
+        fix_strategy: "",
+        code_changes: [],
+        testing_steps: [],
+        deployment_notes: []
+      };
+
+      // Generate fix strategy based on root cause
+      if (root_cause.toLowerCase().includes("rate limit")) {
+        fix.fix_strategy = "Implement rate limiting with exponential backoff and request queuing";
+        fix.code_changes = [
+          {
+            file: "Affected edge function",
+            change: "Add rate limiting logic with retry mechanism",
+            example: `// Add at top of function\nconst RATE_LIMIT_DELAY = 1000; // ms\nconst MAX_RETRIES = 3;\n\nasync function fetchWithRetry(url: string, retries = 0): Promise<Response> {\n  try {\n    const response = await fetch(url);\n    if (response.status === 429 && retries < MAX_RETRIES) {\n      await new Promise(r => setTimeout(r, RATE_LIMIT_DELAY * Math.pow(2, retries)));\n      return fetchWithRetry(url, retries + 1);\n    }\n    return response;\n  } catch (error) {\n    if (retries < MAX_RETRIES) {\n      await new Promise(r => setTimeout(r, RATE_LIMIT_DELAY));\n      return fetchWithRetry(url, retries + 1);\n    }\n    throw error;\n  }\n}`
+          }
+        ];
+      } else if (root_cause.toLowerCase().includes("api") || root_cause.toLowerCase().includes("key")) {
+        fix.fix_strategy = "Verify API configuration and add proper error handling";
+        fix.code_changes = [
+          {
+            file: "Edge function with API calls",
+            change: "Add API key validation and error handling",
+            example: `const API_KEY = Deno.env.get('API_KEY_NAME');\nif (!API_KEY) {\n  return new Response(JSON.stringify({ error: 'API key not configured' }), { status: 500 });\n}`
+          }
+        ];
+      } else {
+        fix.fix_strategy = "Add comprehensive error handling and logging";
+        fix.code_changes = [
+          {
+            file: "Affected component",
+            change: "Add error handling and logging",
+            example: `try {\n  console.log('Operation started:', params);\n  const result = await performOperation(params);\n  console.log('Operation completed:', result);\n  return result;\n} catch (error) {\n  console.error('Operation failed:', error);\n  throw error;\n}`
+          }
+        ];
+      }
+
+      fix.testing_steps = [
+        "Test with various input combinations",
+        "Verify error handling works correctly",
+        "Monitor logs after deployment",
+        "Add regression test"
+      ];
+
+      fix.deployment_notes = [
+        "Test in development first",
+        "Monitor logs after deployment",
+        "Update documentation if needed"
+      ];
+
+      return {
+        success: true,
+        fix: fix,
+        priority: root_cause.toLowerCase().includes("critical") ? "HIGH" : "MEDIUM"
+      };
+    }
+
     case "suggest_improvements": {
       const area = args.area || "all";
       
@@ -2663,6 +3099,8 @@ YOUR CAPABILITIES:
 16. **Platform Improvement**: Suggest improvements for monitoring, security, performance, features, and UI
 17. **Capability Analysis**: Analyze what the platform can and cannot do, identify gaps, recommend priorities
 18. **Code Generation**: Generate edge function templates for new monitoring sources or backend features
+19. **Bug Detection & Resolution**: Search bug reports, analyze edge function errors, diagnose issues, and suggest code fixes
+20. **Comprehensive Debugging**: Analyze logs, error messages, and related code to identify root causes and provide fix strategies
 
 CRITICAL DISTINCTIONS:
 1. CLIENTS are organizations actively monitored by Fortress (customers)

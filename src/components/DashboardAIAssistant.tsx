@@ -523,6 +523,13 @@ export const DashboardAIAssistant = () => {
 • Generate edge function templates for new features
 • Provide implementation guidance for enhancements
 
+🐛 **Bug Detection & Resolution**
+• Search and track bug reports
+• Analyze edge function errors and logs
+• Diagnose issues with comprehensive root cause analysis
+• Suggest code fixes with implementation examples
+• Provide testing and deployment guidance
+
 **Try asking me:**
 • "Get client details for [client name]"
 • "Find recent high-severity signals"
@@ -533,7 +540,11 @@ export const DashboardAIAssistant = () => {
 • "Explain how signals work"
 • "Suggest improvements for monitoring"
 • "What can Fortress do and not do?"
-• "Generate a Reddit monitoring function"`,
+• "Generate a Reddit monitoring function"
+• "Search for open bugs"
+• "Analyze edge function errors"
+• "Diagnose issue with [feature]"
+• "How do I fix [specific error]?"`,
       };
       
       setMessages([...messages, { role: "user", content: input }, helpMessage]);
