@@ -39,7 +39,7 @@ export const DashboardAIAssistant = () => {
     const loadMessages = async () => {
       const defaultMessage: Message = {
         role: "assistant",
-        content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Just ask me anything - for example, try asking me to find a specific person or view recent signals.",
+        content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Upload documents for analysis or ask me anything!",
       };
 
       if (!user) {
@@ -49,6 +49,7 @@ export const DashboardAIAssistant = () => {
       }
 
       try {
+        console.log(`🔄 Loading chat history for user ${user.id}`);
         const { data: dbMessages, error } = await supabase
           .from('ai_assistant_messages')
           .select('*')
@@ -57,8 +58,11 @@ export const DashboardAIAssistant = () => {
           .order('created_at', { ascending: true });
 
         if (error) {
-          console.error("Error loading messages from database:", error);
-          throw error;
+          console.error("❌ Error loading messages from database:", error);
+          toast.error("Failed to load chat history");
+          setMessages([defaultMessage]);
+          setIsLoadingHistory(false);
+          return;
         }
 
         if (dbMessages && dbMessages.length > 0) {
@@ -67,36 +71,46 @@ export const DashboardAIAssistant = () => {
             content: msg.content
           }));
           setMessages(formattedMessages);
-          console.log(`✅ Loaded ${formattedMessages.length} messages from database for user ${user.id}`);
+          console.log(`✅ Loaded ${formattedMessages.length} messages for user ${user.id}`);
         } else {
+          // Check localStorage for migration
           const stored = localStorage.getItem(STORAGE_KEY);
           if (stored) {
-            const parsed = JSON.parse(stored);
-            console.log(`Migrating ${parsed.length} messages from localStorage to database`);
-            
-            const messagesToInsert = parsed.map((msg: Message) => ({
-              user_id: user.id,
-              role: msg.role,
-              content: msg.content
-            }));
-            
-            const { error: insertError } = await supabase
-              .from('ai_assistant_messages')
-              .insert(messagesToInsert);
-            
-            if (insertError) {
-              console.error("Failed to migrate messages:", insertError);
-            } else {
-              setMessages(parsed);
-              localStorage.removeItem(STORAGE_KEY);
-              console.log("Successfully migrated messages to database");
+            try {
+              const parsed = JSON.parse(stored);
+              console.log(`🔄 Migrating ${parsed.length} messages from localStorage`);
+              
+              const messagesToInsert = parsed.map((msg: Message) => ({
+                user_id: user.id,
+                role: msg.role,
+                content: msg.content
+              }));
+              
+              const { error: insertError } = await supabase
+                .from('ai_assistant_messages')
+                .insert(messagesToInsert);
+              
+              if (insertError) {
+                console.error("❌ Failed to migrate messages:", insertError);
+                setMessages(parsed);
+              } else {
+                setMessages(parsed);
+                localStorage.removeItem(STORAGE_KEY);
+                console.log("✅ Successfully migrated messages to database");
+              }
+            } catch (parseError) {
+              console.error("❌ Failed to parse localStorage:", parseError);
+              setMessages([defaultMessage]);
             }
           } else {
             setMessages([defaultMessage]);
+            // Save default message to DB
+            await saveMessageToDb(defaultMessage);
           }
         }
       } catch (error) {
-        console.error("Failed to load chat history:", error);
+        console.error("❌ Failed to load chat history:", error);
+        toast.error("Failed to load chat history");
         setMessages([defaultMessage]);
       } finally {
         setIsLoadingHistory(false);
@@ -107,10 +121,10 @@ export const DashboardAIAssistant = () => {
   }, [user]);
 
   // Helper function to save a new message to database immediately
-  const saveMessageToDb = async (message: Message) => {
+  const saveMessageToDb = async (message: Message): Promise<boolean> => {
     if (!user) {
-      console.warn("Cannot save message - no user logged in");
-      return;
+      console.warn("⚠️ Cannot save message - no user logged in");
+      return false;
     }
     
     try {
@@ -124,13 +138,17 @@ export const DashboardAIAssistant = () => {
 
       if (error) {
         console.error("❌ Failed to save message:", error);
+        console.error("Message details:", { role: message.role, contentLength: message.content.length });
         toast.error("Failed to save message to history");
+        return false;
       } else {
-        console.log(`✅ Message saved to database: ${message.role} for user ${user.id}`);
+        console.log(`✅ Message saved: ${message.role} for user ${user.id}`);
+        return true;
       }
     } catch (error) {
-      console.error("❌ Exception saving message to database:", error);
+      console.error("❌ Exception saving message:", error);
       toast.error("Failed to save message");
+      return false;
     }
   };
 
@@ -191,8 +209,11 @@ export const DashboardAIAssistant = () => {
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     
-    // Save user message immediately
-    await saveMessageToDb(userMsg);
+    // Save user message immediately with error handling
+    const saved = await saveMessageToDb(userMsg);
+    if (!saved && user) {
+      toast.error("Your message wasn't saved to history. It will be lost on refresh.");
+    }
     
     setIsLoading(true);
 
@@ -305,7 +326,10 @@ export const DashboardAIAssistant = () => {
       }
       
       // Save assistant message immediately
-      await saveMessageToDb(assistantMsg);
+      const assistantSaved = await saveMessageToDb(assistantMsg);
+      if (!assistantSaved && user) {
+        toast.warning("AI response wasn't saved to history");
+      }
       
       setStreamingContent("");
     } catch (error) {
@@ -332,38 +356,76 @@ export const DashboardAIAssistant = () => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const uploadFiles = async (): Promise<string[]> => {
-    if (attachments.length === 0) return [];
+  const uploadFiles = async (): Promise<{ urls: string[], documentIds: string[] }> => {
+    if (attachments.length === 0) return { urls: [], documentIds: [] };
     
     setIsUploading(true);
     const uploadedUrls: string[] = [];
+    const documentIds: string[] = [];
     
     try {
       for (const file of attachments) {
+        // Upload to storage
         const fileExt = file.name.split('.').pop();
         const fileName = `${user?.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
         
-        const { data, error } = await supabase.storage
+        const { data: storageData, error: storageError } = await supabase.storage
           .from('ai-chat-attachments')
           .upload(fileName, file, {
             cacheControl: '3600',
             upsert: false
           });
         
-        if (error) {
-          console.error("Upload error:", error);
+        if (storageError) {
+          console.error("Upload error:", storageError);
           toast.error(`Failed to upload ${file.name}`);
           continue;
         }
         
         const { data: { publicUrl } } = supabase.storage
           .from('ai-chat-attachments')
-          .getPublicUrl(data.path);
+          .getPublicUrl(storageData.path);
         
         uploadedUrls.push(publicUrl);
+        
+        // Also create archival document record for AI analysis
+        try {
+          const { data: archivalDoc, error: archivalError } = await supabase
+            .from('archival_documents')
+            .insert({
+              filename: file.name,
+              file_type: file.type || 'application/octet-stream',
+              file_size: file.size,
+              storage_path: storageData.path,
+              uploaded_by: user?.id,
+              tags: ['ai-chat-upload'],
+              metadata: { 
+                source: 'ai-chat',
+                original_name: file.name 
+              }
+            })
+            .select('id')
+            .single();
+          
+          if (archivalError) {
+            console.error("Failed to create archival record:", archivalError);
+          } else if (archivalDoc) {
+            documentIds.push(archivalDoc.id);
+            
+            // Trigger document processing for entity extraction
+            await supabase.functions.invoke('process-stored-document', {
+              body: { 
+                documentId: archivalDoc.id,
+                storagePath: storageData.path 
+              }
+            });
+          }
+        } catch (err) {
+          console.error("Error creating archival document:", err);
+        }
       }
       
-      return uploadedUrls;
+      return { urls: uploadedUrls, documentIds };
     } finally {
       setIsUploading(false);
     }
@@ -381,12 +443,22 @@ export const DashboardAIAssistant = () => {
     
     // Upload files if present
     if (attachments.length > 0) {
-      const uploadedUrls = await uploadFiles();
+      const { urls: uploadedUrls, documentIds } = await uploadFiles();
       if (uploadedUrls.length > 0) {
-        const fileList = uploadedUrls.map((url, idx) => 
-          `[${attachments[idx].name}](${url})`
-        ).join('\n');
-        userMessage = userMessage ? `${userMessage}\n\nAttachments:\n${fileList}` : `Attachments:\n${fileList}`;
+        const fileList = uploadedUrls.map((url, idx) => {
+          const docId = documentIds[idx];
+          return docId 
+            ? `📄 ${attachments[idx].name} (Document ID: ${docId}) - [View](${url})`
+            : `📄 [${attachments[idx].name}](${url})`;
+        }).join('\n');
+        
+        const instruction = documentIds.length > 0
+          ? `\n\n🔍 **I've uploaded ${documentIds.length} document(s) for analysis. Please use the get_document_content tool with the Document ID(s) above to read and analyze the content.**`
+          : '';
+        
+        userMessage = userMessage 
+          ? `${userMessage}\n\nUploaded Documents:\n${fileList}${instruction}` 
+          : `Uploaded Documents:\n${fileList}${instruction}`;
       }
       setAttachments([]);
     }
