@@ -51,6 +51,7 @@ export const DashboardAIAssistant = () => {
           .from('ai_assistant_messages')
           .select('*')
           .eq('user_id', user.id)
+          .is('deleted_at', null)
           .order('created_at', { ascending: true });
 
         if (error) throw error;
@@ -106,26 +107,33 @@ export const DashboardAIAssistant = () => {
       if (!user || isLoadingHistory || messages.length === 0) return;
 
       try {
-        // Soft delete all existing messages for this user
-        await supabase
+        // Get current message count in database
+        const { count } = await supabase
           .from('ai_assistant_messages')
-          .update({ deleted_at: new Date().toISOString() })
+          .select('*', { count: 'exact', head: true })
           .eq('user_id', user.id)
           .is('deleted_at', null);
 
-        // Insert all current messages
-        const messagesToInsert = messages.map(msg => ({
-          user_id: user.id,
-          role: msg.role,
-          content: msg.content
-        }));
+        const currentCount = count || 0;
+        
+        // Only insert new messages that haven't been saved yet
+        if (messages.length > currentCount) {
+          const newMessages = messages.slice(currentCount);
+          const messagesToInsert = newMessages.map(msg => ({
+            user_id: user.id,
+            role: msg.role,
+            content: msg.content
+          }));
 
-        const { error } = await supabase
-          .from('ai_assistant_messages')
-          .insert(messagesToInsert);
+          const { error } = await supabase
+            .from('ai_assistant_messages')
+            .insert(messagesToInsert);
 
-        if (error) {
-          console.error("Failed to save messages:", error);
+          if (error) {
+            console.error("Failed to save messages:", error);
+          } else {
+            console.log(`Saved ${messagesToInsert.length} new messages`);
+          }
         }
       } catch (error) {
         console.error("Failed to save chat history:", error);
