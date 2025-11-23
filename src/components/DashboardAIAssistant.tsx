@@ -30,17 +30,11 @@ export const DashboardAIAssistant = () => {
   const [attachments, setAttachments] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
-  const [mountKey, setMountKey] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Force reload on component mount
-  useEffect(() => {
-    setMountKey(prev => prev + 1);
-  }, []);
-
-  // Load messages from database whenever mount key or auth state changes
+  // Load messages from database on mount and when returning to page
   useEffect(() => {
     const loadMessages = async () => {
       const defaultMessage: Message = {
@@ -134,7 +128,32 @@ export const DashboardAIAssistant = () => {
     };
 
     loadMessages();
-  }, [user, authLoading, mountKey]); // Re-run when user, auth loading state, or mount key changes
+
+    // Reload messages when tab/window becomes visible or focused
+    const handleVisibilityChange = () => {
+      if (!document.hidden && user && !authLoading) {
+        console.log("🔄 Tab became visible, reloading messages");
+        setIsLoadingHistory(true);
+        loadMessages();
+      }
+    };
+
+    const handleFocus = () => {
+      if (user && !authLoading) {
+        console.log("🔄 Window focused, reloading messages");
+        setIsLoadingHistory(true);
+        loadMessages();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [user, authLoading]); // Re-run when user or auth loading state changes
 
   // Helper function to save a new message to database immediately
   const saveMessageToDb = async (message: Message): Promise<boolean> => {
