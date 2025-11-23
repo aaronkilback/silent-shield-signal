@@ -475,6 +475,26 @@ export const DashboardAIAssistant = () => {
     await conversation.endSession();
   };
 
+  const restoreFromLocalStorage = () => {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed);
+          toast.success(`Restored ${parsed.length} messages from browser storage`);
+        } else {
+          toast.error("No valid messages found in browser storage");
+        }
+      } catch (error) {
+        console.error("Failed to parse localStorage:", error);
+        toast.error("Failed to restore from browser storage");
+      }
+    } else {
+      toast.error("No backup found in browser storage");
+    }
+  };
+
   const clearHistory = async () => {
     const defaultMessage: Message = {
       role: "assistant",
@@ -506,14 +526,24 @@ export const DashboardAIAssistant = () => {
             <Sparkles className="w-5 h-5 text-primary" />
             AI Security Assistant
           </CardTitle>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={clearHistory}
-            className="text-xs"
-          >
-            Clear History
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={restoreFromLocalStorage}
+              className="text-xs"
+            >
+              Restore Backup
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearHistory}
+              className="text-xs"
+            >
+              Clear History
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
