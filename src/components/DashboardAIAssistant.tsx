@@ -22,13 +22,7 @@ export const DashboardAIAssistant = () => {
   const { user } = useAuth();
   const STORAGE_KEY = "fortress-ai-chat-history";
   
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Just ask me anything - for example, try asking me to find a specific person or view recent signals.",
-    },
-  ]);
-  
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [agentId, setAgentId] = useState("");
@@ -38,7 +32,13 @@ export const DashboardAIAssistant = () => {
   // Load messages from database on mount
   useEffect(() => {
     const loadMessages = async () => {
+      const defaultMessage: Message = {
+        role: "assistant",
+        content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Just ask me anything - for example, try asking me to find a specific person or view recent signals.",
+      };
+
       if (!user) {
+        setMessages([defaultMessage]);
         setIsLoadingHistory(false);
         return;
       }
@@ -53,7 +53,6 @@ export const DashboardAIAssistant = () => {
         if (error) throw error;
 
         if (dbMessages && dbMessages.length > 0) {
-          // Load from database
           const formattedMessages = dbMessages.map(msg => ({
             role: msg.role as "user" | "assistant",
             content: msg.content
@@ -61,13 +60,11 @@ export const DashboardAIAssistant = () => {
           setMessages(formattedMessages);
           console.log(`Loaded ${formattedMessages.length} messages from database`);
         } else {
-          // Try to migrate from localStorage if database is empty
           const stored = localStorage.getItem(STORAGE_KEY);
           if (stored) {
             const parsed = JSON.parse(stored);
             console.log(`Migrating ${parsed.length} messages from localStorage to database`);
             
-            // Insert all messages into database
             const messagesToInsert = parsed.map((msg: Message) => ({
               user_id: user.id,
               role: msg.role,
@@ -85,10 +82,13 @@ export const DashboardAIAssistant = () => {
               localStorage.removeItem(STORAGE_KEY);
               console.log("Successfully migrated messages to database");
             }
+          } else {
+            setMessages([defaultMessage]);
           }
         }
       } catch (error) {
         console.error("Failed to load chat history:", error);
+        setMessages([defaultMessage]);
       } finally {
         setIsLoadingHistory(false);
       }
@@ -384,8 +384,13 @@ export const DashboardAIAssistant = () => {
 
           <TabsContent value="text" className="space-y-4">
             <ScrollArea ref={scrollRef} className="h-[400px] pr-4">
-              <div className="space-y-4">
-                {messages.map((message, index) => (
+              {isLoadingHistory ? (
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {messages.map((message, index) => (
                   <div
                     key={index}
                     className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
@@ -440,6 +445,7 @@ export const DashboardAIAssistant = () => {
                   </div>
                 )}
               </div>
+              )}
             </ScrollArea>
 
             <form onSubmit={handleSubmit} className="flex gap-2">
