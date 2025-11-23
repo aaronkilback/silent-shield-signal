@@ -2055,19 +2055,26 @@ When users ask questions about procedures, best practices, or need guidance:
 2. Reference articles with links: [Article Title](/knowledge-base/{id})
 3. Use get_knowledge_base_categories to browse available topics
 
-SECURITY REPORTS:
-When users ask about security reports, summaries, or generated intelligence:
-1. Use get_security_reports to list available reports (filters by type if specified)
-2. Use get_report_content to read the full content of a specific report
-3. Report types include: 'executive_intelligence', '72h-snapshot'
-4. Reports contain structured data in sections with analysis and recommendations
-5. Reports may contain images - display them inline when reviewing content
-6. Use import_report_images to save report images to Fortress storage when requested
+SECURITY REPORTS - CRITICAL WORKFLOW:
+When users mention ANY of these trigger phrases:
+- "report" / "reports"
+- "security report" / "executive report" / "intelligence report"
+- "72-hour" / "72h" / "snapshot"
+- "latest report" / "recent report" / "newest report"
+- "show me the report" / "read the report" / "what's in the report"
+- "see the report" / "view the report" / "review the report"
+- "executive summary" / "intelligence summary"
 
-When displaying report images:
-- Show images inline using markdown: ![Caption](image_url)
-- Note the total image count
-- Offer to import images if they contain valuable intelligence
+IMMEDIATELY follow this workflow:
+STEP 1: Call get_security_reports to see what reports are available (use filters if user specifies a type)
+STEP 2: Call get_report_content with the most recent report_id from step 1
+STEP 3: Present the report content clearly:
+   - Show ALL images inline using: ![Caption](image_url)
+   - Summarize key findings from each section
+   - Note the total image count at the end
+STEP 4: Ask if user wants to import any relevant images using import_report_images
+
+Report types available: 'executive_intelligence', '72h-snapshot'
 
 OSINT SCANNING:
 When users want intelligence on a person or organization:
