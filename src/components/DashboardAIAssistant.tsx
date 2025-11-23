@@ -33,7 +33,7 @@ export const DashboardAIAssistant = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const isSavingRef = useRef(false);
+  const lastSavedMessagesRef = useRef<string>("");
 
   // Scroll to bottom helper
   const scrollToBottom = () => {
@@ -115,17 +115,27 @@ export const DashboardAIAssistant = () => {
   // Save messages to database whenever they change
   useEffect(() => {
     const saveMessages = async () => {
-      if (!user || isLoadingHistory || messages.length === 0 || isSavingRef.current) return;
+      if (!user || isLoadingHistory || messages.length === 0) return;
 
-      isSavingRef.current = true;
+      // Check if messages have actually changed
+      const currentMessagesHash = JSON.stringify(messages);
+      if (currentMessagesHash === lastSavedMessagesRef.current) {
+        return;
+      }
+
       try {
         console.log(`Saving ${messages.length} messages to database...`);
         
         // Delete all existing messages for this user
-        await supabase
+        const { error: deleteError } = await supabase
           .from('ai_assistant_messages')
           .delete()
           .eq('user_id', user.id);
+
+        if (deleteError) {
+          console.error("Failed to delete old messages:", deleteError);
+          return;
+        }
 
         // Insert all current messages
         const messagesToInsert = messages.map(msg => ({
@@ -134,19 +144,18 @@ export const DashboardAIAssistant = () => {
           content: msg.content
         }));
 
-        const { error } = await supabase
+        const { error: insertError } = await supabase
           .from('ai_assistant_messages')
           .insert(messagesToInsert);
 
-        if (error) {
-          console.error("Failed to save messages:", error);
+        if (insertError) {
+          console.error("Failed to save messages:", insertError);
         } else {
+          lastSavedMessagesRef.current = currentMessagesHash;
           console.log("Messages saved successfully");
         }
       } catch (error) {
         console.error("Failed to save chat history:", error);
-      } finally {
-        isSavingRef.current = false;
       }
     };
 
@@ -155,17 +164,13 @@ export const DashboardAIAssistant = () => {
       clearTimeout(saveTimeoutRef.current);
     }
 
-    // Debounce saves to avoid too many database writes
-    saveTimeoutRef.current = setTimeout(saveMessages, 1000);
+    // Shorter debounce for more immediate saves
+    saveTimeoutRef.current = setTimeout(saveMessages, 500);
     
-    // Save immediately on unmount
+    // Cleanup on unmount
     return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
-      }
-      // Force immediate save on unmount
-      if (user && !isLoadingHistory && messages.length > 0 && !isSavingRef.current) {
-        saveMessages();
       }
     };
   }, [messages, user, isLoadingHistory]);
@@ -222,32 +227,36 @@ export const DashboardAIAssistant = () => {
     }
   }, [messages, isLoadingHistory]);
 
-  // Add beforeunload handler to save on page close
+  // Save on visibility change (more reliable than beforeunload)
   useEffect(() => {
-    const handleBeforeUnload = async (e: BeforeUnloadEvent) => {
-      if (user && messages.length > 0 && !isSavingRef.current) {
-        e.preventDefault();
-        
-        // Force synchronous save
-        const messagesToInsert = messages.map(msg => ({
-          user_id: user.id,
-          role: msg.role,
-          content: msg.content
-        }));
+    const handleVisibilityChange = async () => {
+      if (document.hidden && user && messages.length > 0) {
+        // Page is being hidden, save immediately
+        try {
+          const messagesToInsert = messages.map(msg => ({
+            user_id: user.id,
+            role: msg.role,
+            content: msg.content
+          }));
 
-        await supabase
-          .from('ai_assistant_messages')
-          .delete()
-          .eq('user_id', user.id);
+          await supabase
+            .from('ai_assistant_messages')
+            .delete()
+            .eq('user_id', user.id);
 
-        await supabase
-          .from('ai_assistant_messages')
-          .insert(messagesToInsert);
+          await supabase
+            .from('ai_assistant_messages')
+            .insert(messagesToInsert);
+          
+          console.log("Messages saved on visibility change");
+        } catch (error) {
+          console.error("Failed to save on visibility change:", error);
+        }
       }
     };
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [user, messages]);
 
   const streamChat = async (userMessage: string) => {
