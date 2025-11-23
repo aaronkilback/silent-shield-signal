@@ -663,6 +663,66 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "create_fix_proposal",
+      description: "Create a fix proposal for a bug and store it in the database. Include detailed fix strategy, code changes, and implementation steps. Use this after diagnosing a bug to propose a solution for user approval.",
+      parameters: {
+        type: "object",
+        properties: {
+          bug_id: {
+            type: "string",
+            description: "The UUID of the bug report (optional - if not provided, creates new bug report)",
+          },
+          title: {
+            type: "string",
+            description: "Title of the bug if creating new report",
+          },
+          description: {
+            type: "string",
+            description: "Description of the bug if creating new report",
+          },
+          severity: {
+            type: "string",
+            enum: ["low", "medium", "high", "critical"],
+            description: "Severity level if creating new report",
+          },
+          root_cause: {
+            type: "string",
+            description: "Identified root cause of the issue",
+          },
+          fix_strategy: {
+            type: "string",
+            description: "Overall strategy for fixing the bug",
+          },
+          code_changes: {
+            type: "array",
+            items: { 
+              type: "object",
+              properties: {
+                file: { type: "string" },
+                change: { type: "string" },
+                example: { type: "string" }
+              }
+            },
+            description: "Array of code changes needed",
+          },
+          affected_files: {
+            type: "array",
+            items: { type: "string" },
+            description: "List of files that need to be modified",
+          },
+          testing_steps: {
+            type: "array",
+            items: { type: "string" },
+            description: "Steps to test the fix",
+          },
+        },
+        required: ["root_cause", "fix_strategy", "code_changes"],
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -2648,6 +2708,108 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       };
     }
 
+    case "create_fix_proposal": {
+      const { 
+        bug_id, 
+        title, 
+        description, 
+        severity, 
+        root_cause, 
+        fix_strategy, 
+        code_changes, 
+        affected_files, 
+        testing_steps 
+      } = args;
+
+      let targetBugId = bug_id;
+
+      // If no bug_id provided, create a new bug report
+      if (!targetBugId) {
+        if (!title || !description || !severity) {
+          return {
+            success: false,
+            message: "When creating a new bug report, title, description, and severity are required"
+          };
+        }
+
+        const { data: newBug, error: createError } = await supabaseClient
+          .from("bug_reports")
+          .insert({
+            title,
+            description,
+            severity,
+            status: 'open',
+            page_url: 'AI-detected',
+            browser_info: 'Detected by AI Assistant'
+          })
+          .select("id")
+          .single();
+
+        if (createError) {
+          console.error("Failed to create bug report:", createError);
+          return {
+            success: false,
+            message: `Failed to create bug report: ${createError.message}`
+          };
+        }
+
+        targetBugId = newBug.id;
+      }
+
+      // Create fix proposal
+      const proposal = {
+        root_cause,
+        fix_strategy,
+        code_changes,
+        affected_files: affected_files || code_changes.map((c: any) => c.file),
+        testing_steps: testing_steps || [
+          "Test the specific functionality mentioned in the bug",
+          "Verify no regressions in related features",
+          "Check error logs after deployment"
+        ],
+        deployment_notes: [
+          "Review code changes before deployment",
+          "Monitor logs for 24 hours after deployment",
+          "Be ready to rollback if issues arise"
+        ],
+        generated_at: new Date().toISOString(),
+        ai_model: "google/gemini-2.5-flash"
+      };
+
+      // Update bug report with fix proposal
+      const { data: updatedBug, error: updateError } = await supabaseClient
+        .from("bug_reports")
+        .update({
+          fix_proposal: proposal,
+          fix_status: 'proposal_ready',
+          status: 'in_progress'
+        })
+        .eq("id", targetBugId)
+        .select("id, title, fix_status")
+        .single();
+
+      if (updateError) {
+        console.error("Failed to save fix proposal:", updateError);
+        return {
+          success: false,
+          message: `Failed to save fix proposal: ${updateError.message}`
+        };
+      }
+
+      return {
+        success: true,
+        message: `✅ Fix proposal created for bug: "${updatedBug.title}". The proposal is now ready for review and approval in the Bug Reports page.`,
+        bug_id: updatedBug.id,
+        proposal: proposal,
+        next_steps: [
+          "Admin/Analyst reviews the proposal in Bug Reports page",
+          "If approved, you can ask the Lovable editor: 'Implement the approved fix for bug [bug_id]'",
+          "The fix will be automatically applied to the codebase"
+        ],
+        view_url: "/bug-reports"
+      };
+    }
+
     case "suggest_improvements": {
       const area = args.area || "all";
       
@@ -3101,6 +3263,7 @@ YOUR CAPABILITIES:
 18. **Code Generation**: Generate edge function templates for new monitoring sources or backend features
 19. **Bug Detection & Resolution**: Search bug reports, analyze edge function errors, diagnose issues, and suggest code fixes
 20. **Comprehensive Debugging**: Analyze logs, error messages, and related code to identify root causes and provide fix strategies
+21. **Fix Proposals**: Create detailed fix proposals that can be reviewed and approved for implementation by the Lovable editor
 
 CRITICAL DISTINCTIONS:
 1. CLIENTS are organizations actively monitored by Fortress (customers)

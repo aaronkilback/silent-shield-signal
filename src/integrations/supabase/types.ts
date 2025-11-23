@@ -246,10 +246,15 @@ export type Database = {
       }
       bug_reports: {
         Row: {
+          approved_at: string | null
+          approved_by: string | null
           browser_info: string | null
           created_at: string | null
           description: string
+          fix_proposal: Json | null
+          fix_status: string | null
           id: string
+          implemented_at: string | null
           page_url: string | null
           resolved_at: string | null
           screenshots: string[] | null
@@ -260,10 +265,15 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
           browser_info?: string | null
           created_at?: string | null
           description: string
+          fix_proposal?: Json | null
+          fix_status?: string | null
           id?: string
+          implemented_at?: string | null
           page_url?: string | null
           resolved_at?: string | null
           screenshots?: string[] | null
@@ -274,10 +284,15 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          approved_at?: string | null
+          approved_by?: string | null
           browser_info?: string | null
           created_at?: string | null
           description?: string
+          fix_proposal?: Json | null
+          fix_status?: string | null
           id?: string
+          implemented_at?: string | null
           page_url?: string | null
           resolved_at?: string | null
           screenshots?: string[] | null
@@ -288,6 +303,13 @@ export type Database = {
           user_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "bug_reports_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "bug_reports_user_id_fkey"
             columns: ["user_id"]

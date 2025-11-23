@@ -13,6 +13,21 @@ import { useUserRole } from "@/hooks/useUserRole";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 
+type FixProposal = {
+  root_cause: string;
+  fix_strategy: string;
+  code_changes: Array<{
+    file: string;
+    change: string;
+    example?: string;
+  }>;
+  affected_files?: string[];
+  testing_steps?: string[];
+  deployment_notes?: string[];
+  generated_at?: string;
+  ai_model?: string;
+};
+
 const BugReports = () => {
   const { user, loading } = useAuth();
   const { isAdmin, isAnalyst, isLoading: roleLoading } = useUserRole();
@@ -34,7 +49,8 @@ const BugReports = () => {
         .from("bug_reports")
         .select(`
           *,
-          profiles:user_id (name)
+          reporter:profiles!user_id (name),
+          approver:profiles!approved_by (name)
         `);
 
       if (!isAdmin && !isAnalyst) {
@@ -177,7 +193,7 @@ const BugReports = () => {
                       </div>
                       <CardTitle>{report.title}</CardTitle>
                       <CardDescription className="mt-2">
-                        Reported by {report.profiles?.name || "Unknown"} •{" "}
+                        Reported by {report.reporter?.name || "Unknown"} •{" "}
                         {formatDistanceToNow(new Date(report.created_at), { addSuffix: true })}
                       </CardDescription>
                     </div>
@@ -204,6 +220,87 @@ const BugReports = () => {
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm whitespace-pre-wrap mb-4">{report.description}</p>
+                  
+                  {report.fix_proposal && report.fix_status && (() => {
+                    const proposal = report.fix_proposal as FixProposal;
+                    return (
+                      <div className="mb-4 p-4 bg-muted/50 rounded-lg border">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-sm font-semibold">🤖 AI Fix Proposal</p>
+                          <Badge variant={
+                            report.fix_status === 'approved' ? 'default' :
+                            report.fix_status === 'implemented' ? 'secondary' :
+                            report.fix_status === 'rejected' ? 'destructive' :
+                            'outline'
+                          }>
+                            {report.fix_status.replace('_', ' ')}
+                          </Badge>
+                        </div>
+                        <div className="text-sm space-y-2">
+                          <p><span className="font-medium">Root Cause:</span> {proposal.root_cause}</p>
+                          <p><span className="font-medium">Strategy:</span> {proposal.fix_strategy}</p>
+                          {proposal.affected_files && proposal.affected_files.length > 0 && (
+                            <p><span className="font-medium">Files:</span> {proposal.affected_files.join(', ')}</p>
+                          )}
+                          {canManage && report.fix_status === 'proposal_ready' && (
+                            <div className="flex gap-2 mt-3">
+                              <Button 
+                                size="sm" 
+                                onClick={async () => {
+                                  const { error } = await supabase
+                                    .from("bug_reports")
+                                    .update({ 
+                                      fix_status: 'approved',
+                                      approved_by: user?.id,
+                                      approved_at: new Date().toISOString()
+                                    })
+                                    .eq("id", report.id);
+                                  
+                                  if (error) {
+                                    toast.error("Failed to approve fix");
+                                  } else {
+                                    queryClient.invalidateQueries({ queryKey: ["bug-reports"] });
+                                    toast.success("Fix approved! Ask Lovable editor: 'Implement approved fix for bug " + report.id + "'");
+                                  }
+                                }}
+                              >
+                                Approve Fix
+                              </Button>
+                              <Button 
+                                size="sm" 
+                                variant="outline"
+                                onClick={async () => {
+                                  const { error } = await supabase
+                                    .from("bug_reports")
+                                    .update({ fix_status: 'rejected' })
+                                    .eq("id", report.id);
+                                  
+                                  if (error) {
+                                    toast.error("Failed to reject fix");
+                                  } else {
+                                    queryClient.invalidateQueries({ queryKey: ["bug-reports"] });
+                                    toast.info("Fix proposal rejected");
+                                  }
+                                }}
+                              >
+                                Reject
+                              </Button>
+                            </div>
+                          )}
+                          {report.fix_status === 'approved' && report.approver && (
+                            <p className="text-xs text-muted-foreground mt-2">
+                              Approved by {report.approver.name} {report.approved_at && `• ${formatDistanceToNow(new Date(report.approved_at), { addSuffix: true })}`}
+                            </p>
+                          )}
+                          {report.fix_status === 'implemented' && report.implemented_at && (
+                            <p className="text-xs text-green-600 mt-2">
+                              ✅ Implemented {formatDistanceToNow(new Date(report.implemented_at), { addSuffix: true })}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   
                   {report.screenshots && report.screenshots.length > 0 && (
                     <div className="mb-4">
