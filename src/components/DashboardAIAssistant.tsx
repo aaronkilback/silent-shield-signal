@@ -23,7 +23,6 @@ export const DashboardAIAssistant = () => {
   const STORAGE_KEY = "fortress-ai-chat-history";
   
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [agentId, setAgentId] = useState("");
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
@@ -369,13 +368,14 @@ export const DashboardAIAssistant = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Form submitted, input:", input, "isLoading:", isLoading);
-    if ((!input.trim() && attachments.length === 0) || isLoading || isUploading) {
+    const inputValue = inputRef.current?.value || "";
+    console.log("Form submitted, input:", inputValue, "isLoading:", isLoading);
+    if ((!inputValue.trim() && attachments.length === 0) || isLoading || isUploading) {
       console.log("Form submission blocked - empty input or loading");
       return;
     }
 
-    let userMessage = input.trim();
+    let userMessage = inputValue.trim();
     
     // Upload files if present
     if (attachments.length > 0) {
@@ -409,7 +409,9 @@ export const DashboardAIAssistant = () => {
       setAttachments([]);
     }
     
-    setInput("");
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
     console.log("Calling streamChat with message:", userMessage);
     await streamChat(userMessage);
   };
@@ -594,8 +596,6 @@ export const DashboardAIAssistant = () => {
               </Button>
               <Input
                 ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
                 placeholder="Ask about threats, signals, or security insights..."
                 disabled={isLoading || isUploading}
                 onKeyDown={(e) => {
@@ -605,7 +605,7 @@ export const DashboardAIAssistant = () => {
                   }
                 }}
               />
-              <Button type="submit" disabled={isLoading || isUploading || (!input.trim() && attachments.length === 0)}>
+              <Button type="submit" disabled={isLoading || isUploading}>
                 {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </Button>
             </form>
