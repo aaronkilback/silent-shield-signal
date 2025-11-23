@@ -19,7 +19,7 @@ type Message = {
 
 export const DashboardAIAssistant = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const STORAGE_KEY = "fortress-ai-chat-history";
   
   const [messages, setMessages] = useState<Message[]>([]);
@@ -42,9 +42,17 @@ export const DashboardAIAssistant = () => {
         content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Upload documents for analysis or ask me anything!",
       };
 
+      // Wait for auth to complete before trying to load messages
+      if (authLoading) {
+        console.log("⏳ Waiting for authentication to complete...");
+        return;
+      }
+
       if (!user) {
+        console.log("❌ No user session found - messages will not persist");
         setMessages([defaultMessage]);
         setIsLoadingHistory(false);
+        toast.error("Please log in to save chat history");
         return;
       }
 
@@ -118,12 +126,15 @@ export const DashboardAIAssistant = () => {
     };
 
     loadMessages();
-  }, [user]);
+  }, [user, authLoading]); // Re-run when user or auth loading state changes
 
   // Helper function to save a new message to database immediately
   const saveMessageToDb = async (message: Message): Promise<boolean> => {
     if (!user) {
       console.warn("⚠️ Cannot save message - no user logged in");
+      toast.error("Not logged in - messages won't be saved!", {
+        description: "Please refresh the page and log in to persist chat history"
+      });
       return false;
     }
     
@@ -595,10 +606,27 @@ export const DashboardAIAssistant = () => {
     <Card className="w-full">
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-primary" />
-            AI Security Assistant
-          </CardTitle>
+          <div className="flex items-center gap-3">
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-primary" />
+              AI Security Assistant
+            </CardTitle>
+            {!user && !authLoading && (
+              <span className="text-xs px-2 py-1 bg-destructive/10 text-destructive rounded-md font-medium">
+                History not saved (not logged in)
+              </span>
+            )}
+            {authLoading && (
+              <span className="text-xs px-2 py-1 bg-muted text-muted-foreground rounded-md">
+                Loading...
+              </span>
+            )}
+            {user && (
+              <span className="text-xs px-2 py-1 bg-green-500/10 text-green-600 dark:text-green-400 rounded-md font-medium">
+                History saved
+              </span>
+            )}
+          </div>
           <Button
             variant="ghost"
             size="sm"
