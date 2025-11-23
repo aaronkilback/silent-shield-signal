@@ -30,11 +30,17 @@ export const DashboardAIAssistant = () => {
   const [attachments, setAttachments] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
+  const [mountKey, setMountKey] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Load messages from database on mount
+  // Force reload on component mount
+  useEffect(() => {
+    setMountKey(prev => prev + 1);
+  }, []);
+
+  // Load messages from database whenever mount key or auth state changes
   useEffect(() => {
     const loadMessages = async () => {
       const defaultMessage: Message = {
@@ -128,7 +134,7 @@ export const DashboardAIAssistant = () => {
     };
 
     loadMessages();
-  }, [user, authLoading]); // Re-run when user or auth loading state changes
+  }, [user, authLoading, mountKey]); // Re-run when user, auth loading state, or mount key changes
 
   // Helper function to save a new message to database immediately
   const saveMessageToDb = async (message: Message): Promise<boolean> => {
