@@ -412,11 +412,20 @@ export const DashboardAIAssistant = () => {
           } else if (archivalDoc) {
             documentIds.push(archivalDoc.id);
             
-            // Trigger document processing for entity extraction
-            await supabase.functions.invoke('process-stored-document', {
+            // Trigger document processing for text extraction and entity detection
+            // This runs in the background - don't await to keep UI responsive
+            supabase.functions.invoke('process-stored-document', {
               body: { 
                 documentId: archivalDoc.id,
                 storagePath: storageData.path 
+              }
+            }).then(({ data, error }) => {
+              if (error) {
+                console.error(`Failed to process document ${file.name}:`, error);
+                toast.error(`Document uploaded but processing failed: ${file.name}`);
+              } else {
+                console.log(`Document ${file.name} processed:`, data);
+                toast.success(`Document ${file.name} processed successfully`);
               }
             });
           }
