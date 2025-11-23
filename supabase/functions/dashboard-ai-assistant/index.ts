@@ -1114,23 +1114,42 @@ serve(async (req) => {
     const processedMessages = await Promise.all(
       messages.map(async (msg: any) => {
         // Look for image URLs in markdown format
-        const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)|<img[^>]+src="([^"]+)"/g;
-        const markdownLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+        const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+        const fileAttachmentRegex = /📎 File: ([^\n]+)\nURL: ([^\n]+)/g;
         
         const imageUrls: string[] = [];
+        const fileAttachments: Array<{name: string, url: string}> = [];
         let match;
         
-        // Extract images from markdown/HTML
+        // Extract images from markdown
         while ((match = imageRegex.exec(msg.content)) !== null) {
-          const url = match[2] || match[3];
+          const url = match[2];
           if (url && (url.includes('ai-chat-attachments') || url.match(/\.(jpg|jpeg|png|gif|webp)$/i))) {
             imageUrls.push(url);
           }
         }
         
+        // Extract non-image file attachments
+        while ((match = fileAttachmentRegex.exec(msg.content)) !== null) {
+          fileAttachments.push({ name: match[1], url: match[2] });
+        }
+        
         // If we have images, format as vision message
         if (imageUrls.length > 0 && msg.role === 'user') {
-          const textContent = msg.content.replace(imageRegex, '').replace(markdownLinkRegex, '[$1]').trim();
+          // Remove image markdown and file attachment blocks from text
+          let textContent = msg.content
+            .replace(imageRegex, '')
+            .replace(fileAttachmentRegex, '')
+            .replace(/Attachments:\s*/g, '')
+            .replace(/Please analyze these attachments:\s*/g, '')
+            .trim();
+          
+          // Add context about non-image files if present
+          if (fileAttachments.length > 0) {
+            const fileList = fileAttachments.map(f => `- ${f.name}`).join('\n');
+            textContent += `\n\nNon-image files attached (cannot be processed visually):\n${fileList}`;
+          }
+          
           const contentParts: any[] = [];
           
           if (textContent) {
