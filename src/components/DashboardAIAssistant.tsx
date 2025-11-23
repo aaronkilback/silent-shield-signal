@@ -493,12 +493,13 @@ export const DashboardAIAssistant = () => {
         content: `**What I Can Do:**
 🔍 **Search & Analysis**
 • Find entities, signals, incidents, investigations, clients
+• Access client monitoring keywords and tracked entities
 • Analyze security reports and uploaded intelligence documents
 • Search the knowledge base for procedures and best practices
 • Cross-reference data across the entire platform
 
 🛠️ **System Operations**
-• Trigger OSINT scans on entities
+• Create entities and trigger OSINT scans using client keywords
 • Check monitoring status and system health
 • Detect and fix duplicate signals
 • Diagnose system issues and errors
@@ -510,17 +511,18 @@ export const DashboardAIAssistant = () => {
 • Read executive reports and 72-hour snapshots
 
 🎯 **Intelligence**
+• Create entities linked to client monitoring interests
 • Analyze uploaded threat assessments
 • Extract entities from documents
 • Correlate threats with existing data
-• Monitor for related intelligence
+• Use client keywords to inform OSINT scans
 
 **Try asking me:**
+• "Get client details for [client name]"
 • "Find recent high-severity signals"
-• "Search for entity John Doe"
+• "Create entity for [person/org] and scan"
 • "What active incidents are there?"
 • "Analyze the latest security report"
-• "Trigger OSINT scan for [entity name]"
 • "Check system health"
 • "Explain how signals work"`,
       };
@@ -657,12 +659,13 @@ export const DashboardAIAssistant = () => {
 **What I Can Do:**
 🔍 **Search & Analysis**
 • Find entities, signals, incidents, investigations, clients
+• Access client monitoring keywords and tracked entities
 • Analyze security reports and uploaded intelligence documents
 • Search the knowledge base for procedures and best practices
 • Cross-reference data across the entire platform
 
 🛠️ **System Operations**
-• Trigger OSINT scans on entities
+• Create entities and trigger OSINT scans using client keywords
 • Check monitoring status and system health
 • Detect and fix duplicate signals
 • Diagnose system issues and errors
@@ -674,17 +677,18 @@ export const DashboardAIAssistant = () => {
 • Read executive reports and 72-hour snapshots
 
 🎯 **Intelligence**
+• Create entities linked to client monitoring interests
 • Analyze uploaded threat assessments
 • Extract entities from documents
 • Correlate threats with existing data
-• Monitor for related intelligence
+• Use client keywords to inform OSINT scans
 
 **Try asking me:**
+• "Get client details for [client name]"
 • "Find recent high-severity signals"
-• "Search for entity John Doe"
+• "Create entity for [person/org] and scan"
 • "What active incidents are there?"
 • "Analyze the latest security report"
-• "Trigger OSINT scan for [entity name]"
 • "Check system health"
 • "Explain how signals work"
 
