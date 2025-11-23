@@ -95,25 +95,21 @@ export const DashboardAIAssistant = () => {
         setMessages([defaultMessage]);
       } finally {
         setIsLoadingHistory(false);
-        // Scroll to bottom after history loads
-        setTimeout(() => {
-          if (scrollRef.current) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-          }
-        }, 100);
       }
     };
 
     loadMessages();
   }, [user]);
 
-  // Save messages to database whenever they change
+  // Save messages to database only when conversation is idle (not while typing)
   useEffect(() => {
-    const saveMessages = async () => {
-      if (!user || isLoadingHistory || messages.length === 0) return;
+    if (!user || isLoadingHistory || messages.length === 0) return;
 
+    // Only save when not loading (after user has sent message and AI responded)
+    if (isLoading) return;
+
+    const saveMessages = async () => {
       try {
-        // Get current message count in database
         const { count } = await supabase
           .from('ai_assistant_messages')
           .select('*', { count: 'exact', head: true })
@@ -122,7 +118,6 @@ export const DashboardAIAssistant = () => {
 
         const currentCount = count || 0;
         
-        // Only insert new messages that haven't been saved yet
         if (messages.length > currentCount) {
           const newMessages = messages.slice(currentCount);
           const messagesToInsert = newMessages.map(msg => ({
@@ -131,24 +126,20 @@ export const DashboardAIAssistant = () => {
             content: msg.content
           }));
 
-          const { error } = await supabase
+          await supabase
             .from('ai_assistant_messages')
             .insert(messagesToInsert);
-
-          if (error) {
-            console.error("Failed to save messages:", error);
-          }
         }
       } catch (error) {
         console.error("Failed to save chat history:", error);
       }
     };
 
-    // Longer debounce to reduce database writes and improve typing performance
-    const timeoutId = setTimeout(saveMessages, 3000);
+    // Save after conversation is complete (long delay)
+    const timeoutId = setTimeout(saveMessages, 5000);
     
     return () => clearTimeout(timeoutId);
-  }, [messages, user, isLoadingHistory]);
+  }, [messages, user, isLoadingHistory, isLoading]);
 
   const conversation = useConversation({
     onConnect: () => {
@@ -198,9 +189,25 @@ export const DashboardAIAssistant = () => {
   // Scroll to bottom when messages change (runs after DOM update but before paint)
   useLayoutEffect(() => {
     if (scrollRef.current && !isLoadingHistory) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      // ScrollArea wraps content in a viewport div
+      const viewport = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
+      if (viewport) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
     }
   }, [messages, isLoadingHistory]);
+
+  // Also scroll to bottom after initial load
+  useEffect(() => {
+    if (!isLoadingHistory && scrollRef.current) {
+      setTimeout(() => {
+        const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement;
+        if (viewport) {
+          viewport.scrollTop = viewport.scrollHeight;
+        }
+      }, 200);
+    }
+  }, [isLoadingHistory]);
 
   const streamChat = async (userMessage: string) => {
     console.log("streamChat called with:", userMessage);
