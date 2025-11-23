@@ -29,8 +29,10 @@ export const DashboardAIAssistant = () => {
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [streamingContent, setStreamingContent] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Load messages from database on mount
   useEffect(() => {
@@ -192,21 +194,9 @@ export const DashboardAIAssistant = () => {
     const newMessages = [...messages, { role: "user" as const, content: userMessage }];
     setMessages(newMessages);
     setIsLoading(true);
+    setStreamingContent("");
 
-    let assistantContent = "";
-    let lastUpdateTime = 0;
-    const UPDATE_INTERVAL = 100; // Update UI every 100ms max
-    
-    const updateAssistantMessage = (content: string, force = false) => {
-      assistantContent = content;
-      const now = Date.now();
-      
-      // Throttle updates to reduce lag
-      if (force || now - lastUpdateTime >= UPDATE_INTERVAL) {
-        lastUpdateTime = now;
-        setMessages([...newMessages, { role: "assistant", content: assistantContent }]);
-      }
-    };
+    let contentBuffer = "";
 
     try {
       console.log("Fetching from edge function...");
@@ -278,7 +268,8 @@ export const DashboardAIAssistant = () => {
             
             if (delta?.content) {
               console.log("Adding content:", delta.content);
-              updateAssistantMessage(assistantContent + delta.content);
+              contentBuffer += delta.content;
+              setStreamingContent(contentBuffer);
             }
           } catch (e) {
             console.error("JSON parse error:", e);
@@ -288,18 +279,20 @@ export const DashboardAIAssistant = () => {
         }
       }
       
-      // Make sure we have a message even if empty
-      if (assistantContent === "") {
-        console.log("No content received, adding placeholder");
-        updateAssistantMessage("I'm having trouble generating a response. Please try again.", true);
+      // Add final message to history
+      if (contentBuffer) {
+        setMessages([...newMessages, { role: "assistant", content: contentBuffer }]);
       } else {
-        // Force final update to ensure last content is shown
-        updateAssistantMessage(assistantContent, true);
+        console.log("No content received, adding placeholder");
+        setMessages([...newMessages, { role: "assistant", content: "I'm having trouble generating a response. Please try again." }]);
       }
+      
+      setStreamingContent("");
     } catch (error) {
       console.error("Chat error:", error);
       toast.error("Failed to get response. Please try again.");
       setMessages(newMessages);
+      setStreamingContent("");
     } finally {
       console.log("streamChat complete, setting isLoading to false");
       setIsLoading(false);
@@ -509,8 +502,46 @@ export const DashboardAIAssistant = () => {
                        </div>
                      </div>
                   </div>
-                ))}
-                {isLoading && messages[messages.length - 1]?.role === "user" && (
+                 ))}
+                 {streamingContent && (
+                   <div className="flex justify-start">
+                     <div className="max-w-[80%] rounded-lg p-3 bg-muted">
+                       <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
+                         <ReactMarkdown
+                           components={{
+                             a: ({ node, href, children, ...props }) => {
+                               const handleClick = (e: React.MouseEvent) => {
+                                 e.preventDefault();
+                                 if (href?.startsWith('/')) {
+                                   navigate(href);
+                                   toast.success("Navigating to " + href);
+                                 } else if (href) {
+                                   window.open(href, '_blank', 'noopener,noreferrer');
+                                 }
+                               };
+                               return (
+                                 <a
+                                   href={href}
+                                   onClick={handleClick}
+                                   className="text-primary hover:underline cursor-pointer font-medium"
+                                   {...props}
+                                 >
+                                   {children}
+                                 </a>
+                               );
+                             },
+                             p: ({ node, children, ...props }) => (
+                               <p className="mb-2 last:mb-0" {...props}>{children}</p>
+                             ),
+                           }}
+                         >
+                           {streamingContent}
+                         </ReactMarkdown>
+                       </div>
+                     </div>
+                   </div>
+                 )}
+                 {isLoading && !streamingContent && messages[messages.length - 1]?.role === "user" && (
                   <div className="flex justify-start">
                     <div className="bg-muted rounded-lg p-3">
                       <Loader2 className="w-4 h-4 animate-spin" />
