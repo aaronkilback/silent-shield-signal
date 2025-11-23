@@ -32,8 +32,6 @@ export const DashboardAIAssistant = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const lastSavedMessagesRef = useRef<string>("");
 
   // Scroll to bottom helper
   const scrollToBottom = () => {
@@ -117,25 +115,12 @@ export const DashboardAIAssistant = () => {
     const saveMessages = async () => {
       if (!user || isLoadingHistory || messages.length === 0) return;
 
-      // Check if messages have actually changed
-      const currentMessagesHash = JSON.stringify(messages);
-      if (currentMessagesHash === lastSavedMessagesRef.current) {
-        return;
-      }
-
       try {
-        console.log(`Saving ${messages.length} messages to database...`);
-        
         // Delete all existing messages for this user
-        const { error: deleteError } = await supabase
+        await supabase
           .from('ai_assistant_messages')
           .delete()
           .eq('user_id', user.id);
-
-        if (deleteError) {
-          console.error("Failed to delete old messages:", deleteError);
-          return;
-        }
 
         // Insert all current messages
         const messagesToInsert = messages.map(msg => ({
@@ -144,34 +129,25 @@ export const DashboardAIAssistant = () => {
           content: msg.content
         }));
 
-        const { error: insertError } = await supabase
+        const { error } = await supabase
           .from('ai_assistant_messages')
           .insert(messagesToInsert);
 
-        if (insertError) {
-          console.error("Failed to save messages:", insertError);
-        } else {
-          lastSavedMessagesRef.current = currentMessagesHash;
-          console.log("Messages saved successfully");
+        if (error) {
+          console.error("Failed to save messages:", error);
         }
       } catch (error) {
         console.error("Failed to save chat history:", error);
       }
     };
 
-    // Clear any existing timeout
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
-
-    // Shorter debounce for more immediate saves
-    saveTimeoutRef.current = setTimeout(saveMessages, 500);
+    // Debounce saves to avoid too many database writes
+    const timeoutId = setTimeout(saveMessages, 1000);
     
-    // Cleanup on unmount
+    // Save immediately on unmount
     return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-      }
+      clearTimeout(timeoutId);
+      saveMessages();
     };
   }, [messages, user, isLoadingHistory]);
 
@@ -226,38 +202,6 @@ export const DashboardAIAssistant = () => {
       scrollToBottom();
     }
   }, [messages, isLoadingHistory]);
-
-  // Save on visibility change (more reliable than beforeunload)
-  useEffect(() => {
-    const handleVisibilityChange = async () => {
-      if (document.hidden && user && messages.length > 0) {
-        // Page is being hidden, save immediately
-        try {
-          const messagesToInsert = messages.map(msg => ({
-            user_id: user.id,
-            role: msg.role,
-            content: msg.content
-          }));
-
-          await supabase
-            .from('ai_assistant_messages')
-            .delete()
-            .eq('user_id', user.id);
-
-          await supabase
-            .from('ai_assistant_messages')
-            .insert(messagesToInsert);
-          
-          console.log("Messages saved on visibility change");
-        } catch (error) {
-          console.error("Failed to save on visibility change:", error);
-        }
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [user, messages]);
 
   const streamChat = async (userMessage: string) => {
     console.log("streamChat called with:", userMessage);
@@ -475,26 +419,6 @@ export const DashboardAIAssistant = () => {
     await conversation.endSession();
   };
 
-  const restoreFromLocalStorage = () => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setMessages(parsed);
-          toast.success(`Restored ${parsed.length} messages from browser storage`);
-        } else {
-          toast.error("No valid messages found in browser storage");
-        }
-      } catch (error) {
-        console.error("Failed to parse localStorage:", error);
-        toast.error("Failed to restore from browser storage");
-      }
-    } else {
-      toast.error("No backup found in browser storage");
-    }
-  };
-
   const clearHistory = async () => {
     const defaultMessage: Message = {
       role: "assistant",
@@ -526,24 +450,14 @@ export const DashboardAIAssistant = () => {
             <Sparkles className="w-5 h-5 text-primary" />
             AI Security Assistant
           </CardTitle>
-          <div className="flex gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={restoreFromLocalStorage}
-              className="text-xs"
-            >
-              Restore Backup
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearHistory}
-              className="text-xs"
-            >
-              Clear History
-            </Button>
-          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearHistory}
+            className="text-xs"
+          >
+            Clear History
+          </Button>
         </div>
       </CardHeader>
       <CardContent>
