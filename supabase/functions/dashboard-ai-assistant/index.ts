@@ -149,6 +149,27 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "search_signals_by_entity",
+      description: "Search for signals related to a specific entity or person. Use this when users ask about threats, hazards, or signals related to a person or organization.",
+      parameters: {
+        type: "object",
+        properties: {
+          entity_name: {
+            type: "string",
+            description: "Name of the entity or person to search for",
+          },
+          limit: {
+            type: "number",
+            description: "Number of signals to return (default 20)",
+          },
+        },
+        required: ["entity_name"],
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -335,6 +356,57 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       };
     }
 
+    case "search_signals_by_entity": {
+      // First, find the entity
+      const { data: entities, error: entityError } = await supabaseClient
+        .from("entities")
+        .select("id, name, type, description")
+        .ilike("name", `%${args.entity_name}%`)
+        .limit(5);
+
+      if (entityError) throw entityError;
+      if (!entities || entities.length === 0) {
+        return { message: `No entity found matching "${args.entity_name}"`, signals: [] };
+      }
+
+      // Get entity IDs
+      const entityIds = entities.map((e: any) => e.id);
+
+      // Find signals that mention these entities
+      const { data: mentions, error: mentionsError } = await supabaseClient
+        .from("entity_mentions")
+        .select("signal_id, entity_id, confidence, context")
+        .in("entity_id", entityIds)
+        .order("detected_at", { ascending: false })
+        .limit(args.limit || 20);
+
+      if (mentionsError) throw mentionsError;
+
+      if (!mentions || mentions.length === 0) {
+        return { 
+          entities: entities,
+          message: `Found entity "${entities[0].name}" but no signals mention this entity yet.`,
+          signals: [] 
+        };
+      }
+
+      // Get the actual signals
+      const signalIds = [...new Set(mentions.map((m: any) => m.signal_id))];
+      const { data: signals, error: signalsError } = await supabaseClient
+        .from("signals")
+        .select("id, title, description, severity, received_at, status, category, client_id, clients(name)")
+        .in("id", signalIds)
+        .order("received_at", { ascending: false });
+
+      if (signalsError) throw signalsError;
+
+      return {
+        entities: entities,
+        entity_mentions_count: mentions.length,
+        signals: signals || [],
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
@@ -373,6 +445,7 @@ serve(async (req) => {
 
 You have access to tools to query the database for:
 - Recent security signals
+- Signals related to specific entities or people
 - Entity information (people, organizations, locations)
 - Active incidents
 - Investigation files
