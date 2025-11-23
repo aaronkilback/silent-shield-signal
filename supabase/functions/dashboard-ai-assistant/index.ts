@@ -104,6 +104,23 @@ const tools = [
   {
     type: "function",
     function: {
+      name: "get_client_details",
+      description: "Get detailed client information including monitoring keywords, tracked entities, high-value assets, and risk profile. Use this to understand what a client is monitoring and to inform OSINT scans.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: {
+            type: "string",
+            description: "Client UUID or name to search for",
+          },
+        },
+        required: ["client_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "get_monitoring_status",
       description: "Check monitoring scan status and history. Use this when users ask if monitors are working, about scan failures, or system health.",
       parameters: {
@@ -563,6 +580,85 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
 
       if (error) throw error;
       return data;
+    }
+
+    case "get_client_details": {
+      // Check if it's a UUID or name
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      let query = supabaseClient.from("clients").select(`
+        id, 
+        name, 
+        industry, 
+        status, 
+        locations, 
+        monitoring_keywords,
+        monitoring_config,
+        high_value_assets,
+        competitor_names,
+        supply_chain_entities,
+        risk_assessment,
+        threat_profile,
+        contact_email,
+        employee_count
+      `);
+      
+      if (uuidRegex.test(args.client_id)) {
+        query = query.eq("id", args.client_id);
+      } else {
+        query = query.ilike("name", `%${args.client_id}%`);
+      }
+      
+      const { data: clients, error: clientError } = await query.limit(1).maybeSingle();
+      
+      if (clientError) throw clientError;
+      if (!clients) {
+        return {
+          success: false,
+          message: `No client found matching "${args.client_id}"`
+        };
+      }
+      
+      // Get related entities for this client
+      const { data: signals, error: signalsError } = await supabaseClient
+        .from("signals")
+        .select("id, auto_correlated_entities")
+        .eq("client_id", clients.id)
+        .not("auto_correlated_entities", "is", null)
+        .limit(100);
+      
+      // Extract unique entity IDs from signals
+      const entityIds = new Set<string>();
+      if (signals) {
+        signals.forEach((signal: any) => {
+          if (signal.auto_correlated_entities) {
+            signal.auto_correlated_entities.forEach((id: string) => entityIds.add(id));
+          }
+        });
+      }
+      
+      // Get entity names for these IDs
+      let relatedEntities: any[] = [];
+      if (entityIds.size > 0) {
+        const { data: entities } = await supabaseClient
+          .from("entities")
+          .select("id, name, type, risk_level")
+          .in("id", Array.from(entityIds))
+          .limit(50);
+        
+        relatedEntities = entities || [];
+      }
+      
+      return {
+        success: true,
+        client: clients,
+        monitoring_keywords: clients.monitoring_keywords || [],
+        high_value_assets: clients.high_value_assets || [],
+        competitor_names: clients.competitor_names || [],
+        supply_chain_entities: clients.supply_chain_entities || [],
+        related_entities: relatedEntities,
+        entity_count: relatedEntities.length,
+        summary: `Client "${clients.name}" monitors ${(clients.monitoring_keywords || []).length} keywords, has ${(clients.high_value_assets || []).length} high-value assets, and ${relatedEntities.length} related entities in the system.`
+      };
     }
 
     case "get_monitoring_status": {
@@ -2190,18 +2286,20 @@ DATABASE SCHEMA:
 
 YOUR CAPABILITIES:
 1. **Data Analysis**: Query all database tables for signals, incidents, entities, investigations, travelers, etc.
-2. **Security Reports**: Access and read security reports including executive intelligence summaries and 72-hour snapshots
-3. **Uploaded Documents**: Search and analyze intelligence documents uploaded by users (3Si reports, threat assessments, etc.)
-4. **Codebase Understanding**: Explain feature implementation, data flow, component architecture
-5. **System Architecture**: Describe technology stack, edge functions, automation, integrations
-6. **Database Schema**: Access table structures, relationships, RLS policies
-7. **Edge Functions**: List and explain all 50+ backend functions and their purposes
-8. **Issue Detection**: Find duplicate signals, orphaned records, data quality problems
-9. **Issue Resolution**: Fix duplicates, clean up data, improve quality
-10. **Knowledge Access**: Search documentation in knowledge base
-11. **Troubleshooting**: Debug system issues using monitoring status, health metrics, error diagnostics
-12. **OSINT Operations**: Trigger entity scans, gather intelligence
-13. **Feature Guidance**: Explain how features work and how they're implemented
+2. **Client Intelligence**: Access client monitoring keywords, tracked entities, high-value assets, and risk profiles
+3. **Security Reports**: Access and read security reports including executive intelligence summaries and 72-hour snapshots
+4. **Uploaded Documents**: Search and analyze intelligence documents uploaded by users (3Si reports, threat assessments, etc.)
+5. **Entity Management**: Create new entities, search existing ones, and link them to clients and signals
+6. **Codebase Understanding**: Explain feature implementation, data flow, component architecture
+7. **System Architecture**: Describe technology stack, edge functions, automation, integrations
+8. **Database Schema**: Access table structures, relationships, RLS policies
+9. **Edge Functions**: List and explain all 50+ backend functions and their purposes
+10. **Issue Detection**: Find duplicate signals, orphaned records, data quality problems
+11. **Issue Resolution**: Fix duplicates, clean up data, improve quality
+12. **Knowledge Access**: Search documentation in knowledge base
+13. **Troubleshooting**: Debug system issues using monitoring status, health metrics, error diagnostics
+14. **OSINT Operations**: Create entities, trigger OSINT scans, gather intelligence using client keywords
+15. **Feature Guidance**: Explain how features work and how they're implemented
 
 CRITICAL DISTINCTIONS:
 1. CLIENTS are organizations actively monitored by Fortress (customers)
@@ -2453,13 +2551,18 @@ After analysis, mention:
 
 OSINT SCANNING:
 When users want intelligence on a person or organization:
-1. Use search_entities first to check if entity exists
-2. If entity doesn't exist:
+1. **Check client context first** - If the entity is related to a specific client:
+   a. Use get_client_details to retrieve client monitoring keywords, high-value assets, and related entities
+   b. Use these keywords to inform entity naming and OSINT queries
+   c. Cross-reference with the client's existing tracked entities
+2. Use search_entities to check if entity exists
+3. If entity doesn't exist:
    a. Use create_entity to create it first (choose appropriate type: person, organization, location, etc.)
-   b. Wait for successful creation
-3. Then check for existing signals using search_signals_by_entity
-4. If no signals or entity is new, use trigger_osint_scan for comprehensive web search
-5. Present findings and suggest next steps
+   b. Consider client keywords when creating the entity
+   c. Wait for successful creation
+4. Then check for existing signals using search_signals_by_entity
+5. If no signals or entity is new, use trigger_osint_scan for comprehensive web search
+6. Present findings with context from client keywords and relationships
 
 ENTITY CREATION:
 When creating entities:
@@ -2468,6 +2571,7 @@ When creating entities:
 - location: Physical places, addresses, regions
 - vehicle: Cars, planes, ships (if tracking physical assets)
 - For digital assets: ip_address, domain, email, phone, cryptocurrency_wallet
+- Always check client monitoring keywords first to ensure entity naming matches client interests
 
 CODE AND DATA ISSUES:
 When users ask about duplicates, data quality, or cleaning:
