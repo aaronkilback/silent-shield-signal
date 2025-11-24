@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss, Plane, Bug, Database, Menu } from "lucide-react";
+import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss, Plane, Bug, Database, Menu, CheckCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -43,6 +43,7 @@ export const Header = () => {
     { path: "/sources", icon: Database, label: "Sources" },
     { path: "/reports", icon: FileText, label: "Reports" },
     { path: "/clients", icon: Building2, label: "Clients" },
+    { path: "/rule-approvals", icon: CheckCircle, label: "Rules" },
     { path: "/bug-reports", icon: Bug, label: "Bugs" },
   ];
 
