@@ -212,7 +212,10 @@ export const DashboardAIAssistant = () => {
 
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      const viewport = scrollRef.current.closest('[data-radix-scroll-area-viewport]') as HTMLElement;
+      if (viewport) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
     }
   }, [messages, streamingContent]);
 
@@ -766,14 +769,14 @@ Type "help" anytime to see this again!`,
           </TabsList>
 
           <TabsContent value="text" className="space-y-3 flex flex-col">
-            <ScrollArea className="h-[400px] sm:h-[500px] lg:h-[600px]">
-              <div ref={scrollRef} className="pr-4">
+            <ScrollArea className="[&>[data-radix-scroll-area-viewport]]:h-[400px] [&>[data-radix-scroll-area-viewport]]:sm:h-[500px] [&>[data-radix-scroll-area-viewport]]:lg:h-[600px]">
+              <div ref={scrollRef} className="pr-4 space-y-4">
                 {isLoadingHistory ? (
-                  <div className="flex items-center justify-center h-[380px] sm:h-[480px] lg:h-[580px]">
+                  <div className="flex items-center justify-center min-h-[400px]">
                     <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                  <>
                     {MessageList}
                   {streamingContent && (
                    <div className="flex justify-start">
@@ -819,10 +822,10 @@ Type "help" anytime to see this again!`,
                       <Loader2 className="w-4 h-4 animate-spin" />
                     </div>
                   </div>
-                 )}
-               </div>
-               )}
-             </div>
+                  )}
+                </>
+                )}
+              </div>
             </ScrollArea>
 
             {attachments.length > 0 && (
