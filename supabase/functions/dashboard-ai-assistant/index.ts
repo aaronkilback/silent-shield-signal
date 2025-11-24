@@ -493,6 +493,114 @@ const tools = [
   {
     type: "function",
     function: {
+      name: "read_intelligence_documents",
+      description: "Read and analyze newly created or existing OSINT intelligence documents. Use this to summarize intelligence items, extract key entities, and correlate new information with existing signals. CRITICAL: Use this immediately after triggering OSINT scans or when users ask about recent intelligence.",
+      parameters: {
+        type: "object",
+        properties: {
+          document_ids: {
+            type: "array",
+            items: { type: "string" },
+            description: "Array of document IDs to read (optional - if omitted, reads recent documents)",
+          },
+          entity_id: {
+            type: "string",
+            description: "Filter by entity ID to read intelligence for a specific entity",
+          },
+          limit: {
+            type: "number",
+            description: "Number of documents to read (default 10, max 50)",
+          },
+          hours_back: {
+            type: "number",
+            description: "How many hours back to look for recent documents (default 24)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "detect_signal_duplicates",
+      description: "Detect duplicate or near-duplicate signals using content hashing and AI-powered similarity scoring. Use this to identify and analyze signals that may be duplicates before taking action.",
+      parameters: {
+        type: "object",
+        properties: {
+          signal_id: {
+            type: "string",
+            description: "Specific signal ID to check for duplicates",
+          },
+          threshold: {
+            type: "number",
+            description: "Similarity threshold 0-1 (default 0.85 = 85% similar)",
+          },
+          limit: {
+            type: "number",
+            description: "Number of potential duplicates to return (default 20)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "diagnose_feed_errors",
+      description: "Diagnose RSS feed errors with detailed HTTP diagnostics, connectivity tests, and configuration suggestions. Use this when troubleshooting monitoring source failures.",
+      parameters: {
+        type: "object",
+        properties: {
+          source_name: {
+            type: "string",
+            description: "Specific RSS source name to diagnose (optional)",
+          },
+          include_successful: {
+            type: "boolean",
+            description: "Include successfully working feeds for comparison (default false)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "submit_ai_feedback",
+      description: "Record structured feedback to help improve AI accuracy and relevance. Use when users correct AI outputs, rate results, or provide guidance on signal/entity relevance.",
+      parameters: {
+        type: "object",
+        properties: {
+          object_id: {
+            type: "string",
+            description: "ID of the object being rated (signal, entity, content, etc)",
+          },
+          object_type: {
+            type: "string",
+            enum: ["signal", "entity", "entity_content", "osint_result", "classification"],
+            description: "Type of object being rated",
+          },
+          feedback: {
+            type: "string",
+            enum: ["positive", "negative", "neutral"],
+            description: "Feedback rating",
+          },
+          notes: {
+            type: "string",
+            description: "Detailed feedback notes explaining the rating",
+          },
+          correction: {
+            type: "string",
+            description: "If negative feedback, what the correct result should be",
+          },
+        },
+        required: ["object_id", "object_type", "feedback"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "suggest_improvements",
       description: "Analyze the platform and suggest improvements for security, performance, features, or code quality. Use this when users ask how to improve the platform or want suggestions.",
       parameters: {
@@ -2387,6 +2495,391 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
         message: `Created entity "${newEntity.name}" (${newEntity.type}) with ID: ${newEntity.id}`,
         entity: newEntity,
         next_step: "You can now trigger an OSINT scan on this entity to gather intelligence."
+      };
+    }
+
+    case "read_intelligence_documents": {
+      const limit = Math.min(args.limit || 10, 50);
+      const hoursBack = args.hours_back || 24;
+      const cutoffTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString();
+
+      let query = supabaseClient
+        .from("ingested_documents")
+        .select("id, title, raw_text, metadata, processed_at, processing_status, chunk_index, total_chunks, source_id, sources(name)")
+        .eq("processing_status", "completed")
+        .gte("processed_at", cutoffTime)
+        .order("processed_at", { ascending: false })
+        .limit(limit);
+
+      // Filter by specific document IDs if provided
+      if (args.document_ids && args.document_ids.length > 0) {
+        query = query.in("id", args.document_ids);
+      }
+
+      // Filter by entity if provided
+      if (args.entity_id) {
+        // Get documents that mention this entity
+        const { data: mentions } = await supabaseClient
+          .from("document_entity_mentions")
+          .select("document_id")
+          .eq("entity_id", args.entity_id);
+        
+        if (mentions && mentions.length > 0) {
+          const docIds = mentions.map((m: any) => m.document_id);
+          query = query.in("id", docIds);
+        } else {
+          return {
+            success: true,
+            documents: [],
+            count: 0,
+            message: "No intelligence documents found for this entity"
+          };
+        }
+      }
+
+      const { data: documents, error } = await query;
+      if (error) throw error;
+
+      // Also get any entity mentions in these documents
+      const documentIds = documents?.map((d: any) => d.id) || [];
+      let entityMentions = [];
+      if (documentIds.length > 0) {
+        const { data: mentions } = await supabaseClient
+          .from("document_entity_mentions")
+          .select("document_id, entity_id, mention_text, confidence, entities(name, type)")
+          .in("document_id", documentIds);
+        
+        entityMentions = mentions || [];
+      }
+
+      // Enrich documents with entity mentions
+      const enrichedDocs = documents?.map((doc: any) => ({
+        ...doc,
+        entity_mentions: entityMentions.filter((m: any) => m.document_id === doc.id),
+        text_preview: doc.raw_text?.substring(0, 500) + "...",
+        full_text: doc.raw_text
+      }));
+
+      return {
+        success: true,
+        documents: enrichedDocs,
+        count: enrichedDocs?.length || 0,
+        time_window: `Last ${hoursBack} hours`,
+        message: `Found ${enrichedDocs?.length || 0} intelligence documents. Use these to summarize OSINT findings, extract key entities, and correlate with signals.`
+      };
+    }
+
+    case "detect_signal_duplicates": {
+      const threshold = args.threshold || 0.85;
+      const limit = args.limit || 20;
+
+      if (!args.signal_id) {
+        return {
+          success: false,
+          message: "signal_id is required to detect duplicates"
+        };
+      }
+
+      // Get the target signal
+      const { data: signal, error: signalError } = await supabaseClient
+        .from("signals")
+        .select("id, normalized_text, title, description, content_hash, created_at")
+        .eq("id", args.signal_id)
+        .single();
+
+      if (signalError || !signal) {
+        return {
+          success: false,
+          message: "Signal not found"
+        };
+      }
+
+      // Check for exact hash matches first
+      const { data: hashMatches } = await supabaseClient
+        .from("signals")
+        .select("id, title, normalized_text, created_at, status, severity, client_id, clients(name)")
+        .eq("content_hash", signal.content_hash)
+        .neq("id", signal.id)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+
+      // Check for near-duplicates via similarity
+      const { data: recentSignals } = await supabaseClient
+        .from("signals")
+        .select("id, title, normalized_text, created_at, status, severity, client_id, clients(name)")
+        .neq("id", signal.id)
+        .order("created_at", { ascending: false })
+        .limit(200);
+
+      // Calculate similarity scores for near-duplicates
+      const contentLower = (signal.normalized_text || signal.description || "").toLowerCase();
+      const nearDuplicates: any[] = [];
+
+      if (recentSignals) {
+        for (const s of recentSignals) {
+          const compareText = (s.normalized_text || "").toLowerCase();
+          
+          // Simple similarity calculation (words in common / total unique words)
+          const words1 = new Set(contentLower.split(/\s+/).filter((w: string) => w.length > 3));
+          const words2 = new Set(compareText.split(/\s+/).filter((w: string) => w.length > 3));
+          
+          const intersection = new Set([...words1].filter(w => words2.has(w)));
+          const union = new Set([...words1, ...words2]);
+          
+          const similarity = union.size > 0 ? intersection.size / union.size : 0;
+          
+          if (similarity >= threshold) {
+            nearDuplicates.push({
+              ...s,
+              similarity_score: similarity,
+              match_type: "content_similarity"
+            });
+          }
+        }
+      }
+
+      const allDuplicates = [
+        ...(hashMatches || []).map((d: any) => ({ ...d, similarity_score: 1.0, match_type: "exact_hash" })),
+        ...nearDuplicates
+      ].sort((a, b) => b.similarity_score - a.similarity_score);
+
+      return {
+        success: true,
+        signal: {
+          id: signal.id,
+          title: signal.title,
+          text_preview: signal.normalized_text?.substring(0, 200)
+        },
+        duplicates: allDuplicates.slice(0, limit),
+        count: allDuplicates.length,
+        exact_matches: hashMatches?.length || 0,
+        near_matches: nearDuplicates.length,
+        threshold_used: threshold,
+        recommendation: allDuplicates.length > 0 
+          ? `Found ${allDuplicates.length} duplicate/similar signals. Review these and consider using fix_duplicate_signals to merge or remove them.`
+          : "No duplicates found for this signal."
+      };
+    }
+
+    case "diagnose_feed_errors": {
+      const { source_name, include_successful = false } = args;
+
+      // Get monitoring history for RSS sources
+      let query = supabaseClient
+        .from("monitoring_history")
+        .select("id, source_name, status, error_message, scan_started_at, scan_completed_at, items_scanned, signals_created, scan_metadata")
+        .order("scan_started_at", { ascending: false })
+        .limit(100);
+
+      if (source_name) {
+        query = query.eq("source_name", source_name);
+      }
+
+      if (!include_successful) {
+        query = query.eq("status", "failed");
+      }
+
+      const { data: history, error } = await query;
+      if (error) throw error;
+
+      // Get source configuration
+      let sourceQuery = supabaseClient
+        .from("sources")
+        .select("id, name, type, config, status, error_message, last_ingested_at")
+        .eq("type", "rss");
+
+      if (source_name) {
+        sourceQuery = sourceQuery.eq("name", source_name);
+      }
+
+      const { data: sources } = await sourceQuery;
+
+      // Analyze error patterns
+      const errorPatterns: Record<string, any> = {};
+      const diagnostics: any[] = [];
+
+      history?.forEach((scan: any) => {
+        const sourceName = scan.source_name;
+        
+        if (!errorPatterns[sourceName]) {
+          errorPatterns[sourceName] = {
+            source_name: sourceName,
+            total_failures: 0,
+            error_types: {},
+            latest_error: null,
+            last_success: null,
+            failure_rate: 0
+          };
+        }
+
+        if (scan.status === "failed") {
+          errorPatterns[sourceName].total_failures++;
+          
+          // Categorize error type
+          const errorMsg = scan.error_message || "Unknown error";
+          let errorType = "unknown";
+          
+          if (errorMsg.includes("403") || errorMsg.includes("Forbidden")) {
+            errorType = "403_forbidden";
+          } else if (errorMsg.includes("404")) {
+            errorType = "404_not_found";
+          } else if (errorMsg.includes("timeout") || errorMsg.includes("ETIMEDOUT")) {
+            errorType = "timeout";
+          } else if (errorMsg.includes("SSL") || errorMsg.includes("certificate")) {
+            errorType = "ssl_error";
+          } else if (errorMsg.includes("DNS") || errorMsg.includes("ENOTFOUND")) {
+            errorType = "dns_error";
+          } else if (errorMsg.includes("rate") || errorMsg.includes("429")) {
+            errorType = "rate_limit";
+          }
+          
+          errorPatterns[sourceName].error_types[errorType] = 
+            (errorPatterns[sourceName].error_types[errorType] || 0) + 1;
+          
+          if (!errorPatterns[sourceName].latest_error) {
+            errorPatterns[sourceName].latest_error = {
+              message: errorMsg,
+              timestamp: scan.scan_started_at,
+              metadata: scan.scan_metadata
+            };
+          }
+        } else if (scan.status === "completed" && !errorPatterns[sourceName].last_success) {
+          errorPatterns[sourceName].last_success = scan.scan_started_at;
+        }
+      });
+
+      // Generate diagnostic recommendations
+      Object.values(errorPatterns).forEach((pattern: any) => {
+        const recommendations: string[] = [];
+        const primaryError = Object.entries(pattern.error_types)
+          .sort(([, a]: any, [, b]: any) => b - a)[0];
+
+        if (primaryError) {
+          const [errorType, count] = primaryError;
+          
+          switch (errorType) {
+            case "403_forbidden":
+              recommendations.push(
+                "403 Forbidden errors suggest the RSS feed is blocking automated access.",
+                "Try adding a User-Agent header that mimics a real browser.",
+                "Some feeds require authentication or API keys.",
+                "The feed may have implemented anti-bot measures. Consider using a proxy or rate limiting."
+              );
+              break;
+            case "404_not_found":
+              recommendations.push(
+                "404 Not Found indicates the RSS feed URL has changed or been removed.",
+                "Verify the feed URL is still valid by testing in a browser.",
+                "Check if the source has moved to a different domain or path.",
+                "Contact the source provider for the updated feed URL."
+              );
+              break;
+            case "timeout":
+              recommendations.push(
+                "Connection timeouts suggest network issues or slow server responses.",
+                "Increase the timeout threshold in the monitoring function.",
+                "The feed server may be overloaded or experiencing issues.",
+                "Consider implementing exponential backoff retry logic."
+              );
+              break;
+            case "ssl_error":
+              recommendations.push(
+                "SSL/TLS certificate errors indicate security configuration issues.",
+                "The feed may be using an expired or invalid SSL certificate.",
+                "Try accessing the URL with SSL verification disabled (not recommended for production).",
+                "Contact the feed provider about their SSL configuration."
+              );
+              break;
+            case "dns_error":
+              recommendations.push(
+                "DNS resolution errors mean the domain cannot be found.",
+                "Verify the domain name is spelled correctly.",
+                "The domain may have expired or been changed.",
+                "Check if your DNS server can resolve the domain."
+              );
+              break;
+            case "rate_limit":
+              recommendations.push(
+                "Rate limiting (429) means too many requests are being sent.",
+                "Reduce scan frequency in the source configuration.",
+                "Implement request throttling and backoff.",
+                "Contact the feed provider about rate limit increases."
+              );
+              break;
+            default:
+              recommendations.push(
+                "Review the full error message for specific details.",
+                "Check if the RSS feed format has changed.",
+                "Test the feed manually to verify it's accessible.",
+                "Review edge function logs for more diagnostic information."
+              );
+          }
+        }
+
+        diagnostics.push({
+          source: pattern.source_name,
+          total_failures: pattern.total_failures,
+          error_breakdown: pattern.error_types,
+          latest_error: pattern.latest_error,
+          last_success: pattern.last_success,
+          recommendations: recommendations
+        });
+      });
+
+      return {
+        success: true,
+        diagnostics: diagnostics,
+        sources_analyzed: diagnostics.length,
+        total_failures: Object.values(errorPatterns).reduce((sum: number, p: any) => sum + p.total_failures, 0),
+        source_configurations: sources || [],
+        summary: diagnostics.length === 0 
+          ? "No RSS feed errors found in recent scans."
+          : `Analyzed ${diagnostics.length} RSS sources with errors. Review recommendations above for each source.`
+      };
+    }
+
+    case "submit_ai_feedback": {
+      const { object_id, object_type, feedback, notes, correction } = args;
+
+      // Create feedback record
+      const { data: feedbackRecord, error } = await supabaseClient
+        .from("feedback_events")
+        .insert({
+          object_id,
+          object_type,
+          feedback,
+          notes: notes || correction || null
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Failed to submit feedback:", error);
+        return {
+          success: false,
+          message: `Failed to submit feedback: ${error.message}`
+        };
+      }
+
+      // Update the object's feedback rating if applicable
+      if (object_type === "entity_content") {
+        const rating = feedback === "positive" ? 1 : (feedback === "negative" ? -1 : 0);
+        await supabaseClient
+          .from("entity_content")
+          .update({ 
+            feedback_rating: rating,
+            feedback_at: new Date().toISOString()
+          })
+          .eq("id", object_id);
+      } else if (object_type === "entity") {
+        // Could update entity threat_score based on feedback
+        console.log(`Feedback recorded for entity ${object_id}: ${feedback}`);
+      }
+
+      return {
+        success: true,
+        message: `Feedback recorded successfully. ${feedback === "negative" && correction ? "Your correction will be used to improve future AI responses." : "Thank you for helping improve the system!"}`,
+        feedback_id: feedbackRecord.id
       };
     }
 
