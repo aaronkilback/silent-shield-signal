@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
+import { Upload, Sparkles, ThumbsUp, ThumbsDown } from "lucide-react";
 
 interface CreateEntityDialogProps {
   open: boolean;
@@ -67,6 +68,13 @@ export const CreateEntityDialog = ({
   const [loading, setLoading] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [enrichedContactInfo, setEnrichedContactInfo] = useState<any>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
+  const [imageFeedback, setImageFeedback] = useState<'positive' | 'negative' | null>(null);
+  const [feedbackNotes, setFeedbackNotes] = useState('');
+  
   const [formData, setFormData] = useState({
     name: prefilledName,
     type: 'person',
@@ -83,7 +91,13 @@ export const CreateEntityDialog = ({
     address_city: '',
     address_province: '',
     address_postal_code: '',
-    address_country: ''
+    address_country: '',
+    // Vehicle-specific fields
+    unknown_vehicle: false,
+    vehicle_year: '',
+    vehicle_make: '',
+    vehicle_model: '',
+    vehicle_license_plate: ''
   });
 
   // Auto-enrich when dialog opens with a prefilled name
@@ -186,6 +200,30 @@ export const CreateEntityDialog = ({
         .map(a => sanitizeText(a))
         .filter(a => a.length > 0);
 
+      // Prepare attributes based on entity type
+      let attributes: any = enrichedContactInfo ? { contact_info: enrichedContactInfo } : {};
+      
+      if (formData.type === 'vehicle') {
+        attributes.vehicle_info = {
+          year: formData.vehicle_year || null,
+          make: formData.vehicle_make || null,
+          model: formData.vehicle_model || null,
+          license_plate: formData.vehicle_license_plate || null
+        };
+        
+        if (uploadedImage) {
+          attributes.uploaded_image_url = uploadedImage;
+        }
+        
+        if (generatedImageUrl) {
+          attributes.generated_image_url = generatedImageUrl;
+          attributes.image_feedback = {
+            feedback: imageFeedback,
+            notes: feedbackNotes
+          };
+        }
+      }
+
       const { data: entity, error: entityError } = await supabase
         .from('entities')
         .insert([{
@@ -198,7 +236,7 @@ export const CreateEntityDialog = ({
           threat_indicators: threatIndicatorsArray.length > 0 ? threatIndicatorsArray : null,
           associations: associationsArray.length > 0 ? associationsArray : null,
           created_by: user.id,
-          attributes: enrichedContactInfo ? { contact_info: enrichedContactInfo } : null,
+          attributes: Object.keys(attributes).length > 0 ? attributes : null,
           active_monitoring_enabled: formData.active_monitoring_enabled,
           current_location: formData.current_location || null,
           monitoring_radius_km: formData.monitoring_radius_km,
@@ -250,9 +288,18 @@ export const CreateEntityDialog = ({
         address_city: '',
         address_province: '',
         address_postal_code: '',
-        address_country: ''
+        address_country: '',
+        unknown_vehicle: false,
+        vehicle_year: '',
+        vehicle_make: '',
+        vehicle_model: '',
+        vehicle_license_plate: ''
       });
       setEnrichedContactInfo(null);
+      setUploadedImage(null);
+      setGeneratedImageUrl(null);
+      setImageFeedback(null);
+      setFeedbackNotes('');
     } catch (error: any) {
       console.error('Error creating entity:', error);
       toast({
@@ -262,6 +309,141 @@ export const CreateEntityDialog = ({
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: "File Too Large",
+        description: "Image must be less than 5MB",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}.${fileExt}`;
+      const filePath = `entity-photos/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('entity-photos')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('entity-photos')
+        .getPublicUrl(filePath);
+
+      setUploadedImage(publicUrl);
+      toast({
+        title: "Image Uploaded",
+        description: "Vehicle image uploaded successfully"
+      });
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      toast({
+        title: "Upload Failed",
+        description: "Could not upload image",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleGenerateImage = async () => {
+    if (!formData.description.trim()) {
+      toast({
+        title: "Description Required",
+        description: "Please provide a description to generate an image",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsGeneratingImage(true);
+    try {
+      const prompt = `Generate a realistic image of a vehicle based on this description: ${formData.description}. ${formData.vehicle_year ? `Year: ${formData.vehicle_year}.` : ''} ${formData.vehicle_make ? `Make: ${formData.vehicle_make}.` : ''} ${formData.vehicle_model ? `Model: ${formData.vehicle_model}.` : ''}`;
+      
+      const { data, error } = await supabase.functions.invoke('generate-vehicle-image', {
+        body: { prompt }
+      });
+
+      if (error) throw error;
+
+      if (data.imageUrl) {
+        setGeneratedImageUrl(data.imageUrl);
+        toast({
+          title: "Image Generated",
+          description: "AI has generated a vehicle image based on your description"
+        });
+      }
+    } catch (error) {
+      console.error('Error generating image:', error);
+      toast({
+        title: "Generation Failed",
+        description: "Could not generate image. Please try again.",
+        variant: "destructive"
+      });
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  };
+
+  const handleFeedback = async (feedback: 'positive' | 'negative') => {
+    setImageFeedback(feedback);
+    
+    if (feedback === 'negative') {
+      toast({
+        title: "Feedback Recorded",
+        description: "Please provide notes on what's inaccurate so we can improve"
+      });
+    } else {
+      try {
+        await supabase.from('feedback_events').insert({
+          object_type: 'vehicle_image_generation',
+          object_id: generatedImageUrl || 'unknown',
+          feedback: 'positive',
+          notes: feedbackNotes
+        });
+        
+        toast({
+          title: "Thank You",
+          description: "Your feedback helps improve our AI"
+        });
+      } catch (error) {
+        console.error('Error saving feedback:', error);
+      }
+    }
+  };
+
+  const submitFeedbackNotes = async () => {
+    if (!feedbackNotes.trim()) return;
+
+    try {
+      await supabase.from('feedback_events').insert({
+        object_type: 'vehicle_image_generation',
+        object_id: generatedImageUrl || 'unknown',
+        feedback: imageFeedback || 'negative',
+        notes: feedbackNotes
+      });
+
+      toast({
+        title: "Feedback Submitted",
+        description: "Thank you for helping us improve"
+      });
+      setFeedbackNotes('');
+    } catch (error) {
+      console.error('Error submitting feedback:', error);
+      toast({
+        title: "Submission Failed",
+        description: "Could not submit feedback",
+        variant: "destructive"
+      });
     }
   };
 
@@ -474,6 +656,159 @@ export const CreateEntityDialog = ({
               </div>
             )}
           </div>
+
+          {/* Vehicle-specific fields */}
+          {formData.type === 'vehicle' && (
+            <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
+              <Label className="text-base font-semibold">Vehicle Information</Label>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="vehicle_year">Year</Label>
+                  <Input
+                    id="vehicle_year"
+                    value={formData.vehicle_year}
+                    onChange={(e) => setFormData({ ...formData, vehicle_year: e.target.value })}
+                    placeholder="e.g., 2020"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="vehicle_make">Make</Label>
+                  <Input
+                    id="vehicle_make"
+                    value={formData.vehicle_make}
+                    onChange={(e) => setFormData({ ...formData, vehicle_make: e.target.value })}
+                    placeholder="e.g., Toyota"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="vehicle_model">Model</Label>
+                  <Input
+                    id="vehicle_model"
+                    value={formData.vehicle_model}
+                    onChange={(e) => setFormData({ ...formData, vehicle_model: e.target.value })}
+                    placeholder="e.g., Camry"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="vehicle_license_plate">License Plate</Label>
+                  <Input
+                    id="vehicle_license_plate"
+                    value={formData.vehicle_license_plate}
+                    onChange={(e) => setFormData({ ...formData, vehicle_license_plate: e.target.value })}
+                    placeholder="e.g., ABC123"
+                  />
+                </div>
+              </div>
+
+              {/* Image Upload */}
+              <div className="space-y-2">
+                <Label>Vehicle Image</Label>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex-1"
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    Upload Image
+                  </Button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleImageUpload}
+                  />
+                </div>
+                {uploadedImage && (
+                  <img src={uploadedImage} alt="Vehicle" className="w-full h-48 object-cover rounded-md mt-2" />
+                )}
+              </div>
+
+              {/* Unknown Vehicle AI Generation */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="unknown_vehicle"
+                    checked={formData.unknown_vehicle}
+                    onChange={(e) => setFormData({ ...formData, unknown_vehicle: e.target.checked })}
+                    className="h-4 w-4"
+                  />
+                  <Label htmlFor="unknown_vehicle" className="font-semibold">Unknown Vehicle - Generate Image from Description</Label>
+                </div>
+                
+                {formData.unknown_vehicle && (
+                  <div className="space-y-3">
+                    <Button
+                      type="button"
+                      onClick={handleGenerateImage}
+                      disabled={isGeneratingImage || !formData.description}
+                      className="w-full"
+                    >
+                      <Sparkles className="w-4 h-4 mr-2" />
+                      {isGeneratingImage ? "Generating..." : "Generate Vehicle Image"}
+                    </Button>
+
+                    {generatedImageUrl && (
+                      <div className="space-y-3">
+                        <img src={generatedImageUrl} alt="Generated Vehicle" className="w-full h-48 object-cover rounded-md" />
+                        
+                        {/* Feedback Section */}
+                        <div className="space-y-2">
+                          <Label>Is this image accurate?</Label>
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant={imageFeedback === 'positive' ? 'default' : 'outline'}
+                              onClick={() => handleFeedback('positive')}
+                              className="flex-1"
+                            >
+                              <ThumbsUp className="w-4 h-4 mr-2" />
+                              Accurate
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={imageFeedback === 'negative' ? 'default' : 'outline'}
+                              onClick={() => handleFeedback('negative')}
+                              className="flex-1"
+                            >
+                              <ThumbsDown className="w-4 h-4 mr-2" />
+                              Inaccurate
+                            </Button>
+                          </div>
+
+                          {imageFeedback === 'negative' && (
+                            <div className="space-y-2">
+                              <Textarea
+                                value={feedbackNotes}
+                                onChange={(e) => setFeedbackNotes(e.target.value)}
+                                placeholder="What's inaccurate? This helps us improve..."
+                                rows={3}
+                              />
+                              <Button
+                                type="button"
+                                onClick={submitFeedbackNotes}
+                                disabled={!feedbackNotes.trim()}
+                                size="sm"
+                              >
+                                Submit Feedback
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="flex gap-2 justify-end">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
