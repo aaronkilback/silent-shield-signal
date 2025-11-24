@@ -134,3 +134,6 @@ verify_jwt = true
 
 [functions.ai-tools-query]
 verify_jwt = false
+
+[functions.generate-vehicle-image]
+verify_jwt = true
