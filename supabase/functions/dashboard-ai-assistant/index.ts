@@ -3452,23 +3452,49 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
         });
       }
 
-      // Save rules for human review
-      if (suggestedRules.length > 0) {
+      // Convert suggested rules to the format expected by RuleApprovals page
+      const proposals = suggestedRules.map((sr: any) => ({
+        rule_name: sr.rule_type === "auto_categorize" 
+          ? `Auto-categorize ${sr.rule.action.set_category} from ${sr.rule.condition.source}`
+          : `Auto-tag ${sr.rule.action.add_tags.join(', ')} for ${sr.rule.condition.keyword_contains}`,
+        description: sr.rule.reason,
+        conditions: sr.rule.condition,
+        actions: sr.rule.action,
+        rationale: `Based on analysis of ${sr.rule.sample_size} historical signals with ${(sr.confidence * 100).toFixed(1)}% confidence`,
+        estimated_impact: `Will affect approximately ${sr.rule.sample_size} signals per month`
+      }));
+
+      // Save rules for human review with proper format
+      if (proposals.length > 0) {
+        const timestamp = Date.now();
         await supabaseClient
           .from("intelligence_config")
           .upsert({
-            key: `rule_suggestions_${Date.now()}`,
-            value: { rules: suggestedRules, created_at: new Date().toISOString() },
+            key: `signal_categorization_rules_proposal_${timestamp}`,
+            value: { 
+              status: "pending_review",
+              proposals: proposals,
+              confidence_threshold: confidence_threshold,
+              analysis_context: pattern_source || `Analyzed ${signals?.length || 0} signals over 30 days`,
+              created_at: new Date().toISOString()
+            },
             description: `AI-suggested categorization and routing rules (${confidence_threshold * 100}% confidence threshold)`
           });
+        
+        return {
+          success: true,
+          proposal_id: `signal_categorization_rules_proposal_${timestamp}`,
+          rules_suggested: proposals.length,
+          proposals: proposals,
+          summary: `✅ Submitted ${proposals.length} rule proposals for human review. View them in the [Rule Approvals](/rule-approvals) page.`,
+          next_step: "Navigate to Settings → Rule Approvals to review and approve these rules."
+        };
       }
 
       return {
-        success: true,
-        rules_suggested: suggestedRules.length,
-        rules: suggestedRules,
-        summary: `Generated ${suggestedRules.length} rule suggestions based on historical signal patterns. All rules require human review before deployment.`,
-        next_step: "Review suggested rules and deploy approved ones to the rules engine."
+        success: false,
+        rules_suggested: 0,
+        summary: `No high-confidence patterns found with ${confidence_threshold * 100}% threshold. Try lowering the threshold or analyzing more data.`
       };
     }
 
