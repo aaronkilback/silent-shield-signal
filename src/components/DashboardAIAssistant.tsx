@@ -65,14 +65,17 @@ export const DashboardAIAssistant = () => {
         console.log(`🔄 Loading chat history for user ${user.id}`);
         setIsLoadingHistory(true);
         
-        // Load the most recent 100 messages in chronological order
+        // Load the most recent 500 messages in chronological order (increased from 100)
         const { data: dbMessages, error } = await supabase
           .from('ai_assistant_messages')
           .select('*')
           .eq('user_id', user.id)
           .is('deleted_at', null)
-          .order('created_at', { ascending: true })
-          .limit(100);
+          .order('created_at', { ascending: false })
+          .limit(500);
+        
+        // Reverse to show chronologically (oldest to newest)
+        const sortedMessages = dbMessages ? [...dbMessages].reverse() : [];
 
         if (error) {
           console.error("❌ Error loading messages from database:", error);
@@ -82,8 +85,8 @@ export const DashboardAIAssistant = () => {
           return;
         }
 
-        if (dbMessages && dbMessages.length > 0) {
-          const formattedMessages = dbMessages.map(msg => ({
+        if (sortedMessages && sortedMessages.length > 0) {
+          const formattedMessages = sortedMessages.map(msg => ({
             role: msg.role as "user" | "assistant",
             content: msg.content
           }));
