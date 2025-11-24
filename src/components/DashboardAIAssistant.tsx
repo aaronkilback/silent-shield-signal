@@ -223,6 +223,9 @@ export const DashboardAIAssistant = () => {
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     
+    // Clear any previous streaming content before starting new request
+    setStreamingContent("");
+    
     // Save user message immediately with error handling
     const saved = await saveMessageToDb(userMsg);
     if (!saved && user) {
@@ -261,13 +264,11 @@ export const DashboardAIAssistant = () => {
 
       if (response.status === 429) {
         toast.error("Rate limit exceeded. Please try again later.");
-        setMessages(newMessages);
         return;
       }
 
       if (response.status === 402) {
         toast.error("Payment required. Please add funds to your workspace.");
-        setMessages(newMessages);
         return;
       }
 
@@ -289,7 +290,6 @@ export const DashboardAIAssistant = () => {
           break;
         }
         const chunk = decoder.decode(value, { stream: true });
-        console.log("Received chunk:", chunk);
         textBuffer += chunk;
 
         let newlineIndex: number;
@@ -302,17 +302,13 @@ export const DashboardAIAssistant = () => {
           if (!line.startsWith("data: ")) continue;
 
           const jsonStr = line.slice(6).trim();
-          console.log("Parsed JSON string:", jsonStr);
           if (jsonStr === "[DONE]") break;
 
           try {
             const parsed = JSON.parse(jsonStr);
-            console.log("Parsed data:", parsed);
             const delta = parsed.choices?.[0]?.delta;
-            console.log("Delta:", delta);
             
             if (delta?.content) {
-              console.log("Adding content:", delta.content);
               contentBuffer += delta.content;
               scheduleUpdate();
             }
@@ -324,32 +320,33 @@ export const DashboardAIAssistant = () => {
         }
       }
       
-      // Add final message to history
+      // Clear pending update and finalize
       if (pendingUpdate) {
         clearTimeout(pendingUpdate);
       }
       
-      let assistantMsg: Message;
-      if (contentBuffer) {
-        assistantMsg = { role: "assistant", content: contentBuffer };
+      // Ensure we add the final complete message
+      const finalContent = contentBuffer.trim();
+      if (finalContent) {
+        const assistantMsg = { role: "assistant" as const, content: finalContent };
         setMessages([...newMessages, assistantMsg]);
+        
+        // Save assistant message immediately
+        const assistantSaved = await saveMessageToDb(assistantMsg);
+        if (!assistantSaved && user) {
+          toast.warning("AI response wasn't saved to history");
+        }
       } else {
-        console.log("No content received, adding placeholder");
-        assistantMsg = { role: "assistant", content: "I'm having trouble generating a response. Please try again." };
-        setMessages([...newMessages, assistantMsg]);
-      }
-      
-      // Save assistant message immediately
-      const assistantSaved = await saveMessageToDb(assistantMsg);
-      if (!assistantSaved && user) {
-        toast.warning("AI response wasn't saved to history");
+        console.log("No content received from stream");
+        const errorMsg = { role: "assistant" as const, content: "I'm having trouble generating a response. Please try again." };
+        setMessages([...newMessages, errorMsg]);
+        await saveMessageToDb(errorMsg);
       }
       
       setStreamingContent("");
     } catch (error) {
       console.error("Chat error:", error);
       toast.error("Failed to get response. Please try again.");
-      setMessages(newMessages);
       setStreamingContent("");
       
       if (pendingUpdate) {
