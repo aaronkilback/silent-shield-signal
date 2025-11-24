@@ -618,6 +618,169 @@ const tools = [
   {
     type: "function",
     function: {
+      name: "read_client_monitoring_config",
+      description: "Read client monitoring configurations including keywords, RSS sources, competitor names, and source health status. Use this to understand current monitoring setup and identify optimization opportunities.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: {
+            type: "string",
+            description: "Client UUID or name to read config for",
+          },
+          include_sources: {
+            type: "boolean",
+            description: "Include detailed RSS/OSINT source information (default true)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "suggest_monitoring_adjustments",
+      description: "Proactively suggest optimizations to client monitoring configurations: add/modify/remove keywords, adjust sources, prioritize feeds. Suggestions require human approval. Use this to reduce noise and improve signal relevance.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: {
+            type: "string",
+            description: "Client UUID to suggest adjustments for",
+          },
+          analysis_summary: {
+            type: "string",
+            description: "Summary of why these adjustments are recommended",
+          },
+          keyword_changes: {
+            type: "object",
+            description: "Suggested keyword modifications",
+            properties: {
+              add: { type: "array", items: { type: "string" } },
+              remove: { type: "array", items: { type: "string" } },
+              modify: { type: "array", items: { 
+                type: "object",
+                properties: {
+                  from: { type: "string" },
+                  to: { type: "string" }
+                }
+              }},
+            },
+          },
+          source_changes: {
+            type: "object",
+            description: "Suggested source modifications",
+            properties: {
+              disable: { type: "array", items: { type: "string" } },
+              prioritize: { type: "array", items: { type: "string" } },
+            },
+          },
+        },
+        required: ["client_id", "analysis_summary"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "analyze_signal_patterns",
+      description: "Analyze historical signal data to identify patterns for automated categorization and routing. Examines signal sources, keywords, classifications, and analyst actions to find automation opportunities.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: {
+            type: "string",
+            description: "Optional: Focus analysis on specific client",
+          },
+          days_back: {
+            type: "number",
+            description: "Number of days of history to analyze (default 30)",
+          },
+          min_confidence: {
+            type: "number",
+            description: "Minimum pattern confidence threshold 0-1 (default 0.75)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "suggest_categorization_rules",
+      description: "Propose automated signal categorization and routing rules based on historical patterns. Rules can auto-categorize signals, apply tags, or route to teams. Requires human review before deployment.",
+      parameters: {
+        type: "object",
+        properties: {
+          rule_type: {
+            type: "string",
+            enum: ["categorization", "tagging", "routing", "all"],
+            description: "Type of rules to suggest (default: all)",
+          },
+          pattern_source: {
+            type: "string",
+            description: "Source of patterns (e.g., 'RSS Feed X always contains Y category')",
+          },
+          confidence_threshold: {
+            type: "number",
+            description: "Minimum confidence for rule suggestions 0-1 (default 0.8)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "analyze_cross_client_threats",
+      description: "Detect emerging threat patterns that span multiple clients. Identifies recurring themes, TTPs, IOCs, and threat actor focus shifts across the entire signal repository for early warning.",
+      parameters: {
+        type: "object",
+        properties: {
+          time_window_days: {
+            type: "number",
+            description: "Days of data to analyze (default 14)",
+          },
+          min_client_count: {
+            type: "number",
+            description: "Minimum number of clients affected to flag pattern (default 2)",
+          },
+          threat_categories: {
+            type: "array",
+            items: { type: "string" },
+            description: "Optional: Focus on specific threat categories",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "detect_signal_anomalies",
+      description: "Identify anomalous signal clusters: unusual spikes in activity, mentions of new vulnerabilities, or sudden shifts in threat actor focus. Flags patterns that deviate from baseline.",
+      parameters: {
+        type: "object",
+        properties: {
+          detection_type: {
+            type: "string",
+            enum: ["volume_spike", "new_keywords", "geographic_shift", "all"],
+            description: "Type of anomaly to detect (default: all)",
+          },
+          baseline_days: {
+            type: "number",
+            description: "Days to use for baseline comparison (default 30)",
+          },
+          sensitivity: {
+            type: "number",
+            description: "Detection sensitivity 1-10, higher=more sensitive (default 7)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "generate_edge_function_template",
       description: "Generate a template for a new Supabase edge function. Use this when users want to add new monitoring sources or backend functionality.",
       parameters: {
@@ -2934,6 +3097,603 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
         feedback_id: feedbackRecord.id
       };
     }
+
+    case "read_client_monitoring_config": {
+      const { client_id, include_sources = true } = args;
+
+      // Resolve client_id if name is provided
+      let resolvedClientId = client_id;
+      if (client_id && !client_id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+        const { data: client } = await supabaseClient
+          .from("clients")
+          .select("id")
+          .ilike("name", client_id)
+          .single();
+        resolvedClientId = client?.id;
+      }
+
+      if (!resolvedClientId) {
+        return {
+          success: false,
+          message: "Client not found. Please provide a valid client UUID or name."
+        };
+      }
+
+      // Get client monitoring configuration
+      const { data: client, error: clientError } = await supabaseClient
+        .from("clients")
+        .select("id, name, monitoring_keywords, competitor_names, high_value_assets, supply_chain_entities, monitoring_config")
+        .eq("id", resolvedClientId)
+        .single();
+
+      if (clientError || !client) {
+        return {
+          success: false,
+          message: `Failed to retrieve client config: ${clientError?.message || "Client not found"}`
+        };
+      }
+
+      // Get RSS/OSINT sources and their health status
+      let sources: any[] = [];
+      let sourceHealth: any = {};
+      
+      if (include_sources) {
+        const { data: sourcesData } = await supabaseClient
+          .from("sources")
+          .select("id, name, type, status, error_message, last_ingested_at, monitor_type");
+        
+        sources = sourcesData || [];
+
+        // Get recent scan history for source health
+        const { data: history } = await supabaseClient
+          .from("monitoring_history")
+          .select("source_name, status, scan_started_at, signals_created, items_scanned")
+          .gte("scan_started_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+          .order("scan_started_at", { ascending: false });
+
+        // Calculate health metrics per source
+        (history || []).forEach((scan: any) => {
+          if (!sourceHealth[scan.source_name]) {
+            sourceHealth[scan.source_name] = {
+              total_scans: 0,
+              successful: 0,
+              failed: 0,
+              total_signals: 0,
+              health_score: 0
+            };
+          }
+          sourceHealth[scan.source_name].total_scans++;
+          if (scan.status === "completed") {
+            sourceHealth[scan.source_name].successful++;
+            sourceHealth[scan.source_name].total_signals += scan.signals_created || 0;
+          } else if (scan.status === "failed") {
+            sourceHealth[scan.source_name].failed++;
+          }
+        });
+
+        // Calculate health scores
+        Object.keys(sourceHealth).forEach((sourceName) => {
+          const health = sourceHealth[sourceName];
+          health.health_score = health.total_scans > 0 
+            ? (health.successful / health.total_scans) * 100 
+            : 0;
+        });
+      }
+
+      return {
+        success: true,
+        client: {
+          id: client.id,
+          name: client.name,
+          monitoring_keywords: client.monitoring_keywords || [],
+          competitor_names: client.competitor_names || [],
+          high_value_assets: client.high_value_assets || [],
+          supply_chain_entities: client.supply_chain_entities || [],
+          monitoring_config: client.monitoring_config
+        },
+        sources: sources,
+        source_health: sourceHealth,
+        summary: `Retrieved monitoring configuration for ${client.name}. ${client.monitoring_keywords?.length || 0} keywords, ${sources.length} sources configured.`
+      };
+    }
+
+    case "suggest_monitoring_adjustments": {
+      const { client_id, analysis_summary, keyword_changes, source_changes } = args;
+
+      // Store suggestions in intelligence_config for human review
+      const suggestion = {
+        client_id,
+        analysis_summary,
+        keyword_changes,
+        source_changes,
+        timestamp: new Date().toISOString(),
+        status: "pending_approval"
+      };
+
+      const { data, error } = await supabaseClient
+        .from("intelligence_config")
+        .upsert({
+          key: `monitoring_suggestions_${client_id}_${Date.now()}`,
+          value: suggestion,
+          description: `AI-suggested monitoring adjustments for client ${client_id}`,
+          updated_by: null
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Failed to save monitoring suggestions:", error);
+        return {
+          success: false,
+          message: `Failed to save suggestions: ${error.message}`
+        };
+      }
+
+      return {
+        success: true,
+        message: `Monitoring adjustment suggestions saved for human review. Analysis: ${analysis_summary}`,
+        suggestion_id: data.key,
+        changes_summary: {
+          keywords: {
+            add: keyword_changes?.add?.length || 0,
+            remove: keyword_changes?.remove?.length || 0,
+            modify: keyword_changes?.modify?.length || 0
+          },
+          sources: {
+            disable: source_changes?.disable?.length || 0,
+            prioritize: source_changes?.prioritize?.length || 0
+          }
+        },
+        next_step: "These suggestions require human approval before being applied to the client's monitoring configuration."
+      };
+    }
+
+    case "analyze_signal_patterns": {
+      const { client_id, days_back = 30, min_confidence = 0.75 } = args;
+      const cutoffDate = new Date(Date.now() - days_back * 24 * 60 * 60 * 1000).toISOString();
+
+      // Build signal query
+      let signalQuery = supabaseClient
+        .from("signals")
+        .select("id, source, category, priority, confidence_score, matched_keywords, created_at, classification")
+        .gte("created_at", cutoffDate)
+        .order("created_at", { ascending: false });
+
+      if (client_id) {
+        signalQuery = signalQuery.eq("client_id", client_id);
+      }
+
+      const { data: signals, error } = await signalQuery.limit(1000);
+
+      if (error) {
+        return {
+          success: false,
+          message: `Failed to analyze patterns: ${error.message}`
+        };
+      }
+
+      // Analyze patterns
+      const patterns: any = {
+        by_source: {},
+        by_keyword: {},
+        by_category: {},
+        categorization_accuracy: {}
+      };
+
+      (signals || []).forEach((signal: any) => {
+        // Source patterns
+        if (!patterns.by_source[signal.source]) {
+          patterns.by_source[signal.source] = {
+            total: 0,
+            categories: {},
+            avg_confidence: 0,
+            confidence_sum: 0
+          };
+        }
+        patterns.by_source[signal.source].total++;
+        patterns.by_source[signal.source].confidence_sum += signal.confidence_score || 0;
+        patterns.by_source[signal.source].categories[signal.category] = 
+          (patterns.by_source[signal.source].categories[signal.category] || 0) + 1;
+
+        // Keyword patterns
+        (signal.matched_keywords || []).forEach((keyword: string) => {
+          if (!patterns.by_keyword[keyword]) {
+            patterns.by_keyword[keyword] = {
+              total: 0,
+              categories: {},
+              sources: {}
+            };
+          }
+          patterns.by_keyword[keyword].total++;
+          patterns.by_keyword[keyword].categories[signal.category] = 
+            (patterns.by_keyword[keyword].categories[signal.category] || 0) + 1;
+          patterns.by_keyword[keyword].sources[signal.source] = 
+            (patterns.by_keyword[keyword].sources[signal.source] || 0) + 1;
+        });
+
+        // Category patterns
+        if (!patterns.by_category[signal.category]) {
+          patterns.by_category[signal.category] = {
+            total: 0,
+            sources: {},
+            priorities: {}
+          };
+        }
+        patterns.by_category[signal.category].total++;
+        patterns.by_category[signal.category].sources[signal.source] = 
+          (patterns.by_category[signal.category].sources[signal.source] || 0) + 1;
+        patterns.by_category[signal.category].priorities[signal.priority] = 
+          (patterns.by_category[signal.category].priorities[signal.priority] || 0) + 1;
+      });
+
+      // Calculate confidence scores
+      Object.values(patterns.by_source).forEach((sourcePattern: any) => {
+        sourcePattern.avg_confidence = sourcePattern.confidence_sum / sourcePattern.total;
+      });
+
+      // Identify high-confidence patterns (potential automation candidates)
+      const automationCandidates: any[] = [];
+      
+      Object.entries(patterns.by_source).forEach(([source, data]: [string, any]) => {
+        const dominantCategory = Object.entries(data.categories)
+          .sort(([, a]: any, [, b]: any) => b - a)[0];
+        
+        if (dominantCategory) {
+          const [category, count] = dominantCategory;
+          const confidence = (count as number) / data.total;
+          
+          if (confidence >= min_confidence) {
+            automationCandidates.push({
+              pattern_type: "source_to_category",
+              source,
+              category,
+              confidence,
+              sample_size: data.total,
+              suggestion: `Signals from "${source}" are ${(confidence * 100).toFixed(1)}% likely to be "${category}". Consider auto-categorizing.`
+            });
+          }
+        }
+      });
+
+      return {
+        success: true,
+        analysis_period: `${days_back} days`,
+        signals_analyzed: signals?.length || 0,
+        patterns: patterns,
+        automation_candidates: automationCandidates,
+        summary: `Analyzed ${signals?.length || 0} signals. Found ${automationCandidates.length} high-confidence patterns (≥${min_confidence * 100}%) suitable for automation.`
+      };
+    }
+
+    case "suggest_categorization_rules": {
+      const { rule_type = "all", pattern_source, confidence_threshold = 0.8 } = args;
+
+      // Get recent signal patterns
+      const { data: signals } = await supabaseClient
+        .from("signals")
+        .select("id, source, category, priority, matched_keywords, classification")
+        .gte("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+        .limit(1000);
+
+      const suggestedRules: any[] = [];
+
+      // Analyze for categorization rules
+      if (rule_type === "all" || rule_type === "categorization") {
+        const sourceCategories: any = {};
+        
+        (signals || []).forEach((signal: any) => {
+          if (!sourceCategories[signal.source]) {
+            sourceCategories[signal.source] = {};
+          }
+          sourceCategories[signal.source][signal.category] = 
+            (sourceCategories[signal.source][signal.category] || 0) + 1;
+        });
+
+        Object.entries(sourceCategories).forEach(([source, categories]: [string, any]) => {
+          const total = Object.values(categories).reduce((sum: number, count: any) => sum + count, 0);
+          const dominant = Object.entries(categories).sort(([, a]: any, [, b]: any) => b - a)[0];
+          
+          if (dominant) {
+            const [category, count] = dominant;
+            const confidence = (count as number) / total;
+            
+            if (confidence >= confidence_threshold) {
+              suggestedRules.push({
+                rule_type: "auto_categorize",
+                confidence,
+                rule: {
+                  condition: { source },
+                  action: { set_category: category },
+                  reason: `${(confidence * 100).toFixed(1)}% of signals from "${source}" are "${category}"`,
+                  sample_size: total
+                }
+              });
+            }
+          }
+        });
+      }
+
+      // Analyze for tagging rules
+      if (rule_type === "all" || rule_type === "tagging") {
+        const keywordTags: any = {};
+        
+        (signals || []).forEach((signal: any) => {
+          (signal.matched_keywords || []).forEach((keyword: string) => {
+            if (!keywordTags[keyword]) {
+              keywordTags[keyword] = { categories: {}, total: 0 };
+            }
+            keywordTags[keyword].total++;
+            keywordTags[keyword].categories[signal.category] = 
+              (keywordTags[keyword].categories[signal.category] || 0) + 1;
+          });
+        });
+
+        Object.entries(keywordTags).forEach(([keyword, data]: [string, any]) => {
+          if (data.total >= 10) { // Minimum sample size
+            const dominant = Object.entries(data.categories).sort(([, a]: any, [, b]: any) => b - a)[0];
+            if (dominant) {
+              const [category, count] = dominant;
+              const confidence = (count as number) / data.total;
+              
+              if (confidence >= confidence_threshold) {
+                suggestedRules.push({
+                  rule_type: "auto_tag",
+                  confidence,
+                  rule: {
+                    condition: { keyword_contains: keyword },
+                    action: { add_tags: [category, "auto_tagged"] },
+                    reason: `${(confidence * 100).toFixed(1)}% of signals with keyword "${keyword}" are "${category}"`,
+                    sample_size: data.total
+                  }
+                });
+              }
+            }
+          }
+        });
+      }
+
+      // Save rules for human review
+      if (suggestedRules.length > 0) {
+        await supabaseClient
+          .from("intelligence_config")
+          .upsert({
+            key: `rule_suggestions_${Date.now()}`,
+            value: { rules: suggestedRules, created_at: new Date().toISOString() },
+            description: `AI-suggested categorization and routing rules (${confidence_threshold * 100}% confidence threshold)`
+          });
+      }
+
+      return {
+        success: true,
+        rules_suggested: suggestedRules.length,
+        rules: suggestedRules,
+        summary: `Generated ${suggestedRules.length} rule suggestions based on historical signal patterns. All rules require human review before deployment.`,
+        next_step: "Review suggested rules and deploy approved ones to the rules engine."
+      };
+    }
+
+    case "analyze_cross_client_threats": {
+      const { time_window_days = 14, min_client_count = 2, threat_categories } = args;
+      const cutoffDate = new Date(Date.now() - time_window_days * 24 * 60 * 60 * 1000).toISOString();
+
+      // Get signals across all clients
+      let query = supabaseClient
+        .from("signals")
+        .select("id, client_id, source, category, priority, matched_keywords, normalized_text, created_at, clients(name)")
+        .gte("created_at", cutoffDate)
+        .order("created_at", { ascending: false });
+
+      if (threat_categories && threat_categories.length > 0) {
+        query = query.in("category", threat_categories);
+      }
+
+      const { data: signals, error } = await query.limit(2000);
+
+      if (error) {
+        return {
+          success: false,
+          message: `Failed to analyze cross-client threats: ${error.message}`
+        };
+      }
+
+      // Analyze patterns across clients
+      const keywordClientMap: any = {};
+      const categoryClientMap: any = {};
+      const threatPatterns: any[] = [];
+
+      (signals || []).forEach((signal: any) => {
+        // Track keywords across clients
+        (signal.matched_keywords || []).forEach((keyword: string) => {
+          if (!keywordClientMap[keyword]) {
+            keywordClientMap[keyword] = new Set();
+          }
+          keywordClientMap[keyword].add(signal.client_id);
+        });
+
+        // Track categories across clients
+        if (!categoryClientMap[signal.category]) {
+          categoryClientMap[signal.category] = { clients: new Set(), count: 0 };
+        }
+        categoryClientMap[signal.category].clients.add(signal.client_id);
+        categoryClientMap[signal.category].count++;
+      });
+
+      // Identify cross-client patterns
+      Object.entries(keywordClientMap).forEach(([keyword, clientSet]: [string, any]) => {
+        const clientCount = clientSet.size;
+        if (clientCount >= min_client_count) {
+          const relatedSignals = (signals || []).filter((s: any) => 
+            (s.matched_keywords || []).includes(keyword)
+          );
+          
+          threatPatterns.push({
+            pattern_type: "keyword_across_clients",
+            keyword,
+            affected_clients: clientCount,
+            total_signals: relatedSignals.length,
+            priority_distribution: relatedSignals.reduce((acc: any, s: any) => {
+              acc[s.priority] = (acc[s.priority] || 0) + 1;
+              return acc;
+            }, {}),
+            first_seen: relatedSignals[relatedSignals.length - 1]?.created_at,
+            last_seen: relatedSignals[0]?.created_at,
+            alert_level: clientCount >= 3 ? "high" : "medium"
+          });
+        }
+      });
+
+      // Identify category-based cross-client trends
+      Object.entries(categoryClientMap).forEach(([category, data]: [string, any]) => {
+        const clientCount = data.clients.size;
+        if (clientCount >= min_client_count && data.count >= 5) {
+          threatPatterns.push({
+            pattern_type: "category_surge",
+            category,
+            affected_clients: clientCount,
+            total_signals: data.count,
+            alert_level: data.count > 20 ? "high" : "medium",
+            analysis: `Unusual surge in "${category}" signals affecting ${clientCount} clients`
+          });
+        }
+      });
+
+      // Sort by alert level and affected client count
+      threatPatterns.sort((a, b) => {
+        if (a.alert_level !== b.alert_level) {
+          return a.alert_level === "high" ? -1 : 1;
+        }
+        return b.affected_clients - a.affected_clients;
+      });
+
+      return {
+        success: true,
+        analysis_window: `${time_window_days} days`,
+        signals_analyzed: signals?.length || 0,
+        patterns_detected: threatPatterns.length,
+        patterns: threatPatterns,
+        summary: `Detected ${threatPatterns.length} cross-client threat patterns. ${threatPatterns.filter((p: any) => p.alert_level === "high").length} high-priority patterns require immediate attention.`,
+        recommendation: threatPatterns.length > 0 
+          ? "Review high-priority patterns for potential coordinated threats or emerging attack campaigns."
+          : "No significant cross-client threat patterns detected in the analysis window."
+      };
+    }
+
+    case "detect_signal_anomalies": {
+      const { detection_type = "all", baseline_days = 30, sensitivity = 7 } = args;
+      const baselineCutoff = new Date(Date.now() - baseline_days * 24 * 60 * 60 * 1000).toISOString();
+      const recentCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(); // Last 24h
+
+      // Get baseline signals
+      const { data: baselineSignals } = await supabaseClient
+        .from("signals")
+        .select("id, source, category, matched_keywords, created_at, priority")
+        .gte("created_at", baselineCutoff)
+        .lt("created_at", recentCutoff);
+
+      // Get recent signals
+      const { data: recentSignals } = await supabaseClient
+        .from("signals")
+        .select("id, source, category, matched_keywords, created_at, priority")
+        .gte("created_at", recentCutoff);
+
+      const anomalies: any[] = [];
+
+      // Volume spike detection
+      if (detection_type === "all" || detection_type === "volume_spike") {
+        const baselineAvgPerDay = (baselineSignals?.length || 0) / baseline_days;
+        const recentCount = recentSignals?.length || 0;
+        const threshold = baselineAvgPerDay * (1 + (sensitivity / 10));
+
+        if (recentCount > threshold) {
+          anomalies.push({
+            anomaly_type: "volume_spike",
+            severity: recentCount > threshold * 1.5 ? "high" : "medium",
+            description: `Signal volume spike detected: ${recentCount} signals in last 24h vs baseline ${baselineAvgPerDay.toFixed(1)}/day`,
+            baseline: baselineAvgPerDay,
+            current: recentCount,
+            deviation_percent: ((recentCount - baselineAvgPerDay) / baselineAvgPerDay * 100).toFixed(1)
+          });
+        }
+      }
+
+      // New keyword detection
+      if (detection_type === "all" || detection_type === "new_keywords") {
+        const baselineKeywords = new Set(
+          (baselineSignals || []).flatMap((s: any) => s.matched_keywords || [])
+        );
+        const recentKeywords = new Set(
+          (recentSignals || []).flatMap((s: any) => s.matched_keywords || [])
+        );
+
+        const newKeywords = [...recentKeywords].filter(k => !baselineKeywords.has(k));
+        
+        if (newKeywords.length > 0) {
+          const significantNew = (newKeywords as string[]).filter((keyword: string) => {
+            const count = (recentSignals || []).filter((s: any) => 
+              (s.matched_keywords || []).includes(keyword)
+            ).length;
+            return count >= sensitivity / 2; // Threshold based on sensitivity
+          });
+
+          if (significantNew.length > 0) {
+            anomalies.push({
+              anomaly_type: "new_keywords",
+              severity: significantNew.length > 5 ? "high" : "medium",
+              description: `${significantNew.length} new significant keywords detected`,
+              keywords: significantNew.slice(0, 10),
+              analysis: "New keywords may indicate emerging threats or attack vectors"
+            });
+          }
+        }
+      }
+
+      // Geographic/source shift detection
+      if (detection_type === "all" || detection_type === "geographic_shift") {
+        const baselineSources: any = {};
+        const recentSources: any = {};
+
+        (baselineSignals || []).forEach((s: any) => {
+          baselineSources[s.source] = (baselineSources[s.source] || 0) + 1;
+        });
+
+        (recentSignals || []).forEach((s: any) => {
+          recentSources[s.source] = (recentSources[s.source] || 0) + 1;
+        });
+
+        Object.keys(recentSources).forEach((source: string) => {
+          const baselineCount = baselineSources[source] || 0;
+          const recentCount = recentSources[source];
+          const baselineAvg = baselineCount / baseline_days;
+          
+          if (recentCount > baselineAvg * (1 + (sensitivity / 10))) {
+            anomalies.push({
+              anomaly_type: "source_surge",
+              severity: recentCount > baselineAvg * 2 ? "high" : "medium",
+              source,
+              description: `Unusual activity surge from source "${source}"`,
+              baseline_avg: baselineAvg.toFixed(1),
+              recent_count: recentCount,
+              deviation_percent: ((recentCount - baselineAvg) / (baselineAvg || 1) * 100).toFixed(1)
+            });
+          }
+        });
+      }
+
+      return {
+        success: true,
+        detection_window: "Last 24 hours vs 30-day baseline",
+        sensitivity_level: sensitivity,
+        anomalies_detected: anomalies.length,
+        anomalies: anomalies,
+        summary: anomalies.length > 0
+          ? `Detected ${anomalies.length} anomalies. ${anomalies.filter((a: any) => a.severity === "high").length} require immediate investigation.`
+          : "No significant anomalies detected in recent signal activity.",
+        recommendation: anomalies.length > 0
+          ? "Investigate high-severity anomalies for potential security incidents or emerging threats."
+          : "Signal activity is within normal parameters."
+      };
+    }
+
 
     case "search_bug_reports": {
       let query = supabaseClient
