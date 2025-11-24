@@ -757,7 +757,7 @@ export const CreateEntityDialog = ({
 
                     {generatedImageUrl && (
                       <div className="space-y-3">
-                        <img src={generatedImageUrl} alt="Generated Vehicle" className="w-full h-48 object-cover rounded-md" />
+                        <img src={generatedImageUrl} alt="Generated Vehicle" className="w-full h-96 object-contain rounded-md" />
                         
                         {/* Feedback Section */}
                         <div className="space-y-2">
