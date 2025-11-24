@@ -662,12 +662,14 @@ export const DashboardAIAssistant = () => {
   const clearHistory = async () => {
     // Show confirmation dialog
     const confirmed = window.confirm(
-      "Clear conversation history?\n\n" +
-      "This will clear your chat messages but the AI will keep:\n" +
+      "⚠️ CLEAR CHAT HISTORY?\n\n" +
+      "This will permanently clear all your chat messages.\n\n" +
+      "The AI will still have:\n" +
       "✓ Full platform knowledge and tools\n" +
-      "✓ Access to all your data (entities, signals, incidents, etc.)\n" +
-      "✓ Ability to search and analyze\n\n" +
-      "Only the conversation messages will be cleared."
+      "✓ Access to all your data\n" +
+      "✓ All search and analysis capabilities\n\n" +
+      "Only the conversation history will be deleted.\n\n" +
+      "Are you sure you want to continue?"
     );
     
     if (!confirmed) return;
@@ -747,10 +749,10 @@ Type "help" anytime to see this again!`,
 
   return (
     <Card className="w-full">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <CardTitle className="flex items-center gap-2">
+      <CardHeader className="pb-3">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
               <Sparkles className="w-5 h-5 text-primary" />
               AI Security Assistant
             </CardTitle>
@@ -771,13 +773,13 @@ Type "help" anytime to see this again!`,
             )}
           </div>
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
             onClick={clearHistory}
-            className="text-xs"
+            className="text-xs shrink-0"
             title="Clear conversation messages only (AI keeps all platform knowledge and tools)"
           >
-            Clear Conversation
+            Clear Chat
           </Button>
         </div>
       </CardHeader>
@@ -788,8 +790,8 @@ Type "help" anytime to see this again!`,
             <TabsTrigger value="voice">Voice Agent</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="text" className="space-y-4">
-            <ScrollArea ref={scrollRef} className="h-[calc(100vh-400px)] min-h-[400px] max-h-[600px] pr-4">
+          <TabsContent value="text" className="space-y-3">
+            <ScrollArea ref={scrollRef} className="h-[50vh] sm:h-[60vh] lg:h-[calc(100vh-450px)] min-h-[300px] sm:min-h-[400px] max-h-[600px] pr-4">
               {isLoadingHistory ? (
                 <div className="flex items-center justify-center h-full">
                   <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -876,6 +878,7 @@ Type "help" anytime to see this again!`,
                 type="button"
                 variant="outline"
                 size="icon"
+                className="shrink-0"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isLoading || isUploading}
               >
@@ -884,10 +887,11 @@ Type "help" anytime to see this again!`,
               <Input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask about threats, signals, or security insights..."
+                placeholder="Ask about threats, signals..."
                 disabled={isLoading || isUploading}
+                className="min-w-0"
               />
-              <Button type="submit" disabled={isLoading || isUploading || (!input.trim() && attachments.length === 0)}>
+              <Button type="submit" disabled={isLoading || isUploading || (!input.trim() && attachments.length === 0)} className="shrink-0">
                 {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </Button>
             </form>
