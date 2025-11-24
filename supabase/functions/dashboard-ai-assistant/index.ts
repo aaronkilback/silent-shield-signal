@@ -731,6 +731,47 @@ const tools = [
   {
     type: "function",
     function: {
+      name: "submit_rule_proposal",
+      description: "Submit a fully pre-defined signal categorization/routing rule for human review and approval. Use this when you have formulated a specific rule that should be implemented (e.g., based on client requirements, threat patterns, or operational needs). The rule will be stored in pending status until approved by a human.",
+      parameters: {
+        type: "object",
+        properties: {
+          rule_name: {
+            type: "string",
+            description: "Unique identifier for the rule (e.g., 'RULE_PhysicalSecurity_Protest_Energy')",
+          },
+          description: {
+            type: "string",
+            description: "Clear description of what the rule does and why it's needed",
+          },
+          conditions: {
+            type: "object",
+            description: "Trigger conditions as JSON (e.g., {keywords: ['protest', 'demonstration'], client_industry: 'energy', source_type: 'news'})",
+          },
+          actions: {
+            type: "object",
+            description: "Actions to perform when triggered (e.g., {set_category: 'physical_security', add_tags: ['protest', 'alert'], route_to_team: 'security_ops', set_priority: 'high'})",
+          },
+          rationale: {
+            type: "string",
+            description: "Why this rule is important and the business/security justification",
+          },
+          estimated_impact: {
+            type: "string",
+            description: "Expected impact on operations (e.g., 'Will auto-categorize ~50 signals/month, reducing manual triage time by 30%')",
+          },
+          confidence_threshold: {
+            type: "number",
+            description: "Confidence level for this rule 0-1 (default 0.85)",
+          },
+        },
+        required: ["rule_name", "description", "conditions", "actions", "rationale"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "analyze_cross_client_threats",
       description: "Detect emerging threat patterns that span multiple clients. Identifies recurring themes, TTPs, IOCs, and threat actor focus shifts across the entire signal repository for early warning.",
       parameters: {
@@ -3495,6 +3536,72 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
         success: false,
         rules_suggested: 0,
         summary: `No high-confidence patterns found with ${confidence_threshold * 100}% threshold. Try lowering the threshold or analyzing more data.`
+      };
+    }
+
+    case "submit_rule_proposal": {
+      const { 
+        rule_name, 
+        description, 
+        conditions, 
+        actions, 
+        rationale, 
+        estimated_impact = "Impact not specified",
+        confidence_threshold = 0.85 
+      } = args;
+
+      // Validate required fields
+      if (!rule_name || !description || !conditions || !actions || !rationale) {
+        return {
+          success: false,
+          error: "Missing required fields. Need: rule_name, description, conditions, actions, rationale"
+        };
+      }
+
+      // Create the proposal in the expected format
+      const proposal = {
+        rule_name,
+        description,
+        conditions,
+        actions,
+        rationale,
+        estimated_impact
+      };
+
+      // Store the rule proposal in intelligence_config for human review
+      const timestamp = Date.now();
+      const proposalKey = `signal_categorization_rules_proposal_${timestamp}`;
+      
+      const { error } = await supabaseClient
+        .from("intelligence_config")
+        .upsert({
+          key: proposalKey,
+          value: { 
+            status: "pending_review",
+            proposals: [proposal],
+            confidence_threshold: confidence_threshold,
+            analysis_context: `AI Assistant submitted pre-defined rule: ${rule_name}`,
+            created_at: new Date().toISOString(),
+            submitted_by: "ai_assistant"
+          },
+          description: `AI-submitted rule proposal: ${rule_name}`
+        });
+
+      if (error) {
+        console.error("Error submitting rule proposal:", error);
+        return {
+          success: false,
+          error: `Failed to submit rule: ${error.message}`
+        };
+      }
+
+      return {
+        success: true,
+        proposal_id: proposalKey,
+        rule_name: rule_name,
+        summary: `✅ Successfully submitted rule proposal "${rule_name}" for human review. The rule is now visible in the Rule Approvals page.`,
+        next_step: "Navigate to Settings → Rule Approvals to review and approve this rule.",
+        proposal_details: proposal
       };
     }
 
