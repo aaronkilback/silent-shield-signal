@@ -21,6 +21,7 @@ import InvestigationDetail from "./pages/InvestigationDetail";
 import Travel from "./pages/Travel";
 import KnowledgeBase from "./pages/KnowledgeBase";
 import BugReports from "./pages/BugReports";
+import RuleApprovals from "./pages/RuleApprovals";
 import MonitoringSources from "./pages/MonitoringSources";
 import Benchmark from "./pages/Benchmark";
 import NotFound from "./pages/NotFound";
@@ -52,6 +53,7 @@ const App = () => (
               <Route path="/travel" element={<Travel />} />
               <Route path="/knowledge-base" element={<KnowledgeBase />} />
               <Route path="/bug-reports" element={<BugReports />} />
+              <Route path="/rule-approvals" element={<RuleApprovals />} />
               <Route path="/benchmark" element={<Benchmark />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
