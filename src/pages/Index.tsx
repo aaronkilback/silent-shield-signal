@@ -35,14 +35,14 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-background">
       <Header />
-      <main className="container mx-auto px-6 py-8 space-y-6">
+      <main className="container mx-auto px-4 sm:px-6 py-4 sm:py-8 space-y-4 sm:space-y-6">
         <DashboardClientSelector />
         <DashboardAIAssistant />
         <AutonomousSystemStatus />
         <MonitoringHistory />
         <MetricsPanel />
         
-        <div className="grid grid-cols-1 gap-6">
+        <div className="grid grid-cols-1 gap-4 sm:gap-6">
           <LearningDashboard />
         </div>
       </main>
