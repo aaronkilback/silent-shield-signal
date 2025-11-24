@@ -640,19 +640,27 @@ export const DashboardAIAssistant = () => {
   };
 
   const clearHistory = async () => {
-    // Show confirmation dialog
-    const confirmed = window.confirm(
+    // First confirmation
+    const firstConfirm = window.confirm(
       "⚠️ CLEAR CHAT HISTORY?\n\n" +
-      "This will permanently clear all your chat messages.\n\n" +
-      "The AI will still have:\n" +
-      "✓ Full platform knowledge and tools\n" +
-      "✓ Access to all your data\n" +
-      "✓ All search and analysis capabilities\n\n" +
-      "Only the conversation history will be deleted.\n\n" +
+      "This will soft-delete all your chat messages.\n\n" +
+      "Messages can be restored by an admin, but will be hidden.\n\n" +
       "Are you sure you want to continue?"
     );
     
-    if (!confirmed) return;
+    if (!firstConfirm) return;
+    
+    // Second confirmation with type requirement
+    const typeConfirm = window.prompt(
+      "⚠️ FINAL CONFIRMATION\n\n" +
+      `You are about to clear ${messages.length} messages.\n\n` +
+      "Type 'DELETE HISTORY' to confirm:"
+    );
+    
+    if (typeConfirm !== "DELETE HISTORY") {
+      toast.info("History clear cancelled");
+      return;
+    }
     
     const defaultMessage: Message = {
       role: "assistant",
