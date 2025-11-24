@@ -210,12 +210,10 @@ export const DashboardAIAssistant = () => {
     },
   });
 
+  // Auto-scroll to bottom when messages change
   useEffect(() => {
     if (scrollRef.current) {
-      const viewport = scrollRef.current.closest('[data-radix-scroll-area-viewport]') as HTMLElement;
-      if (viewport) {
-        viewport.scrollTop = viewport.scrollHeight;
-      }
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, streamingContent]);
 
@@ -769,64 +767,64 @@ Type "help" anytime to see this again!`,
           </TabsList>
 
           <TabsContent value="text" className="space-y-3 flex flex-col">
-            <ScrollArea className="[&>[data-radix-scroll-area-viewport]]:h-[400px] [&>[data-radix-scroll-area-viewport]]:sm:h-[500px] [&>[data-radix-scroll-area-viewport]]:lg:h-[600px]">
-              <div ref={scrollRef} className="pr-4 space-y-4">
+            <div className="h-[400px] sm:h-[500px] lg:h-[600px] overflow-y-auto border rounded-md" ref={scrollRef}>
+              <div className="p-4 space-y-4">
                 {isLoadingHistory ? (
-                  <div className="flex items-center justify-center min-h-[400px]">
+                  <div className="flex items-center justify-center h-[380px]">
                     <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                   </div>
                 ) : (
                   <>
                     {MessageList}
-                  {streamingContent && (
-                   <div className="flex justify-start">
-                     <div className="max-w-[80%] rounded-lg p-3 bg-muted">
-                       <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
-                         <ReactMarkdown
-                           components={{
-                             a: ({ node, href, children, ...props }) => {
-                               const handleClick = (e: React.MouseEvent) => {
-                                 e.preventDefault();
-                                 if (href?.startsWith('/')) {
-                                   navigate(href);
-                                   toast.success("Navigating to " + href);
-                                 } else if (href) {
-                                   window.open(href, '_blank', 'noopener,noreferrer');
-                                 }
-                               };
-                               return (
-                                 <a
-                                   href={href}
-                                   onClick={handleClick}
-                                   className="text-primary hover:underline cursor-pointer font-medium"
-                                   {...props}
-                                 >
-                                   {children}
-                                 </a>
-                               );
-                             },
-                             p: ({ node, children, ...props }) => (
-                               <p className="mb-2 last:mb-0" {...props}>{children}</p>
-                             ),
-                           }}
-                         >
-                           {streamingContent}
-                         </ReactMarkdown>
-                       </div>
-                     </div>
-                   </div>
-                 )}
-                 {isLoading && !streamingContent && messages[messages.length - 1]?.role === "user" && (
-                  <div className="flex justify-start">
-                    <div className="bg-muted rounded-lg p-3">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    </div>
-                  </div>
-                  )}
-                </>
+                    {streamingContent && (
+                      <div className="flex justify-start">
+                        <div className="max-w-[80%] rounded-lg p-3 bg-muted">
+                          <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
+                            <ReactMarkdown
+                              components={{
+                                a: ({ node, href, children, ...props }) => {
+                                  const handleClick = (e: React.MouseEvent) => {
+                                    e.preventDefault();
+                                    if (href?.startsWith('/')) {
+                                      navigate(href);
+                                      toast.success("Navigating to " + href);
+                                    } else if (href) {
+                                      window.open(href, '_blank', 'noopener,noreferrer');
+                                    }
+                                  };
+                                  return (
+                                    <a
+                                      href={href}
+                                      onClick={handleClick}
+                                      className="text-primary hover:underline cursor-pointer font-medium"
+                                      {...props}
+                                    >
+                                      {children}
+                                    </a>
+                                  );
+                                },
+                                p: ({ node, children, ...props }) => (
+                                  <p className="mb-2 last:mb-0" {...props}>{children}</p>
+                                ),
+                              }}
+                            >
+                              {streamingContent}
+                            </ReactMarkdown>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {isLoading && !streamingContent && messages[messages.length - 1]?.role === "user" && (
+                      <div className="flex justify-start">
+                        <div className="bg-muted rounded-lg p-3">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
-            </ScrollArea>
+            </div>
 
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-2 p-2 bg-muted rounded-lg">
