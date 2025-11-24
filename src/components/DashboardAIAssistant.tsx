@@ -128,31 +128,6 @@ export const DashboardAIAssistant = () => {
     };
 
     loadMessages();
-
-    // Reload messages when tab/window becomes visible or focused
-    const handleVisibilityChange = () => {
-      if (!document.hidden && user && !authLoading) {
-        console.log("🔄 Tab became visible, reloading messages");
-        setIsLoadingHistory(true);
-        loadMessages();
-      }
-    };
-
-    const handleFocus = () => {
-      if (user && !authLoading) {
-        console.log("🔄 Window focused, reloading messages");
-        setIsLoadingHistory(true);
-        loadMessages();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleFocus);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleFocus);
-    };
   }, [user, authLoading]); // Re-run when user or auth loading state changes
 
   // Helper function to save a new message to database immediately
@@ -237,9 +212,12 @@ export const DashboardAIAssistant = () => {
 
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      const scrollElement = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]');
+      if (scrollElement) {
+        scrollElement.scrollTop = scrollElement.scrollHeight;
+      }
     }
-  }, [messages]);
+  }, [messages, streamingContent]);
 
   const streamChat = async (userMessage: string) => {
     console.log("streamChat called with:", userMessage);
@@ -791,7 +769,7 @@ Type "help" anytime to see this again!`,
           </TabsList>
 
           <TabsContent value="text" className="space-y-3">
-            <ScrollArea ref={scrollRef} className="h-[50vh] sm:h-[60vh] lg:h-[calc(100vh-450px)] min-h-[300px] sm:min-h-[400px] max-h-[600px] pr-4">
+            <ScrollArea ref={scrollRef} className="h-[400px] sm:h-[500px] lg:h-[600px] pr-4">
               {isLoadingHistory ? (
                 <div className="flex items-center justify-center h-full">
                   <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
