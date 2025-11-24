@@ -212,10 +212,7 @@ export const DashboardAIAssistant = () => {
 
   useEffect(() => {
     if (scrollRef.current) {
-      const scrollElement = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]');
-      if (scrollElement) {
-        scrollElement.scrollTop = scrollElement.scrollHeight;
-      }
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, streamingContent]);
 
@@ -768,15 +765,16 @@ Type "help" anytime to see this again!`,
             <TabsTrigger value="voice">Voice Agent</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="text" className="space-y-3">
-            <ScrollArea ref={scrollRef} className="h-[400px] sm:h-[500px] lg:h-[600px] pr-4">
-              {isLoadingHistory ? (
-                <div className="flex items-center justify-center h-full">
-                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {MessageList}
+          <TabsContent value="text" className="space-y-3 flex flex-col">
+            <ScrollArea className="h-[400px] sm:h-[500px] lg:h-[600px]">
+              <div ref={scrollRef} className="pr-4">
+                {isLoadingHistory ? (
+                  <div className="flex items-center justify-center h-[380px] sm:h-[480px] lg:h-[580px]">
+                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {MessageList}
                   {streamingContent && (
                    <div className="flex justify-start">
                      <div className="max-w-[80%] rounded-lg p-3 bg-muted">
@@ -821,9 +819,10 @@ Type "help" anytime to see this again!`,
                       <Loader2 className="w-4 h-4 animate-spin" />
                     </div>
                   </div>
-                )}
-              </div>
-              )}
+                 )}
+               </div>
+               )}
+             </div>
             </ScrollArea>
 
             {attachments.length > 0 && (
