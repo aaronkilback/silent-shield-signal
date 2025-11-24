@@ -2503,22 +2503,31 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
       const hoursBack = args.hours_back || 24;
       const cutoffTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString();
 
-      let query = supabaseClient
-        .from("ingested_documents")
-        .select("id, title, raw_text, metadata, processed_at, processing_status, chunk_index, total_chunks, source_id, sources(name)")
-        .eq("processing_status", "completed")
-        .gte("processed_at", cutoffTime)
-        .order("processed_at", { ascending: false })
-        .limit(limit);
+      let documents: any[] = [];
+      let searchMethod = "time_filter";
 
       // Filter by specific document IDs if provided
       if (args.document_ids && args.document_ids.length > 0) {
-        query = query.in("id", args.document_ids);
+        const { data, error } = await supabaseClient
+          .from("ingested_documents")
+          .select("id, title, raw_text, metadata, processed_at, processing_status, chunk_index, total_chunks, source_id, sources(name)")
+          .in("id", args.document_ids)
+          .eq("processing_status", "completed");
+        
+        if (error) throw error;
+        documents = data || [];
+        searchMethod = "document_ids";
       }
-
       // Filter by entity if provided
-      if (args.entity_id) {
-        // Get documents that mention this entity
+      else if (args.entity_id) {
+        // First, get the entity name for text search fallback
+        const { data: entity } = await supabaseClient
+          .from("entities")
+          .select("name, aliases")
+          .eq("id", args.entity_id)
+          .single();
+
+        // Try to get documents via entity mentions first
         const { data: mentions } = await supabaseClient
           .from("document_entity_mentions")
           .select("document_id")
@@ -2526,23 +2535,63 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
         
         if (mentions && mentions.length > 0) {
           const docIds = mentions.map((m: any) => m.document_id);
-          query = query.in("id", docIds);
-        } else {
-          return {
-            success: true,
-            documents: [],
-            count: 0,
-            message: "No intelligence documents found for this entity"
-          };
+          const { data, error } = await supabaseClient
+            .from("ingested_documents")
+            .select("id, title, raw_text, metadata, processed_at, processing_status, chunk_index, total_chunks, source_id, sources(name)")
+            .in("id", docIds)
+            .eq("processing_status", "completed")
+            .gte("processed_at", cutoffTime)
+            .order("processed_at", { ascending: false })
+            .limit(limit);
+          
+          if (!error && data) {
+            documents = data;
+            searchMethod = "entity_mentions";
+          }
+        }
+        
+        // FALLBACK: If no documents found via mentions, search by entity name in content
+        if (documents.length === 0 && entity) {
+          console.log(`No entity mentions found, falling back to text search for: ${entity.name}`);
+          
+          // Search in raw_text, title, and metadata
+          const searchTerms = [entity.name, ...(entity.aliases || [])];
+          const { data, error } = await supabaseClient
+            .from("ingested_documents")
+            .select("id, title, raw_text, metadata, processed_at, processing_status, chunk_index, total_chunks, source_id, sources(name)")
+            .eq("processing_status", "completed")
+            .gte("processed_at", cutoffTime)
+            .order("processed_at", { ascending: false })
+            .limit(100); // Get more for filtering
+          
+          if (!error && data) {
+            // Filter documents that contain the entity name or aliases
+            documents = data.filter((doc: any) => {
+              const textToSearch = `${doc.title || ""} ${doc.raw_text || ""} ${JSON.stringify(doc.metadata || {})}`.toLowerCase();
+              return searchTerms.some(term => textToSearch.includes(term.toLowerCase()));
+            }).slice(0, limit);
+            
+            searchMethod = "text_search_fallback";
+          }
         }
       }
+      // Default: get recent documents
+      else {
+        const { data, error } = await supabaseClient
+          .from("ingested_documents")
+          .select("id, title, raw_text, metadata, processed_at, processing_status, chunk_index, total_chunks, source_id, sources(name)")
+          .eq("processing_status", "completed")
+          .gte("processed_at", cutoffTime)
+          .order("processed_at", { ascending: false })
+          .limit(limit);
+        
+        if (error) throw error;
+        documents = data || [];
+      }
 
-      const { data: documents, error } = await query;
-      if (error) throw error;
-
-      // Also get any entity mentions in these documents
+      // Get any entity mentions in these documents
       const documentIds = documents?.map((d: any) => d.id) || [];
-      let entityMentions = [];
+      let entityMentions: any[] = [];
       if (documentIds.length > 0) {
         const { data: mentions } = await supabaseClient
           .from("document_entity_mentions")
@@ -2565,7 +2614,10 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
         documents: enrichedDocs,
         count: enrichedDocs?.length || 0,
         time_window: `Last ${hoursBack} hours`,
-        message: `Found ${enrichedDocs?.length || 0} intelligence documents. Use these to summarize OSINT findings, extract key entities, and correlate with signals.`
+        search_method: searchMethod,
+        message: searchMethod === "text_search_fallback" 
+          ? `Found ${enrichedDocs?.length || 0} documents using text search (entity mentions not yet linked). Documents contain the entity name in their content.`
+          : `Found ${enrichedDocs?.length || 0} intelligence documents. Use these to summarize OSINT findings, extract key entities, and correlate with signals.`
       };
     }
 
