@@ -8,7 +8,7 @@ import { Send, Sparkles, Loader2, Mic, MicOff, Paperclip, X } from "lucide-react
 import { toast } from "sonner";
 import { useConversation } from "@11labs/react";
 import { supabase } from "@/integrations/supabase/client";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -19,6 +19,7 @@ type Message = {
 
 export const DashboardAIAssistant = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, loading: authLoading } = useAuth();
   const STORAGE_KEY = "fortress-ai-chat-history";
   
@@ -33,6 +34,7 @@ export const DashboardAIAssistant = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const hasLoadedOnceRef = useRef(false);
 
   // Load messages from database on mount and when returning to page
   useEffect(() => {
@@ -52,12 +54,17 @@ export const DashboardAIAssistant = () => {
         console.log("❌ No user session found - messages will not persist");
         setMessages([defaultMessage]);
         setIsLoadingHistory(false);
-        toast.error("Please log in to save chat history");
+        if (!hasLoadedOnceRef.current) {
+          toast.error("Please log in to save chat history");
+          hasLoadedOnceRef.current = true;
+        }
         return;
       }
 
       try {
         console.log(`🔄 Loading chat history for user ${user.id}`);
+        setIsLoadingHistory(true);
+        
         // Load the most recent 100 messages in chronological order
         const { data: dbMessages, error } = await supabase
           .from('ai_assistant_messages')
@@ -128,7 +135,7 @@ export const DashboardAIAssistant = () => {
     };
 
     loadMessages();
-  }, [user, authLoading]); // Re-run when user or auth loading state changes
+  }, [user, authLoading, location.pathname]); // Re-run when navigating back to this page
 
   // Helper function to save a new message to database immediately
   const saveMessageToDb = async (message: Message): Promise<boolean> => {
