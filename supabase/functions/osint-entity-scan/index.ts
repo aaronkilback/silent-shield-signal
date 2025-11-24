@@ -145,6 +145,16 @@ serve(async (req) => {
               .single();
 
             if (!docError && doc) {
+              // CRITICAL: Create document_entity_mentions linkage for immediate AI access
+              await supabase
+                .from('document_entity_mentions')
+                .insert({
+                  document_id: doc.id,
+                  entity_id: entity.id,
+                  confidence: 0.9, // High confidence since we're explicitly scanning this entity
+                  mention_text: entity.name
+                });
+
               // Invoke intelligence processing
               await supabase.functions.invoke('process-intelligence-document', {
                 body: { documentId: doc.id }
