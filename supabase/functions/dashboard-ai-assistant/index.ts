@@ -97,6 +97,36 @@ const tools = [
   {
     type: "function",
     function: {
+      name: "inject_test_signal",
+      description: "Inject a test signal into the system for verification purposes. This creates a signal that will be processed through the full ingestion pipeline including rule application.",
+      parameters: {
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            description: "The signal text content (e.g., 'BREAKING: Energy pipeline faces protest blockade')",
+          },
+          client_id: {
+            type: "string",
+            description: "Client UUID to associate this signal with",
+          },
+          severity: {
+            type: "string",
+            description: "Severity level: critical, high, medium, or low (default: medium)",
+            enum: ["critical", "high", "medium", "low"],
+          },
+          category: {
+            type: "string",
+            description: "Initial category (will be overridden by rules if they match)",
+          },
+        },
+        required: ["text", "client_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "get_active_incidents",
       description: "Get currently active security incidents. Use this when users ask about ongoing incidents or incident status.",
       parameters: {
@@ -4828,6 +4858,40 @@ serve(async (req) => {
         proposal_id: mergeProposal.proposal_id,
         message: `Merge proposal created successfully. ${duplicate_signal_ids.length} duplicate signals will be merged into primary signal ${primary_signal_id.slice(0, 8)}... after human approval. View proposals in the Approvals page (Signal Merges tab).`,
         details: mergeProposal,
+      };
+    }
+
+    case "inject_test_signal": {
+      const { text, client_id, severity = "medium", category = "test" } = args;
+      
+      console.log(`Injecting test signal for client: ${client_id}`);
+      
+      const { data: ingestResult, error: ingestError } = await supabaseClient.functions.invoke(
+        "ingest-signal",
+        {
+          body: {
+            text,
+            client_id,
+            severity,
+            category,
+            is_test: true,
+          },
+        }
+      );
+
+      if (ingestError) {
+        console.error("Error injecting signal:", ingestError);
+        return {
+          error: ingestError.message,
+          message: `Failed to inject signal: ${ingestError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        signal_id: ingestResult.signal_id,
+        message: `Test signal injected successfully with ID ${ingestResult.signal_id?.slice(0, 8)}... Rules will be applied automatically. Check the Signals page to see the categorized signal.`,
+        details: ingestResult,
       };
     }
 
