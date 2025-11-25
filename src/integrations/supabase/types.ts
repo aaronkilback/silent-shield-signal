@@ -2192,6 +2192,7 @@ export type Database = {
       }
       signals: {
         Row: {
+          applied_rules: Json | null
           auto_correlated_entities: string[] | null
           category: string | null
           client_id: string | null
@@ -2214,6 +2215,10 @@ export type Database = {
           raw_json: Json | null
           received_at: string
           relevance_score: number | null
+          routed_to_team: string | null
+          rule_category: string | null
+          rule_priority: string | null
+          rule_tags: string[] | null
           severity: string | null
           severity_score: number | null
           signal_type: string | null
@@ -2223,6 +2228,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          applied_rules?: Json | null
           auto_correlated_entities?: string[] | null
           category?: string | null
           client_id?: string | null
@@ -2245,6 +2251,10 @@ export type Database = {
           raw_json?: Json | null
           received_at?: string
           relevance_score?: number | null
+          routed_to_team?: string | null
+          rule_category?: string | null
+          rule_priority?: string | null
+          rule_tags?: string[] | null
           severity?: string | null
           severity_score?: number | null
           signal_type?: string | null
@@ -2254,6 +2264,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          applied_rules?: Json | null
           auto_correlated_entities?: string[] | null
           category?: string | null
           client_id?: string | null
@@ -2276,6 +2287,10 @@ export type Database = {
           raw_json?: Json | null
           received_at?: string
           relevance_score?: number | null
+          routed_to_team?: string | null
+          rule_category?: string | null
+          rule_priority?: string | null
+          rule_tags?: string[] | null
           severity?: string | null
           severity_score?: number | null
           signal_type?: string | null

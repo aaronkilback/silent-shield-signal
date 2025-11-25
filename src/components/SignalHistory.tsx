@@ -49,6 +49,12 @@ interface Signal {
   is_read: boolean;
   is_test: boolean;
   source_id: string | null;
+  // Rule-based categorization fields
+  applied_rules?: string[];
+  rule_tags?: string[];
+  rule_category?: string;
+  rule_priority?: string;
+  routed_to_team?: string;
   sources?: {
     name: string;
     type: string;
@@ -66,6 +72,10 @@ export const SignalHistory = () => {
   const [selectedSignalIds, setSelectedSignalIds] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
   const { selectedClientId } = useClientSelection();
+  
+  // Filter states
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [priorityFilter, setPriorityFilter] = useState<string>('all');
 
   useEffect(() => {
     if (selectedClientId) {
@@ -127,6 +137,11 @@ export const SignalHistory = () => {
           is_read,
           is_test,
           source_id,
+          applied_rules,
+          rule_tags,
+          rule_category,
+          rule_priority,
+          routed_to_team,
           clients (
             name
           )
@@ -277,6 +292,21 @@ export const SignalHistory = () => {
     );
   }
 
+  // Apply filters
+  const filteredSignals = signals.filter(signal => {
+    if (categoryFilter !== 'all' && signal.rule_category !== categoryFilter && signal.category !== categoryFilter) {
+      return false;
+    }
+    if (priorityFilter !== 'all' && signal.rule_priority !== priorityFilter) {
+      return false;
+    }
+    return true;
+  });
+
+  // Get unique categories and priorities for filters
+  const uniqueCategories = Array.from(new Set(signals.map(s => s.rule_category || s.category).filter(Boolean)));
+  const uniquePriorities = Array.from(new Set(signals.map(s => s.rule_priority).filter(Boolean)));
+
   return (
     <Card>
       <CardHeader>
@@ -313,17 +343,58 @@ export const SignalHistory = () => {
             </div>
           )}
         </div>
+        {/* Filters */}
+        {(uniqueCategories.length > 0 || uniquePriorities.length > 0) && (
+          <div className="flex gap-2 mt-4">
+            {uniqueCategories.length > 0 && (
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="px-3 py-1.5 text-sm border rounded-md bg-background"
+              >
+                <option value="all">All Categories</option>
+                {uniqueCategories.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+            )}
+            {uniquePriorities.length > 0 && (
+              <select
+                value={priorityFilter}
+                onChange={(e) => setPriorityFilter(e.target.value)}
+                className="px-3 py-1.5 text-sm border rounded-md bg-background"
+              >
+                <option value="all">All Priorities</option>
+                {uniquePriorities.map(pri => (
+                  <option key={pri} value={pri}>{pri?.toUpperCase()}</option>
+                ))}
+              </select>
+            )}
+            {(categoryFilter !== 'all' || priorityFilter !== 'all') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setCategoryFilter('all');
+                  setPriorityFilter('all');
+                }}
+              >
+                Clear Filters
+              </Button>
+            )}
+          </div>
+        )}
       </CardHeader>
       <CardContent>
-        {signals.length === 0 ? (
+        {filteredSignals.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <AlertCircle className="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p>No signals found. Use the Test Signal Generator to create demo signals.</p>
+            <p>{signals.length === 0 ? 'No signals found. Use the Test Signal Generator to create demo signals.' : 'No signals match the selected filters.'}</p>
           </div>
         ) : (
           <ScrollArea className="h-[400px] pr-4">
             <div className="space-y-2">
-              {signals.map((signal) => (
+              {filteredSignals.map((signal) => (
                 <div
                   key={signal.id}
                   className={`p-4 border rounded-lg hover:bg-muted/50 transition-colors ${!signal.is_read ? 'bg-primary/5 border-primary/20' : ''}`}
@@ -343,7 +414,26 @@ export const SignalHistory = () => {
                           <Badge variant={getSeverityColor(signal.severity)} className="h-5 px-2 text-xs">
                             {signal.severity}
                           </Badge>
-                          <Badge variant="outline" className="h-5 px-2 text-xs">{signal.category}</Badge>
+                          <Badge variant="outline" className="h-5 px-2 text-xs">
+                            {signal.rule_category || signal.category}
+                          </Badge>
+                          {signal.rule_priority && (
+                            <Badge variant="destructive" className="h-5 px-2 text-xs">
+                              {signal.rule_priority.toUpperCase()}
+                            </Badge>
+                          )}
+                          {signal.rule_tags && signal.rule_tags.length > 0 && (
+                            signal.rule_tags.slice(0, 3).map(tag => (
+                              <Badge key={tag} variant="secondary" className="h-5 px-2 text-xs">
+                                {tag}
+                              </Badge>
+                            ))
+                          )}
+                          {signal.routed_to_team && (
+                            <Badge variant="outline" className="h-5 px-2 text-xs bg-blue-50">
+                              → {signal.routed_to_team}
+                            </Badge>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
                           <span className="text-xs text-muted-foreground font-medium">
@@ -361,10 +451,17 @@ export const SignalHistory = () => {
                       </p>
                       
                       <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5" />
-                          {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
-                        </span>
+                        <div className="flex items-center gap-3">
+                          <span className="flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5" />
+                            {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
+                          </span>
+                          {signal.applied_rules && signal.applied_rules.length > 0 && (
+                            <span className="text-xs text-blue-600 font-medium">
+                              ⚡ {signal.applied_rules.length} rule{signal.applied_rules.length > 1 ? 's' : ''} applied
+                            </span>
+                          )}
+                        </div>
                         {signal.sources && (
                           <span className="font-medium">{signal.sources.name}</span>
                         )}
