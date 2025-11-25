@@ -4,7 +4,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Send, Sparkles, Loader2, Mic, MicOff, Paperclip, X } from "lucide-react";
+import { Send, Sparkles, Loader2, Mic, MicOff, Paperclip, X, Phone } from "lucide-react";
+import { VoiceConversationInterface } from "./VoiceConversationInterface";
 import { toast } from "sonner";
 import { useConversation } from "@11labs/react";
 import { supabase } from "@/integrations/supabase/client";
@@ -35,6 +36,7 @@ export const DashboardAIAssistant = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const hasLoadedOnceRef = useRef(false);
+  const [showVoiceInterface, setShowVoiceInterface] = useState(false);
 
   // Load messages from database on mount and when returning to page
   useEffect(() => {
@@ -738,6 +740,15 @@ Type "help" anytime to see this again!`,
     toast.success("Conversation cleared - AI knowledge and tools intact");
   };
 
+  if (showVoiceInterface) {
+    return (
+      <VoiceConversationInterface 
+        onClose={() => setShowVoiceInterface(false)}
+        conversationHistory={messages}
+      />
+    );
+  }
+
   return (
     <Card className="w-full">
       <CardHeader className="pb-3">
@@ -763,15 +774,27 @@ Type "help" anytime to see this again!`,
               </span>
             )}
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={clearHistory}
-            className="text-xs shrink-0"
-            title="Clear conversation messages only (AI keeps all platform knowledge and tools)"
-          >
-            Clear Chat
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowVoiceInterface(true)}
+              className="text-xs shrink-0"
+              title="Start voice conversation"
+            >
+              <Phone className="w-3.5 h-3.5 mr-1.5" />
+              Voice
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={clearHistory}
+              className="text-xs shrink-0"
+              title="Clear conversation messages only (AI keeps all platform knowledge and tools)"
+            >
+              Clear Chat
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
