@@ -2190,6 +2190,59 @@ export type Database = {
           },
         ]
       }
+      signal_merge_proposals: {
+        Row: {
+          created_at: string
+          duplicate_signal_ids: string[]
+          id: string
+          merge_rationale: string | null
+          primary_signal_id: string
+          proposed_at: string
+          proposed_by: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          similarity_scores: number[] | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          duplicate_signal_ids: string[]
+          id?: string
+          merge_rationale?: string | null
+          primary_signal_id: string
+          proposed_at?: string
+          proposed_by?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          similarity_scores?: number[] | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          duplicate_signal_ids?: string[]
+          id?: string
+          merge_rationale?: string | null
+          primary_signal_id?: string
+          proposed_at?: string
+          proposed_by?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          similarity_scores?: number[] | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_merge_proposals_primary_signal_id_fkey"
+            columns: ["primary_signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       signals: {
         Row: {
           applied_rules: Json | null
