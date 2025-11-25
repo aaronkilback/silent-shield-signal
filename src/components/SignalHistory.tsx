@@ -49,8 +49,8 @@ interface Signal {
   is_read: boolean;
   is_test: boolean;
   source_id: string | null;
-  // Rule-based categorization fields
-  applied_rules?: string[];
+  // Rule-based categorization fields - applied_rules is JSONB (string[] in JSON format)
+  applied_rules?: any; // JSONB array
   rule_tags?: string[];
   rule_category?: string;
   rule_priority?: string;
@@ -456,7 +456,7 @@ export const SignalHistory = () => {
                             <Clock className="w-3.5 h-3.5" />
                             {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
                           </span>
-                          {signal.applied_rules && signal.applied_rules.length > 0 && (
+                          {signal.applied_rules && Array.isArray(signal.applied_rules) && signal.applied_rules.length > 0 && (
                             <span className="text-xs text-blue-600 font-medium">
                               ⚡ {signal.applied_rules.length} rule{signal.applied_rules.length > 1 ? 's' : ''} applied
                             </span>
