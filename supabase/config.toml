@@ -167,3 +167,6 @@ verify_jwt = false
 
 [functions.perform-impact-analysis]
 verify_jwt = false
+
+[functions.gemini-voice-conversation]
+verify_jwt = false
