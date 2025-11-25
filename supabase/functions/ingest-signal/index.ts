@@ -474,7 +474,7 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
     
     await supabase.from('signals').update({ content_hash: contentHash }).eq('id', signal.id);
     
-    // Check for duplicates
+    // Check for duplicates BEFORE insertion
     const dupCheck = await supabase.functions.invoke('detect-duplicates', {
       body: {
         type: 'signal',
@@ -484,7 +484,23 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
       }
     });
     
-    if (dupCheck?.data?.isDuplicate) {
+    if (dupCheck?.data?.isDuplicate && dupCheck?.data?.exactMatch) {
+      console.log(`EXACT duplicate detected - deleting signal ${signal.id}`);
+      // Delete the duplicate signal
+      await supabase
+        .from('signals')
+        .delete()
+        .eq('id', signal.id);
+      
+      return new Response(
+        JSON.stringify({ 
+          error: 'Duplicate signal detected and removed',
+          duplicate_of: dupCheck.data.duplicate?.id,
+          message: dupCheck.data.message
+        }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    } else if (dupCheck?.data?.isDuplicate) {
       console.log(`Potential duplicate detected: ${dupCheck.data.count} similar signals`);
     }
     
@@ -498,31 +514,90 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
       }
     });
     
-    // Auto-open incident based on rules
-    if (rulesResult.shouldOpenIncident) {
-      const { error: incidentError } = await supabase
-        .from('incidents')
-        .insert({
+    // Apply AI decision engine for rule-based categorization and analysis
+    console.log('Invoking AI decision engine for signal categorization...');
+    try {
+      const aiDecisionResult = await supabase.functions.invoke('ai-decision-engine', {
+        body: {
           signal_id: signal.id,
-          client_id: signal.client_id,
-          priority: rulesResult.priority,
-          status: 'open',
-          is_test: signal.is_test || false,
-          sla_targets_json: { 
-            mttd: 10, 
-            mttr: rulesResult.priority === 'p1' ? 60 : 120 
-          },
-          timeline_json: [{
-            timestamp: new Date().toISOString(),
-            action: 'incident_opened',
-            details: `Auto-opened by rule: ${rulesResult.matchedRule} (${rulesResult.matchedKeyword})`
-          }]
-        });
+          force_ai: rulesResult.priority === 'p1' || rulesResult.priority === 'p2'
+        }
+      });
       
-      if (incidentError) {
-        console.error('Error creating incident:', incidentError);
+      if (aiDecisionResult.error) {
+        console.error('AI decision engine error:', aiDecisionResult.error);
       } else {
-        console.log('Incident auto-opened for signal:', signal.id);
+        console.log('AI decision engine result:', aiDecisionResult.data);
+        
+        // Check if AI decision recommends incident creation
+        if (aiDecisionResult.data?.decision?.should_create_incident) {
+          const { error: incidentError } = await supabase
+            .from('incidents')
+            .insert({
+              signal_id: signal.id,
+              client_id: signal.client_id,
+              priority: aiDecisionResult.data.decision.incident_priority || rulesResult.priority,
+              status: 'open',
+              is_test: signal.is_test || false,
+              title: `AI-Escalated: ${signal.title || signal.normalized_text?.substring(0, 100)}`,
+              summary: aiDecisionResult.data.decision.reasoning,
+              sla_targets_json: { 
+                mttd: 10, 
+                mttr: aiDecisionResult.data.decision.incident_priority === 'p1' ? 60 : 120 
+              },
+              timeline_json: [{
+                timestamp: new Date().toISOString(),
+                action: 'incident_opened',
+                details: `Auto-opened by AI Decision Engine: ${aiDecisionResult.data.decision.threat_level} threat`
+              }]
+            });
+          
+          if (incidentError) {
+            console.error('Error creating incident:', incidentError);
+          } else {
+            console.log('Incident auto-opened by AI decision for signal:', signal.id);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to invoke AI decision engine:', error);
+      // Don't fail the main request if AI decision fails
+    }
+    
+    // Auto-open incident based on rules (fallback if AI didn't create one)
+    if (rulesResult.shouldOpenIncident) {
+      // Check if incident was already created by AI
+      const { data: existingIncident } = await supabase
+        .from('incidents')
+        .select('id')
+        .eq('signal_id', signal.id)
+        .single();
+      
+      if (!existingIncident) {
+        const { error: incidentError } = await supabase
+          .from('incidents')
+          .insert({
+            signal_id: signal.id,
+            client_id: signal.client_id,
+            priority: rulesResult.priority,
+            status: 'open',
+            is_test: signal.is_test || false,
+            sla_targets_json: { 
+              mttd: 10, 
+              mttr: rulesResult.priority === 'p1' ? 60 : 120 
+            },
+            timeline_json: [{
+              timestamp: new Date().toISOString(),
+              action: 'incident_opened',
+              details: `Auto-opened by rule: ${rulesResult.matchedRule} (${rulesResult.matchedKeyword})`
+            }]
+          });
+        
+        if (incidentError) {
+          console.error('Error creating incident:', incidentError);
+        } else {
+          console.log('Incident auto-opened for signal:', signal.id);
+        }
       }
     }
 
