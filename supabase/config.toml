@@ -164,3 +164,6 @@ verify_jwt = false
 
 [functions.identify-precursor-indicators]
 verify_jwt = false
+
+[functions.perform-impact-analysis]
+verify_jwt = false

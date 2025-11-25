@@ -6,6 +6,51 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Enhanced system prompt for Phase 4: Intent Recognition & Contextual Understanding
+const ENHANCED_SYSTEM_PROMPT = `You are an advanced AI security co-pilot for Fortress, a threat intelligence platform. You have sophisticated natural language understanding and can handle complex, multi-part queries with context awareness.
+
+CRITICAL CAPABILITIES - PHASE 4 ENHANCEMENTS:
+
+1. INTENT RECOGNITION & CONTEXTUAL UNDERSTANDING:
+   - Parse complex, ambiguous, or multi-step requests intelligently
+   - Maintain conversation context across multiple turns
+   - Proactively ask clarifying questions when user intent is unclear
+   - Handle implicit requests and infer missing information from context
+   - Support natural follow-ups like "What about that other client?" or "Do the same for critical signals"
+
+2. AUTOMATED IMPACT ANALYSIS:
+   - Use perform_impact_analysis tool to quantify threat impact
+   - Provide probabilistic financial cost ranges based on client context
+   - Calculate dynamic risk scores considering asset criticality
+   - Analyze cascading effects across interconnected systems
+   - Update entity risk profiles with update_risk_profile tool
+
+3. PLAYBOOK INTEGRATION & ACTIONABLE RESPONSE:
+   - Recommend appropriate security playbooks using recommend_playbook
+   - Generate specific response tasks with draft_response_tasks
+   - Integrate with incident management using integrate_incident_management
+   - Create or update incidents with pre-populated tasks and priorities
+
+INTERACTION GUIDELINES:
+- If a query is ambiguous, ask targeted follow-up questions rather than stating inability
+- Build on previous conversation context without requiring users to repeat information
+- Offer proactive suggestions based on analysis results
+- When presenting risk scores, always explain contributing factors
+- For high-risk scenarios, automatically suggest playbooks and response tasks
+- Present impact analysis in business terms (P.R.A.: People, Reputation, Assets)
+
+EXAMPLE MULTI-TURN CONVERSATIONS:
+User: "What's the impact of that critical cyber signal from yesterday?"
+AI: [Searches recent critical cyber signals, performs impact analysis, presents risk score with breakdown]
+
+User: "Should we create an incident for it?"
+AI: [Uses signal from previous context, recommends playbook, drafts response tasks, asks for approval to create incident]
+
+User: "Yes, make it high priority"
+AI: [Creates incident with high priority, pre-populated tasks, confirms creation]
+
+Always prioritize clarity, actionability, and security posture improvement.`;
+
 // Tool definitions for querying the database
 const tools = [
   {
@@ -1032,6 +1077,122 @@ const tools = [
           },
         },
         required: ["root_cause", "fix_strategy", "code_changes"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "perform_impact_analysis",
+      description: "Perform comprehensive impact analysis on a signal, calculating risk scores, financial impact, operational disruption, and cascading effects. Use this to quantify threat severity for prioritization and resource allocation.",
+      parameters: {
+        type: "object",
+        properties: {
+          signal_id: {
+            type: "string",
+            description: "UUID of the signal to analyze",
+          },
+          threat_actor_id: {
+            type: "string",
+            description: "Optional: UUID of threat actor entity if known",
+          },
+        },
+        required: ["signal_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_risk_profile",
+      description: "Update an entity's risk profile with new threat score and risk level. Use after impact analysis or when new intelligence changes risk assessment.",
+      parameters: {
+        type: "object",
+        properties: {
+          entity_id: {
+            type: "string",
+            description: "UUID of the entity to update",
+          },
+          risk_score: {
+            type: "number",
+            description: "New risk score (0-100)",
+          },
+          justifications: {
+            type: "array",
+            items: { type: "string" },
+            description: "Reasons for risk score change",
+          },
+        },
+        required: ["entity_id", "risk_score"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "recommend_playbook",
+      description: "Recommend appropriate security playbooks based on signal characteristics and client context. Use when planning incident response.",
+      parameters: {
+        type: "object",
+        properties: {
+          signal_id: {
+            type: "string",
+            description: "UUID of the signal",
+          },
+          client_context: {
+            type: "string",
+            description: "Optional: Additional client context for better recommendations",
+          },
+        },
+        required: ["signal_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "draft_response_tasks",
+      description: "Generate specific, actionable response tasks based on a playbook and signal. Use to create detailed incident response plans.",
+      parameters: {
+        type: "object",
+        properties: {
+          playbook_id: {
+            type: "string",
+            description: "UUID of the playbook to use",
+          },
+          signal_id: {
+            type: "string",
+            description: "UUID of the signal requiring response",
+          },
+        },
+        required: ["playbook_id", "signal_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "integrate_incident_management",
+      description: "Create or update an incident with pre-populated tasks and priority. Use to operationalize response plans after user approval.",
+      parameters: {
+        type: "object",
+        properties: {
+          signal_id: {
+            type: "string",
+            description: "UUID of the signal",
+          },
+          task_list: {
+            type: "array",
+            items: { type: "object" },
+            description: "Array of response tasks",
+          },
+          incident_priority: {
+            type: "string",
+            enum: ["p1", "p2", "p3", "p4"],
+            description: "Incident priority level",
+          },
+        },
+        required: ["signal_id", "task_list"],
       },
     },
   },
@@ -4551,6 +4712,59 @@ serve(async (req) => {
           integration_breadth: "40% - Limited to basic webhooks, needs enterprise tool integration"
         }
       };
+    }
+
+    case "perform_impact_analysis": {
+      const { signal_id, threat_actor_id } = args;
+      
+      console.log(`Calling perform-impact-analysis for signal: ${signal_id}`);
+      
+      const { data: analysisResult, error: analysisError } = await supabaseClient.functions.invoke(
+        "perform-impact-analysis",
+        {
+          body: { signal_id, threat_actor_id },
+        }
+      );
+
+      if (analysisError) {
+        console.error("Error in perform-impact-analysis:", analysisError);
+        return {
+          error: analysisError.message,
+          message: `Failed to perform impact analysis: ${analysisError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        analysis: analysisResult,
+        summary: `Risk Score: ${analysisResult.risk_score}/100 (${analysisResult.risk_level}). 
+        Financial Impact: $${analysisResult.impact_assessment.financial_impact.estimated_cost_range.minimum}-${analysisResult.impact_assessment.financial_impact.estimated_cost_range.maximum}. 
+        Operational Impact: ${analysisResult.impact_assessment.operational_impact.estimated_downtime_hours}h downtime estimated.`,
+      };
+    }
+
+    case "update_risk_profile":
+    case "recommend_playbook":
+    case "draft_response_tasks":
+    case "integrate_incident_management": {
+      console.log(`Calling ai-tools-query for ${toolName}`);
+      
+      const { data: toolResult, error: toolError } = await supabaseClient.functions.invoke(
+        "ai-tools-query",
+        {
+          body: { toolName, parameters: args },
+        }
+      );
+
+      if (toolError) {
+        console.error(`Error in ai-tools-query for ${toolName}:`, toolError);
+        return {
+          error: toolError.message,
+          message: `Failed to execute ${toolName}: ${toolError.message}`,
+        };
+      }
+
+      return toolResult.result;
     }
 
     default:
