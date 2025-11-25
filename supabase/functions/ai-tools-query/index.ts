@@ -367,8 +367,273 @@ serve(async (req) => {
         result = clientOps;
         break;
 
+      case "update_risk_profile":
+        const { entity_id: entityId, risk_score, justifications } = parameters;
+        if (!entityId || risk_score === undefined) {
+          return new Response(JSON.stringify({ error: 'entity_id and risk_score required' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { data: entityUpdate, error: entityUpdateError } = await supabase
+          .from('entities')
+          .update({
+            threat_score: risk_score,
+            risk_level: risk_score >= 80 ? 'critical' : 
+                       risk_score >= 60 ? 'high' :
+                       risk_score >= 40 ? 'medium' : 'low',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', entityId)
+          .select()
+          .single();
+
+        if (entityUpdateError) {
+          return new Response(JSON.stringify({ error: entityUpdateError.message }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        result = {
+          success: true,
+          entity_id: entityId,
+          updated_risk_score: risk_score,
+          justifications,
+          timestamp: new Date().toISOString(),
+        };
+        break;
+
+      case "recommend_playbook":
+        const { signal_id: playbookSigId, client_context } = parameters;
+        if (!playbookSigId) {
+          return new Response(JSON.stringify({ error: 'signal_id required' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { data: playbookSignal, error: playbookSigError } = await supabase
+          .from('signals')
+          .select('id, category, severity, normalized_text, client_id, clients(industry)')
+          .eq('id', playbookSigId)
+          .single();
+
+        if (playbookSigError || !playbookSignal) {
+          return new Response(JSON.stringify({ error: 'Signal not found' }), {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { data: allPlaybooks } = await supabase
+          .from('playbooks')
+          .select('*');
+
+        const clientIndustry = Array.isArray(playbookSignal.clients) 
+          ? playbookSignal.clients[0]?.industry 
+          : (playbookSignal.clients as any)?.industry;
+
+        const relevantPlaybooks = (allPlaybooks || []).filter((playbook: any) => {
+          const keyLower = playbook.key.toLowerCase();
+          const categoryLower = (playbookSignal.category || '').toLowerCase();
+          const textLower = (playbookSignal.normalized_text || '').toLowerCase();
+          
+          return keyLower.includes(categoryLower) || 
+                 textLower.includes(keyLower) ||
+                 playbook.markdown.toLowerCase().includes(categoryLower);
+        });
+
+        result = {
+          signal_id: playbookSigId,
+          recommended_playbooks: relevantPlaybooks.map((p: any) => ({
+            id: p.id,
+            key: p.key,
+            title: p.title,
+            relevance_score: 0.8,
+          })),
+          client_industry: clientIndustry,
+        };
+        break;
+
+      case "draft_response_tasks":
+        const { playbook_id, signal_id: taskSigId } = parameters;
+        if (!playbook_id || !taskSigId) {
+          return new Response(JSON.stringify({ error: 'playbook_id and signal_id required' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { data: playbook, error: playbookError } = await supabase
+          .from('playbooks')
+          .select('*')
+          .eq('id', playbook_id)
+          .single();
+
+        if (playbookError || !playbook) {
+          return new Response(JSON.stringify({ error: 'Playbook not found' }), {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { data: taskSignal, error: taskSigError } = await supabase
+          .from('signals')
+          .select('*')
+          .eq('id', taskSigId)
+          .single();
+
+        if (taskSigError || !taskSignal) {
+          return new Response(JSON.stringify({ error: 'Signal not found' }), {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const tasks = generateResponseTasks(playbook, taskSignal);
+        
+        result = {
+          playbook_id,
+          signal_id: taskSigId,
+          tasks,
+          estimated_completion_time: tasks.length * 30,
+        };
+        break;
+
+      case "integrate_incident_management":
+        const { signal_id: incidentSigId, task_list, incident_priority } = parameters;
+        if (!incidentSigId || !task_list) {
+          return new Response(JSON.stringify({ error: 'signal_id and task_list required' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { data: incidentSignal, error: incidentSigError } = await supabase
+          .from('signals')
+          .select('*')
+          .eq('id', incidentSigId)
+          .single();
+
+        if (incidentSigError || !incidentSignal) {
+          return new Response(JSON.stringify({ error: 'Signal not found' }), {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { data: existingIncident } = await supabase
+          .from('incidents')
+          .select('id')
+          .eq('signal_id', incidentSigId)
+          .single();
+
+        if (existingIncident) {
+          const { data: updatedIncident, error: updateError } = await supabase
+            .from('incidents')
+            .update({
+              priority: incident_priority || 'p3',
+              timeline_json: task_list,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', existingIncident.id)
+            .select()
+            .single();
+
+          result = {
+            action: 'updated',
+            incident_id: existingIncident.id,
+            tasks: task_list,
+          };
+        } else {
+          const { data: newIncident, error: createError } = await supabase
+            .from('incidents')
+            .insert({
+              signal_id: incidentSigId,
+              client_id: incidentSignal.client_id,
+              title: incidentSignal.title || 'Auto-generated incident',
+              summary: incidentSignal.description,
+              priority: incident_priority || 'p3',
+              status: 'open',
+              timeline_json: task_list,
+              severity_level: incidentSignal.severity,
+            })
+            .select()
+            .single();
+
+          if (createError) {
+            return new Response(JSON.stringify({ error: createError.message }), {
+              status: 400,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+          result = {
+            action: 'created',
+            incident_id: newIncident.id,
+            tasks: task_list,
+          };
+        }
+        break;
+
       default:
         result = { error: "Unknown tool" };
+    }
+
+    function generateResponseTasks(playbook: any, signal: any): any[] {
+      const tasks = [];
+      const severity = signal.severity?.toLowerCase() || 'medium';
+      
+      tasks.push({
+        task_id: 1,
+        action: "Initial Assessment",
+        description: `Review signal details and assess immediate threat level`,
+        assigned_to: "Security Operations Center",
+        priority: severity === 'critical' ? 'immediate' : 'high',
+        estimated_minutes: 15,
+      });
+
+      if (severity === 'critical' || severity === 'high') {
+        tasks.push({
+          task_id: 2,
+          action: "Escalate to Leadership",
+          description: `Notify senior security leadership and relevant stakeholders`,
+          assigned_to: "Security Manager",
+          priority: 'immediate',
+          estimated_minutes: 10,
+        });
+      }
+
+      tasks.push({
+        task_id: 3,
+        action: "Containment Measures",
+        description: `Implement immediate containment based on ${playbook.title}`,
+        assigned_to: "Response Team",
+        priority: 'high',
+        estimated_minutes: 45,
+      });
+
+      tasks.push({
+        task_id: 4,
+        action: "Investigation",
+        description: `Conduct thorough investigation following playbook procedures`,
+        assigned_to: "Investigation Team",
+        priority: 'medium',
+        estimated_minutes: 120,
+      });
+
+      tasks.push({
+        task_id: 5,
+        action: "Documentation",
+        description: `Document all findings, actions taken, and lessons learned`,
+        assigned_to: "Security Analyst",
+        priority: 'medium',
+        estimated_minutes: 30,
+      });
+
+      return tasks;
     }
 
     return new Response(JSON.stringify({ result }), {
