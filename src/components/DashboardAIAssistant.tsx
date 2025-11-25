@@ -3,11 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Send, Sparkles, Loader2, Mic, MicOff, Paperclip, X, Phone } from "lucide-react";
+import { Send, Sparkles, Loader2, Paperclip, X, Phone } from "lucide-react";
 import { VoiceConversationInterface } from "./VoiceConversationInterface";
 import { toast } from "sonner";
-import { useConversation } from "@11labs/react";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -27,7 +25,6 @@ export const DashboardAIAssistant = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [agentId, setAgentId] = useState("");
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -177,50 +174,6 @@ export const DashboardAIAssistant = () => {
     }
   };
 
-  const conversation = useConversation({
-    onConnect: () => {
-      console.log("Voice conversation connected");
-      toast.success("Voice assistant connected");
-    },
-    onDisconnect: () => {
-      console.log("Voice conversation disconnected");
-      toast.info("Voice assistant disconnected");
-    },
-    onMessage: (message) => {
-      console.log("Voice message:", message);
-    },
-    onError: (error) => {
-      console.error("Voice error:", error);
-      toast.error("Voice assistant error: " + error);
-    },
-    clientTools: {
-      get_recent_signals: async (params: { limit?: number }) => {
-        const { data } = await supabase.functions.invoke("ai-tools-query", {
-          body: { toolName: "get_recent_signals", parameters: params },
-        });
-        return JSON.stringify(data.result);
-      },
-      get_active_incidents: async (params: { limit?: number }) => {
-        const { data } = await supabase.functions.invoke("ai-tools-query", {
-          body: { toolName: "get_active_incidents", parameters: params },
-        });
-        return JSON.stringify(data.result);
-      },
-      search_entities: async (params: { query: string; limit?: number }) => {
-        const { data } = await supabase.functions.invoke("ai-tools-query", {
-          body: { toolName: "search_entities", parameters: params },
-        });
-        return JSON.stringify(data.result);
-      },
-      trigger_manual_scan: async (params: { source?: string }) => {
-        const { data } = await supabase.functions.invoke("ai-tools-query", {
-          body: { toolName: "trigger_manual_scan", parameters: params },
-        });
-        toast.success("Scan triggered successfully");
-        return JSON.stringify(data.result);
-      },
-    },
-  });
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -616,33 +569,6 @@ export const DashboardAIAssistant = () => {
     ));
   }, [messages, navigate]);
 
-  const startVoiceConversation = async () => {
-    if (!agentId.trim()) {
-      toast.error("Please enter an ElevenLabs Agent ID");
-      return;
-    }
-
-    try {
-      // Get signed URL from our edge function
-      const { data, error } = await supabase.functions.invoke("elevenlabs-agent-url", {
-        body: { agentId: agentId.trim() },
-      });
-
-      if (error) throw error;
-      if (!data?.signed_url) throw new Error("No signed URL received");
-
-      await conversation.startSession({
-        signedUrl: data.signed_url,
-      });
-    } catch (error) {
-      console.error("Error starting voice conversation:", error);
-      toast.error("Failed to start voice conversation");
-    }
-  };
-
-  const endVoiceConversation = async () => {
-    await conversation.endSession();
-  };
 
   const clearHistory = async () => {
     // First confirmation
@@ -798,13 +724,7 @@ Type "help" anytime to see this again!`,
         </div>
       </CardHeader>
       <CardContent>
-        <Tabs defaultValue="text" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="text">Text Chat</TabsTrigger>
-            <TabsTrigger value="voice">Voice Agent</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="text" className="space-y-3 flex flex-col">
+        <div className="space-y-3 flex flex-col">
             <div className="h-[400px] sm:h-[500px] lg:h-[600px] overflow-y-auto border rounded-md" ref={scrollRef}>
               <div className="p-4 space-y-4">
                 {isLoadingHistory ? (
@@ -911,63 +831,7 @@ Type "help" anytime to see this again!`,
                 {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </Button>
             </form>
-          </TabsContent>
-
-          <TabsContent value="voice" className="space-y-4">
-            <div className="flex flex-col items-center gap-4 py-8">
-              <div className="w-full max-w-md space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">ElevenLabs Agent ID</label>
-                  <Input
-                    value={agentId}
-                    onChange={(e) => setAgentId(e.target.value)}
-                    placeholder="Enter your Agent ID"
-                    disabled={conversation.status === "connected"}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Create an agent in ElevenLabs dashboard with knowledge about security intelligence and threat monitoring. Use the system prompt from the elevenlabs-agent-config function.
-                  </p>
-                </div>
-
-                {conversation.status === "disconnected" ? (
-                  <Button 
-                    onClick={startVoiceConversation}
-                    className="w-full"
-                    size="lg"
-                  >
-                    <Mic className="w-4 h-4 mr-2" />
-                    Start Voice Conversation
-                  </Button>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-                      {conversation.isSpeaking ? (
-                        <>
-                          <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
-                          AI is speaking...
-                        </>
-                      ) : (
-                        <>
-                          <Mic className="w-4 h-4 text-primary" />
-                          Listening...
-                        </>
-                      )}
-                    </div>
-                    <Button 
-                      onClick={endVoiceConversation}
-                      variant="destructive"
-                      className="w-full"
-                      size="lg"
-                    >
-                      <MicOff className="w-4 h-4 mr-2" />
-                      End Conversation
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </TabsContent>
-        </Tabs>
+        </div>
       </CardContent>
     </Card>
   );
