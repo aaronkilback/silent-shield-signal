@@ -152,3 +152,15 @@ verify_jwt = false
 
 [functions.execute-signal-merge]
 verify_jwt = false
+
+[functions.analyze-image-content]
+verify_jwt = false
+
+[functions.fuse-geospatial-intelligence]
+verify_jwt = false
+
+[functions.analyze-threat-escalation]
+verify_jwt = false
+
+[functions.identify-precursor-indicators]
+verify_jwt = false
