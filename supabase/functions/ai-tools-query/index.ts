@@ -279,6 +279,94 @@ serve(async (req) => {
         };
         break;
 
+      case "get_client_risk_profile":
+        const { client_id: clientId } = parameters;
+        if (!clientId) {
+          return new Response(JSON.stringify({ error: 'client_id required' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { data: clientProfile, error: clientProfileError } = await supabase
+          .from('clients')
+          .select('id, name, industry, risk_assessment, threat_profile, high_value_assets, locations, monitoring_keywords, employee_count, status')
+          .eq('id', clientId)
+          .single();
+        
+        if (clientProfileError || !clientProfile) {
+          return new Response(JSON.stringify({ error: 'Client not found' }), {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        
+        result = clientProfile;
+        break;
+
+      case "get_client_critical_assets":
+        const { client_id: assetClientId } = parameters;
+        if (!assetClientId) {
+          return new Response(JSON.stringify({ error: 'client_id required' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { data: clientAssets, error: clientAssetsError } = await supabase
+          .from('clients')
+          .select('id, name, high_value_assets, locations, risk_assessment')
+          .eq('id', assetClientId)
+          .single();
+        
+        if (clientAssetsError || !clientAssets) {
+          return new Response(JSON.stringify({ error: 'Client not found' }), {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        
+        const assetRegistry = (clientAssets?.high_value_assets || []).map((asset: string, index: number) => ({
+          asset_name: asset,
+          criticality: 'high',
+          asset_type: 'infrastructure',
+          index: index + 1
+        }));
+        
+        result = {
+          client_id: clientAssets?.id,
+          client_name: clientAssets?.name,
+          critical_assets: assetRegistry,
+          locations: clientAssets?.locations || [],
+          risk_assessment: clientAssets?.risk_assessment
+        };
+        break;
+
+      case "get_client_operational_context":
+        const { client_id: opsClientId } = parameters;
+        if (!opsClientId) {
+          return new Response(JSON.stringify({ error: 'client_id required' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { data: clientOps, error: clientOpsError } = await supabase
+          .from('clients')
+          .select('id, name, industry, locations, monitoring_config, threat_profile, risk_assessment, employee_count, competitor_names, supply_chain_entities')
+          .eq('id', opsClientId)
+          .single();
+        
+        if (clientOpsError || !clientOps) {
+          return new Response(JSON.stringify({ error: 'Client not found' }), {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        
+        result = clientOps;
+        break;
+
       default:
         result = { error: "Unknown tool" };
     }
