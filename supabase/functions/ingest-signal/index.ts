@@ -435,7 +435,37 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
       }
     }
 
-    // Insert signal
+    // Calculate content hash BEFORE insertion for duplicate detection
+    const encoder = new TextEncoder();
+    const data = encoder.encode(signalText);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const contentHash = hashArray.map((b: number) => b.toString(16).padStart(2, '0')).join('');
+    
+    console.log(`Calculated content hash: ${contentHash.substring(0, 16)}...`);
+    
+    // Check for duplicates BEFORE insertion
+    const dupCheck = await supabase.functions.invoke('detect-duplicates', {
+      body: {
+        type: 'signal',
+        content: signalText,
+        autoCheck: false  // Don't create detection records yet since signal doesn't exist
+      }
+    });
+    
+    if (dupCheck?.data?.isDuplicate && dupCheck?.data?.exactMatch) {
+      console.log(`EXACT duplicate detected - blocking signal creation`);
+      return new Response(
+        JSON.stringify({ 
+          error: 'Duplicate signal detected and blocked',
+          duplicate_of: dupCheck.data.duplicate?.id,
+          message: dupCheck.data.message
+        }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Insert signal WITH content_hash from the start
     const { data: signal, error: insertError } = await supabase
       .from('signals')
       .insert({
@@ -452,7 +482,8 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
         severity: classification.severity,
         confidence: classification.confidence,
         status: 'new',
-        is_test: is_test || false
+        is_test: is_test || false,
+        content_hash: contentHash  // CRITICAL: Include hash in initial insert
       })
       .select()
       .single();
@@ -464,44 +495,23 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
 
     console.log(`Signal ingested: ${signal.id}${matchedKeywords.length > 0 ? ` (keywords: ${matchedKeywords.join(', ')})` : ''}`);
 
-    
-    // Calculate and store content hash for duplicate detection
-    const encoder = new TextEncoder();
-    const data = encoder.encode(signalText);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const contentHash = hashArray.map((b: number) => b.toString(16).padStart(2, '0')).join('');
-    
-    await supabase.from('signals').update({ content_hash: contentHash }).eq('id', signal.id);
-    
-    // Check for duplicates BEFORE insertion
-    const dupCheck = await supabase.functions.invoke('detect-duplicates', {
-      body: {
-        type: 'signal',
-        content: signalText,
-        id: signal.id,
-        autoCheck: true
+    // Now create duplicate detection records if any near-duplicates found
+    if (dupCheck?.data?.duplicates && dupCheck.data.duplicates.length > 0) {
+      console.log(`Found ${dupCheck.data.duplicates.length} near-duplicate signals`);
+      try {
+        const detections = dupCheck.data.duplicates.map((dup: any) => ({
+          detection_type: 'signal',
+          source_id: signal.id,
+          duplicate_id: dup.id,
+          similarity_score: dup.similarity_score || 1.0,
+          detection_method: dup.similarity_score ? 'text_similarity' : 'hash',
+          status: 'pending'
+        }));
+        await supabase.from('duplicate_detections').insert(detections);
+      } catch (detectionError) {
+        console.error('Failed to create duplicate detection records:', detectionError);
+        // Don't fail the whole request if detection records fail
       }
-    });
-    
-    if (dupCheck?.data?.isDuplicate && dupCheck?.data?.exactMatch) {
-      console.log(`EXACT duplicate detected - deleting signal ${signal.id}`);
-      // Delete the duplicate signal
-      await supabase
-        .from('signals')
-        .delete()
-        .eq('id', signal.id);
-      
-      return new Response(
-        JSON.stringify({ 
-          error: 'Duplicate signal detected and removed',
-          duplicate_of: dupCheck.data.duplicate?.id,
-          message: dupCheck.data.message
-        }),
-        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    } else if (dupCheck?.data?.isDuplicate) {
-      console.log(`Potential duplicate detected: ${dupCheck.data.count} similar signals`);
     }
     
     // Use intelligent entity correlation system
