@@ -1196,6 +1196,37 @@ const tools = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "propose_signal_merge",
+      description: "Propose merging duplicate or near-duplicate signals. Use when you identify signals that appear to be duplicates based on content similarity, source, or entity mentions. This creates a proposal for human review before executing the merge.",
+      parameters: {
+        type: "object",
+        properties: {
+          primary_signal_id: {
+            type: "string",
+            description: "UUID of the signal to keep (primary/canonical signal)",
+          },
+          duplicate_signal_ids: {
+            type: "array",
+            items: { type: "string" },
+            description: "Array of UUIDs of duplicate signals to merge into the primary",
+          },
+          similarity_scores: {
+            type: "array",
+            items: { type: "number" },
+            description: "Array of similarity scores (0-1) for each duplicate, matching order of duplicate_signal_ids",
+          },
+          rationale: {
+            type: "string",
+            description: "Explanation of why these signals should be merged (detection method, similarity reasoning)",
+          },
+        },
+        required: ["primary_signal_id", "duplicate_signal_ids"],
+      },
+    },
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -4765,6 +4796,39 @@ serve(async (req) => {
       }
 
       return toolResult.result;
+    }
+
+    case "propose_signal_merge": {
+      const { primary_signal_id, duplicate_signal_ids, similarity_scores, rationale } = args;
+      
+      console.log(`Proposing merge for primary signal: ${primary_signal_id} with ${duplicate_signal_ids.length} duplicates`);
+      
+      const { data: mergeProposal, error: mergeError } = await supabaseClient.functions.invoke(
+        "propose-signal-merge",
+        {
+          body: {
+            primary_signal_id,
+            duplicate_signal_ids,
+            similarity_scores: similarity_scores || [],
+            rationale: rationale || "AI-detected duplicate signals",
+          },
+        }
+      );
+
+      if (mergeError) {
+        console.error("Error proposing signal merge:", mergeError);
+        return {
+          error: mergeError.message,
+          message: `Failed to propose merge: ${mergeError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        proposal_id: mergeProposal.proposal_id,
+        message: `Merge proposal created successfully. ${duplicate_signal_ids.length} duplicate signals will be merged into primary signal ${primary_signal_id.slice(0, 8)}... after human approval. View proposals in the Approvals page (Signal Merges tab).`,
+        details: mergeProposal,
+      };
     }
 
     default:

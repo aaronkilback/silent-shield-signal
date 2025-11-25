@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SignalMergeProposals } from "@/components/SignalMergeProposals";
 
 interface RuleProposal {
   key: string;
@@ -141,11 +143,19 @@ const RuleApprovals = () => {
       <Header />
       <main className="container mx-auto px-6 py-8 space-y-6">
         <div>
-          <h1 className="text-3xl font-bold">Rule Approvals</h1>
+          <h1 className="text-3xl font-bold">Approvals</h1>
           <p className="text-muted-foreground mt-2">
-            Review and approve automated signal categorization rules
+            Review and approve AI-proposed actions
           </p>
         </div>
+
+        <Tabs defaultValue="rules" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="rules">Categorization Rules</TabsTrigger>
+            <TabsTrigger value="merges">Signal Merges</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="rules" className="space-y-6">
 
         {pendingProposals.length === 0 && (
           <Card>
@@ -296,6 +306,12 @@ const RuleApprovals = () => {
             </div>
           </>
         )}
+          </TabsContent>
+
+          <TabsContent value="merges" className="space-y-6">
+            {user && <SignalMergeProposals userId={user.id} />}
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );
