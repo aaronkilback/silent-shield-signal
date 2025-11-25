@@ -2620,6 +2620,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      calculate_signal_hash: { Args: { text_content: string }; Returns: string }
       cleanup_processing_queue: { Args: never; Returns: number }
       enqueue_signal_processing: {
         Args: { priority_level?: number; signal_id: string }
