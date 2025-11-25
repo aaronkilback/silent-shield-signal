@@ -141,6 +141,144 @@ serve(async (req) => {
         result = signalResults;
         break;
 
+      case "get_entity_summary_for_signal":
+        const { signal_id: sigId } = parameters;
+        if (!sigId) {
+          return new Response(JSON.stringify({ error: 'signal_id required' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { data: signalData, error: sigError } = await supabase
+          .from('signals')
+          .select('id, correlated_entity_ids')
+          .eq('id', sigId)
+          .single();
+
+        if (sigError || !signalData) {
+          return new Response(JSON.stringify({ error: 'Signal not found' }), {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const entityIds = signalData.correlated_entity_ids || [];
+        if (entityIds.length === 0) {
+          result = { entities: [] };
+          break;
+        }
+
+        const { data: entityDetails } = await supabase
+          .from('entities')
+          .select('*')
+          .in('id', entityIds);
+
+        result = {
+          entities: entityDetails?.map(e => ({
+            id: e.id,
+            name: e.name,
+            type: e.type,
+            description: e.description,
+            risk_level: e.risk_level,
+            threat_score: e.threat_score,
+            last_activity: e.updated_at,
+            key_attributes: e.attributes,
+          })) || []
+        };
+        break;
+
+      case "get_related_signals":
+        const { signal_id: relSigId, criteria = 'shared_entities' } = parameters;
+        if (!relSigId) {
+          return new Response(JSON.stringify({ error: 'signal_id required' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { data: sourceSignal, error: srcError } = await supabase
+          .from('signals')
+          .select('id, correlated_entity_ids, normalized_text, category')
+          .eq('id', relSigId)
+          .single();
+
+        if (srcError || !sourceSignal) {
+          return new Response(JSON.stringify({ error: 'Signal not found' }), {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        let relatedQuery = supabase
+          .from('signals')
+          .select('id, normalized_text, category, severity, created_at, correlated_entity_ids')
+          .neq('id', relSigId)
+          .order('created_at', { ascending: false })
+          .limit(20);
+
+        if (criteria === 'shared_entities' && sourceSignal.correlated_entity_ids?.length > 0) {
+          relatedQuery = relatedQuery.overlaps('correlated_entity_ids', sourceSignal.correlated_entity_ids);
+        } else if (criteria === 'same_category' && sourceSignal.category) {
+          relatedQuery = relatedQuery.eq('category', sourceSignal.category);
+        }
+
+        const { data: relatedSignals } = await relatedQuery;
+        result = {
+          related_signals: relatedSignals || [],
+          criteria,
+          source_signal_id: relSigId
+        };
+        break;
+
+      case "get_source_reputation":
+        const { source_id: srcId } = parameters;
+        if (!srcId) {
+          return new Response(JSON.stringify({ error: 'source_id required' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { data: sourceData, error: sourceErr } = await supabase
+          .from('sources')
+          .select('id, name, type, status, created_at')
+          .eq('id', srcId)
+          .single();
+
+        if (sourceErr || !sourceData) {
+          return new Response(JSON.stringify({ error: 'Source not found' }), {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { data: metrics } = await supabase
+          .from('source_reliability_metrics')
+          .select('*')
+          .eq('source_id', srcId)
+          .single();
+
+        const { count: signalCount } = await supabase
+          .from('signals')
+          .select('id', { count: 'exact', head: true })
+          .contains('sources_mentioned', [sourceData.name]);
+
+        result = {
+          reputation: {
+            source_id: srcId,
+            source_name: sourceData.name,
+            source_type: sourceData.type,
+            status: sourceData.status,
+            total_signals: signalCount || 0,
+            reliability_score: metrics?.reliability_score || 0.5,
+            accurate_signals: metrics?.accurate_signals || 0,
+            false_positives: metrics?.false_positives || 0,
+            last_updated: metrics?.last_updated || sourceData.created_at,
+          }
+        };
+        break;
+
       default:
         result = { error: "Unknown tool" };
     }

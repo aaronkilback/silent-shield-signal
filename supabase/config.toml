@@ -137,3 +137,18 @@ verify_jwt = false
 
 [functions.generate-vehicle-image]
 verify_jwt = true
+
+[functions.test-osint-source-connectivity]
+verify_jwt = false
+
+[functions.update-osint-source-config]
+verify_jwt = false
+
+[functions.detect-near-duplicate-signals]
+verify_jwt = false
+
+[functions.propose-signal-merge]
+verify_jwt = false
+
+[functions.execute-signal-merge]
+verify_jwt = false
