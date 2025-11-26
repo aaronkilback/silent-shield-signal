@@ -401,8 +401,10 @@ Extract all entities, signals, and their relationships.`
 
     // Process signals - create one per matched client
     for (const signal of intelligence.signals || []) {
-      // Generate content hash for deduplication
-      const contentToHash = `${signal.title || ''}|${signal.description || ''}`;
+      // FIX 3: Generate content hash based on SOURCE URL + signal content for better deduplication
+      // This ensures the same RSS article always produces the same hash regardless of AI phrasing variations
+      const sourceUrl = document.metadata?.url || '';
+      const contentToHash = `${sourceUrl}|${signal.title || ''}|${signal.description || ''}`;
       const encoder = new TextEncoder();
       const data = encoder.encode(contentToHash);
       const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -411,21 +413,45 @@ Extract all entities, signals, and their relationships.`
 
       // Create signal for each matched client
       for (const clientMatch of clientMatches) {
-        // Check for existing signal with same content hash (within 7 days)
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        // Check for existing signal with same content hash (within 30 days instead of 7)
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
         
         const { data: existingSignal } = await supabase
           .from('signals')
           .select('id')
           .eq('content_hash', contentHash)
           .eq('client_id', clientMatch.clientId)
-          .gte('created_at', sevenDaysAgo.toISOString())
+          .gte('created_at', thirtyDaysAgo.toISOString())
           .single();
 
         if (existingSignal) {
           console.log(`Skipping duplicate signal for client ${clientMatch.clientName}: ${signal.title}`);
           continue; // Skip this duplicate
+        }
+        
+        // Additional near-duplicate check: look for similar normalized_text in recent signals
+        const { data: recentSignals } = await supabase
+          .from('signals')
+          .select('id, normalized_text')
+          .eq('client_id', clientMatch.clientId)
+          .gte('created_at', thirtyDaysAgo.toISOString())
+          .limit(50);
+        
+        // Simple similarity check - if any recent signal contains 80% of the same words, skip
+        if (recentSignals && recentSignals.length > 0) {
+          const signalWords = new Set(signal.description.toLowerCase().split(/\s+/));
+          for (const existing of recentSignals) {
+            if (!existing.normalized_text) continue;
+            const existingWords = new Set(existing.normalized_text.toLowerCase().split(/\s+/));
+            const intersection = new Set([...signalWords].filter(w => existingWords.has(w)));
+            const similarity = intersection.size / Math.min(signalWords.size, existingWords.size);
+            
+            if (similarity > 0.8) {
+              console.log(`Skipping near-duplicate signal (${(similarity * 100).toFixed(0)}% similar): ${signal.title}`);
+              continue;
+            }
+          }
         }
 
         const { data: newSignal, error: signalError } = await supabase

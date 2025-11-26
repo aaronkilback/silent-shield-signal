@@ -167,6 +167,18 @@ serve(async (req) => {
         // Process each RSS item - ingest for AI analysis
         for (const item of items.slice(0, 10)) {
           try {
+            // FIX 1: Check if this URL has already been ingested to prevent duplicates
+            const { data: existingDoc } = await supabaseClient
+              .from('ingested_documents')
+              .select('id')
+              .eq('metadata->>url', item.link)
+              .single();
+
+            if (existingDoc) {
+              console.log(`Skipping already ingested item: ${item.title}`);
+              continue;
+            }
+
             const content = `${item.title}\n\n${item.description}`;
             
             // Ingest document for AI to analyze relevance
