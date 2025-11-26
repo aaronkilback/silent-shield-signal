@@ -31,11 +31,17 @@ CRITICAL CAPABILITIES - PHASE 4 & PHASE 5 ENHANCEMENTS:
    - Integrate with incident management using integrate_incident_management
    - Create or update incidents with pre-populated tasks and priorities
 
-4. AUTONOMOUS LEARNING & SELF-OPTIMIZATION (PHASE 5):
+4. AUTONOMOUS LEARNING & SELF-OPTIMIZATION (PHASE 5 - PILLAR 1):
    - Continuously optimize rule thresholds based on feedback and incident outcomes using optimize_rule_thresholds
    - Autonomously propose new monitoring keywords based on emerging threats using propose_new_monitoring_keywords
    - Proactively manage OSINT source health and auto-fix common issues using autonomous_source_health_manager
    - Learn from feedback_events and incident_outcomes to improve accuracy over time
+
+5. THREAT EMULATION & SCENARIO SIMULATION (PHASE 5 - PILLAR 2):
+   - Simulate attack paths using simulate_attack_path to model how threat actors would exploit vulnerabilities
+   - Predict protest/demonstration escalation using simulate_protest_escalation for physical security planning
+   - Identify critical failure points using identify_critical_failure_points for business continuity and resilience testing
+   - Enable proactive vulnerability assessment and pre-emptive risk mitigation
 
 INTERACTION GUIDELINES:
 - If a query is ambiguous, ask targeted follow-up questions rather than stating inability
@@ -56,7 +62,7 @@ AI: [Uses signal from previous context, recommends playbook, drafts response tas
 User: "Yes, make it high priority"
 AI: [Creates incident with high priority, pre-populated tasks, confirms creation]
 
-AUTONOMOUS LEARNING EXAMPLES:
+AUTONOMOUS LEARNING EXAMPLES (PILLAR 1):
 User: "Are our monitoring rules accurate?"
 AI: [Analyzes feedback data, optimizes thresholds, identifies rules with high false positive rates, recommends adjustments]
 
@@ -65,6 +71,16 @@ AI: [Analyzes cross-client patterns, proposes new keywords based on emerging thr
 
 User: "Why isn't the XYZ feed working?"
 AI: [Tests source connectivity, diagnoses issue, autonomously applies fix if possible, reports result]
+
+THREAT EMULATION EXAMPLES (PILLAR 2):
+User: "How would a ransomware gang attack our infrastructure?"
+AI: [Simulates attack path, models TTPs, estimates timeline, identifies vulnerable points, recommends mitigations]
+
+User: "Will this protest escalate to violence?"
+AI: [Analyzes historical patterns, assesses escalation factors, predicts likelihood and timeline, recommends operational adjustments]
+
+User: "What are our biggest operational vulnerabilities?"
+AI: [Identifies critical failure points, maps cascading effects, prioritizes mitigation, provides business continuity recommendations]
 
 Always prioritize clarity, actionability, security posture improvement, and continuous self-optimization.`;
 
@@ -1345,6 +1361,73 @@ const tools = [
             description: "If true, only diagnose without applying fixes (default: false)",
           },
         },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "simulate_attack_path",
+      description: "PHASE 5: Simulate how a threat actor would exploit vulnerabilities against client assets. Models attack TTPs, lateral movement, persistence, and impact. Use for proactive vulnerability testing and risk planning.",
+      parameters: {
+        type: "object",
+        properties: {
+          threat_actor_profile: {
+            type: "string",
+            description: "Threat actor name, group, or profile (e.g., 'APT28', 'ransomware gang', 'insider threat')",
+          },
+          target_asset_id: {
+            type: "string",
+            description: "Client UUID or asset identifier to target in simulation",
+          },
+          vulnerability_id: {
+            type: "string",
+            description: "Optional: Specific vulnerability or CVE to model exploitation of",
+          },
+        },
+        required: ["threat_actor_profile", "target_asset_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "simulate_protest_escalation",
+      description: "PHASE 5: Predict likelihood and nature of protest/demonstration escalation to violence, property damage, or operational disruption. Analyzes historical patterns and current factors. Use for physical security planning.",
+      parameters: {
+        type: "object",
+        properties: {
+          signal_id: {
+            type: "string",
+            description: "UUID of the protest/demonstration signal to analyze",
+          },
+          escalation_factors: {
+            type: "string",
+            description: "Optional: Specific escalation factors to consider (e.g., 'police presence', 'counter-protesters', 'grievance severity')",
+          },
+        },
+        required: ["signal_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "identify_critical_failure_points",
+      description: "PHASE 5: Analyze client operational flow to identify critical failure points and single points of failure under threat scenarios. Maps cascading effects and prioritizes mitigation. Use for business continuity planning.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_operation_flow: {
+            type: "string",
+            description: "Client UUID or description of operational process (e.g., 'supply chain', 'incident response', 'production pipeline')",
+          },
+          threat_scenario: {
+            type: "string",
+            description: "Threat scenario to test against (e.g., 'ransomware attack', 'facility blockade', 'supplier failure')",
+          },
+        },
+        required: ["client_operation_flow", "threat_scenario"],
       },
     },
   },
@@ -5089,6 +5172,106 @@ serve(async (req) => {
         message: dry_run 
           ? `Health check complete (DRY RUN). ${healthResult.sources_checked} sources checked. ${fixedSources.length} sources with issues identified.`
           : `Source health management complete. ${healthResult.sources_checked} sources checked, ${fixedSources.length} sources auto-fixed, ${healthySources.length} sources healthy.`,
+      };
+    }
+
+    case "simulate_attack_path": {
+      const { threat_actor_profile, target_asset_id, vulnerability_id } = args;
+      
+      console.log(`Simulating attack path: ${threat_actor_profile} → ${target_asset_id}`);
+      
+      const { data: simulationResult, error: simulationError } = await supabaseClient.functions.invoke(
+        "simulate-attack-path",
+        {
+          body: {
+            threat_actor_profile,
+            target_asset_id,
+            vulnerability_id,
+          },
+        }
+      );
+
+      if (simulationError) {
+        console.error("Error simulating attack path:", simulationError);
+        return {
+          error: simulationError.message,
+          message: `Failed to simulate attack path: ${simulationError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        threat_actor: threat_actor_profile,
+        target: target_asset_id,
+        simulation: simulationResult.simulation,
+        message: `Attack path simulation complete. Likelihood: ${simulationResult.simulation.likelihood}. Timeline: ${simulationResult.simulation.estimated_timeline}. Found ${simulationResult.simulation.related_signals_count} related threat signals.`,
+      };
+    }
+
+    case "simulate_protest_escalation": {
+      const { signal_id, escalation_factors } = args;
+      
+      console.log(`Simulating protest escalation for signal: ${signal_id}`);
+      
+      const { data: escalationResult, error: escalationError } = await supabaseClient.functions.invoke(
+        "simulate-protest-escalation",
+        {
+          body: {
+            signal_id,
+            escalation_factors,
+          },
+        }
+      );
+
+      if (escalationError) {
+        console.error("Error simulating escalation:", escalationError);
+        return {
+          error: escalationError.message,
+          message: `Failed to simulate protest escalation: ${escalationError.message}`,
+        };
+      }
+
+      const forecast = escalationResult.escalation_forecast;
+      
+      return {
+        success: true,
+        signal_id,
+        forecast,
+        message: `Escalation forecast complete. Likelihood: ${forecast.escalation_likelihood} (${forecast.escalation_probability}%). Violence probability: ${forecast.violence_probability}%. Estimated duration: ${forecast.estimated_duration}. Analysis based on ${forecast.historical_context.similar_protests} historical protests.`,
+      };
+    }
+
+    case "identify_critical_failure_points": {
+      const { client_operation_flow, threat_scenario } = args;
+      
+      console.log(`Identifying failure points in: ${client_operation_flow} under scenario: ${threat_scenario}`);
+      
+      const { data: analysisResult, error: analysisError } = await supabaseClient.functions.invoke(
+        "identify-critical-failure-points",
+        {
+          body: {
+            client_operation_flow,
+            threat_scenario,
+          },
+        }
+      );
+
+      if (analysisError) {
+        console.error("Error analyzing failure points:", analysisError);
+        return {
+          error: analysisError.message,
+          message: `Failed to identify failure points: ${analysisError.message}`,
+        };
+      }
+
+      const analysis = analysisResult.failure_analysis;
+      
+      return {
+        success: true,
+        operation: analysisResult.operation_context,
+        threat_scenario,
+        analysis,
+        message: `Failure point analysis complete. Identified ${analysis.critical_points_identified} critical failure points and ${analysis.single_points_of_failure} single points of failure. Analysis based on ${analysis.historical_context.total_incidents_analyzed} historical incidents.`,
       };
     }
 
