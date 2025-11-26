@@ -6,10 +6,10 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Enhanced system prompt for Phase 4: Intent Recognition & Contextual Understanding
+// Enhanced system prompt for Phase 4/5: Intent Recognition, Contextual Understanding, and Autonomous Learning
 const ENHANCED_SYSTEM_PROMPT = `You are an advanced AI security co-pilot for Fortress, a threat intelligence platform. You have sophisticated natural language understanding and can handle complex, multi-part queries with context awareness.
 
-CRITICAL CAPABILITIES - PHASE 4 ENHANCEMENTS:
+CRITICAL CAPABILITIES - PHASE 4 & PHASE 5 ENHANCEMENTS:
 
 1. INTENT RECOGNITION & CONTEXTUAL UNDERSTANDING:
    - Parse complex, ambiguous, or multi-step requests intelligently
@@ -31,6 +31,12 @@ CRITICAL CAPABILITIES - PHASE 4 ENHANCEMENTS:
    - Integrate with incident management using integrate_incident_management
    - Create or update incidents with pre-populated tasks and priorities
 
+4. AUTONOMOUS LEARNING & SELF-OPTIMIZATION (PHASE 5):
+   - Continuously optimize rule thresholds based on feedback and incident outcomes using optimize_rule_thresholds
+   - Autonomously propose new monitoring keywords based on emerging threats using propose_new_monitoring_keywords
+   - Proactively manage OSINT source health and auto-fix common issues using autonomous_source_health_manager
+   - Learn from feedback_events and incident_outcomes to improve accuracy over time
+
 INTERACTION GUIDELINES:
 - If a query is ambiguous, ask targeted follow-up questions rather than stating inability
 - Build on previous conversation context without requiring users to repeat information
@@ -38,6 +44,7 @@ INTERACTION GUIDELINES:
 - When presenting risk scores, always explain contributing factors
 - For high-risk scenarios, automatically suggest playbooks and response tasks
 - Present impact analysis in business terms (P.R.A.: People, Reputation, Assets)
+- PROACTIVELY identify optimization opportunities: suggest keyword additions, rule threshold adjustments, source health improvements
 
 EXAMPLE MULTI-TURN CONVERSATIONS:
 User: "What's the impact of that critical cyber signal from yesterday?"
@@ -49,7 +56,17 @@ AI: [Uses signal from previous context, recommends playbook, drafts response tas
 User: "Yes, make it high priority"
 AI: [Creates incident with high priority, pre-populated tasks, confirms creation]
 
-Always prioritize clarity, actionability, and security posture improvement.`;
+AUTONOMOUS LEARNING EXAMPLES:
+User: "Are our monitoring rules accurate?"
+AI: [Analyzes feedback data, optimizes thresholds, identifies rules with high false positive rates, recommends adjustments]
+
+User: "What new threats should we be monitoring?"
+AI: [Analyzes cross-client patterns, proposes new keywords based on emerging threats, explains rationale]
+
+User: "Why isn't the XYZ feed working?"
+AI: [Tests source connectivity, diagnoses issue, autonomously applies fix if possible, reports result]
+
+Always prioritize clarity, actionability, security posture improvement, and continuous self-optimization.`;
 
 // Tool definitions for querying the database
 const tools = [
@@ -1254,6 +1271,80 @@ const tools = [
           },
         },
         required: ["primary_signal_id", "duplicate_signal_ids"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "optimize_rule_thresholds",
+      description: "PHASE 5: Autonomously analyze feedback data and incident outcomes to optimize signal categorization rule thresholds and conditions. Identifies false positive patterns and recommends threshold adjustments to improve accuracy. Can auto-apply changes if high-confidence recommendations exist.",
+      parameters: {
+        type: "object",
+        properties: {
+          rule_id: {
+            type: "string",
+            description: "UUID of the rule to optimize",
+          },
+          feedback_data: {
+            type: "object",
+            description: "Optional: Specific feedback data to incorporate into analysis",
+          },
+          auto_apply: {
+            type: "boolean",
+            description: "If true, auto-applies high-priority recommendations (default: false, requires manual approval)",
+          },
+        },
+        required: ["rule_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "propose_new_monitoring_keywords",
+      description: "PHASE 5: Autonomously analyze signal patterns and cross-client threat trends to propose new monitoring keywords for client profiles. Identifies emerging threats, frequently occurring entities, and high-severity terms that should be monitored.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: {
+            type: "string",
+            description: "UUID of the client to propose keywords for",
+          },
+          observed_trends: {
+            type: "string",
+            description: "Optional: Specific trends or patterns observed by AI to incorporate",
+          },
+          lookback_days: {
+            type: "number",
+            description: "Number of days to analyze (default: 30)",
+          },
+        },
+        required: ["client_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "autonomous_source_health_manager",
+      description: "PHASE 5: Autonomously test OSINT/RSS source connectivity and attempt low-risk fixes for common issues (User-Agent blocks, SSL errors, timeouts). Proactively maintains source health without manual intervention. Logs all actions for audit trail.",
+      parameters: {
+        type: "object",
+        properties: {
+          source_id: {
+            type: "string",
+            description: "Optional: Specific source UUID to manage. If omitted, checks all recently failed sources",
+          },
+          auto_fix: {
+            type: "boolean",
+            description: "If true, autonomously applies low-risk fixes (default: true)",
+          },
+          dry_run: {
+            type: "boolean",
+            description: "If true, only diagnose without applying fixes (default: false)",
+          },
+        },
       },
     },
   },
@@ -4892,6 +4983,112 @@ serve(async (req) => {
         signal_id: ingestResult.signal_id,
         message: `Test signal injected successfully with ID ${ingestResult.signal_id?.slice(0, 8)}... Rules will be applied automatically. Check the Signals page to see the categorized signal.`,
         details: ingestResult,
+      };
+    }
+
+    case "optimize_rule_thresholds": {
+      const { rule_id, feedback_data, auto_apply = false } = args;
+      
+      console.log(`Optimizing rule thresholds for rule: ${rule_id}`);
+      
+      const { data: optimizationResult, error: optimizationError } = await supabaseClient.functions.invoke(
+        "optimize-rule-thresholds",
+        {
+          body: {
+            rule_id,
+            feedback_data: feedback_data || {},
+            auto_apply,
+          },
+        }
+      );
+
+      if (optimizationError) {
+        console.error("Error optimizing rule thresholds:", optimizationError);
+        return {
+          error: optimizationError.message,
+          message: `Failed to optimize rule: ${optimizationError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        rule_name: optimizationResult.rule_name,
+        analysis: optimizationResult.analysis,
+        applied_changes: optimizationResult.applied_changes,
+        message: optimizationResult.applied_changes 
+          ? `Rule optimization complete with ${optimizationResult.analysis.recommendations.length} recommendations. Changes ${optimizationResult.applied_changes.status === "pending_approval" ? "pending approval" : "applied"}.`
+          : `Rule analysis complete. Found ${optimizationResult.analysis.recommendations.length} optimization opportunities. False positive rate: ${(optimizationResult.analysis.analysis.false_positive_rate * 100).toFixed(1)}%.`,
+      };
+    }
+
+    case "propose_new_monitoring_keywords": {
+      const { client_id, observed_trends, lookback_days = 30 } = args;
+      
+      console.log(`Proposing new monitoring keywords for client: ${client_id}`);
+      
+      const { data: keywordProposal, error: keywordError } = await supabaseClient.functions.invoke(
+        "propose-new-monitoring-keywords",
+        {
+          body: {
+            client_id,
+            observed_trends,
+            lookback_days,
+          },
+        }
+      );
+
+      if (keywordError) {
+        console.error("Error proposing keywords:", keywordError);
+        return {
+          error: keywordError.message,
+          message: `Failed to propose keywords: ${keywordError.message}`,
+        };
+      }
+
+      const highConfidenceProposals = keywordProposal.proposals.filter((p: any) => p.confidence === "high");
+      
+      return {
+        success: true,
+        client_name: keywordProposal.client_name,
+        proposals: keywordProposal.proposals,
+        message: `Keyword analysis complete for ${keywordProposal.client_name}. Found ${keywordProposal.proposals.length} keyword proposals (${highConfidenceProposals.length} high-confidence) based on ${keywordProposal.signals_analyzed} signals from the past ${lookback_days} days.`,
+      };
+    }
+
+    case "autonomous_source_health_manager": {
+      const { source_id, auto_fix = true, dry_run = false } = args;
+      
+      console.log(`Managing source health${source_id ? ` for: ${source_id}` : " for all failed sources"}`);
+      
+      const { data: healthResult, error: healthError } = await supabaseClient.functions.invoke(
+        "autonomous-source-health-manager",
+        {
+          body: {
+            source_id,
+            auto_fix,
+            dry_run,
+          },
+        }
+      );
+
+      if (healthError) {
+        console.error("Error managing source health:", healthError);
+        return {
+          error: healthError.message,
+          message: `Failed to manage source health: ${healthError.message}`,
+        };
+      }
+
+      const fixedSources = healthResult.results.filter((r: any) => r.actions_taken.some((a: any) => a.action !== "health_check_passed"));
+      const healthySources = healthResult.results.filter((r: any) => r.test_result.success);
+      
+      return {
+        success: true,
+        sources_checked: healthResult.sources_checked,
+        results: healthResult.results,
+        message: dry_run 
+          ? `Health check complete (DRY RUN). ${healthResult.sources_checked} sources checked. ${fixedSources.length} sources with issues identified.`
+          : `Source health management complete. ${healthResult.sources_checked} sources checked, ${fixedSources.length} sources auto-fixed, ${healthySources.length} sources healthy.`,
       };
     }
 
