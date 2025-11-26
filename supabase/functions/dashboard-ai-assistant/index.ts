@@ -5148,7 +5148,14 @@ serve(async (req) => {
       return {
         success: true,
         signal_id: ingestResult.signal_id,
-        message: `Test signal injected successfully with ID ${ingestResult.signal_id?.slice(0, 8)}... Rules will be applied automatically. Check the Signals page to see the categorized signal.`,
+        message: `✅ Test signal injected successfully with ID ${ingestResult.signal_id?.slice(0, 8)}...
+        
+**CRITICAL: To view this signal in the UI:**
+1. You MUST be logged in to Fortress
+2. You MUST have selected the correct client (Petronas Canada or Dan Martell) using the client selector
+3. Navigate to the Signals page (/signals)
+
+The signal has been created in the database and will appear once you're logged in with the correct client selected. Rules are applied automatically.`,
         details: ingestResult,
       };
     }

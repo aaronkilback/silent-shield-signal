@@ -15,7 +15,8 @@ const SignalInputSchema = z.object({
   url: z.string().url().optional(),
   location: z.string().max(500).optional(),
   raw_json: z.any().optional(),
-  is_test: z.boolean().optional()
+  is_test: z.boolean().optional(),
+  client_id: z.string().uuid().optional() // CRITICAL FIX: Accept explicit client_id for test signals
 }).refine(data => data.text || data.event || data.url, {
   message: "Either 'text', 'event', or 'url' must be provided"
 });
@@ -100,7 +101,7 @@ serve(async (req) => {
       );
     }
 
-    const { source_key, event, text, url, location, raw_json, is_test } = validationResult.data;
+    const { source_key, event, text, url, location, raw_json, is_test, client_id: explicitClientId } = validationResult.data;
     
     let signalText = text || JSON.stringify(event);
     let signalLocation = location || null;
@@ -329,14 +330,20 @@ Respond ONLY with valid JSON.`
     }
 
     // Match signal to clients using keyword and AI-powered matching
-    let clientId: string | null = null;
+    let clientId: string | null = explicitClientId || null; // CRITICAL FIX: Use explicit client_id if provided
     let matchedKeywords: string[] = [];
     
-    const { data: clients } = await supabase
-      .from('clients')
-      .select('id, name, organization, industry, locations, high_value_assets, monitoring_keywords');
-    
-    if (clients && clients.length > 0) {
+    // If explicit client_id provided (e.g., from inject_test_signal), skip matching and use it directly
+    if (explicitClientId) {
+      console.log(`✓ EXPLICIT CLIENT OVERRIDE: Using provided client_id ${explicitClientId}`);
+      matchedKeywords.push('explicit_client_override');
+    } else {
+      // Only perform client matching if no explicit client_id provided
+      const { data: clients } = await supabase
+        .from('clients')
+        .select('id, name, organization, industry, locations, high_value_assets, monitoring_keywords');
+      
+      if (clients && clients.length > 0) {
       const textLower = signalText.toLowerCase();
       
       // CRITICAL: First check explicit keyword matches
@@ -434,6 +441,7 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
         }
       }
     }
+    } // Close the explicitClientId else block
 
     // Calculate content hash BEFORE insertion for duplicate detection
     const encoder = new TextEncoder();
