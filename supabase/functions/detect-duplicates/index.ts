@@ -50,7 +50,7 @@ serve(async (req) => {
   }
 
   try {
-    const { type, content, id, autoCheck = true } = await req.json();
+    const { type, content, id, autoCheck = true, client_id } = await req.json();
     
     if (!type || !content) {
       return new Response(
@@ -59,7 +59,7 @@ serve(async (req) => {
       );
     }
 
-    console.log(`Checking duplicates for ${type}`);
+    console.log(`Checking duplicates for ${type}${client_id ? ` (client: ${client_id})` : ''}`);
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -98,15 +98,20 @@ serve(async (req) => {
         duplicates = existingDocs;
       }
     } else if (type === 'signal') {
-      // Check for exact hash match in signals
-      const { data: hashMatch } = await supabase
+      // Check for exact hash match in signals (same client only)
+      let exactQuery = supabase
         .from('signals')
         .select('*')
         .eq('content_hash', contentHash)
-        .limit(1)
-        .single();
+        .limit(1);
+      
+      if (client_id) {
+        exactQuery = exactQuery.eq('client_id', client_id);
+      }
 
-      if (hashMatch) {
+      const { data: hashMatch } = await exactQuery.maybeSingle();
+
+      if (hashMatch && hashMatch.id !== id) {
         return new Response(
           JSON.stringify({ 
             isDuplicate: true,
@@ -118,25 +123,35 @@ serve(async (req) => {
         );
       }
 
-      // Check for similar signals (text similarity)
-      const { data: recentSignals } = await supabase
+      // Check for near-duplicate signals using text similarity (same client only)
+      let similarQuery = supabase
         .from('signals')
-        .select('id, normalized_text, created_at')
+        .select('id, normalized_text, created_at, client_id')
         .order('created_at', { ascending: false })
-        .limit(100);
+        .limit(200);
+      
+      if (client_id) {
+        similarQuery = similarQuery.eq('client_id', client_id);
+      }
+
+      const { data: recentSignals } = await similarQuery;
 
       if (recentSignals && recentSignals.length > 0) {
-        const contentLower = content.toLowerCase();
+        const contentLower = content.toLowerCase().trim();
         for (const signal of recentSignals) {
+          if (signal.id === id) continue; // Skip self
+          
           const similarity = calculateSimilarity(
             contentLower,
-            (signal.normalized_text || '').toLowerCase()
+            (signal.normalized_text || '').toLowerCase().trim()
           );
           
-          if (similarity > 0.85) {
+          // Block near-duplicates with >90% similarity
+          if (similarity > 0.90) {
             duplicates.push({
               ...signal,
-              similarity_score: similarity
+              similarity_score: similarity,
+              detection_type: similarity > 0.98 ? 'near-exact' : 'similar'
             });
           }
         }
