@@ -19,7 +19,7 @@ verify_jwt = false
 verify_jwt = true
 
 [functions.ingest-signal]
-verify_jwt = true
+verify_jwt = false
 
 [functions.incident-action]
 verify_jwt = true
