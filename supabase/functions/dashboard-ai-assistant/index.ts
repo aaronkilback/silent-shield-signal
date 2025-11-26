@@ -43,6 +43,12 @@ CRITICAL CAPABILITIES - PHASE 4 & PHASE 5 ENHANCEMENTS:
    - Identify critical failure points using identify_critical_failure_points for business continuity and resilience testing
    - Enable proactive vulnerability assessment and pre-emptive risk mitigation
 
+6. INTEGRATED HUMAN-AI DECISION SUPPORT (PHASE 5 - PILLAR 3):
+   - Generate customizable incident briefings using generate_incident_briefing (executive or operational format)
+   - Guide analysts through dynamic decision trees using guide_decision_tree for consistent, optimal response workflows
+   - Track playbook effectiveness using track_mitigation_effectiveness to continuously improve response procedures
+   - Offload cognitive burden and accelerate decision-making during high-stress incidents
+
 INTERACTION GUIDELINES:
 - If a query is ambiguous, ask targeted follow-up questions rather than stating inability
 - Build on previous conversation context without requiring users to repeat information
@@ -81,6 +87,16 @@ AI: [Analyzes historical patterns, assesses escalation factors, predicts likelih
 
 User: "What are our biggest operational vulnerabilities?"
 AI: [Identifies critical failure points, maps cascading effects, prioritizes mitigation, provides business continuity recommendations]
+
+DECISION SUPPORT EXAMPLES (PILLAR 3):
+User: "I need to brief the CEO on this incident"
+AI: [Generates executive briefing with business impact, financial implications, status, and decisions needed]
+
+User: "What should I do next for this P1 incident?"
+AI: [Guides through decision tree, presents options with trade-offs, recommends specific next steps based on current state]
+
+User: "How effective is our ransomware playbook?"
+AI: [Tracks historical effectiveness, identifies strengths/weaknesses, provides specific improvement recommendations]
 
 Always prioritize clarity, actionability, security posture improvement, and continuous self-optimization.`;
 
@@ -1428,6 +1444,74 @@ const tools = [
           },
         },
         required: ["client_operation_flow", "threat_scenario"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "generate_incident_briefing",
+      description: "PHASE 5: Generate comprehensive incident briefings tailored for executives or operational teams. Automatically compiles all relevant signals, impact analysis, entities, response status, and recommendations. Use for stakeholder communication.",
+      parameters: {
+        type: "object",
+        properties: {
+          incident_id: {
+            type: "string",
+            description: "UUID of the incident to generate briefing for",
+          },
+          format: {
+            type: "string",
+            enum: ["executive", "operational"],
+            description: "Briefing format: 'executive' for C-level (business impact focus) or 'operational' for security teams (technical details)",
+          },
+        },
+        required: ["incident_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "guide_decision_tree",
+      description: "PHASE 5: Provide dynamic, context-aware decision guidance during incident response. Guides analyst through optimal workflow, presents clear options with trade-offs, and ensures consistent decision-making. Use during active incident management.",
+      parameters: {
+        type: "object",
+        properties: {
+          incident_id: {
+            type: "string",
+            description: "UUID of the incident being managed",
+          },
+          current_state: {
+            type: "string",
+            description: "Current response state (e.g., 'incident_opened', 'triage_complete', 'containment_required', 'investigation_phase', 'remediation_phase', 'resolution_pending')",
+          },
+          user_response: {
+            type: "string",
+            description: "Optional: Analyst's previous response/decision to inform next guidance",
+          },
+        },
+        required: ["incident_id", "current_state"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "track_mitigation_effectiveness",
+      description: "PHASE 5: Track and analyze effectiveness of playbooks and response actions across incidents. Identifies what works, what doesn't, and provides specific recommendations for optimization. Feeds continuous improvement loop.",
+      parameters: {
+        type: "object",
+        properties: {
+          playbook_id: {
+            type: "string",
+            description: "UUID of the playbook to track",
+          },
+          incident_id: {
+            type: "string",
+            description: "UUID of the incident where playbook was used",
+          },
+        },
+        required: ["playbook_id", "incident_id"],
       },
     },
   },
@@ -5272,6 +5356,109 @@ serve(async (req) => {
         threat_scenario,
         analysis,
         message: `Failure point analysis complete. Identified ${analysis.critical_points_identified} critical failure points and ${analysis.single_points_of_failure} single points of failure. Analysis based on ${analysis.historical_context.total_incidents_analyzed} historical incidents.`,
+      };
+    }
+
+    case "generate_incident_briefing": {
+      const { incident_id, format = "executive" } = args;
+      
+      console.log(`Generating ${format} briefing for incident: ${incident_id}`);
+      
+      const { data: briefingResult, error: briefingError } = await supabaseClient.functions.invoke(
+        "generate-incident-briefing",
+        {
+          body: {
+            incident_id,
+            format,
+          },
+        }
+      );
+
+      if (briefingError) {
+        console.error("Error generating briefing:", briefingError);
+        return {
+          error: briefingError.message,
+          message: `Failed to generate briefing: ${briefingError.message}`,
+        };
+      }
+
+      const briefing = briefingResult.briefing;
+      
+      return {
+        success: true,
+        incident_id,
+        format,
+        briefing,
+        message: `${format === 'executive' ? 'Executive' : 'Operational'} briefing generated for incident ${briefingResult.briefing.incident_summary.title}. Status: ${briefingResult.briefing.incident_summary.status}, Priority: ${briefingResult.briefing.incident_summary.priority}, Age: ${briefing.incident_summary.age_minutes} minutes.`,
+      };
+    }
+
+    case "guide_decision_tree": {
+      const { incident_id, current_state, user_response } = args;
+      
+      console.log(`Guiding decision for incident: ${incident_id}, state: ${current_state}`);
+      
+      const { data: guidanceResult, error: guidanceError } = await supabaseClient.functions.invoke(
+        "guide-decision-tree",
+        {
+          body: {
+            incident_id,
+            current_state,
+            user_response,
+          },
+        }
+      );
+
+      if (guidanceError) {
+        console.error("Error providing guidance:", guidanceError);
+        return {
+          error: guidanceError.message,
+          message: `Failed to provide decision guidance: ${guidanceError.message}`,
+        };
+      }
+
+      const guidance = guidanceResult.guidance;
+      
+      return {
+        success: true,
+        incident_id,
+        current_state,
+        guidance,
+        message: `Decision guidance provided for state '${current_state}'. Recommended next state: ${guidance.recommended_next_state}. ${guidance.available_playbooks.length} playbooks available, ${guidance.escalation_options.length} escalation options.`,
+      };
+    }
+
+    case "track_mitigation_effectiveness": {
+      const { playbook_id, incident_id } = args;
+      
+      console.log(`Tracking effectiveness for playbook: ${playbook_id}, incident: ${incident_id}`);
+      
+      const { data: trackingResult, error: trackingError } = await supabaseClient.functions.invoke(
+        "track-mitigation-effectiveness",
+        {
+          body: {
+            playbook_id,
+            incident_id,
+          },
+        }
+      );
+
+      if (trackingError) {
+        console.error("Error tracking effectiveness:", trackingError);
+        return {
+          error: trackingError.message,
+          message: `Failed to track effectiveness: ${trackingError.message}`,
+        };
+      }
+
+      const tracking = trackingResult.effectiveness_tracking;
+      
+      return {
+        success: true,
+        playbook_name: trackingResult.playbook_name,
+        incident_id,
+        tracking,
+        message: `Effectiveness analysis complete for playbook '${trackingResult.playbook_name}'. Rating: ${tracking.rating}/5. Success rate: ${tracking.metrics.success_rate}, Accuracy: ${tracking.metrics.accuracy_rate}, Avg response time: ${tracking.metrics.average_response_time_minutes} minutes.`,
       };
     }
 
