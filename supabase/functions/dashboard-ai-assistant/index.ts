@@ -5124,38 +5124,55 @@ serve(async (req) => {
       
       console.log(`Injecting test signal for client: ${client_id}`);
       
-      const { data: ingestResult, error: ingestError } = await supabaseClient.functions.invoke(
-        "ingest-signal",
+      // CRITICAL FIX: Use direct HTTP call instead of supabaseClient.functions.invoke()
+      // which was failing silently. Direct HTTP calls are more reliable for edge-to-edge communication.
+      const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+      const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      
+      const ingestResponse = await fetch(
+        `${SUPABASE_URL}/functions/v1/ingest-signal`,
         {
-          body: {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+          body: JSON.stringify({
             text,
             client_id,
             severity,
             category,
             is_test: true,
-          },
+          }),
         }
       );
 
-      if (ingestError) {
-        console.error("Error injecting signal:", ingestError);
+      if (!ingestResponse.ok) {
+        const errorText = await ingestResponse.text();
+        console.error("Error injecting signal:", errorText);
         return {
-          error: ingestError.message,
-          message: `Failed to inject signal: ${ingestError.message}`,
+          error: errorText,
+          message: `Failed to inject signal: ${ingestResponse.status} ${errorText}`,
         };
       }
+
+      const ingestResult = await ingestResponse.json();
+      
+      console.log(`✅ Signal created successfully: ${ingestResult.signal_id}`);
 
       return {
         success: true,
         signal_id: ingestResult.signal_id,
         message: `✅ Test signal injected successfully with ID ${ingestResult.signal_id?.slice(0, 8)}...
         
-**CRITICAL: To view this signal in the UI:**
-1. You MUST be logged in to Fortress
-2. You MUST have selected the correct client (Petronas Canada or Dan Martell) using the client selector
+**Signal created in database and visible in UI.**
+
+To view:
+1. Log in to Fortress (if not already)
+2. Select the correct client using the client selector
 3. Navigate to the Signals page (/signals)
 
-The signal has been created in the database and will appear once you're logged in with the correct client selected. Rules are applied automatically.`,
+The signal is now in the database with status 'triaged' and rules have been applied.`,
         details: ingestResult,
       };
     }
