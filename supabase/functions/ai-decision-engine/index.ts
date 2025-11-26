@@ -521,7 +521,7 @@ Generated: ${new Date().toISOString()}
     const { error: updateError } = await supabase
       .from('signals')
       .update({ 
-        status: 'processed',
+        status: 'triaged',
         raw_json: {
           ...signal.raw_json,
           ai_decision: decision,
