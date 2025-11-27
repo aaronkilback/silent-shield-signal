@@ -5712,6 +5712,283 @@ The signal is now in the database with status 'triaged' and rules have been appl
       };
     }
 
+    // Phase 6: Proactive Defense Optimization
+    case "recommend_tactical_countermeasures": {
+      const { signal_id, client_context } = args;
+      
+      console.log(`Recommending tactical countermeasures for signal: ${signal_id}`);
+      
+      const { data: countermeasuresResult, error: countermeasuresError } = await supabaseClient.functions.invoke(
+        "recommend-tactical-countermeasures",
+        { body: { signal_id, client_context } }
+      );
+
+      if (countermeasuresError) {
+        console.error("Error recommending countermeasures:", countermeasuresError);
+        return {
+          error: countermeasuresError.message,
+          message: `Failed to generate countermeasures: ${countermeasuresError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        signal_id,
+        countermeasures: countermeasuresResult.countermeasures,
+        analyzed_at: countermeasuresResult.analyzed_at,
+        message: `Generated tactical countermeasure recommendations for signal ${signal_id}.`,
+      };
+    }
+
+    case "evaluate_countermeasure_impact": {
+      const { countermeasure_plan, threat_scenario_id } = args;
+      
+      console.log(`Evaluating countermeasure impact for scenario: ${threat_scenario_id}`);
+      
+      const { data: evaluationResult, error: evaluationError } = await supabaseClient.functions.invoke(
+        "evaluate-countermeasure-impact",
+        { body: { countermeasure_plan, threat_scenario_id } }
+      );
+
+      if (evaluationError) {
+        console.error("Error evaluating countermeasure impact:", evaluationError);
+        return {
+          error: evaluationError.message,
+          message: `Failed to evaluate impact: ${evaluationError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        threat_scenario_id,
+        evaluation: evaluationResult.evaluation,
+        evaluated_at: evaluationResult.evaluated_at,
+        message: `Completed countermeasure impact evaluation for scenario ${threat_scenario_id}.`,
+      };
+    }
+
+    case "optimize_defense_strategies": {
+      const { client_id, threat_type } = args;
+      
+      console.log(`Optimizing defense strategies for client: ${client_id}, threat: ${threat_type}`);
+      
+      const { data: strategyResult, error: strategyError } = await supabaseClient.functions.invoke(
+        "optimize-defense-strategies",
+        { body: { client_id, threat_type } }
+      );
+
+      if (strategyError) {
+        console.error("Error optimizing defense strategies:", strategyError);
+        return {
+          error: strategyError.message,
+          message: `Failed to optimize strategies: ${strategyError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        client_id,
+        threat_type,
+        optimized_strategy: strategyResult.optimized_strategy,
+        analyzed_at: strategyResult.analyzed_at,
+        message: `Generated optimized defense strategy for ${threat_type} threats.`,
+      };
+    }
+
+    // Phase 6: Strategic Foresight & Long-term Planning
+    case "propose_security_investments": {
+      const { client_id, budget_constraints, time_horizon_months } = args;
+      
+      console.log(`Proposing security investments for client: ${client_id}`);
+      
+      const { data: investmentResult, error: investmentError } = await supabaseClient.functions.invoke(
+        "propose-security-investments",
+        { body: { client_id, budget_constraints, time_horizon_months } }
+      );
+
+      if (investmentError) {
+        console.error("Error proposing investments:", investmentError);
+        return {
+          error: investmentError.message,
+          message: `Failed to generate investment recommendations: ${investmentError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        client_id,
+        investment_plan: investmentResult.investment_plan,
+        analyzed_at: investmentResult.analyzed_at,
+        message: `Generated strategic security investment recommendations.`,
+      };
+    }
+
+    case "model_geopolitical_risk": {
+      const { geopolitical_event_description, affected_regions, client_business_units } = args;
+      
+      console.log(`Modeling geopolitical risk impact`);
+      
+      const { data: riskResult, error: riskError } = await supabaseClient.functions.invoke(
+        "model-geopolitical-risk",
+        { body: { geopolitical_event_description, affected_regions, client_business_units } }
+      );
+
+      if (riskError) {
+        console.error("Error modeling geopolitical risk:", riskError);
+        return {
+          error: riskError.message,
+          message: `Failed to model geopolitical risk: ${riskError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        risk_analysis: riskResult.risk_analysis,
+        analyzed_at: riskResult.analyzed_at,
+        message: `Completed geopolitical risk impact analysis.`,
+      };
+    }
+
+    case "recommend_policy_adjustments": {
+      const { client_id, threat_scenario_description } = args;
+      
+      console.log(`Recommending policy adjustments for client: ${client_id}`);
+      
+      const { data: policyResult, error: policyError } = await supabaseClient.functions.invoke(
+        "recommend-policy-adjustments",
+        { body: { client_id, threat_scenario_description } }
+      );
+
+      if (policyError) {
+        console.error("Error recommending policy adjustments:", policyError);
+        return {
+          error: policyError.message,
+          message: `Failed to generate policy recommendations: ${policyError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        client_id,
+        policy_recommendations: policyResult.policy_recommendations,
+        analyzed_at: policyResult.analyzed_at,
+        message: `Generated security policy adjustment recommendations.`,
+      };
+    }
+
+    // Phase 6: Autonomous Compliance Monitoring
+    case "monitor_regulatory_changes": {
+      const { jurisdiction, industry_sector } = args;
+      
+      console.log(`Monitoring regulatory changes for ${jurisdiction}, ${industry_sector}`);
+      
+      const { data: regulatoryResult, error: regulatoryError } = await supabaseClient.functions.invoke(
+        "monitor-regulatory-changes",
+        { body: { jurisdiction, industry_sector } }
+      );
+
+      if (regulatoryError) {
+        console.error("Error monitoring regulatory changes:", regulatoryError);
+        return {
+          error: regulatoryError.message,
+          message: `Failed to analyze regulatory changes: ${regulatoryError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        jurisdiction,
+        industry_sector,
+        regulatory_analysis: regulatoryResult.regulatory_analysis,
+        analyzed_at: regulatoryResult.analyzed_at,
+        message: `Completed regulatory change analysis for ${jurisdiction} ${industry_sector} sector.`,
+      };
+    }
+
+    case "map_policy_to_controls": {
+      const { client_id, policy_document_content, policy_name } = args;
+      
+      console.log(`Mapping policy to controls for client: ${client_id}, policy: ${policy_name}`);
+      
+      const { data: mappingResult, error: mappingError } = await supabaseClient.functions.invoke(
+        "map-policy-to-controls",
+        { body: { client_id, policy_document_content, policy_name } }
+      );
+
+      if (mappingError) {
+        console.error("Error mapping policy to controls:", mappingError);
+        return {
+          error: mappingError.message,
+          message: `Failed to map policy to controls: ${mappingError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        client_id,
+        policy_name,
+        control_mapping: mappingResult.control_mapping,
+        analyzed_at: mappingResult.analyzed_at,
+        message: `Completed policy-to-control mapping analysis for '${policy_name}'.`,
+      };
+    }
+
+    case "audit_compliance_status": {
+      const { client_id, policy_area, audit_period_days } = args;
+      
+      console.log(`Auditing compliance status for client: ${client_id}, policy area: ${policy_area}`);
+      
+      const { data: auditResult, error: auditError } = await supabaseClient.functions.invoke(
+        "audit-compliance-status",
+        { body: { client_id, policy_area, audit_period_days } }
+      );
+
+      if (auditError) {
+        console.error("Error auditing compliance status:", auditError);
+        return {
+          error: auditError.message,
+          message: `Failed to conduct compliance audit: ${auditError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        client_id,
+        policy_area,
+        audit_report: auditResult.audit_report,
+        audited_at: auditResult.audited_at,
+        message: `Completed compliance audit for ${policy_area} (${audit_period_days} day period).`,
+      };
+    }
+
+    case "recommend_compliance_remediation": {
+      const { client_id, compliance_gap_description, risk_score } = args;
+      
+      console.log(`Recommending compliance remediation for client: ${client_id}`);
+      
+      const { data: remediationResult, error: remediationError } = await supabaseClient.functions.invoke(
+        "recommend-compliance-remediation",
+        { body: { client_id, compliance_gap_description, risk_score } }
+      );
+
+      if (remediationError) {
+        console.error("Error recommending remediation:", remediationError);
+        return {
+          error: remediationError.message,
+          message: `Failed to generate remediation plan: ${remediationError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        client_id,
+        compliance_gap: remediationResult.compliance_gap,
+        remediation_plan: remediationResult.remediation_plan,
+        generated_at: remediationResult.generated_at,
+        message: `Generated comprehensive compliance remediation plan.`,
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
