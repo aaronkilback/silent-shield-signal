@@ -9,19 +9,26 @@ import { useNavigate } from "react-router-dom";
 import { Plus, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 const Investigations = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [isCreating, setIsCreating] = useState(false);
+  const { selectedClientId } = useClientSelection();
 
   const { data: investigations = [], isLoading } = useQuery({
-    queryKey: ['investigations'],
+    queryKey: ['investigations', selectedClientId],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('investigations')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select('*');
+      
+      if (selectedClientId) {
+        query = query.eq('client_id', selectedClientId);
+      }
+      
+      const { data, error } = await query.order('created_at', { ascending: false });
       
       if (error) throw error;
       return data;
@@ -50,7 +57,8 @@ const Investigations = () => {
         .insert({
           file_number: fileNumber,
           prepared_by: user.id,
-          created_by_name: profile?.name || user.email || 'Unknown'
+          created_by_name: profile?.name || user.email || 'Unknown',
+          client_id: selectedClientId || null
         })
         .select()
         .single();

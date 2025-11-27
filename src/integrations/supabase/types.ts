@@ -1646,6 +1646,7 @@ export type Database = {
         Row: {
           accommodation_details: Json | null
           ai_risk_assessment: Json | null
+          client_id: string | null
           created_at: string
           created_by: string | null
           departure_date: string
@@ -1673,6 +1674,7 @@ export type Database = {
         Insert: {
           accommodation_details?: Json | null
           ai_risk_assessment?: Json | null
+          client_id?: string | null
           created_at?: string
           created_by?: string | null
           departure_date: string
@@ -1700,6 +1702,7 @@ export type Database = {
         Update: {
           accommodation_details?: Json | null
           ai_risk_assessment?: Json | null
+          client_id?: string | null
           created_at?: string
           created_by?: string | null
           departure_date?: string
@@ -1725,6 +1728,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "itineraries_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "itineraries_created_by_fkey"
             columns: ["created_by"]
@@ -2525,6 +2535,7 @@ export type Database = {
       }
       travelers: {
         Row: {
+          client_id: string | null
           created_at: string
           created_by: string | null
           current_country: string | null
@@ -2544,6 +2555,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          client_id?: string | null
           created_at?: string
           created_by?: string | null
           current_country?: string | null
@@ -2563,6 +2575,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          client_id?: string | null
           created_at?: string
           created_by?: string | null
           current_country?: string | null
@@ -2582,6 +2595,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "travelers_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "travelers_created_by_fkey"
             columns: ["created_by"]
