@@ -147,7 +147,7 @@ const tools = [
     type: "function",
     function: {
       name: "inject_test_signal",
-      description: "Inject a test signal into the system for verification purposes. This creates a signal that will be processed through the full ingestion pipeline including rule application.",
+      description: "Inject a test signal into the system for verification purposes. This creates a signal that will be processed through the full ingestion pipeline including rule application. IMPORTANT: Always use client_name parameter (e.g., 'Petronas Canada') instead of client_id to avoid UUID errors.",
       parameters: {
         type: "object",
         properties: {
@@ -155,9 +155,13 @@ const tools = [
             type: "string",
             description: "The signal text content (e.g., 'BREAKING: Energy pipeline faces protest blockade')",
           },
+          client_name: {
+            type: "string",
+            description: "Client name to associate this signal with (e.g., 'Petronas Canada', 'Dan Martell'). The tool will automatically look up the correct UUID.",
+          },
           client_id: {
             type: "string",
-            description: "Client UUID to associate this signal with",
+            description: "DEPRECATED: Use client_name instead. Direct client UUID (only if you have the exact valid UUID)",
           },
           severity: {
             type: "string",
@@ -169,7 +173,7 @@ const tools = [
             description: "Initial category (will be overridden by rules if they match)",
           },
         },
-        required: ["text", "client_id"],
+        required: ["text"],
       },
     },
   },
@@ -5120,9 +5124,39 @@ serve(async (req) => {
     }
 
     case "inject_test_signal": {
-      const { text, client_id, severity = "medium", category = "test" } = args;
+      const { text, client_name, client_id, severity = "medium", category = "test" } = args;
       
-      console.log(`Injecting test signal for client: ${client_id}`);
+      // CRITICAL FIX: Look up client_id from client_name if provided
+      let resolvedClientId = client_id;
+      
+      if (client_name && !client_id) {
+        console.log(`Looking up client_id for: ${client_name}`);
+        const { data: clientData, error: clientError } = await supabaseClient
+          .from('clients')
+          .select('id, name')
+          .ilike('name', `%${client_name}%`)
+          .limit(1)
+          .single();
+        
+        if (clientError || !clientData) {
+          return {
+            error: "Client not found",
+            message: `Could not find client matching '${client_name}'. Please check the client name and try again.`,
+          };
+        }
+        
+        resolvedClientId = clientData.id;
+        console.log(`Resolved client '${client_name}' to UUID: ${resolvedClientId}`);
+      }
+      
+      if (!resolvedClientId) {
+        return {
+          error: "Missing client identifier",
+          message: "Either client_name or client_id must be provided",
+        };
+      }
+      
+      console.log(`Injecting test signal for client: ${resolvedClientId}`);
       
       // CRITICAL FIX: Use direct HTTP call instead of supabaseClient.functions.invoke()
       // which was failing silently. Direct HTTP calls are more reliable for edge-to-edge communication.
@@ -5139,7 +5173,7 @@ serve(async (req) => {
           },
           body: JSON.stringify({
             text,
-            client_id,
+            client_id: resolvedClientId,
             severity,
             category,
             is_test: true,
