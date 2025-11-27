@@ -1,7 +1,7 @@
 import { Header } from "@/components/Header";
-import { MetricsPanel } from "@/components/MetricsPanel";
-import AutonomousSystemStatus from "@/components/AutonomousSystemStatus";
-import LearningDashboard from "@/components/LearningDashboard";
+// import { MetricsPanel } from "@/components/MetricsPanel";
+// import AutonomousSystemStatus from "@/components/AutonomousSystemStatus";
+// import LearningDashboard from "@/components/LearningDashboard";
 import { DashboardClientSelector } from "@/components/DashboardClientSelector";
 import { MonitoringHistory } from "@/components/MonitoringHistory";
 import { DashboardAIAssistant } from "@/components/DashboardAIAssistant";
@@ -38,13 +38,13 @@ const Index = () => {
       <main className="container mx-auto px-4 sm:px-6 py-4 sm:py-8 space-y-4 sm:space-y-6">
         <DashboardClientSelector />
         <DashboardAIAssistant />
-        <AutonomousSystemStatus />
+        {/* <AutonomousSystemStatus /> */}
         <MonitoringHistory />
-        <MetricsPanel />
+        {/* <MetricsPanel /> */}
         
-        <div className="grid grid-cols-1 gap-4 sm:gap-6">
+        {/* <div className="grid grid-cols-1 gap-4 sm:gap-6">
           <LearningDashboard />
-        </div>
+        </div> */}
       </main>
     </div>
   );
