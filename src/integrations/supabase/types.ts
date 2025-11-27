@@ -2669,6 +2669,10 @@ export type Database = {
         Args: { message_ids: string[] }
         Returns: undefined
       }
+      set_current_client: {
+        Args: { client_id_param: string }
+        Returns: undefined
+      }
     }
     Enums: {
       alert_status: "pending" | "sent" | "delivered" | "failed" | "acknowledged"

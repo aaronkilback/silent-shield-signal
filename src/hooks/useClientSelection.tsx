@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import { supabase } from '@/integrations/supabase/client';
 
 interface ClientSelectionContextType {
   selectedClientId: string | null;
@@ -16,11 +17,19 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    if (selectedClientId) {
-      localStorage.setItem(STORAGE_KEY, selectedClientId);
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
-    }
+    const updateClientContext = async () => {
+      if (selectedClientId) {
+        localStorage.setItem(STORAGE_KEY, selectedClientId);
+        // Set the database session variable for RLS policies
+        await supabase.rpc('set_current_client', { client_id_param: selectedClientId });
+      } else {
+        localStorage.removeItem(STORAGE_KEY);
+        // Clear the session variable
+        await supabase.rpc('set_current_client', { client_id_param: '' });
+      }
+    };
+    
+    updateClientContext();
   }, [selectedClientId]);
 
   return (
