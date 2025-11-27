@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import { createContext, useContext, useState, ReactNode, useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
 interface ClientSelectionContextType {
@@ -15,33 +15,42 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
     const stored = localStorage.getItem(STORAGE_KEY);
     return stored || null;
   });
-  const [isInitialMount, setIsInitialMount] = useState(true);
+  const hasSetInitialContext = useRef(false);
+  const previousClientId = useRef<string | null>(selectedClientId);
 
   useEffect(() => {
     const updateClientContext = async () => {
+      // Only proceed if client has actually changed
+      if (previousClientId.current === selectedClientId && hasSetInitialContext.current) {
+        return;
+      }
+
+      const isInitialMount = !hasSetInitialContext.current;
+      hasSetInitialContext.current = true;
+      previousClientId.current = selectedClientId;
+
       if (selectedClientId) {
         localStorage.setItem(STORAGE_KEY, selectedClientId);
-        // Set the database session variable for RLS policies
         const { error } = await supabase.rpc('set_current_client', { client_id_param: selectedClientId });
         if (error) {
           console.error('Failed to set client context:', error);
         }
       } else {
         localStorage.removeItem(STORAGE_KEY);
-        // Clear the session variable
-        await supabase.rpc('set_current_client', { client_id_param: '' });
+        const { error } = await supabase.rpc('set_current_client', { client_id_param: '' });
+        if (error) {
+          console.error('Failed to clear client context:', error);
+        }
       }
       
       // Only reload on actual client changes, not initial mount
       if (!isInitialMount) {
         window.location.reload();
-      } else {
-        setIsInitialMount(false);
       }
     };
     
     updateClientContext();
-  }, [selectedClientId, isInitialMount]);
+  }, [selectedClientId]);
 
   return (
     <ClientSelectionContext.Provider value={{ selectedClientId, setSelectedClientId }}>
