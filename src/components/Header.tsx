@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss, Plane, Bug, Database, Menu, CheckCircle } from "lucide-react";
+import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss, Plane, Bug, Database, Menu, CheckCircle, UserCog } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useUserRole } from "@/hooks/useUserRole";
 
 export const Header = () => {
   const { signOut } = useAuth();
@@ -17,6 +18,7 @@ export const Header = () => {
   const location = useLocation();
   const isMobile = useIsMobile();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { isAdmin } = useUserRole();
 
   // Get pending entity suggestions count
   const { data: pendingSuggestions } = useQuery({
@@ -45,6 +47,7 @@ export const Header = () => {
     { path: "/clients", icon: Building2, label: "Clients" },
     { path: "/rule-approvals", icon: CheckCircle, label: "Rules" },
     { path: "/bug-reports", icon: Bug, label: "Bugs" },
+    ...(isAdmin ? [{ path: "/user-management", icon: UserCog, label: "Users" }] : []),
   ];
 
   const handleNavClick = (path: string) => {
