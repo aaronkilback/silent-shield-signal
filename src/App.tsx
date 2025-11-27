@@ -24,6 +24,7 @@ import BugReports from "./pages/BugReports";
 import RuleApprovals from "./pages/RuleApprovals";
 import MonitoringSources from "./pages/MonitoringSources";
 import Benchmark from "./pages/Benchmark";
+import UserManagement from "./pages/UserManagement";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -54,6 +55,7 @@ const App = () => (
               <Route path="/knowledge-base" element={<KnowledgeBase />} />
               <Route path="/bug-reports" element={<BugReports />} />
               <Route path="/rule-approvals" element={<RuleApprovals />} />
+              <Route path="/user-management" element={<UserManagement />} />
               <Route path="/benchmark" element={<Benchmark />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
