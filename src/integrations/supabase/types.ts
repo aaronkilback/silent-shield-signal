@@ -2664,6 +2664,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       restore_ai_messages: {
         Args: { message_ids: string[] }
         Returns: undefined
@@ -2671,7 +2672,7 @@ export type Database = {
     }
     Enums: {
       alert_status: "pending" | "sent" | "delivered" | "failed" | "acknowledged"
-      app_role: "admin" | "analyst" | "viewer"
+      app_role: "admin" | "analyst" | "viewer" | "super_admin"
       entity_type:
         | "person"
         | "organization"
@@ -2825,7 +2826,7 @@ export const Constants = {
   public: {
     Enums: {
       alert_status: ["pending", "sent", "delivered", "failed", "acknowledged"],
-      app_role: ["admin", "analyst", "viewer"],
+      app_role: ["admin", "analyst", "viewer", "super_admin"],
       entity_type: [
         "person",
         "organization",

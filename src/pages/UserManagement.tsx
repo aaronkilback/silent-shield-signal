@@ -16,7 +16,7 @@ import { Loader2, Users, Shield, AlertCircle, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
-type AppRole = 'admin' | 'analyst' | 'viewer';
+type AppRole = 'super_admin' | 'admin' | 'analyst' | 'viewer';
 
 interface Client {
   id: string;
@@ -40,7 +40,7 @@ interface UserRole {
 
 const UserManagement = () => {
   const { user, loading: authLoading } = useAuth();
-  const { isAdmin, isLoading: roleLoading } = useUserRole();
+  const { isSuperAdmin, isAdmin, isLoading: roleLoading } = useUserRole();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
@@ -48,6 +48,8 @@ const UserManagement = () => {
   const [inviteName, setInviteName] = useState("");
   const [inviteClientId, setInviteClientId] = useState<string>("");
   const [inviteRole, setInviteRole] = useState<AppRole>("viewer");
+  
+  const canManageUsers = isSuperAdmin || isAdmin;
 
   const { data: clients } = useQuery({
     queryKey: ['clients-list'],
@@ -60,7 +62,7 @@ const UserManagement = () => {
       if (error) throw error;
       return data as Client[];
     },
-    enabled: !!user && isAdmin
+    enabled: !!user && canManageUsers
   });
 
   const { data: users, isLoading: usersLoading } = useQuery({
@@ -107,7 +109,7 @@ const UserManagement = () => {
 
       return combinedUsers;
     },
-    enabled: !!user && isAdmin
+    enabled: !!user && canManageUsers
   });
 
   const inviteUserMutation = useMutation({
@@ -217,7 +219,7 @@ const UserManagement = () => {
     return null;
   }
 
-  if (!isAdmin) {
+  if (!canManageUsers) {
     return (
       <div className="min-h-screen bg-background">
         <Header />
@@ -239,8 +241,10 @@ const UserManagement = () => {
 
   const getRoleBadgeVariant = (role: AppRole) => {
     switch (role) {
-      case 'admin':
+      case 'super_admin':
         return 'destructive';
+      case 'admin':
+        return 'default';
       case 'analyst':
         return 'default';
       case 'viewer':
@@ -329,6 +333,7 @@ const UserManagement = () => {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
+                            {isSuperAdmin && <SelectItem value="super_admin">Super Admin</SelectItem>}
                             <SelectItem value="admin">Admin</SelectItem>
                             <SelectItem value="analyst">Analyst</SelectItem>
                             <SelectItem value="viewer">Viewer</SelectItem>
@@ -397,6 +402,7 @@ const UserManagement = () => {
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
+                                {isSuperAdmin && <SelectItem value="super_admin">Super Admin</SelectItem>}
                                 <SelectItem value="admin">Admin</SelectItem>
                                 <SelectItem value="analyst">Analyst</SelectItem>
                                 <SelectItem value="viewer">Viewer</SelectItem>
@@ -438,34 +444,55 @@ const UserManagement = () => {
           <h3 className="text-lg font-semibold mb-4">Role Permissions & Access Control</h3>
           <div className="space-y-4 text-sm">
             <div className="flex items-start gap-3">
-              <Badge variant="destructive" className="mt-1 min-w-[80px] justify-center">
+              <Badge variant="destructive" className="mt-1 min-w-[110px] justify-center">
+                <Shield className="w-3 h-3 mr-1" />
+                Super Admin
+              </Badge>
+              <div className="flex-1">
+                <p className="font-medium mb-1">Platform-Level Access</p>
+                <p className="text-muted-foreground mb-2">
+                  Complete control over all system features and ALL client data:
+                </p>
+                <ul className="list-disc list-inside text-muted-foreground space-y-1 ml-2">
+                  <li>Manage all users across all clients</li>
+                  <li>View and manage data for ALL clients (cross-client access)</li>
+                  <li>Configure global monitoring sources and automation</li>
+                  <li>Create and delete clients</li>
+                  <li>Full administrative control over the entire platform</li>
+                </ul>
+                <p className="text-amber-600 dark:text-amber-500 mt-2 font-medium">
+                  ⚠️ Platform administrators only - not for client staff
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <Badge variant="default" className="mt-1 min-w-[110px] justify-center">
                 <Shield className="w-3 h-3 mr-1" />
                 Admin
               </Badge>
               <div className="flex-1">
-                <p className="font-medium mb-1">Full System Access</p>
+                <p className="font-medium mb-1">Client Administrator</p>
                 <p className="text-muted-foreground mb-2">
-                  Complete control over all system features and data:
+                  Administrative control within their assigned client only:
                 </p>
                 <ul className="list-disc list-inside text-muted-foreground space-y-1 ml-2">
-                  <li>User management (invite, assign roles, manage clients)</li>
-                  <li>View and manage all clients' data</li>
-                  <li>Configure monitoring sources and automation</li>
-                  <li>Access all signals, incidents, investigations, and entities</li>
-                  <li>Generate and export reports</li>
-                  <li>Manage knowledge base and playbooks</li>
+                  <li>Manage users within their client organization</li>
+                  <li>View and manage data ONLY for their assigned client</li>
+                  <li>Configure client-specific monitoring and automation</li>
+                  <li>Full access to their client's signals, incidents, investigations</li>
+                  <li>Cannot access other clients' data (client-isolated)</li>
                 </ul>
               </div>
             </div>
             <div className="flex items-start gap-3">
-              <Badge variant="default" className="mt-1 min-w-[80px] justify-center">
+              <Badge variant="default" className="mt-1 min-w-[110px] justify-center">
                 <Shield className="w-3 h-3 mr-1" />
                 Analyst
               </Badge>
               <div className="flex-1">
-                <p className="font-medium mb-1">Operational Access</p>
+                <p className="font-medium mb-1">Security Operations</p>
                 <p className="text-muted-foreground mb-2">
-                  Can manage day-to-day security operations for their assigned client:
+                  Can manage day-to-day security operations for their assigned client only:
                 </p>
                 <ul className="list-disc list-inside text-muted-foreground space-y-1 ml-2">
                   <li>View and triage signals for their client</li>
@@ -473,26 +500,27 @@ const UserManagement = () => {
                   <li>Add and manage entities (people, organizations, locations, vehicles)</li>
                   <li>Manage travel itineraries and travelers</li>
                   <li>Generate client-specific reports</li>
-                  <li>Access knowledge base and playbooks (read-only)</li>
+                  <li>Cannot access other clients' data (client-isolated)</li>
                 </ul>
               </div>
             </div>
             <div className="flex items-start gap-3">
-              <Badge variant="secondary" className="mt-1 min-w-[80px] justify-center">
+              <Badge variant="secondary" className="mt-1 min-w-[110px] justify-center">
                 <Shield className="w-3 h-3 mr-1" />
                 Viewer
               </Badge>
               <div className="flex-1">
                 <p className="font-medium mb-1">Read-Only Access</p>
                 <p className="text-muted-foreground mb-2">
-                  Can view information but cannot make changes:
+                  Can view information but cannot make changes (client-scoped):
                 </p>
                 <ul className="list-disc list-inside text-muted-foreground space-y-1 ml-2">
-                  <li>View dashboard and metrics for their client</li>
+                  <li>View dashboard and metrics for their assigned client</li>
                   <li>View signals, incidents, and investigations (read-only)</li>
                   <li>View entities and their relationships</li>
-                  <li>View reports and analytics</li>
+                  <li>View reports and analytics for their client</li>
                   <li>Cannot create, edit, or delete any records</li>
+                  <li>Cannot access other clients' data (client-isolated)</li>
                 </ul>
               </div>
             </div>

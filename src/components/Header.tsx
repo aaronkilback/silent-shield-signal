@@ -18,7 +18,7 @@ export const Header = () => {
   const location = useLocation();
   const isMobile = useIsMobile();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { isAdmin } = useUserRole();
+  const { isSuperAdmin, isAdmin } = useUserRole();
 
   // Get pending entity suggestions count
   const { data: pendingSuggestions } = useQuery({
@@ -47,7 +47,7 @@ export const Header = () => {
     { path: "/clients", icon: Building2, label: "Clients" },
     { path: "/rule-approvals", icon: CheckCircle, label: "Rules" },
     { path: "/bug-reports", icon: Bug, label: "Bugs" },
-    ...(isAdmin ? [{ path: "/user-management", icon: UserCog, label: "Users" }] : []),
+    ...((isSuperAdmin || isAdmin) ? [{ path: "/user-management", icon: UserCog, label: "Users" }] : []),
   ];
 
   const handleNavClick = (path: string) => {
