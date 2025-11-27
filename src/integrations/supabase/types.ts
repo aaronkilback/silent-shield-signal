@@ -2035,24 +2035,35 @@ export type Database = {
       }
       profiles: {
         Row: {
+          client_id: string | null
           created_at: string
           id: string
           name: string
           updated_at: string
         }
         Insert: {
+          client_id?: string | null
           created_at?: string
           id: string
           name: string
           updated_at?: string
         }
         Update: {
+          client_id?: string | null
           created_at?: string
           id?: string
           name?: string
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "profiles_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       reports: {
         Row: {
