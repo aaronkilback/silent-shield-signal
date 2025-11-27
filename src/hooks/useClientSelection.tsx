@@ -21,12 +21,18 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
       if (selectedClientId) {
         localStorage.setItem(STORAGE_KEY, selectedClientId);
         // Set the database session variable for RLS policies
-        await supabase.rpc('set_current_client', { client_id_param: selectedClientId });
+        const { error } = await supabase.rpc('set_current_client', { client_id_param: selectedClientId });
+        if (error) {
+          console.error('Failed to set client context:', error);
+        }
       } else {
         localStorage.removeItem(STORAGE_KEY);
         // Clear the session variable
         await supabase.rpc('set_current_client', { client_id_param: '' });
       }
+      
+      // Force a page reload to ensure all queries use the new context
+      window.location.reload();
     };
     
     updateClientContext();
