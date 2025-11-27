@@ -1556,6 +1556,161 @@ Inform user of successful creation and instruct to refresh if needed
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "recommend_tactical_countermeasures",
+      description: "PHASE 6 PILLAR 1: Generate prioritized tactical countermeasures (physical, cyber, operational) for a threat signal with effectiveness estimates and resource requirements.",
+      parameters: {
+        type: "object",
+        properties: {
+          signal_id: { type: "string", description: "UUID of the signal" },
+          client_context: { type: "string", description: "Additional context (optional)" }
+        },
+        required: ["signal_id"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "evaluate_countermeasure_impact",
+      description: "PHASE 6 PILLAR 1: Evaluate countermeasure effectiveness against threat scenarios with risk reduction estimates.",
+      parameters: {
+        type: "object",
+        properties: {
+          countermeasure_plan: { type: "object", description: "Proposed countermeasures" },
+          threat_scenario_id: { type: "string", description: "Signal/incident UUID (optional)" }
+        },
+        required: ["countermeasure_plan"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "optimize_defense_strategies",
+      description: "PHASE 6 PILLAR 1: Design comprehensive layered defense strategies for specific threat types.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: { type: "string", description: "Client UUID" },
+          threat_type: { type: "string", description: "Threat category" }
+        },
+        required: ["client_id", "threat_type"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "propose_security_investment_priorities",
+      description: "PHASE 6 PILLAR 2: Strategic security investment recommendations with ROI analysis and phased roadmap.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: { type: "string", description: "Client UUID" },
+          budget_constraints: { type: "string", description: "Budget info (optional)" },
+          timeframe_months: { type: "number", description: "Planning horizon (default: 12)" }
+        },
+        required: ["client_id"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "model_geopolitical_risk_impact",
+      description: "PHASE 6 PILLAR 2: Analyze geopolitical events and project 12-24 month security implications.",
+      parameters: {
+        type: "object",
+        properties: {
+          geopolitical_event: { type: "string", description: "Event description" },
+          client_business_units: { type: "object", description: "Affected operations" },
+          analysis_horizon_months: { type: "number", description: "Timeframe (default: 12)" }
+        },
+        required: ["geopolitical_event"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "recommend_policy_adjustments",
+      description: "PHASE 6 PILLAR 2: Recommend security policy adjustments based on threat intelligence and lessons learned.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: { type: "string", description: "Client UUID" },
+          threat_scenario_context: { type: "string", description: "Context (optional)" }
+        },
+        required: ["client_id"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "monitor_regulatory_changes",
+      description: "PHASE 6 PILLAR 3: Track regulatory changes for jurisdictions and industries.",
+      parameters: {
+        type: "object",
+        properties: {
+          jurisdiction: { type: "string", description: "Geographic area" },
+          industry_sector: { type: "string", description: "Industry" }
+        },
+        required: ["jurisdiction", "industry_sector"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "map_policy_to_controls",
+      description: "PHASE 6 PILLAR 3: Map policy requirements to existing/missing controls with gap analysis.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: { type: "string", description: "Client UUID" },
+          policy_document_content: { type: "string", description: "Policy text" },
+          policy_name: { type: "string", description: "Policy identifier" }
+        },
+        required: ["client_id", "policy_document_content", "policy_name"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "audit_compliance_status",
+      description: "PHASE 6 PILLAR 3: Conduct automated compliance audit with scoring and remediation recommendations.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: { type: "string", description: "Client UUID" },
+          policy_area: { type: "string", description: "Policy domain" },
+          audit_period_days: { type: "number", description: "Days to audit (default: 90)" }
+        },
+        required: ["client_id", "policy_area"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "recommend_compliance_remediation",
+      description: "PHASE 6 PILLAR 3: Design comprehensive remediation plans for compliance gaps.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: { type: "string", description: "Client UUID" },
+          compliance_gap_description: { type: "string", description: "Gap details" },
+          risk_score: { type: "number", description: "Risk score 0-100 (optional)" }
+        },
+        required: ["client_id", "compliance_gap_description"]
+      }
+    }
+  },
 ];
 
 // Execute tools by querying Supabase
