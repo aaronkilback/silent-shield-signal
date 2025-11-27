@@ -15,6 +15,7 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
     const stored = localStorage.getItem(STORAGE_KEY);
     return stored || null;
   });
+  const [isInitialMount, setIsInitialMount] = useState(true);
 
   useEffect(() => {
     const updateClientContext = async () => {
@@ -31,12 +32,16 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
         await supabase.rpc('set_current_client', { client_id_param: '' });
       }
       
-      // Force a page reload to ensure all queries use the new context
-      window.location.reload();
+      // Only reload on actual client changes, not initial mount
+      if (!isInitialMount) {
+        window.location.reload();
+      } else {
+        setIsInitialMount(false);
+      }
     };
     
     updateClientContext();
-  }, [selectedClientId]);
+  }, [selectedClientId, isInitialMount]);
 
   return (
     <ClientSelectionContext.Provider value={{ selectedClientId, setSelectedClientId }}>
