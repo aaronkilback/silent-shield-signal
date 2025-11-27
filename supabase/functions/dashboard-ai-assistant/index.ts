@@ -147,7 +147,44 @@ const tools = [
     type: "function",
     function: {
       name: "inject_test_signal",
-      description: "Inject a test signal into the system for verification purposes. This creates a signal that will be processed through the full ingestion pipeline including rule application. IMPORTANT: Always use client_name parameter (e.g., 'Petronas Canada') instead of client_id to avoid UUID errors.",
+      description: `Inject a test signal into the system for verification purposes. This creates a signal that will be processed through the full ingestion pipeline including rule application.
+
+**CRITICAL TESTING PROTOCOL (MANDATORY):**
+
+1. **ALWAYS use client_name parameter** (e.g., 'Petronas Canada') - NEVER use client_id directly to avoid UUID format errors.
+
+2. **VERIFICATION WORKFLOW (REQUIRED FOR EVERY inject_test_signal CALL):**
+   - Step 1: Call inject_test_signal with client_name and unique test content
+   - Step 2: Tool will return success with signal_id
+   - Step 3: IMMEDIATELY verify signal in database by querying: 
+     SELECT id, normalized_text, client_id, status, created_at FROM signals WHERE id = '<returned_signal_id>'
+   - Step 4: Confirm signal exists and has correct client_id
+   - Step 5: Inform user the signal was created successfully and instruct them to refresh their browser if they don't see it immediately
+
+3. **NEVER SKIP VERIFICATION** - Do not claim success based solely on tool response. Always query database to confirm signal actually exists.
+
+4. **IF SIGNAL NOT VISIBLE IN UI AFTER CREATION:**
+   - First verify signal exists in database (query by signal_id)
+   - If in database but not visible, instruct user to hard refresh (Ctrl+Shift+R / Cmd+Shift+R)
+   - Verify user has correct client selected in client selector
+   - Verify user is on /signals page
+
+5. **TESTING BEST PRACTICES:**
+   - Use unique text for each test to avoid duplicate detection
+   - Include relevant keywords to trigger rule matching if testing rules
+   - Use realistic severity levels (critical, high, medium, low)
+
+**Example Correct Usage:**
+\`\`\`
+inject_test_signal(
+  client_name="Petronas Canada",
+  text="Test signal: Pipeline security alert near Fort St. John - " + Date.now(),
+  severity="high"
+)
+// THEN IMMEDIATELY:
+Query database to verify signal with returned signal_id
+Inform user of successful creation and instruct to refresh if needed
+\`\`\``,
       parameters: {
         type: "object",
         properties: {
