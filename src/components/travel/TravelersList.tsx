@@ -8,19 +8,26 @@ import { Plus, MapPin, Phone, Mail, Pencil, Trash2 } from "lucide-react";
 import { CreateTravelerDialog } from "./CreateTravelerDialog";
 import { EditTravelerDialog } from "./EditTravelerDialog";
 import { toast } from "sonner";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 export function TravelersList() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingTraveler, setEditingTraveler] = useState<any>(null);
   const queryClient = useQueryClient();
+  const { selectedClientId } = useClientSelection();
 
   const { data: travelers, isLoading } = useQuery({
-    queryKey: ["travelers"],
+    queryKey: ["travelers", selectedClientId],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("travelers")
-        .select("*")
-        .order("name");
+        .select("*");
+      
+      if (selectedClientId) {
+        query = query.eq("client_id", selectedClientId);
+      }
+      
+      const { data, error } = await query.order("name");
       if (error) throw error;
       return data;
     },

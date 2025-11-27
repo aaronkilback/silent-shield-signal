@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { Upload } from "lucide-react";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 interface CreateItineraryDialogProps {
   open: boolean;
@@ -27,6 +28,7 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
   const [monitoringEnabled, setMonitoringEnabled] = useState(true);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [isParsing, setIsParsing] = useState(false);
+  const { selectedClientId } = useClientSelection();
 
   const { data: travelers } = useQuery({
     queryKey: ["travelers"],
@@ -78,6 +80,7 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
         file_path: filePath,
         monitoring_enabled: monitoringEnabled,
         created_by: user?.id,
+        client_id: selectedClientId || null,
       });
 
       if (error) throw error;

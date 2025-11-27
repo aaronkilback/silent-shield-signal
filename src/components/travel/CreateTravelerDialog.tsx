@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 interface CreateTravelerDialogProps {
   open: boolean;
@@ -23,6 +24,7 @@ const COLORS = ["#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899"
 export function CreateTravelerDialog({ open, onOpenChange }: CreateTravelerDialogProps) {
   const queryClient = useQueryClient();
   const [selectedColor, setSelectedColor] = useState(COLORS[0]);
+  const { selectedClientId } = useClientSelection();
 
   const createMutation = useMutation({
     mutationFn: async (formData: FormData) => {
@@ -39,6 +41,7 @@ export function CreateTravelerDialog({ open, onOpenChange }: CreateTravelerDialo
         notes: formData.get("notes") as string,
         map_color: selectedColor,
         created_by: user?.id,
+        client_id: selectedClientId || null,
       });
 
       if (error) throw error;

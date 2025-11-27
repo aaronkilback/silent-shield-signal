@@ -9,11 +9,13 @@ import { CreateItineraryDialog } from "./CreateItineraryDialog";
 import { EditItineraryDialog } from "./EditItineraryDialog";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 export function ItinerariesList() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingItinerary, setEditingItinerary] = useState<any>(null);
   const queryClient = useQueryClient();
+  const { selectedClientId } = useClientSelection();
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -27,15 +29,20 @@ export function ItinerariesList() {
   });
 
   const { data: itineraries, isLoading } = useQuery({
-    queryKey: ["itineraries"],
+    queryKey: ["itineraries", selectedClientId],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("itineraries")
         .select(`
           *,
           travelers:traveler_id (name, map_color)
-        `)
-        .order("departure_date", { ascending: true });
+        `);
+      
+      if (selectedClientId) {
+        query = query.eq("client_id", selectedClientId);
+      }
+      
+      const { data, error } = await query.order("departure_date", { ascending: true });
       if (error) throw error;
       return data;
     },
