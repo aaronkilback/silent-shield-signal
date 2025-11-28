@@ -18,17 +18,12 @@ const Investigations = () => {
   const { selectedClientId, isContextReady } = useClientSelection();
 
   const { data: investigations = [], isLoading } = useQuery({
-    queryKey: ['investigations', selectedClientId],
+    queryKey: ['investigations'],
     queryFn: async () => {
-      let query = supabase
+      const { data, error } = await supabase
         .from('investigations')
-        .select('*');
-      
-      if (selectedClientId) {
-        query = query.eq('client_id', selectedClientId);
-      }
-      
-      const { data, error } = await query.order('created_at', { ascending: false });
+        .select('*')
+        .order('created_at', { ascending: false });
       
       if (error) throw error;
       return data;
