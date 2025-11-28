@@ -542,6 +542,7 @@ export type Database = {
           aliases: string[] | null
           associations: string[] | null
           attributes: Json | null
+          client_id: string | null
           confidence_score: number | null
           created_at: string
           created_by: string | null
@@ -568,6 +569,7 @@ export type Database = {
           aliases?: string[] | null
           associations?: string[] | null
           attributes?: Json | null
+          client_id?: string | null
           confidence_score?: number | null
           created_at?: string
           created_by?: string | null
@@ -594,6 +596,7 @@ export type Database = {
           aliases?: string[] | null
           associations?: string[] | null
           attributes?: Json | null
+          client_id?: string | null
           confidence_score?: number | null
           created_at?: string
           created_by?: string | null
@@ -611,6 +614,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "entities_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "entities_created_by_fkey"
             columns: ["created_by"]
