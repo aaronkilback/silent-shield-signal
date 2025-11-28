@@ -1,9 +1,11 @@
 import { createContext, useContext, useState, ReactNode, useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useQueryClient } from '@tanstack/react-query';
 
 interface ClientSelectionContextType {
   selectedClientId: string | null;
   setSelectedClientId: (id: string | null) => void;
+  isContextReady: boolean;
 }
 
 const ClientSelectionContext = createContext<ClientSelectionContextType | undefined>(undefined);
@@ -15,8 +17,10 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
     const stored = localStorage.getItem(STORAGE_KEY);
     return stored || null;
   });
+  const [isContextReady, setIsContextReady] = useState(false);
   const hasSetInitialContext = useRef(false);
   const previousClientId = useRef<string | null>(selectedClientId);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     const updateClientContext = async () => {
@@ -29,31 +33,40 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
       hasSetInitialContext.current = true;
       previousClientId.current = selectedClientId;
 
+      setIsContextReady(false);
+
       if (selectedClientId) {
         localStorage.setItem(STORAGE_KEY, selectedClientId);
+        console.log('[ClientContext] Setting client context:', selectedClientId);
         const { error } = await supabase.rpc('set_current_client', { client_id_param: selectedClientId });
         if (error) {
-          console.error('Failed to set client context:', error);
+          console.error('[ClientContext] Failed to set client context:', error);
+        } else {
+          console.log('[ClientContext] Client context set successfully');
         }
       } else {
         localStorage.removeItem(STORAGE_KEY);
+        console.log('[ClientContext] Clearing client context');
         const { error } = await supabase.rpc('set_current_client', { client_id_param: '' });
         if (error) {
-          console.error('Failed to clear client context:', error);
+          console.error('[ClientContext] Failed to clear client context:', error);
         }
       }
+
+      setIsContextReady(true);
       
-      // Only reload on actual client changes, not initial mount
+      // Invalidate all queries when client changes (not on initial mount)
       if (!isInitialMount) {
-        window.location.reload();
+        console.log('[ClientContext] Client changed, invalidating queries');
+        await queryClient.invalidateQueries();
       }
     };
     
     updateClientContext();
-  }, [selectedClientId]);
+  }, [selectedClientId, queryClient]);
 
   return (
-    <ClientSelectionContext.Provider value={{ selectedClientId, setSelectedClientId }}>
+    <ClientSelectionContext.Provider value={{ selectedClientId, setSelectedClientId, isContextReady }}>
       {children}
     </ClientSelectionContext.Provider>
   );

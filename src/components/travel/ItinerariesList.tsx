@@ -15,7 +15,7 @@ export function ItinerariesList() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingItinerary, setEditingItinerary] = useState<any>(null);
   const queryClient = useQueryClient();
-  const { selectedClientId } = useClientSelection();
+  const { selectedClientId, isContextReady } = useClientSelection();
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -46,6 +46,7 @@ export function ItinerariesList() {
       if (error) throw error;
       return data;
     },
+    enabled: isContextReady,
   });
 
   const getRiskColor = (level: string) => {

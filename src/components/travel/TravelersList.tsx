@@ -14,7 +14,7 @@ export function TravelersList() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingTraveler, setEditingTraveler] = useState<any>(null);
   const queryClient = useQueryClient();
-  const { selectedClientId } = useClientSelection();
+  const { selectedClientId, isContextReady } = useClientSelection();
 
   const { data: travelers, isLoading } = useQuery({
     queryKey: ["travelers", selectedClientId],
@@ -31,6 +31,7 @@ export function TravelersList() {
       if (error) throw error;
       return data;
     },
+    enabled: isContextReady,
   });
 
   const deleteMutation = useMutation({
