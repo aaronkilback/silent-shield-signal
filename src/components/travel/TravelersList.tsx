@@ -19,11 +19,16 @@ export function TravelersList() {
   const { data: travelers, isLoading } = useQuery({
     queryKey: ["travelers"],
     queryFn: async () => {
+      console.log('[Travelers] Fetching travelers...');
       const { data, error } = await supabase
         .from("travelers")
         .select("*")
         .order("name");
-      if (error) throw error;
+      if (error) {
+        console.error('[Travelers] Error fetching:', error);
+        throw error;
+      }
+      console.log('[Travelers] Fetched count:', data?.length || 0);
       return data;
     },
     enabled: isContextReady,

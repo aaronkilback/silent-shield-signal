@@ -10,20 +10,24 @@ export const useUserRole = () => {
       const { data: { user } } = await supabase.auth.getUser();
       
       if (!user) {
+        console.log('[UserRole] No authenticated user');
         return [];
       }
 
+      console.log('[UserRole] Fetching roles for user:', user.id);
       const { data, error } = await supabase
         .from('user_roles')
         .select('role')
         .eq('user_id', user.id);
 
       if (error) {
-        console.error('Error fetching user roles:', error);
+        console.error('[UserRole] Error fetching user roles:', error);
         throw error;
       }
 
-      return data?.map(r => r.role as AppRole) || [];
+      const rolesList = data?.map(r => r.role as AppRole) || [];
+      console.log('[UserRole] User roles:', rolesList);
+      return rolesList;
     },
     enabled: true,
   });
@@ -36,6 +40,8 @@ export const useUserRole = () => {
   const isAdmin = hasRole('admin');
   const isAnalyst = hasRole('analyst');
   const isViewer = hasRole('viewer');
+
+  console.log('[UserRole] Role checks - Super Admin:', isSuperAdmin, 'Admin:', isAdmin, 'Analyst:', isAnalyst, 'Viewer:', isViewer);
 
   return {
     roles: roles || [],
