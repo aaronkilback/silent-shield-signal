@@ -31,6 +31,7 @@ export function ItinerariesList() {
   const { data: itineraries, isLoading } = useQuery({
     queryKey: ["itineraries"],
     queryFn: async () => {
+      console.log('[Itineraries] Fetching itineraries...');
       const { data, error } = await supabase
         .from("itineraries")
         .select(`
@@ -38,7 +39,11 @@ export function ItinerariesList() {
           travelers:traveler_id (name, map_color)
         `)
         .order("departure_date", { ascending: true });
-      if (error) throw error;
+      if (error) {
+        console.error('[Itineraries] Error fetching:', error);
+        throw error;
+      }
+      console.log('[Itineraries] Fetched count:', data?.length || 0);
       return data;
     },
     enabled: isContextReady,

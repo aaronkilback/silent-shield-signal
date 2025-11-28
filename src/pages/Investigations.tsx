@@ -20,12 +20,17 @@ const Investigations = () => {
   const { data: investigations = [], isLoading } = useQuery({
     queryKey: ['investigations'],
     queryFn: async () => {
+      console.log('[Investigations] Fetching investigations...');
       const { data, error } = await supabase
         .from('investigations')
         .select('*')
         .order('created_at', { ascending: false });
       
-      if (error) throw error;
+      if (error) {
+        console.error('[Investigations] Error fetching:', error);
+        throw error;
+      }
+      console.log('[Investigations] Fetched count:', data?.length || 0);
       return data;
     },
     enabled: !!user && isContextReady
