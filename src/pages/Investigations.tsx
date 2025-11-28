@@ -15,7 +15,7 @@ const Investigations = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [isCreating, setIsCreating] = useState(false);
-  const { selectedClientId } = useClientSelection();
+  const { selectedClientId, isContextReady } = useClientSelection();
 
   const { data: investigations = [], isLoading } = useQuery({
     queryKey: ['investigations', selectedClientId],
@@ -33,7 +33,7 @@ const Investigations = () => {
       if (error) throw error;
       return data;
     },
-    enabled: !!user
+    enabled: !!user && isContextReady
   });
 
   const createNewInvestigation = async () => {
