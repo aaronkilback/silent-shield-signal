@@ -17,17 +17,12 @@ export function TravelersList() {
   const { selectedClientId, isContextReady } = useClientSelection();
 
   const { data: travelers, isLoading } = useQuery({
-    queryKey: ["travelers", selectedClientId],
+    queryKey: ["travelers"],
     queryFn: async () => {
-      let query = supabase
+      const { data, error } = await supabase
         .from("travelers")
-        .select("*");
-      
-      if (selectedClientId) {
-        query = query.eq("client_id", selectedClientId);
-      }
-      
-      const { data, error } = await query.order("name");
+        .select("*")
+        .order("name");
       if (error) throw error;
       return data;
     },

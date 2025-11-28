@@ -29,20 +29,15 @@ export function ItinerariesList() {
   });
 
   const { data: itineraries, isLoading } = useQuery({
-    queryKey: ["itineraries", selectedClientId],
+    queryKey: ["itineraries"],
     queryFn: async () => {
-      let query = supabase
+      const { data, error } = await supabase
         .from("itineraries")
         .select(`
           *,
           travelers:traveler_id (name, map_color)
-        `);
-      
-      if (selectedClientId) {
-        query = query.eq("client_id", selectedClientId);
-      }
-      
-      const { data, error } = await query.order("departure_date", { ascending: true });
+        `)
+        .order("departure_date", { ascending: true });
       if (error) throw error;
       return data;
     },
