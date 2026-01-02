@@ -3347,34 +3347,54 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
           entity_id: existing.id
         };
       }
+
+      // Check if there's already a pending suggestion for this entity
+      const { data: existingSuggestion } = await supabaseClient
+        .from("entity_suggestions")
+        .select("id, suggested_name, status")
+        .ilike("suggested_name", name)
+        .eq("status", "pending")
+        .limit(1)
+        .maybeSingle();
+
+      if (existingSuggestion) {
+        return {
+          success: false,
+          message: `A suggestion for entity "${existingSuggestion.suggested_name}" already exists and is pending review.`,
+          suggestion_id: existingSuggestion.id
+        };
+      }
       
-      // Create the entity
-      const { data: newEntity, error } = await supabaseClient
-        .from("entities")
+      // Create as entity_suggestion instead of directly in entities (suggestions-first policy)
+      const { data: newSuggestion, error } = await supabaseClient
+        .from("entity_suggestions")
         .insert({
-          name,
-          type,
-          description: description || null,
-          aliases: aliases || null,
-          is_active: true,
-          entity_status: 'active'
+          suggested_name: name,
+          suggested_type: type,
+          suggested_aliases: aliases || null,
+          suggested_attributes: description ? { description } : null,
+          source_type: "ai_assistant",
+          source_id: "dashboard-ai-assistant",
+          confidence: 0.85,
+          context: `Created via AI Assistant: ${description || 'No description provided'}`,
+          status: "pending"
         })
-        .select("id, name, type")
+        .select("id, suggested_name, suggested_type")
         .single();
       
       if (error) {
-        console.error("Failed to create entity:", error);
+        console.error("Failed to create entity suggestion:", error);
         return {
           success: false,
-          message: `Failed to create entity: ${error.message}`
+          message: `Failed to create entity suggestion: ${error.message}`
         };
       }
       
       return {
         success: true,
-        message: `Created entity "${newEntity.name}" (${newEntity.type}) with ID: ${newEntity.id}`,
-        entity: newEntity,
-        next_step: "You can now trigger an OSINT scan on this entity to gather intelligence."
+        message: `Created entity suggestion "${newSuggestion.suggested_name}" (${newSuggestion.suggested_type}). It will appear in the Suggestions tab for analyst review.`,
+        suggestion: newSuggestion,
+        next_step: "The entity suggestion is now pending review. Once approved by an analyst, it will be added to the entities database."
       };
     }
 
