@@ -180,43 +180,112 @@ ${text}`
       throw new Error('Invalid user token');
     }
 
-    // Insert entities into database
-    const insertedEntities = [];
+    // Suggestions-first policy: store extracted entities as pending suggestions (not active entities)
+    const uploadId = crypto.randomUUID();
+
+    const normalizeEntityType = (t: string): 'person' | 'organization' | 'location' | 'infrastructure' | 'domain' | 'ip_address' => {
+      switch ((t || '').toLowerCase()) {
+        case 'person':
+          return 'person';
+        case 'organization':
+          return 'organization';
+        case 'location':
+          return 'location';
+        case 'infrastructure':
+          return 'infrastructure';
+        case 'domain':
+          return 'domain';
+        case 'ip_address':
+          return 'ip_address';
+        // Map unsupported extracted types to the closest supported type for approval flow
+        case 'email':
+        case 'phone':
+        case 'vehicle':
+        case 'other':
+        default:
+          return 'infrastructure';
+      }
+    };
+
+    const getContext = (fullText: string, needle: string) => {
+      const idx = fullText.indexOf(needle);
+      if (idx === -1) return null;
+      const start = Math.max(0, idx - 120);
+      const end = Math.min(fullText.length, idx + needle.length + 120);
+      return fullText.substring(start, end);
+    };
+
+    const computeConfidence = (name: string, originalType: string) => {
+      const base = (() => {
+        switch ((originalType || '').toLowerCase()) {
+          case 'email':
+          case 'phone':
+            return 0.9;
+          case 'domain':
+          case 'ip_address':
+            return 0.85;
+          case 'organization':
+          case 'person':
+          case 'location':
+          case 'infrastructure':
+            return 0.75;
+          default:
+            return 0.7;
+        }
+      })();
+
+      // Slightly boost confidence if the name appears multiple times
+      const occurrences = (text.match(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+      return Math.min(0.95, base + Math.min(0.2, occurrences * 0.05));
+    };
+
+    const insertedSuggestions: any[] = [];
     for (const entity of entities) {
+      const originalType = entity.type || 'other';
+      const suggestedType = normalizeEntityType(originalType);
+      const confidence = computeConfidence(entity.name, originalType);
+
       const { data, error } = await supabase
-        .from('entities')
+        .from('entity_suggestions')
         .insert({
-          name: entity.name,
-          type: entity.type,
-          description: entity.description || null,
-          aliases: entity.aliases || [],
-          risk_level: entity.risk_level || 'medium',
-          threat_score: entity.threat_score || null,
-          threat_indicators: entity.threat_indicators || [],
-          associations: entity.associations || [],
-          created_by: user.id,
-          attributes: {
+          suggested_name: entity.name,
+          suggested_type: suggestedType,
+          suggested_aliases: entity.aliases || [],
+          suggested_attributes: {
+            original_type: originalType,
+            description: entity.description || null,
+            risk_level: entity.risk_level || null,
+            threat_score: entity.threat_score ?? null,
+            threat_indicators: entity.threat_indicators || [],
+            associations: entity.associations || [],
             source: 'document_upload',
-            filename: filename
-          }
+            filename,
+            upload_id: uploadId,
+          },
+          source_type: 'document_upload',
+          source_id: uploadId,
+          confidence,
+          context: getContext(text, entity.name),
+          status: 'pending',
         })
         .select()
         .single();
 
       if (error) {
-        console.error('Error inserting entity:', entity.name, error);
+        console.error('Error inserting entity suggestion:', entity.name, error);
       } else {
-        insertedEntities.push(data);
+        insertedSuggestions.push(data);
       }
     }
 
-    console.log(`Successfully inserted ${insertedEntities.length} entities`);
+    console.log(`Successfully inserted ${insertedSuggestions.length} entity suggestions`);
 
     return new Response(
-      JSON.stringify({ 
-        success: true, 
-        message: `Successfully created ${insertedEntities.length} entities`,
-        entities: insertedEntities
+      JSON.stringify({
+        success: true,
+        message: `Successfully created ${insertedSuggestions.length} entity suggestions`,
+        suggestions: insertedSuggestions,
+        uploadId,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,7 @@ import { Label } from "@/components/ui/label";
 
 export default function Entities() {
   const { selectedClientId } = useClientSelection();
+  const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<string | null>(null);
@@ -110,10 +111,13 @@ export default function Entities() {
             });
 
             if (error) throw error;
-            
-            const count = data.entities?.length || 0;
-            toast.success(`Successfully created ${count} entities from document`);
-            refetch();
+
+            const count = data.suggestions?.length || 0;
+            toast.success(`Created ${count} entity suggestion${count === 1 ? '' : 's'} for review`);
+
+            queryClient.invalidateQueries({ queryKey: ['entity-suggestions'] });
+            setActiveTab('suggestions');
+
             resolve(data);
           } catch (err) {
             reject(err);

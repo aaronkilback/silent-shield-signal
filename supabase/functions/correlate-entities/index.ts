@@ -26,7 +26,9 @@ serve(async (req) => {
   }
 
   try {
-    const { text, sourceType, sourceId, autoApprove = false }: CorrelationRequest = await req.json();
+    const { text, sourceType, sourceId }: CorrelationRequest = await req.json();
+    // Suggestions-first policy: never auto-create entities from correlation.
+    const autoApprove = false;
     
     if (!text || !sourceType || !sourceId) {
       return new Response(
