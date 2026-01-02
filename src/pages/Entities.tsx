@@ -52,11 +52,8 @@ export default function Entities() {
       // Show all entities - they are global resources that can be referenced across clients
       let query = supabase
         .from('entities')
-        .select(`
-          *,
-          entity_mentions(count),
-          created_by_profile:profiles!entities_created_by_fkey(name)
-        `)
+        // Avoid joins here so viewers without access to related tables can still see entities
+        .select('*')
         .eq('is_active', true)
         .order('created_at', { ascending: false });
 
@@ -489,7 +486,7 @@ export default function Entities() {
                     )}
 
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>{entity.entity_mentions[0]?.count || 0} mentions</span>
+                      <span>{entity.entity_mentions?.[0]?.count ?? 0} mentions</span>
                       <span>{formatDistanceToNow(new Date(entity.created_at), { addSuffix: true })}</span>
                     </div>
 
@@ -575,7 +572,7 @@ export default function Entities() {
                         {entity.risk_level || 'unknown'}
                       </Badge>
                       <span className="text-sm text-muted-foreground">
-                        {entity.entity_mentions[0]?.count || 0} mentions
+                        {entity.entity_mentions?.[0]?.count ?? 0} mentions
                       </span>
                       <span className="text-xs text-muted-foreground w-24 text-right">
                         {formatDistanceToNow(new Date(entity.created_at), { addSuffix: true })}
