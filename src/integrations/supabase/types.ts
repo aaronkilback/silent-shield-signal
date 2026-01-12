@@ -14,6 +14,161 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_conversations: {
+        Row: {
+          agent_id: string
+          client_id: string | null
+          created_at: string
+          id: string
+          status: string | null
+          title: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          agent_id: string
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          status?: string | null
+          title?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          agent_id?: string
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          status?: string | null
+          title?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_conversations_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_conversations_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_conversations_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_messages: {
+        Row: {
+          content: string
+          conversation_id: string
+          created_at: string
+          id: string
+          metadata: Json | null
+          role: string
+        }
+        Insert: {
+          content: string
+          conversation_id: string
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          role: string
+        }
+        Update: {
+          content?: string
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          role?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "agent_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_agents: {
+        Row: {
+          avatar_color: string | null
+          call_sign: string
+          codename: string
+          created_at: string
+          created_by: string | null
+          id: string
+          input_sources: string[] | null
+          interaction_style: string
+          is_active: boolean | null
+          is_client_facing: boolean | null
+          mission_scope: string
+          output_types: string[] | null
+          persona: string
+          specialty: string
+          system_prompt: string | null
+          updated_at: string
+        }
+        Insert: {
+          avatar_color?: string | null
+          call_sign: string
+          codename: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          input_sources?: string[] | null
+          interaction_style?: string
+          is_active?: boolean | null
+          is_client_facing?: boolean | null
+          mission_scope: string
+          output_types?: string[] | null
+          persona: string
+          specialty: string
+          system_prompt?: string | null
+          updated_at?: string
+        }
+        Update: {
+          avatar_color?: string | null
+          call_sign?: string
+          codename?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          input_sources?: string[] | null
+          interaction_style?: string
+          is_active?: boolean | null
+          is_client_facing?: boolean | null
+          mission_scope?: string
+          output_types?: string[] | null
+          persona?: string
+          specialty?: string
+          system_prompt?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_agents_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_assistant_messages: {
         Row: {
           content: string
