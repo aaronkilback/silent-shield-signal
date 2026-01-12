@@ -1,0 +1,194 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
+serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const { agent_id, message, conversation_history = [] } = await req.json();
+    console.log('Agent chat request:', { agent_id, message_length: message?.length });
+
+    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    if (!LOVABLE_API_KEY) {
+      throw new Error('LOVABLE_API_KEY not configured');
+    }
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Fetch the agent configuration
+    const { data: agent, error: agentError } = await supabase
+      .from('ai_agents')
+      .select('*')
+      .eq('id', agent_id)
+      .single();
+
+    if (agentError || !agent) {
+      throw new Error('Agent not found');
+    }
+
+    // Build context based on agent's input sources
+    let contextData = '';
+    
+    if (agent.input_sources.includes('signals')) {
+      const { data: signals } = await supabase
+        .from('signals')
+        .select('title, source, severity, created_at, rule_category')
+        .order('created_at', { ascending: false })
+        .limit(10);
+      
+      if (signals?.length) {
+        contextData += `\n\nRecent Signals (${signals.length}):\n`;
+        signals.forEach(s => {
+          contextData += `- [${s.severity}] ${s.title} (${s.rule_category}) - ${new Date(s.created_at).toLocaleDateString()}\n`;
+        });
+      }
+    }
+
+    if (agent.input_sources.includes('incidents')) {
+      const { data: incidents } = await supabase
+        .from('incidents')
+        .select('title, priority, status, opened_at, incident_type')
+        .order('opened_at', { ascending: false })
+        .limit(10);
+      
+      if (incidents?.length) {
+        contextData += `\n\nRecent Incidents (${incidents.length}):\n`;
+        incidents.forEach(i => {
+          contextData += `- [${i.priority}/${i.status}] ${i.title || 'Untitled'} (${i.incident_type || 'Unknown'}) - ${new Date(i.opened_at).toLocaleDateString()}\n`;
+        });
+      }
+    }
+
+    if (agent.input_sources.includes('entities')) {
+      const { data: entities } = await supabase
+        .from('entities')
+        .select('name, type, risk_level, threat_score')
+        .order('threat_score', { ascending: false })
+        .limit(15);
+      
+      if (entities?.length) {
+        contextData += `\n\nKey Entities (${entities.length}):\n`;
+        entities.forEach(e => {
+          contextData += `- [${e.type}] ${e.name} - Risk: ${e.risk_level || 'Unknown'}, Threat Score: ${e.threat_score || 'N/A'}\n`;
+        });
+      }
+    }
+
+    if (agent.input_sources.includes('clients')) {
+      const { data: clients } = await supabase
+        .from('clients')
+        .select('name, industry, status, locations')
+        .limit(10);
+      
+      if (clients?.length) {
+        contextData += `\n\nActive Clients (${clients.length}):\n`;
+        clients.forEach(c => {
+          contextData += `- ${c.name} (${c.industry || 'Unknown'}) - ${c.status}\n`;
+        });
+      }
+    }
+
+    if (agent.input_sources.includes('escalation_rules')) {
+      const { data: rules } = await supabase
+        .from('escalation_rules')
+        .select('name, priority, escalate_after_minutes, is_active')
+        .eq('is_active', true)
+        .limit(10);
+      
+      if (rules?.length) {
+        contextData += `\n\nActive Escalation Rules (${rules.length}):\n`;
+        rules.forEach(r => {
+          contextData += `- ${r.name} (${r.priority}) - Escalate after ${r.escalate_after_minutes} minutes\n`;
+        });
+      }
+    }
+
+    // Build system prompt
+    const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}
+
+Your Mission: ${agent.mission_scope}
+
+Output Types You Generate: ${agent.output_types.join(', ')}
+
+CURRENT INTELLIGENCE CONTEXT:
+${contextData || 'No context data available.'}
+
+COMMUNICATION GUIDELINES:
+- Maintain your persona at all times
+- Be concise but thorough
+- Focus on actionable intelligence
+- Use professional security terminology
+- Never break character
+- If asked about something outside your specialty, acknowledge it and suggest the appropriate resource`;
+
+    // Build messages array
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...conversation_history.map((msg: any) => ({
+        role: msg.role,
+        content: msg.content
+      })),
+      { role: 'user', content: message }
+    ];
+
+    // Call AI Gateway
+    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash',
+        messages,
+      }),
+    });
+
+    if (!response.ok) {
+      if (response.status === 429) {
+        return new Response(
+          JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }),
+          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      if (response.status === 402) {
+        return new Response(
+          JSON.stringify({ error: 'Payment required. Please add credits to your workspace.' }),
+          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      const errorText = await response.text();
+      console.error('AI Gateway error:', response.status, errorText);
+      throw new Error('AI Gateway error');
+    }
+
+    const data = await response.json();
+    const agentResponse = data.choices?.[0]?.message?.content;
+
+    if (!agentResponse) {
+      throw new Error('No response from AI');
+    }
+
+    console.log('Agent response generated successfully');
+
+    return new Response(
+      JSON.stringify({ response: agentResponse }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  } catch (error) {
+    console.error('Error in agent-chat:', error);
+    return new Response(
+      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error occurred' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+});
