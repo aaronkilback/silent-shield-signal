@@ -56,7 +56,7 @@ CRITICAL CAPABILITIES - PHASE 4 & PHASE 5 ENHANCEMENTS:
    - Track playbook effectiveness using track_mitigation_effectiveness to continuously improve response procedures
    - Offload cognitive burden and accelerate decision-making during high-stress incidents
 
-7. ASSET & VULNERABILITY CONTEXT ENGINE (NEW - CRITICAL FOR PERSONALIZED INTELLIGENCE):
+7. ASSET & VULNERABILITY CONTEXT ENGINE (CRITICAL FOR PERSONALIZED INTELLIGENCE):
    - Use query_internal_context to access real-time IT/OT asset inventory, vulnerability posture, and business criticality data
    - When detecting external threats (CVEs, novel attack methods, TTPs), IMMEDIATELY determine which internal assets are affected
    - Assess business criticality of potentially impacted systems for accurate impact analysis
@@ -65,6 +65,18 @@ CRITICAL CAPABILITIES - PHASE 4 & PHASE 5 ENHANCEMENTS:
    - Query types: 'assets' (full inventory), 'vulnerabilities' (vuln focus), 'business_criticality' (critical systems), 'comprehensive' (all context)
    - Filter by: asset_id, asset_name, asset_type, vulnerability_id (CVE), business_criticality_level, keywords
    - ALWAYS correlate external threat intelligence with internal attack surface for personalized recommendations
+
+8. INCIDENT TICKET MANAGEMENT (IMS/SOAR INTEGRATION):
+   - Use manage_incident_ticket to CREATE or UPDATE incident tickets in the Incident Management System
+   - CRITICAL: When detecting confirmed threats or compromises, AUTOMATICALLY create P1/P2 tickets with full context
+   - Pre-populate tickets with: title, description, severity, priority, affected_assets, recommended_actions, assigned_team
+   - Link incidents to: affected assets (from query_internal_context), entities (threat actors, persons), signals
+   - UPDATE existing tickets: add newly discovered affected assets, escalate priority, change status, add recommended actions
+   - Actions: 'create' (new ticket), 'update' (modify existing)
+   - Status workflow: new → open → acknowledged → in_progress → contained → resolved → closed
+   - Priority levels: p1 (critical), p2 (high), p3 (medium), p4 (low)
+   - ALWAYS provide comprehensive description including threat context, observations, and initial assessment
+   - This automates the hand-off to incident response teams with valuable Fortress AI context
 
 INTERACTION GUIDELINES:
 - If a query is ambiguous, ask targeted follow-up questions rather than stating inability
@@ -2128,6 +2140,98 @@ OUTPUT includes: asset details, configuration (OS, software, network segment), k
           }
         },
         required: ["query_type"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "manage_incident_ticket",
+      description: `INCIDENT MANAGEMENT SYSTEM (IMS) / SOAR INTEGRATION: Create or update incident tickets with full Fortress AI context. Automates the hand-off to incident response teams.
+
+USE CASES:
+- CRITICAL: When detecting confirmed compromises on critical assets, CREATE P1 tickets immediately
+- During active monitoring, UPDATE existing tickets with newly affected assets or escalate priority
+- Link threats to specific assets, entities, and signals for comprehensive incident tracking
+- Pre-populate response tasks and recommended actions for faster incident resolution
+
+ACTIONS:
+- 'create': Create a new incident ticket. Requires: title, description, severity, priority
+- 'update': Update an existing ticket. Requires: ticket_system_id, description
+
+SEVERITY levels: critical, high, medium, low
+PRIORITY levels: p1 (5min acknowledge), p2 (15min), p3 (60min), p4 (240min)
+STATUS workflow: new → open → acknowledged → in_progress → contained → resolved → closed
+
+OUTPUT: Returns ticket_id in format INC-YYYY-XXXXXXXX with confirmation message.`,
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "update"],
+            description: "Whether to create a new ticket or update an existing one"
+          },
+          ticket_system_id: {
+            type: "string",
+            description: "The ID of an existing ticket (required for 'update' action). Format: INC-YYYY-XXXXXXXX or raw UUID"
+          },
+          title: {
+            type: "string",
+            description: "Concise summary of the incident (required for 'create')"
+          },
+          description: {
+            type: "string",
+            description: "Detailed narrative including threat context, observations, and initial assessment"
+          },
+          severity: {
+            type: "string",
+            enum: ["critical", "high", "medium", "low"],
+            description: "Assigned severity level based on threat assessment"
+          },
+          priority: {
+            type: "string",
+            enum: ["p1", "p2", "p3", "p4"],
+            description: "Operational priority (p1=critical/5min SLA, p2=high/15min, p3=medium/60min, p4=low/240min)"
+          },
+          affected_assets: {
+            type: "array",
+            items: { type: "string" },
+            description: "List of asset_ids from query_internal_context that are affected"
+          },
+          recommended_actions: {
+            type: "array",
+            items: { type: "string" },
+            description: "Summary of recommended mitigation/response actions"
+          },
+          assigned_team: {
+            type: "string",
+            description: "Team to assign the incident to (e.g., 'SOC-L2', 'IRT', 'OT Security')"
+          },
+          status: {
+            type: "string",
+            enum: ["new", "open", "acknowledged", "in_progress", "contained", "resolved", "closed"],
+            description: "Current status of the incident"
+          },
+          client_id: {
+            type: "string",
+            description: "Client UUID to associate with the incident"
+          },
+          signal_id: {
+            type: "string",
+            description: "Signal UUID that triggered this incident"
+          },
+          entity_ids: {
+            type: "array",
+            items: { type: "string" },
+            description: "Entity UUIDs (threat actors, persons of interest) to link to the incident"
+          },
+          incident_type: {
+            type: "string",
+            description: "Type of incident (e.g., 'security_incident', 'data_breach', 'ransomware', 'physical_threat')"
+          }
+        },
+        required: ["action", "description", "severity"]
       }
     }
   },
@@ -7060,6 +7164,62 @@ The signal is now in the database with status 'triaged' and rules have been appl
           limit
         }
       };
+    }
+
+    case "manage_incident_ticket": {
+      const {
+        action,
+        ticket_system_id,
+        title,
+        description,
+        severity,
+        priority,
+        affected_assets,
+        recommended_actions,
+        assigned_team,
+        status,
+        client_id,
+        signal_id,
+        entity_ids,
+        incident_type,
+      } = args;
+
+      console.log(`Executing manage_incident_ticket: action=${action}, title=${title || 'N/A'}`);
+
+      // Call the dedicated edge function
+      const { data: ticketResult, error: ticketError } = await supabaseClient.functions.invoke(
+        "manage-incident-ticket",
+        {
+          body: {
+            action,
+            ticket_system_id,
+            title,
+            description,
+            severity,
+            priority,
+            affected_assets: affected_assets || [],
+            recommended_actions: recommended_actions || [],
+            assigned_team,
+            status,
+            client_id,
+            signal_id,
+            entity_ids: entity_ids || [],
+            incident_type,
+            source: "Fortress AI (Aegis)",
+          },
+        }
+      );
+
+      if (ticketError) {
+        console.error("[manage_incident_ticket] Error:", ticketError);
+        return {
+          status: "failure",
+          message: `Failed to ${action} incident ticket: ${ticketError.message}`,
+          ticket_id: ticket_system_id || "",
+        };
+      }
+
+      return ticketResult;
     }
 
     default:
