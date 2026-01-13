@@ -2377,6 +2377,66 @@ This tool bridges the gap between internal Fortress data and open-source intelli
       }
     }
   },
+  {
+    type: "function",
+    function: {
+      name: "run_data_quality_check",
+      description: "Run data quality monitoring to identify issues like incidents missing titles/summaries, entities with generic descriptions, and signals lacking key information. Can auto-fix issues.",
+      parameters: {
+        type: "object",
+        properties: {
+          auto_fix: { type: "boolean", description: "Automatically fix issues where possible (default: false)" },
+          categories: { type: "array", items: { type: "string" }, description: "Categories to check: incident, entity, signal" }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "auto_summarize_incidents",
+      description: "Generate AI-powered titles and summaries for incidents that are missing them. Use batch_mode=true to process multiple incidents.",
+      parameters: {
+        type: "object",
+        properties: {
+          incident_id: { type: "string", description: "Specific incident ID to summarize" },
+          batch_mode: { type: "boolean", description: "Process multiple incidents missing summaries (default: false)" },
+          limit: { type: "number", description: "Max incidents to process in batch mode (default: 20)" }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "enrich_entity_descriptions",
+      description: "Enrich entities with generic/missing descriptions using OSINT and AI. Creates suggestions for human review or auto-applies if confident.",
+      parameters: {
+        type: "object",
+        properties: {
+          entity_id: { type: "string", description: "Specific entity to enrich" },
+          batch_mode: { type: "boolean", description: "Process multiple entities (default: false)" },
+          auto_apply: { type: "boolean", description: "Auto-apply high-confidence enrichments (default: false)" },
+          limit: { type: "number", description: "Max entities to process (default: 10)" }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "extract_signal_insights",
+      description: "Extract structured insights from signals: entities, dates, locations, actions, threat indicators. Enhances signals for actionability.",
+      parameters: {
+        type: "object",
+        properties: {
+          signal_id: { type: "string", description: "Specific signal to process" },
+          batch_mode: { type: "boolean", description: "Process signals missing insights (default: false)" },
+          limit: { type: "number", description: "Max signals to process (default: 10)" }
+        }
+      }
+    }
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -7518,6 +7578,38 @@ The signal is now in the database with status 'triaged' and rules have been appl
         signal_created: true,
         note: "Search results have been stored as a signal for future reference"
       };
+    }
+
+    case "run_data_quality_check": {
+      const { data, error } = await supabaseClient.functions.invoke('data-quality-monitor', {
+        body: { auto_fix: args.auto_fix || false, categories: args.categories || ['incident', 'entity', 'signal'] }
+      });
+      if (error) throw error;
+      return data;
+    }
+
+    case "auto_summarize_incidents": {
+      const { data, error } = await supabaseClient.functions.invoke('auto-summarize-incident', {
+        body: { incident_id: args.incident_id, batch_mode: args.batch_mode || false, limit: args.limit || 20 }
+      });
+      if (error) throw error;
+      return data;
+    }
+
+    case "enrich_entity_descriptions": {
+      const { data, error } = await supabaseClient.functions.invoke('auto-enrich-entities', {
+        body: { entity_id: args.entity_id, batch_mode: args.batch_mode || false, auto_apply: args.auto_apply || false, limit: args.limit || 10 }
+      });
+      if (error) throw error;
+      return data;
+    }
+
+    case "extract_signal_insights": {
+      const { data, error } = await supabaseClient.functions.invoke('extract-signal-insights', {
+        body: { signal_id: args.signal_id, batch_mode: args.batch_mode || false, limit: args.limit || 10 }
+      });
+      if (error) throw error;
+      return data;
     }
 
     default:
