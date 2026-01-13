@@ -119,6 +119,7 @@ export type Database = {
           mission_scope: string
           output_types: string[] | null
           persona: string
+          roe_id: string | null
           specialty: string
           system_prompt: string | null
           updated_at: string
@@ -137,6 +138,7 @@ export type Database = {
           mission_scope: string
           output_types?: string[] | null
           persona: string
+          roe_id?: string | null
           specialty: string
           system_prompt?: string | null
           updated_at?: string
@@ -155,6 +157,7 @@ export type Database = {
           mission_scope?: string
           output_types?: string[] | null
           persona?: string
+          roe_id?: string | null
           specialty?: string
           system_prompt?: string | null
           updated_at?: string
@@ -165,6 +168,13 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_agents_roe_id_fkey"
+            columns: ["roe_id"]
+            isOneToOne: false
+            referencedRelation: "rules_of_engagement"
             referencedColumns: ["id"]
           },
         ]
@@ -2293,6 +2303,83 @@ export type Database = {
         }
         Relationships: []
       }
+      rules_of_engagement: {
+        Row: {
+          allowed_domains: Json | null
+          audience: Database["public"]["Enums"]["roe_audience"]
+          classification: Database["public"]["Enums"]["roe_classification"]
+          created_at: string
+          created_by: string | null
+          data_sources: Json | null
+          description: string | null
+          escalation_rules: Json | null
+          evidence_policy: Json | null
+          id: string
+          is_global_default: boolean | null
+          mode: Database["public"]["Enums"]["roe_mode"]
+          name: string
+          output_constraints: Json | null
+          permissions: Json | null
+          scope_control: Json | null
+          uncertainty_protocol: Json | null
+          updated_at: string
+          validation_gate: Json | null
+          version: string | null
+        }
+        Insert: {
+          allowed_domains?: Json | null
+          audience?: Database["public"]["Enums"]["roe_audience"]
+          classification?: Database["public"]["Enums"]["roe_classification"]
+          created_at?: string
+          created_by?: string | null
+          data_sources?: Json | null
+          description?: string | null
+          escalation_rules?: Json | null
+          evidence_policy?: Json | null
+          id?: string
+          is_global_default?: boolean | null
+          mode?: Database["public"]["Enums"]["roe_mode"]
+          name: string
+          output_constraints?: Json | null
+          permissions?: Json | null
+          scope_control?: Json | null
+          uncertainty_protocol?: Json | null
+          updated_at?: string
+          validation_gate?: Json | null
+          version?: string | null
+        }
+        Update: {
+          allowed_domains?: Json | null
+          audience?: Database["public"]["Enums"]["roe_audience"]
+          classification?: Database["public"]["Enums"]["roe_classification"]
+          created_at?: string
+          created_by?: string | null
+          data_sources?: Json | null
+          description?: string | null
+          escalation_rules?: Json | null
+          evidence_policy?: Json | null
+          id?: string
+          is_global_default?: boolean | null
+          mode?: Database["public"]["Enums"]["roe_mode"]
+          name?: string
+          output_constraints?: Json | null
+          permissions?: Json | null
+          scope_control?: Json | null
+          uncertainty_protocol?: Json | null
+          updated_at?: string
+          validation_gate?: Json | null
+          version?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rules_of_engagement_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       signal_correlation_groups: {
         Row: {
           avg_confidence: number | null
@@ -2683,12 +2770,19 @@ export type Database = {
           content: string
           content_type: string | null
           created_at: string
+          evidence_level: string | null
           id: string
           is_included_in_final: boolean | null
           mission_id: string
+          next_validation_steps: string[] | null
           phase: Database["public"]["Enums"]["mission_phase"]
           role: Database["public"]["Enums"]["task_force_role"]
           sources: string[] | null
+          unknowns: string[] | null
+          validation_errors: string[] | null
+          validation_status:
+            | Database["public"]["Enums"]["validation_status"]
+            | null
         }
         Insert: {
           agent_id: string
@@ -2697,12 +2791,19 @@ export type Database = {
           content: string
           content_type?: string | null
           created_at?: string
+          evidence_level?: string | null
           id?: string
           is_included_in_final?: boolean | null
           mission_id: string
+          next_validation_steps?: string[] | null
           phase: Database["public"]["Enums"]["mission_phase"]
           role: Database["public"]["Enums"]["task_force_role"]
           sources?: string[] | null
+          unknowns?: string[] | null
+          validation_errors?: string[] | null
+          validation_status?:
+            | Database["public"]["Enums"]["validation_status"]
+            | null
         }
         Update: {
           agent_id?: string
@@ -2711,12 +2812,19 @@ export type Database = {
           content?: string
           content_type?: string | null
           created_at?: string
+          evidence_level?: string | null
           id?: string
           is_included_in_final?: boolean | null
           mission_id?: string
+          next_validation_steps?: string[] | null
           phase?: Database["public"]["Enums"]["mission_phase"]
           role?: Database["public"]["Enums"]["task_force_role"]
           sources?: string[] | null
+          unknowns?: string[] | null
+          validation_errors?: string[] | null
+          validation_status?:
+            | Database["public"]["Enums"]["validation_status"]
+            | null
         }
         Relationships: [
           {
@@ -2758,11 +2866,17 @@ export type Database = {
           next_actions: Json | null
           phase: Database["public"]["Enums"]["mission_phase"]
           priority: string
+          roe_id: string | null
+          roe_override: Json | null
           rules_of_engagement: Json | null
           started_at: string | null
           task_breakdown: Json | null
           time_horizon: string | null
           updated_at: string
+          validation_errors: string[] | null
+          validation_status:
+            | Database["public"]["Enums"]["validation_status"]
+            | null
         }
         Insert: {
           assumptions?: string[] | null
@@ -2786,11 +2900,17 @@ export type Database = {
           next_actions?: Json | null
           phase?: Database["public"]["Enums"]["mission_phase"]
           priority?: string
+          roe_id?: string | null
+          roe_override?: Json | null
           rules_of_engagement?: Json | null
           started_at?: string | null
           task_breakdown?: Json | null
           time_horizon?: string | null
           updated_at?: string
+          validation_errors?: string[] | null
+          validation_status?:
+            | Database["public"]["Enums"]["validation_status"]
+            | null
         }
         Update: {
           assumptions?: string[] | null
@@ -2814,11 +2934,17 @@ export type Database = {
           next_actions?: Json | null
           phase?: Database["public"]["Enums"]["mission_phase"]
           priority?: string
+          roe_id?: string | null
+          roe_override?: Json | null
           rules_of_engagement?: Json | null
           started_at?: string | null
           task_breakdown?: Json | null
           time_horizon?: string | null
           updated_at?: string
+          validation_errors?: string[] | null
+          validation_status?:
+            | Database["public"]["Enums"]["validation_status"]
+            | null
         }
         Relationships: [
           {
@@ -2833,6 +2959,13 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_force_missions_roe_id_fkey"
+            columns: ["roe_id"]
+            isOneToOne: false
+            referencedRelation: "rules_of_engagement"
             referencedColumns: ["id"]
           },
         ]
@@ -3082,6 +3215,9 @@ export type Database = {
         | "client_onboarding"
         | "threat_assessment"
         | "custom"
+      roe_audience: "INTERNAL" | "CLIENT"
+      roe_classification: "PUBLIC" | "CONFIDENTIAL" | "RESTRICTED"
+      roe_mode: "STRICT" | "STANDARD"
       signal_status:
         | "new"
         | "triaged"
@@ -3098,6 +3234,7 @@ export type Database = {
         | "travel_security"
         | "communications"
         | "legal"
+      validation_status: "PASS" | "WARN" | "FAIL" | "PENDING"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -3264,6 +3401,9 @@ export const Constants = {
         "threat_assessment",
         "custom",
       ],
+      roe_audience: ["INTERNAL", "CLIENT"],
+      roe_classification: ["PUBLIC", "CONFIDENTIAL", "RESTRICTED"],
+      roe_mode: ["STRICT", "STANDARD"],
       signal_status: [
         "new",
         "triaged",
@@ -3282,6 +3422,7 @@ export const Constants = {
         "communications",
         "legal",
       ],
+      validation_status: ["PASS", "WARN", "FAIL", "PENDING"],
     },
   },
 } as const
