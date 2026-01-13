@@ -27,6 +27,7 @@ import Benchmark from "./pages/Benchmark";
 import UserManagement from "./pages/UserManagement";
 import CommandCenter from "./pages/CommandCenter";
 import TaskForce from "./pages/TaskForce";
+import ThreatRadar from "./pages/ThreatRadar";
 import NotFound from "./pages/NotFound";
 import { EnsureDefaultRole } from "@/components/EnsureDefaultRole";
 
@@ -62,6 +63,7 @@ const App = () => (
               <Route path="/user-management" element={<UserManagement />} />
               <Route path="/command-center" element={<CommandCenter />} />
               <Route path="/task-force" element={<TaskForce />} />
+              <Route path="/threat-radar" element={<ThreatRadar />} />
               <Route path="/benchmark" element={<Benchmark />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />

@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Plane, Menu, Bot, ChevronDown, Settings, Database, Building2, Bug, CheckCircle, UserCog, Crosshair } from "lucide-react";
+import { Shield, Activity, LogOut, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Plane, Menu, Bot, ChevronDown, Settings, Database, Building2, Bug, CheckCircle, UserCog, Crosshair, Radar } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -46,6 +46,7 @@ export const Header = () => {
   // Primary nav items (always visible)
   const primaryItems = [
     { path: "/", icon: Home, label: "Dashboard" },
+    { path: "/threat-radar", icon: Radar, label: "Threat Radar" },
     { path: "/signals", icon: Radio, label: "Signals" },
     { path: "/incidents", icon: AlertTriangle, label: "Incidents" },
   ];
