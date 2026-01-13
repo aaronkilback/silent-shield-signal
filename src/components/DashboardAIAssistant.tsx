@@ -64,14 +64,14 @@ export const DashboardAIAssistant = () => {
         console.log(`🔄 Loading chat history for user ${user.id}`);
         setIsLoadingHistory(true);
         
-        // Load the most recent 500 messages in chronological order (increased from 100)
+        // Load the most recent 100 messages for faster loading
         const { data: dbMessages, error } = await supabase
           .from('ai_assistant_messages')
-          .select('*')
+          .select('id, role, content, created_at')
           .eq('user_id', user.id)
           .is('deleted_at', null)
           .order('created_at', { ascending: false })
-          .limit(500);
+          .limit(100);
         
         // Reverse to show chronologically (oldest to newest)
         const sortedMessages = dbMessages ? [...dbMessages].reverse() : [];

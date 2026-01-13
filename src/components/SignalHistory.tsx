@@ -119,10 +119,8 @@ export const SignalHistory = () => {
   }, [selectedClientId]);
 
   const loadSignals = async () => {
-    if (!selectedClientId) return;
-    
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('signals')
         .select(`
           id,
@@ -146,10 +144,15 @@ export const SignalHistory = () => {
             name
           )
         `)
-        .eq('client_id', selectedClientId)
         .order('created_at', { ascending: false })
         .limit(50);
 
+      // Only filter by client if one is selected
+      if (selectedClientId) {
+        query = query.eq('client_id', selectedClientId);
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
       
       // Fetch source names separately if needed
