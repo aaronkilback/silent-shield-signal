@@ -93,29 +93,29 @@ export const ReprocessDocuments = () => {
         { duration: 6000 }
       );
 
-      // Set up polling to check progress by counting document_entity_mentions
+      // Set up polling to check progress by reading updated archival_documents metadata
       const pollInterval = setInterval(async () => {
-        // Count how many documents have entity mentions created
-        const { data: mentionCounts } = await supabase
-          .from('document_entity_mentions')
-          .select('document_id', { count: 'exact', head: false })
-          .in('document_id', documentIds);
+        const { data: docsData, error: docsError } = await supabase
+          .from('archival_documents')
+          .select('id, metadata, entity_mentions')
+          .in('id', documentIds);
 
-        if (mentionCounts) {
-          // Get unique document IDs that have been processed
-          const processedDocs = new Set(mentionCounts.map(m => m.document_id));
-          const processed = processedDocs.size;
-          setProcessedCount(processed);
+        if (docsError) {
+          console.warn('Progress poll failed:', docsError);
+          return;
+        }
 
-          if (processed >= total) {
-            clearInterval(pollInterval);
-            setProcessing(false);
-            toast.success(
-              `✅ All ${total} documents processed! Check Entity Management or Signals for extracted intelligence.`,
-              { duration: 10000 }
-            );
-            refetch();
-          }
+        const processed = (docsData || []).filter((d: any) => (d?.metadata as any)?.entities_processed).length;
+        setProcessedCount(processed);
+
+        if (processed >= total) {
+          clearInterval(pollInterval);
+          setProcessing(false);
+          toast.success(
+            `✅ All ${total} documents processed! Check Entity Management or Signals for extracted intelligence.`,
+            { duration: 10000 }
+          );
+          refetch();
         }
       }, 5000); // Check every 5 seconds
 
@@ -207,18 +207,17 @@ export const ReprocessDocuments = () => {
 
                   <ScrollArea className="h-[300px] border rounded-md p-2">
                     <div className="space-y-2">
-                      {documents.map((doc, index) => {
+                      {documents.map((doc) => {
                         const hasBeenProcessed = doc.metadata && (doc.metadata as any).entities_processed;
                         const entityCount = doc.entity_mentions?.length || 0;
-                        const isCurrentlyProcessing = processing && index < processedCount;
-                        const isNext = processing && index === processedCount;
+                        const isQueued = processing && !hasBeenProcessed;
                         
                         return (
-                          <div key={doc.id} className={`flex items-center justify-between p-3 rounded-md ${
-                            isCurrentlyProcessing ? 'bg-green-500/10 border-green-500' : 
-                            isNext ? 'bg-blue-500/10 border-blue-500' : 
+                          <div key={doc.id} className={`flex items-center justify-between p-3 rounded-md border ${
+                            hasBeenProcessed ? 'bg-muted/50' :
+                            isQueued ? 'bg-accent/30' :
                             'bg-muted'
-                          } ${isNext ? 'border-2' : ''}`}>
+                          }`}>
                             <div className="flex-1 min-w-0">
                               <div className="text-sm font-medium truncate">{doc.filename}</div>
                               <div className="text-xs text-muted-foreground">
@@ -229,13 +228,13 @@ export const ReprocessDocuments = () => {
                               </div>
                             </div>
                             <Badge variant={
-                              isCurrentlyProcessing ? "default" : 
-                              isNext ? "secondary" :
-                              hasBeenProcessed ? "outline" : "destructive"
+                              hasBeenProcessed ? "outline" :
+                              isQueued ? "secondary" :
+                              "destructive"
                             }>
-                              {isCurrentlyProcessing ? "✓ Done" : 
-                               isNext ? "Processing..." :
-                               hasBeenProcessed ? (entityCount > 0 ? "Processed" : "No entities") : "Pending"}
+                              {hasBeenProcessed
+                                ? (entityCount > 0 ? "Processed" : "No entities")
+                                : (isQueued ? "Queued" : "Pending")}
                             </Badge>
                           </div>
                         );
