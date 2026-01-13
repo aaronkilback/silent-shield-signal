@@ -173,3 +173,6 @@ verify_jwt = false
 
 [functions.generate-agent-avatar]
 verify_jwt = true
+
+[functions.query-fortress-data]
+verify_jwt = false

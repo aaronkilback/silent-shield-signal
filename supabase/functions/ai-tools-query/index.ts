@@ -578,6 +578,194 @@ serve(async (req) => {
         }
         break;
 
+      case "query_fortress_data":
+        // Comprehensive fortress data query tool
+        const { 
+          query_type: fortressQueryType = 'comprehensive',
+          filters: fortressFilters = {},
+          output_format: fortressOutputFormat = 'detailed',
+          reason_for_access: fortressReason,
+          agent_id: fortressAgentId
+        } = parameters;
+
+        if (!fortressReason) {
+          return new Response(JSON.stringify({ error: 'reason_for_access is required for audit purposes' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // Log access for audit
+        await supabase.from('intelligence_config').upsert({
+          key: `fortress_data_access_${Date.now()}`,
+          value: {
+            query_type: fortressQueryType,
+            filters: fortressFilters,
+            reason: fortressReason,
+            agent_id: fortressAgentId,
+            timestamp: new Date().toISOString()
+          },
+          description: 'Fortress data access audit log'
+        });
+
+        const fortressLimit = fortressFilters.limit || 100;
+        const fortressResults: Record<string, any> = {};
+
+        // Helper function for common filters
+        const applyFortressFilters = (query: any) => {
+          if (fortressFilters.client_id) {
+            query = query.eq('client_id', fortressFilters.client_id);
+          }
+          if (fortressFilters.time_range?.start) {
+            query = query.gte('created_at', fortressFilters.time_range.start);
+          }
+          if (fortressFilters.time_range?.end) {
+            query = query.lte('created_at', fortressFilters.time_range.end);
+          }
+          return query.limit(fortressLimit);
+        };
+
+        // Query signals
+        if (fortressQueryType === 'signals' || fortressQueryType === 'comprehensive') {
+          let signalsQ = supabase.from('signals').select('*');
+          signalsQ = applyFortressFilters(signalsQ);
+          if (fortressFilters.severity?.length) signalsQ = signalsQ.in('severity', fortressFilters.severity);
+          if (fortressFilters.status?.length) signalsQ = signalsQ.in('status', fortressFilters.status);
+          if (fortressFilters.keywords?.length) {
+            const kf = fortressFilters.keywords.map((k: string) => `normalized_text.ilike.%${k}%`).join(',');
+            signalsQ = signalsQ.or(kf);
+          }
+          const { data: sigData } = await signalsQ.order('created_at', { ascending: false });
+          fortressResults.signals = sigData;
+        }
+
+        // Query incidents
+        if (fortressQueryType === 'incidents' || fortressQueryType === 'comprehensive') {
+          let incQ = supabase.from('incidents').select('*, signals(*)');
+          incQ = applyFortressFilters(incQ);
+          if (fortressFilters.priority?.length) incQ = incQ.in('priority', fortressFilters.priority);
+          if (fortressFilters.status?.length) incQ = incQ.in('status', fortressFilters.status);
+          const { data: incData } = await incQ.order('created_at', { ascending: false });
+          fortressResults.incidents = incData;
+        }
+
+        // Query entities
+        if (fortressQueryType === 'entities' || fortressQueryType === 'comprehensive') {
+          let entQ = supabase.from('entities').select('*, entity_relationships(*), entity_mentions(*)');
+          if (fortressFilters.client_id) entQ = entQ.eq('client_id', fortressFilters.client_id);
+          if (fortressFilters.entity_id) entQ = entQ.eq('id', fortressFilters.entity_id);
+          if (fortressFilters.keywords?.length) {
+            const kf = fortressFilters.keywords.map((k: string) => `name.ilike.%${k}%,description.ilike.%${k}%`).join(',');
+            entQ = entQ.or(kf);
+          }
+          const { data: entData } = await entQ.limit(fortressLimit).order('updated_at', { ascending: false });
+          fortressResults.entities = entData;
+        }
+
+        // Query clients
+        if (fortressQueryType === 'clients' || fortressQueryType === 'comprehensive') {
+          let clientQ = supabase.from('clients').select('*');
+          if (fortressFilters.client_id) clientQ = clientQ.eq('id', fortressFilters.client_id);
+          if (fortressFilters.keywords?.length) {
+            const kf = fortressFilters.keywords.map((k: string) => `name.ilike.%${k}%,industry.ilike.%${k}%`).join(',');
+            clientQ = clientQ.or(kf);
+          }
+          const { data: clientData } = await clientQ.limit(fortressLimit);
+          fortressResults.clients = clientData;
+        }
+
+        // Query documents
+        if (fortressQueryType === 'documents' || fortressQueryType === 'comprehensive') {
+          let docQ = supabase.from('archival_documents').select('*');
+          docQ = applyFortressFilters(docQ);
+          if (fortressFilters.keywords?.length) {
+            const kf = fortressFilters.keywords.map((k: string) => `content_text.ilike.%${k}%,summary.ilike.%${k}%,filename.ilike.%${k}%`).join(',');
+            docQ = docQ.or(kf);
+          }
+          const { data: docData } = await docQ.order('created_at', { ascending: false });
+          fortressResults.documents = docData;
+        }
+
+        // Query investigations
+        if (fortressQueryType === 'investigations' || fortressQueryType === 'comprehensive') {
+          let invQ = supabase.from('investigations').select('*, investigation_entries(*), investigation_persons(*)');
+          invQ = applyFortressFilters(invQ);
+          if (fortressFilters.keywords?.length) {
+            const kf = fortressFilters.keywords.map((k: string) => `synopsis.ilike.%${k}%,information.ilike.%${k}%,recommendations.ilike.%${k}%`).join(',');
+            invQ = invQ.or(kf);
+          }
+          const { data: invData } = await invQ.order('created_at', { ascending: false });
+          fortressResults.investigations = invData;
+        }
+
+        // Query knowledge base
+        if (fortressQueryType === 'knowledge_base' || fortressQueryType === 'comprehensive') {
+          let kbQ = supabase.from('knowledge_base_articles').select('*, knowledge_base_categories(*)');
+          if (fortressFilters.keywords?.length) {
+            const kf = fortressFilters.keywords.map((k: string) => `title.ilike.%${k}%,content.ilike.%${k}%,summary.ilike.%${k}%`).join(',');
+            kbQ = kbQ.or(kf);
+          }
+          const { data: kbData } = await kbQ.limit(fortressLimit).order('updated_at', { ascending: false });
+          fortressResults.knowledge_base = kbData;
+        }
+
+        // Query monitoring history
+        if (fortressQueryType === 'monitoring_history' || fortressQueryType === 'comprehensive') {
+          let monQ = supabase.from('monitoring_history').select('*');
+          if (fortressFilters.time_range?.start) monQ = monQ.gte('scan_started_at', fortressFilters.time_range.start);
+          if (fortressFilters.time_range?.end) monQ = monQ.lte('scan_started_at', fortressFilters.time_range.end);
+          if (fortressFilters.status?.length) monQ = monQ.in('status', fortressFilters.status);
+          const { data: monData } = await monQ.limit(fortressLimit).order('scan_started_at', { ascending: false });
+          fortressResults.monitoring_history = monData;
+        }
+
+        // Query travel
+        if (fortressQueryType === 'travel' || fortressQueryType === 'comprehensive') {
+          let travelQ = supabase.from('itineraries').select('*, travelers(*)');
+          travelQ = applyFortressFilters(travelQ);
+          if (fortressFilters.keywords?.length) {
+            const kf = fortressFilters.keywords.map((k: string) => `destination_country.ilike.%${k}%,destination_city.ilike.%${k}%,trip_name.ilike.%${k}%`).join(',');
+            travelQ = travelQ.or(kf);
+          }
+          const { data: travelData } = await travelQ.order('departure_date', { ascending: false });
+          fortressResults.travel = travelData;
+        }
+
+        // Format output
+        if (fortressOutputFormat === 'summary') {
+          result = {
+            query_type: fortressQueryType,
+            timestamp: new Date().toISOString(),
+            summary: {
+              signals_count: fortressResults.signals?.length || 0,
+              incidents_count: fortressResults.incidents?.length || 0,
+              entities_count: fortressResults.entities?.length || 0,
+              clients_count: fortressResults.clients?.length || 0,
+              documents_count: fortressResults.documents?.length || 0,
+              investigations_count: fortressResults.investigations?.length || 0,
+              knowledge_base_count: fortressResults.knowledge_base?.length || 0,
+              monitoring_history_count: fortressResults.monitoring_history?.length || 0,
+              travel_count: fortressResults.travel?.length || 0,
+            },
+            filters_applied: fortressFilters,
+            data: fortressResults
+          };
+        } else {
+          result = {
+            query_type: fortressQueryType,
+            timestamp: new Date().toISOString(),
+            reason_for_access: fortressReason,
+            agent_id: fortressAgentId,
+            filters_applied: fortressFilters,
+            data: fortressResults,
+            metadata: {
+              total_records: Object.values(fortressResults).reduce((acc: number, arr: any) => acc + (arr?.length || 0), 0),
+              query_types_included: Object.keys(fortressResults).filter(k => fortressResults[k]?.length > 0)
+            }
+          };
+        }
+        break;
+
       default:
         result = { error: "Unknown tool" };
     }
