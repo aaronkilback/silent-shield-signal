@@ -1,7 +1,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // Access EdgeRuntime from global scope for background tasks
-declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void };
+// (In some runtimes this may be undefined, so we guard usage.)
+declare const EdgeRuntime: { waitUntil?: (promise: Promise<unknown>) => void } | undefined;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -132,8 +133,16 @@ Deno.serve(async (req) => {
       }
     };
 
-    // Use EdgeRuntime.waitUntil to ensure background task completes
-    EdgeRuntime.waitUntil(processEntities());
+    // Use EdgeRuntime.waitUntil when available to keep the background task alive.
+    try {
+      if (typeof EdgeRuntime !== 'undefined' && typeof EdgeRuntime?.waitUntil === 'function') {
+        EdgeRuntime.waitUntil(processEntities());
+      } else {
+        processEntities();
+      }
+    } catch {
+      processEntities();
+    }
 
     return new Response(
       JSON.stringify({ 

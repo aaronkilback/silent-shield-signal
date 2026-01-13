@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { extractFunctionInvokeErrorBody, formatFunctionInvokeError } from "@/lib/functionInvokeError";
 import { toast } from "sonner";
 
 interface FileWithPreview {
@@ -205,11 +206,17 @@ export const UnifiedDocumentUpload = () => {
           }
         );
 
-        if (error || data?.isDuplicate) {
-          if (data?.isDuplicate) {
-            await supabase.storage.from('archival-documents').remove([storagePath]);
-          }
-          throw new Error(data?.error || error.message || 'Failed to create record');
+        const invokeBody: any = extractFunctionInvokeErrorBody(error);
+        const isDuplicate = Boolean(data?.isDuplicate || invokeBody?.isDuplicate);
+
+        if (isDuplicate) {
+          await supabase.storage.from('archival-documents').remove([storagePath]);
+        }
+
+        if (error || isDuplicate) {
+          throw new Error(
+            invokeBody?.error || data?.error || formatFunctionInvokeError(error) || 'Failed to create record'
+          );
         }
 
         setFiles(prev => prev.map(f => 
@@ -219,13 +226,14 @@ export const UnifiedDocumentUpload = () => {
 
       } catch (error: any) {
         console.error('Upload error:', error);
+        const errorMsg = formatFunctionInvokeError(error);
         errorCount += 1;
         setFiles(prev => prev.map(f => 
           f.id === file.id 
-            ? { ...f, status: 'error' as const, error: error.message }
+            ? { ...f, status: 'error' as const, error: errorMsg }
             : f
         ));
-        toast.error(`Failed: ${file.file.name} - ${error.message}`);
+        toast.error(`Failed: ${file.file.name} - ${errorMsg}`);
       }
 
       if (i + 1 < files.length) {

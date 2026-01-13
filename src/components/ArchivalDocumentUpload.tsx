@@ -9,6 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Archive, Upload, X, CheckCircle2, AlertCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { extractFunctionInvokeErrorBody, formatFunctionInvokeError } from "@/lib/functionInvokeError";
 import { toast } from "sonner";
 
 interface FileWithPreview {
@@ -145,13 +146,17 @@ export const ArchivalDocumentUpload = () => {
           }
         );
 
-        if (error) {
-          throw new Error(error.message || 'Failed to create record');
+        const invokeBody: any = extractFunctionInvokeErrorBody(error);
+        const isDuplicate = Boolean(data?.isDuplicate || invokeBody?.isDuplicate);
+
+        if (isDuplicate) {
+          await supabase.storage.from('archival-documents').remove([storagePath]);
         }
 
-        if (data?.isDuplicate) {
-          await supabase.storage.from('archival-documents').remove([storagePath]);
-          throw new Error(data.error || 'Duplicate file');
+        if (error || isDuplicate) {
+          throw new Error(
+            invokeBody?.error || data?.error || formatFunctionInvokeError(error) || 'Failed to create record'
+          );
         }
 
         // Background processing is triggered server-side when the record is created.
