@@ -1969,6 +1969,81 @@ Inform user of successful creation and instruct to refresh if needed
       }
     }
   },
+  {
+    type: "function",
+    function: {
+      name: "query_fortress_data",
+      description: `COMPREHENSIVE DATA ACCESS: Query all Fortress data stores with flexible filtering. Provides unified access to signals, incidents, entities, clients, documents, investigations, knowledge base, monitoring history, and travel data. Use for cross-module analysis, historical deep dives, and holistic intelligence queries.
+
+QUERY TYPES:
+- 'signals': Security signals and threat intelligence
+- 'incidents': Active and historical incidents
+- 'entities': People, organizations, locations, and other tracked entities
+- 'clients': Client profiles and configurations
+- 'documents': Uploaded intelligence documents and reports
+- 'investigations': Investigation files and entries
+- 'knowledge_base': Knowledge base articles and procedures
+- 'monitoring_history': OSINT scan history and results
+- 'travel': Traveler itineraries and risk assessments
+- 'comprehensive': Query ALL data types at once
+
+FILTERS:
+- client_id: Filter by specific client
+- entity_id: Filter by specific entity
+- keywords: Array of keywords to search across text fields
+- severity: Array of severity levels (critical, high, medium, low)
+- priority: Array of priorities (p1, p2, p3, p4)
+- status: Array of statuses
+- time_range: { start: ISO date, end: ISO date }
+- limit: Max records per data type (default 100)
+
+OUTPUT FORMATS:
+- 'summary': Includes counts and condensed data
+- 'detailed': Full records with metadata
+
+REQUIRED: reason_for_access parameter for audit logging.`,
+      parameters: {
+        type: "object",
+        properties: {
+          query_type: {
+            type: "string",
+            enum: ["signals", "incidents", "entities", "clients", "documents", "investigations", "knowledge_base", "monitoring_history", "travel", "comprehensive"],
+            description: "Type of data to query. Use 'comprehensive' for cross-module analysis."
+          },
+          filters: {
+            type: "object",
+            description: "Filtering options",
+            properties: {
+              client_id: { type: "string", description: "Filter by client UUID" },
+              entity_id: { type: "string", description: "Filter by entity UUID" },
+              keywords: { type: "array", items: { type: "string" }, description: "Keywords to search" },
+              severity: { type: "array", items: { type: "string" }, description: "Severity levels" },
+              priority: { type: "array", items: { type: "string" }, description: "Priority levels" },
+              status: { type: "array", items: { type: "string" }, description: "Status values" },
+              time_range: {
+                type: "object",
+                properties: {
+                  start: { type: "string", description: "Start date (ISO format)" },
+                  end: { type: "string", description: "End date (ISO format)" }
+                }
+              },
+              limit: { type: "number", description: "Max records per type (default 100)" }
+            }
+          },
+          output_format: {
+            type: "string",
+            enum: ["summary", "detailed"],
+            description: "Output format (default: detailed)"
+          },
+          reason_for_access: {
+            type: "string",
+            description: "REQUIRED: Reason for accessing this data (for audit purposes)"
+          }
+        },
+        required: ["query_type", "reason_for_access"]
+      }
+    }
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -6527,6 +6602,188 @@ The signal is now in the database with status 'triaged' and rules have been appl
       }
 
       return body;
+    }
+
+    case "query_fortress_data": {
+      const { query_type, filters = {}, output_format = 'detailed', reason_for_access } = args;
+      
+      if (!reason_for_access) {
+        return { error: "reason_for_access is required for audit purposes" };
+      }
+
+      console.log(`Executing query_fortress_data: ${query_type}, reason: ${reason_for_access}`);
+      
+      // Log access for audit
+      await supabaseClient.from('intelligence_config').upsert({
+        key: `fortress_data_access_${Date.now()}`,
+        value: {
+          query_type,
+          filters,
+          reason: reason_for_access,
+          agent_id: 'aegis',
+          timestamp: new Date().toISOString()
+        },
+        description: 'Fortress data access audit log'
+      });
+
+      const limit = filters.limit || 100;
+      const results: Record<string, any> = {};
+
+      // Helper function for common filters
+      const applyFilters = (query: any) => {
+        if (filters.client_id) {
+          query = query.eq('client_id', filters.client_id);
+        }
+        if (filters.time_range?.start) {
+          query = query.gte('created_at', filters.time_range.start);
+        }
+        if (filters.time_range?.end) {
+          query = query.lte('created_at', filters.time_range.end);
+        }
+        return query.limit(limit);
+      };
+
+      // Query signals
+      if (query_type === 'signals' || query_type === 'comprehensive') {
+        let signalsQ = supabaseClient.from('signals').select('id, title, description, severity, status, received_at, client_id, clients(name), normalized_text, category');
+        signalsQ = applyFilters(signalsQ);
+        if (filters.severity?.length) signalsQ = signalsQ.in('severity', filters.severity);
+        if (filters.status?.length) signalsQ = signalsQ.in('status', filters.status);
+        if (filters.keywords?.length) {
+          const kf = filters.keywords.map((k: string) => `normalized_text.ilike.%${k}%`).join(',');
+          signalsQ = signalsQ.or(kf);
+        }
+        const { data: sigData } = await signalsQ.order('received_at', { ascending: false });
+        results.signals = sigData || [];
+      }
+
+      // Query incidents
+      if (query_type === 'incidents' || query_type === 'comprehensive') {
+        let incQ = supabaseClient.from('incidents').select('id, title, priority, status, severity_level, opened_at, client_id, clients(name), summary');
+        incQ = applyFilters(incQ);
+        if (filters.priority?.length) incQ = incQ.in('priority', filters.priority);
+        if (filters.status?.length) incQ = incQ.in('status', filters.status);
+        const { data: incData } = await incQ.order('opened_at', { ascending: false });
+        results.incidents = incData || [];
+      }
+
+      // Query entities
+      if (query_type === 'entities' || query_type === 'comprehensive') {
+        let entQ = supabaseClient.from('entities').select('id, name, type, description, risk_level, threat_score, current_location, aliases');
+        if (filters.client_id) entQ = entQ.eq('client_id', filters.client_id);
+        if (filters.entity_id) entQ = entQ.eq('id', filters.entity_id);
+        if (filters.keywords?.length) {
+          const kf = filters.keywords.map((k: string) => `name.ilike.%${k}%`).join(',');
+          entQ = entQ.or(kf);
+        }
+        const { data: entData } = await entQ.limit(limit).order('updated_at', { ascending: false });
+        results.entities = entData || [];
+      }
+
+      // Query clients
+      if (query_type === 'clients' || query_type === 'comprehensive') {
+        let clientQ = supabaseClient.from('clients').select('id, name, industry, status, locations, monitoring_keywords, high_value_assets');
+        if (filters.client_id) clientQ = clientQ.eq('id', filters.client_id);
+        if (filters.keywords?.length) {
+          const kf = filters.keywords.map((k: string) => `name.ilike.%${k}%`).join(',');
+          clientQ = clientQ.or(kf);
+        }
+        const { data: clientData } = await clientQ.limit(limit);
+        results.clients = clientData || [];
+      }
+
+      // Query documents
+      if (query_type === 'documents' || query_type === 'comprehensive') {
+        let docQ = supabaseClient.from('archival_documents').select('id, filename, summary, content_text, file_type, created_at, client_id, keywords, tags');
+        docQ = applyFilters(docQ);
+        if (filters.keywords?.length) {
+          const kf = filters.keywords.map((k: string) => `content_text.ilike.%${k}%,summary.ilike.%${k}%,filename.ilike.%${k}%`).join(',');
+          docQ = docQ.or(kf);
+        }
+        const { data: docData } = await docQ.order('created_at', { ascending: false });
+        results.documents = docData || [];
+      }
+
+      // Query investigations
+      if (query_type === 'investigations' || query_type === 'comprehensive') {
+        let invQ = supabaseClient.from('investigations').select('id, file_number, synopsis, file_status, created_at, client_id, information, recommendations');
+        invQ = applyFilters(invQ);
+        if (filters.keywords?.length) {
+          const kf = filters.keywords.map((k: string) => `synopsis.ilike.%${k}%,information.ilike.%${k}%`).join(',');
+          invQ = invQ.or(kf);
+        }
+        const { data: invData } = await invQ.order('created_at', { ascending: false });
+        results.investigations = invData || [];
+      }
+
+      // Query knowledge base
+      if (query_type === 'knowledge_base' || query_type === 'comprehensive') {
+        let kbQ = supabaseClient.from('knowledge_base_articles').select('id, title, summary, content, category_id, tags, created_at');
+        if (filters.keywords?.length) {
+          const kf = filters.keywords.map((k: string) => `title.ilike.%${k}%,content.ilike.%${k}%`).join(',');
+          kbQ = kbQ.or(kf);
+        }
+        const { data: kbData } = await kbQ.limit(limit).order('updated_at', { ascending: false });
+        results.knowledge_base = kbData || [];
+      }
+
+      // Query monitoring history
+      if (query_type === 'monitoring_history' || query_type === 'comprehensive') {
+        let monQ = supabaseClient.from('monitoring_history').select('id, source_name, status, scan_started_at, scan_completed_at, signals_created, error_message');
+        if (filters.time_range?.start) monQ = monQ.gte('scan_started_at', filters.time_range.start);
+        if (filters.time_range?.end) monQ = monQ.lte('scan_started_at', filters.time_range.end);
+        if (filters.status?.length) monQ = monQ.in('status', filters.status);
+        const { data: monData } = await monQ.limit(limit).order('scan_started_at', { ascending: false });
+        results.monitoring_history = monData || [];
+      }
+
+      // Query travel
+      if (query_type === 'travel' || query_type === 'comprehensive') {
+        let travelQ = supabaseClient.from('itineraries').select('id, trip_name, traveler_id, travelers(first_name, last_name), destination_country, destination_city, departure_date, return_date, risk_level, status');
+        travelQ = applyFilters(travelQ);
+        if (filters.keywords?.length) {
+          const kf = filters.keywords.map((k: string) => `destination_country.ilike.%${k}%,destination_city.ilike.%${k}%,trip_name.ilike.%${k}%`).join(',');
+          travelQ = travelQ.or(kf);
+        }
+        const { data: travelData } = await travelQ.order('departure_date', { ascending: false });
+        results.travel = travelData || [];
+      }
+
+      // Format output
+      if (output_format === 'summary') {
+        return {
+          success: true,
+          query_type,
+          timestamp: new Date().toISOString(),
+          reason_for_access,
+          summary: {
+            signals_count: results.signals?.length || 0,
+            incidents_count: results.incidents?.length || 0,
+            entities_count: results.entities?.length || 0,
+            clients_count: results.clients?.length || 0,
+            documents_count: results.documents?.length || 0,
+            investigations_count: results.investigations?.length || 0,
+            knowledge_base_count: results.knowledge_base?.length || 0,
+            monitoring_history_count: results.monitoring_history?.length || 0,
+            travel_count: results.travel?.length || 0,
+          },
+          filters_applied: filters,
+          data: results
+        };
+      } else {
+        return {
+          success: true,
+          query_type,
+          timestamp: new Date().toISOString(),
+          reason_for_access,
+          filters_applied: filters,
+          data: results,
+          metadata: {
+            total_records: Object.values(results).reduce((acc: number, arr: any) => acc + (arr?.length || 0), 0),
+            query_types_included: Object.keys(results).filter(k => results[k]?.length > 0)
+          }
+        };
+      }
     }
 
     default:
