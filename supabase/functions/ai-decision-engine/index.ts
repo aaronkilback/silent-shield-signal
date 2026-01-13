@@ -178,7 +178,9 @@ serve(async (req) => {
     // Update signal with rule-applied data
     if (matchedRules.length > 0) {
       console.log(`Applying ${matchedRules.length} matched rules to signal`);
-      await supabase
+      console.log(`Setting category to: ${ruleCategory}, priority to: ${rulePriority}`);
+      
+      const updateResult = await supabase
         .from('signals')
         .update({
           applied_rules: matchedRules,
@@ -187,9 +189,16 @@ serve(async (req) => {
           rule_tags: Array.from(new Set(ruleTags)), // dedupe tags
           routed_to_team: routedToTeam,
           category: ruleCategory || signal.category, // Override category if rule matched
+          severity: rulePriority || signal.severity, // Also update severity to match rule priority
           status: 'triaged'
         })
         .eq('id', signal_id);
+      
+      if (updateResult.error) {
+        console.error('Failed to update signal with rule data:', updateResult.error);
+      } else {
+        console.log(`✓ Signal ${signal_id} updated with rule: ${matchedRules.join(', ')}`);
+      }
     }
 
     // Use Lovable AI to make autonomous decisions
