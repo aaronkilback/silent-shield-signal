@@ -238,19 +238,39 @@ serve(async (req) => {
       document = doc;
       clientId = doc.client_id;
 
-      // Check if content_text exists and is meaningful (not raw PDF binary)
+      // Check if content_text exists and is meaningful (not raw PDF binary or garbage)
+      // Must have:
+      // 1. Sufficient length
+      // 2. Not raw PDF markers
+      // 3. Contains actual English words (multiple 4+ letter words with spaces)
+      // 4. Low ratio of special characters (garbage text has high special char ratio)
+      const contentSample = doc.content_text?.slice(0, 1000) || '';
+      const wordMatches = contentSample.match(/\b[a-zA-Z]{4,}\b/g) || [];
+      const specialCharCount = (contentSample.match(/[^a-zA-Z0-9\s.,;:'"!?()-]/g) || []).length;
+      const specialCharRatio = contentSample.length > 0 ? specialCharCount / contentSample.length : 1;
+      
+      // Common English words that should appear in readable text
+      const commonWords = ['the', 'and', 'for', 'that', 'with', 'this', 'from', 'have', 'are', 'was', 'were', 'been', 'has', 'report', 'security', 'risk'];
+      const hasCommonWords = commonWords.some(word => 
+        contentSample.toLowerCase().includes(` ${word} `) || contentSample.toLowerCase().startsWith(`${word} `)
+      );
+      
       const hasValidContent = doc.content_text && 
         doc.content_text.length > 500 && 
         !doc.content_text.includes('content not processed') &&
         !doc.content_text.startsWith('%PDF') && // Not raw PDF data
-        !doc.content_text.includes('\\x00') && // Not binary garbage
-        /[a-zA-Z]{3,}\s+[a-zA-Z]{3,}/.test(doc.content_text.slice(0, 500)); // Contains actual words
+        !doc.content_text.startsWith('==Start of OCR') === false || doc.content_text.startsWith('==Start of OCR') && // OCR content is valid
+        wordMatches.length >= 10 && // At least 10 words of 4+ letters
+        specialCharRatio < 0.15 && // Less than 15% special characters
+        hasCommonWords; // Contains common English words
+
+      console.log(`Content validation: words=${wordMatches.length}, specialCharRatio=${specialCharRatio.toFixed(2)}, hasCommonWords=${hasCommonWords}, valid=${hasValidContent}`);
 
       if (!content && hasValidContent) {
         content = doc.content_text;
         console.log('Using existing valid content_text');
       } else if (!content) {
-        console.log(`Re-extracting content - hasValidContent: ${hasValidContent}, content_text starts with: ${doc.content_text?.slice(0, 20) || 'null'}`);
+        console.log(`Re-extracting content - content appears to be garbage or missing`);
         // Need to extract text from file
         console.log('Content not extracted yet, downloading file...');
         
