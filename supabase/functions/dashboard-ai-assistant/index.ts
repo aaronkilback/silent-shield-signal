@@ -1769,6 +1769,135 @@ Inform user of successful creation and instruct to refresh if needed
       }
     }
   },
+  // LEGAL & REGULATORY TOOLS - For specialized legal research agents like Legion (LEX-MAGNA)
+  {
+    type: "function",
+    function: {
+      name: "query_legal_database",
+      description: "Query comprehensive legal databases for case law, statutes, and legal interpretations. Specialized for Canadian law including BC and Alberta jurisdictions. Use for security licensing, employment law, workplace safety, privacy regulations, and related legal research.",
+      parameters: {
+        type: "object",
+        properties: {
+          jurisdiction: {
+            type: "string",
+            description: "Legal jurisdiction (e.g., 'Canada', 'BC', 'Alberta', 'Federal')"
+          },
+          topic: {
+            type: "string",
+            description: "Legal topic to research (e.g., 'security licensing', 'workplace harassment', 'use of force')"
+          },
+          keywords: {
+            type: "array",
+            items: { type: "string" },
+            description: "Additional search keywords (e.g., 'private security act', 'negligence', 'duty of care')"
+          },
+          include_case_law: {
+            type: "boolean",
+            description: "Whether to include case law citations (default true)"
+          },
+          include_statutes: {
+            type: "boolean",
+            description: "Whether to include statutory references (default true)"
+          },
+          max_results: {
+            type: "number",
+            description: "Maximum number of results to return (default 10)"
+          }
+        },
+        required: ["jurisdiction", "topic"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "retrieve_regulatory_document",
+      description: "Fetch specific regulatory documents, acts, and standards by name and section. Covers BC Security Services Act, Alberta Security Services and Investigators Act, OHS regulations, PIPA, Criminal Code sections relevant to security, and more.",
+      parameters: {
+        type: "object",
+        properties: {
+          jurisdiction: {
+            type: "string",
+            description: "Jurisdiction (e.g., 'BC', 'Alberta', 'Canada')"
+          },
+          document_name: {
+            type: "string",
+            description: "Name of the regulatory document (e.g., 'Security Services Act', 'Occupational Health & Safety Regulation')"
+          },
+          section_or_part: {
+            type: "string",
+            description: "Specific section or part to retrieve (optional, e.g., 'Section 15', 'Part 3')"
+          },
+          document_type: {
+            type: "string",
+            description: "Type filter: 'act', 'regulation', 'standard', 'guideline', or 'policy'"
+          }
+        },
+        required: ["jurisdiction", "document_name"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "access_industry_standards",
+      description: "Access industry-specific security standards and best practices. Covers energy sector (NERC CIP, API guidelines), security services (ASIS, CANASA, ISO 18788), A&D policies, workplace safety standards, and information security frameworks.",
+      parameters: {
+        type: "object",
+        properties: {
+          industry: {
+            type: "string",
+            description: "Industry sector (e.g., 'energy', 'security_services', 'information_security', 'workplace_safety', 'a_and_d_policy')"
+          },
+          standard_type: {
+            type: "string",
+            description: "Type of standard (e.g., 'A&D policy best practices', 'physical security guidelines', 'cybersecurity framework')"
+          },
+          focus_area: {
+            type: "string",
+            description: "Specific focus area within the industry (optional)"
+          },
+          include_best_practices: {
+            type: "boolean",
+            description: "Whether to include industry best practices (default true)"
+          }
+        },
+        required: ["industry"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "review_client_policy",
+      description: "Retrieve and review a client's internal security, HR, or operational policies stored within Fortress. Supports policy summary, compliance checking, and gap analysis against regulatory requirements.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: {
+            type: "string",
+            description: "Client UUID"
+          },
+          client_name: {
+            type: "string",
+            description: "Client name (alternative to client_id)"
+          },
+          policy_name: {
+            type: "string",
+            description: "Specific policy to review (e.g., 'Workplace Harassment Policy', 'Code of Conduct', 'A&D Policy')"
+          },
+          policy_type: {
+            type: "string",
+            description: "Type filter: 'security', 'hr', 'operational', 'safety', 'a&d', or 'all'"
+          },
+          analysis_type: {
+            type: "string",
+            description: "Type of analysis: 'summary', 'compliance_check', 'gap_analysis', or 'full'"
+          }
+        }
+      }
+    }
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -6158,6 +6287,67 @@ The signal is now in the database with status 'triaged' and rules have been appl
         audit_key: configResult.audit_key,
         message: configResult.message || `Successfully updated agent configuration.`,
       };
+    }
+
+    // LEGAL & REGULATORY TOOLS
+    case "query_legal_database": {
+      const { jurisdiction, topic, keywords, include_case_law, include_statutes, max_results } = args;
+      console.log(`Querying legal database: ${jurisdiction} - ${topic}`);
+      
+      const { data, error } = await supabaseClient.functions.invoke("query-legal-database", {
+        body: { jurisdiction, topic, keywords, include_case_law, include_statutes, max_results }
+      });
+      
+      if (error) {
+        console.error("Error querying legal database:", error);
+        return { error: error.message, message: `Failed to query legal database: ${error.message}` };
+      }
+      return data;
+    }
+
+    case "retrieve_regulatory_document": {
+      const { jurisdiction, document_name, section_or_part, document_type } = args;
+      console.log(`Retrieving regulatory document: ${jurisdiction} - ${document_name}`);
+      
+      const { data, error } = await supabaseClient.functions.invoke("retrieve-regulatory-document", {
+        body: { jurisdiction, document_name, section_or_part, document_type }
+      });
+      
+      if (error) {
+        console.error("Error retrieving regulatory document:", error);
+        return { error: error.message, message: `Failed to retrieve document: ${error.message}` };
+      }
+      return data;
+    }
+
+    case "access_industry_standards": {
+      const { industry, standard_type, focus_area, include_best_practices } = args;
+      console.log(`Accessing industry standards: ${industry}`);
+      
+      const { data, error } = await supabaseClient.functions.invoke("access-industry-standards", {
+        body: { industry, standard_type, focus_area, include_best_practices }
+      });
+      
+      if (error) {
+        console.error("Error accessing industry standards:", error);
+        return { error: error.message, message: `Failed to access standards: ${error.message}` };
+      }
+      return data;
+    }
+
+    case "review_client_policy": {
+      const { client_id, client_name, policy_name, policy_type, analysis_type } = args;
+      console.log(`Reviewing client policy: ${client_id || client_name}`);
+      
+      const { data, error } = await supabaseClient.functions.invoke("review-client-policy", {
+        body: { client_id, client_name, policy_name, policy_type, analysis_type }
+      });
+      
+      if (error) {
+        console.error("Error reviewing client policy:", error);
+        return { error: error.message, message: `Failed to review policy: ${error.message}` };
+      }
+      return data;
     }
 
     default:
