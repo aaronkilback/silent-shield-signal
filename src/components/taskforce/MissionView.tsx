@@ -21,12 +21,13 @@ import {
   Users,
   Eye,
   EyeOff,
-  Shield,
+  ShieldAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import ReactMarkdown from "react-markdown";
 import { ValidationStatusPill } from "./ValidationStatusPill";
+import { LintResultsPanel } from "./LintResultsPanel";
 
 interface MissionViewProps {
   missionId: string;
@@ -357,8 +358,48 @@ export function MissionView({ missionId, onBack }: MissionViewProps) {
           </div>
 
           {/* Right Panel - Final Output */}
-          <div className="lg:col-span-4">
-            <Card className="h-[600px] flex flex-col">
+          <div className="lg:col-span-4 space-y-4">
+            {/* Validation Status */}
+            {mission?.validation_status && (
+              <Card className="border-border">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <ShieldAlert className="h-4 w-4" />
+                      Output Gate
+                    </CardTitle>
+                    <ValidationStatusPill 
+                      status={mission.validation_status as "PASS" | "WARN" | "FAIL" | "PENDING"} 
+                      errors={mission.validation_errors as string[] | undefined}
+                    />
+                  </div>
+                </CardHeader>
+                {mission.validation_errors && (mission.validation_errors as string[]).length > 0 && (
+                  <CardContent className="pt-0">
+                    <LintResultsPanel
+                      results={(mission.validation_errors as string[]).map((err: string) => {
+                        const ruleMatch = err.match(/\[([A-Z-]+)\]/);
+                        const autoFixed = err.includes('[AUTO-FIXED]');
+                        return {
+                          rule_id: ruleMatch?.[1] || 'UNKNOWN',
+                          severity: err.includes('Evidence too low') ? 'BLOCK' as const : 
+                                   (ruleMatch?.[1]?.includes('WARN') ? 'WARN' as const : 'BLOCK' as const),
+                          message: err.replace(/\[[A-Z-]+\]\s*/, '').replace(' [AUTO-FIXED]', ''),
+                          suggested_fix: 'See RoE documentation',
+                          match: '',
+                          auto_fixed: autoFixed,
+                        };
+                      })}
+                      blockCount={(mission.validation_errors as string[]).filter((e: string) => !e.includes('[AUTO-FIXED]') && !e.includes('WARN')).length}
+                      warnCount={(mission.validation_errors as string[]).filter((e: string) => e.includes('WARN')).length}
+                      infoCount={0}
+                    />
+                  </CardContent>
+                )}
+              </Card>
+            )}
+
+            <Card className="h-[500px] flex flex-col">
               <CardHeader className="pb-2 flex-shrink-0">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm">Final Output</CardTitle>
