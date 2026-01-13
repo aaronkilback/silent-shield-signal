@@ -7,6 +7,7 @@ import { Archive, Download, FileText, RefreshCw, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import { formatFunctionInvokeErrorAsync } from "@/lib/functionInvokeError";
 import { useState } from "react";
 
 export const ArchivalDocumentsList = () => {
@@ -73,7 +74,8 @@ export const ArchivalDocumentsList = () => {
       queryClient.invalidateQueries({ queryKey: ['pending-entity-suggestions-count'] });
     } catch (error: any) {
       console.error('Reprocess error:', error);
-      toast.error(`Failed to reprocess: ${error.message}`);
+      const message = await formatFunctionInvokeErrorAsync(error);
+      toast.error(`Failed to reprocess: ${message}`);
     } finally {
       setReprocessing(null);
     }
@@ -112,7 +114,8 @@ export const ArchivalDocumentsList = () => {
       queryClient.invalidateQueries({ queryKey: ['pending-entity-suggestions-count'] });
     } catch (error: any) {
       console.error('Intelligence processing error:', error);
-      toast.error(`Failed to process intelligence: ${error.message}`);
+      const message = await formatFunctionInvokeErrorAsync(error);
+      toast.error(`Failed to process intelligence: ${message}`);
     } finally {
       setProcessingIntel(null);
     }

@@ -1,7 +1,55 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import pdfParse from "https://esm.sh/pdf-parse@1.1.1";
+
+function normalizeExtractedText(input: string): string {
+  return input
+    .replace(/\s+/g, ' ')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, ' ')
+    .trim();
+}
+
+async function extractPdfTextBasic(blob: Blob, maxBytes = 2 * 1024 * 1024): Promise<string> {
+  // Edge-runtime safe “best effort” PDF text extraction.
+  // Avoids Node-only PDF parsers that rely on fs.
+  const arrayBuffer = await blob.slice(0, maxBytes).arrayBuffer();
+  const uint8 = new Uint8Array(arrayBuffer);
+
+  // latin1 keeps byte-to-char mapping stable for PDF streams
+  const pdfString = new TextDecoder('latin1').decode(uint8);
+
+  const textBlocks = pdfString.match(/BT(.*?)ET/gs) || [];
+  let extracted = '';
+
+  for (const block of textBlocks.slice(0, 800)) {
+    const parenStrings = block.match(/\((?:\\.|[^\\)])*\)/g) || [];
+    for (const str of parenStrings.slice(0, 50)) {
+      const text = str.slice(1, -1);
+      const decoded = text
+        .replace(/\\n/g, ' ')
+        .replace(/\\r/g, ' ')
+        .replace(/\\t/g, ' ')
+        .replace(/\\\(/g, '(')
+        .replace(/\\\)/g, ')')
+        .replace(/\\\\/g, '\\');
+      extracted += decoded + ' ';
+      if (extracted.length > 120_000) break;
+    }
+    if (extracted.length > 120_000) break;
+  }
+
+  extracted = normalizeExtractedText(extracted);
+
+  // Fallback: strip control chars from the raw header slice
+  if (!extracted || extracted.length < 100) {
+    const fallback = normalizeExtractedText(
+      pdfString.replace(/[\x00-\x1F\x7F-\xFF]/g, ' ')
+    );
+    return fallback;
+  }
+
+  return extracted;
+}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -74,23 +122,22 @@ serve(async (req) => {
 
         // Extract text based on file type
         if (doc.file_type === 'application/pdf') {
-          console.log('Extracting text from PDF using pdf-parse...');
+          console.log('Extracting text from PDF...');
           try {
-            const arrayBuffer = await fileData.arrayBuffer();
-            const buffer = new Uint8Array(arrayBuffer);
-            
-            // Use pdf-parse to extract text
-            const pdfData = await pdfParse(buffer);
-            content = pdfData.text;
-            
-            console.log(`Extracted ${content.length} characters from PDF (${pdfData.numpages} pages)`);
-            
-            if (!content || content.trim().length < 100) {
-              throw new Error('Failed to extract meaningful text from PDF. File may be scanned, image-based, or encrypted. Please ensure the PDF contains selectable text.');
+            content = await extractPdfTextBasic(fileData);
+
+            console.log(`Extracted ${content.length} characters from PDF (basic extractor)`);
+
+            if (!content || content.trim().length < 200) {
+              throw new Error(
+                'Failed to extract meaningful text from PDF. The file may be scanned/image-based or encrypted. Please upload a PDF with selectable text (or upload a text export).'
+              );
             }
           } catch (pdfError) {
             console.error('PDF parsing error:', pdfError);
-            throw new Error(`Failed to parse PDF: ${pdfError instanceof Error ? pdfError.message : 'Unknown error'}. The file may be corrupted, encrypted, or contain only images.`);
+            throw new Error(
+              `Failed to parse PDF: ${pdfError instanceof Error ? pdfError.message : 'Unknown error'}`
+            );
           }
         } else if (doc.file_type.includes('text')) {
           content = await fileData.text();
