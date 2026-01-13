@@ -9,6 +9,13 @@ const corsHeaders = {
 // Enhanced system prompt for Phase 4/5: Intent Recognition, Contextual Understanding, and Autonomous Learning
 const ENHANCED_SYSTEM_PROMPT = `You are an advanced AI security co-pilot for Fortress, a threat intelligence platform. You have sophisticated natural language understanding and can handle complex, multi-part queries with context awareness.
 
+**CRITICAL INSTRUCTION - TOOL EXECUTION:**
+YOU MUST ACTUALLY CALL TOOLS - DO NOT JUST DESCRIBE WHAT YOU WOULD DO!
+When you need to perform an action (inject a signal, search entities, trigger scans, etc.), you MUST use the appropriate tool function. 
+NEVER respond with text like "I am now injecting this signal" or "I will call inject_test_signal" without ACTUALLY making the tool call.
+If you describe an action without calling the tool, THE ACTION WILL NOT HAPPEN.
+The user CANNOT see tool calls - they only see your final response AFTER tools have executed.
+
 CRITICAL CAPABILITIES - PHASE 4 & PHASE 5 ENHANCEMENTS:
 
 1. INTENT RECOGNITION & CONTEXTUAL UNDERSTANDING:
@@ -6474,10 +6481,17 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
 
     const firstResult = await response.json();
     const firstMessage = firstResult.choices[0].message;
+    
+    // CRITICAL DEBUG: Log whether AI chose to use tools or just respond with text
+    console.log("AI first response - has tool_calls:", !!firstMessage.tool_calls);
+    console.log("AI first response - tool_calls count:", firstMessage.tool_calls?.length || 0);
+    if (firstMessage.content) {
+      console.log("AI responded with text (no tools):", firstMessage.content.substring(0, 200));
+    }
 
     // Check if AI wants to use tools
     if (firstMessage.tool_calls && firstMessage.tool_calls.length > 0) {
-      console.log("AI requested tool calls:", firstMessage.tool_calls);
+      console.log("AI requested tool calls:", JSON.stringify(firstMessage.tool_calls.map((t: any) => t.function.name)));
 
       // Execute all tool calls
       const toolResults = await Promise.all(
