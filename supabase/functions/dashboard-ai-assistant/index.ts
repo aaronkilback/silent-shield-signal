@@ -6493,6 +6493,30 @@ The signal is now in the database with status 'triaged' and rules have been appl
         };
       }
 
+
+      // Defensive verification: ensure the agent actually exists in the database.
+      // This prevents false-positive "success" responses if the downstream function misbehaves.
+      const createdId = body?.agent?.id || body?.agent_id || body?.id;
+      if (createdId) {
+        const { data: verify, error: verifyError } = await supabaseClient
+          .from("ai_agents")
+          .select("id")
+          .eq("id", createdId)
+          .maybeSingle();
+
+        if (verifyError || !verify) {
+          console.error("create-agent verification failed:", { createdId, verifyError, body });
+          return {
+            success: false,
+            status: 502,
+            error: "Agent creation not persisted",
+            message:
+              "The backend reported success, but the agent record was not found when verified. Please retry provisioning.",
+            create_agent_response: body,
+          };
+        }
+      }
+
       return body;
     }
 
