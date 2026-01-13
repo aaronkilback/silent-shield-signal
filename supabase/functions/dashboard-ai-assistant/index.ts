@@ -16,7 +16,16 @@ NEVER respond with text like "I am now injecting this signal" or "I will call in
 If you describe an action without calling the tool, THE ACTION WILL NOT HAPPEN.
 The user CANNOT see tool calls - they only see your final response AFTER tools have executed.
 
-**OSINT / INTERNET NOTE:** You cannot do ad-hoc, free-form web browsing. However, you CAN run configured monitoring and targeted collection through available tools (e.g., creating entities, triggering OSINT scans, reading ingested documents, and using Threat Radar analysis). If something fails, report the specific tool error and offer the next-best tool-based path.
+**OSINT / EXTERNAL WEB SEARCH CAPABILITY:**
+You now have the ability to perform targeted external web searches using the perform_external_web_search tool. This enables:
+- Researching historical incidents (e.g., "communication tower sabotage Northern BC September 2023")
+- Gathering intelligence on threat actors, groups, and organizations
+- Finding news articles about security events, protests, and infrastructure threats
+- Investigating emerging threats or attack patterns across the open web
+When users ask about events, incidents, or threats you don't have in Fortress data, USE this tool to search for relevant OSINT. The tool returns structured intelligence summaries with sources, key entities, dates, and threat indicators.
+
+**CRITICAL INSTRUCTION - TOOL EXECUTION:**
+When you need to perform an action (search the web, inject a signal, create entities, trigger scans, etc.), you MUST use the appropriate tool function. NEVER respond with text like "I will search for..." without ACTUALLY making the tool call.
 
 CRITICAL CAPABILITIES - PHASE 4 & PHASE 5 ENHANCEMENTS:
 
@@ -2322,6 +2331,67 @@ RETURNS:
           }
         },
         required: []
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "perform_external_web_search",
+      description: `OSINT WEB SEARCH: Perform targeted external web searches for intelligence gathering. This tool searches the open web for information related to security threats, incidents, organizations, and individuals.
+
+USE CASES:
+- Research historical incidents (e.g., "communication tower sabotage Northern BC September 2023")
+- Gather intelligence on threat actors, groups, or organizations
+- Find news articles about security events, protests, or infrastructure threats
+- Research geographic areas for security context
+- Investigate emerging threats or attack patterns
+
+PARAMETERS:
+- query: Natural language search query (e.g., "LNG facility protests British Columbia 2024")
+- time_range: Optional date filter { start: "YYYY-MM-DD", end: "YYYY-MM-DD" }
+- geographic_focus: Region/location focus (e.g., "Northern BC", "Alberta", "Canada")
+- language: Language preference (default: English)
+- max_results: Number of results to return (default: 5)
+
+RETURNS:
+- summary: Comprehensive intelligence summary of findings
+- source_urls: Array of source articles with title, URL, snippet, and date
+- key_entities: Extracted organizations, people, groups mentioned
+- key_dates: Important dates and timeline events
+- threat_indicators: Identified warning signs or threat patterns
+- geographic_relevance: Locations mentioned in the results
+
+This tool bridges the gap between internal Fortress data and open-source intelligence, enabling comprehensive threat research.`,
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Natural language search query (e.g., 'pipeline sabotage BC 2023')"
+          },
+          time_range: {
+            type: "object",
+            description: "Optional date range filter",
+            properties: {
+              start: { type: "string", description: "Start date (YYYY-MM-DD)" },
+              end: { type: "string", description: "End date (YYYY-MM-DD)" }
+            }
+          },
+          geographic_focus: {
+            type: "string",
+            description: "Geographic area to focus on (e.g., 'Northern BC', 'Alberta', 'Canada')"
+          },
+          language: {
+            type: "string",
+            description: "Language preference (default: 'en')"
+          },
+          max_results: {
+            type: "number",
+            description: "Number of results to return (default: 5, max: 10)"
+          }
+        },
+        required: ["query"]
       }
     }
   },
@@ -7399,6 +7469,72 @@ The signal is now in the database with status 'triaged' and rules have been appl
           ...(assessment.scores?.precursor_activity >= 50 ? ["Brief leadership on emerging threats"] : [])
         ],
         snapshot_id: radarResult?.snapshot_id
+      };
+    }
+
+    case "perform_external_web_search": {
+      const { query, time_range, geographic_focus, language, max_results } = args;
+      
+      if (!query) {
+        return { error: "Query is required for web search" };
+      }
+
+      console.log(`[perform_external_web_search] Executing search for: "${query}"`);
+      
+      // Call the dedicated edge function
+      const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+      const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+      
+      const searchResponse = await fetch(`${SUPABASE_URL}/functions/v1/perform-external-web-search`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({
+          query,
+          time_range,
+          geographic_focus,
+          language: language || "en",
+          max_results: Math.min(max_results || 5, 10),
+        }),
+      });
+
+      if (!searchResponse.ok) {
+        const errorText = await searchResponse.text();
+        console.error("[perform_external_web_search] Edge function error:", errorText);
+        return { 
+          error: `Web search failed: ${searchResponse.status}`,
+          details: errorText
+        };
+      }
+
+      const searchResult = await searchResponse.json();
+      
+      return {
+        success: true,
+        message: `OSINT web search completed for: "${query}"`,
+        query_info: {
+          original_query: query,
+          geographic_focus: geographic_focus || "Global",
+          time_range: time_range ? `${time_range.start || 'any'} to ${time_range.end || 'present'}` : "Last 12 months",
+          results_returned: searchResult.source_urls?.length || 0
+        },
+        summary: searchResult.summary,
+        sources: searchResult.source_urls?.slice(0, max_results || 5).map((s: any) => ({
+          title: s.title,
+          url: s.url,
+          snippet: s.snippet,
+          date: s.published_date
+        })) || [],
+        extracted_intelligence: {
+          key_entities: searchResult.key_entities || [],
+          key_dates: searchResult.key_dates || [],
+          threat_indicators: searchResult.threat_indicators || [],
+          geographic_relevance: searchResult.geographic_relevance || []
+        },
+        signal_created: true,
+        note: "Search results have been stored as a signal for future reference"
       };
     }
 
