@@ -2630,6 +2630,213 @@ export type Database = {
         }
         Relationships: []
       }
+      task_force_agents: {
+        Row: {
+          agent_id: string
+          assigned_tasks: string[] | null
+          created_at: string
+          id: string
+          mission_id: string
+          role: Database["public"]["Enums"]["task_force_role"]
+          status: string | null
+        }
+        Insert: {
+          agent_id: string
+          assigned_tasks?: string[] | null
+          created_at?: string
+          id?: string
+          mission_id: string
+          role: Database["public"]["Enums"]["task_force_role"]
+          status?: string | null
+        }
+        Update: {
+          agent_id?: string
+          assigned_tasks?: string[] | null
+          created_at?: string
+          id?: string
+          mission_id?: string
+          role?: Database["public"]["Enums"]["task_force_role"]
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_force_agents_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_force_agents_mission_id_fkey"
+            columns: ["mission_id"]
+            isOneToOne: false
+            referencedRelation: "task_force_missions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      task_force_contributions: {
+        Row: {
+          agent_id: string
+          assumptions: string[] | null
+          confidence_score: number | null
+          content: string
+          content_type: string | null
+          created_at: string
+          id: string
+          is_included_in_final: boolean | null
+          mission_id: string
+          phase: Database["public"]["Enums"]["mission_phase"]
+          role: Database["public"]["Enums"]["task_force_role"]
+          sources: string[] | null
+        }
+        Insert: {
+          agent_id: string
+          assumptions?: string[] | null
+          confidence_score?: number | null
+          content: string
+          content_type?: string | null
+          created_at?: string
+          id?: string
+          is_included_in_final?: boolean | null
+          mission_id: string
+          phase: Database["public"]["Enums"]["mission_phase"]
+          role: Database["public"]["Enums"]["task_force_role"]
+          sources?: string[] | null
+        }
+        Update: {
+          agent_id?: string
+          assumptions?: string[] | null
+          confidence_score?: number | null
+          content?: string
+          content_type?: string | null
+          created_at?: string
+          id?: string
+          is_included_in_final?: boolean | null
+          mission_id?: string
+          phase?: Database["public"]["Enums"]["mission_phase"]
+          role?: Database["public"]["Enums"]["task_force_role"]
+          sources?: string[] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_force_contributions_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_force_contributions_mission_id_fkey"
+            columns: ["mission_id"]
+            isOneToOne: false
+            referencedRelation: "task_force_missions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      task_force_missions: {
+        Row: {
+          assumptions: string[] | null
+          audience: string | null
+          client_id: string | null
+          commanders_intent: string | null
+          completed_at: string | null
+          constraints: string | null
+          created_at: string
+          created_by: string | null
+          data_sources: string[] | null
+          description: string | null
+          desired_outcome: string | null
+          end_state: string | null
+          final_output: string | null
+          final_output_metadata: Json | null
+          id: string
+          is_stealth_mode: boolean | null
+          mission_type: Database["public"]["Enums"]["mission_type"]
+          name: string
+          next_actions: Json | null
+          phase: Database["public"]["Enums"]["mission_phase"]
+          priority: string
+          rules_of_engagement: Json | null
+          started_at: string | null
+          task_breakdown: Json | null
+          time_horizon: string | null
+          updated_at: string
+        }
+        Insert: {
+          assumptions?: string[] | null
+          audience?: string | null
+          client_id?: string | null
+          commanders_intent?: string | null
+          completed_at?: string | null
+          constraints?: string | null
+          created_at?: string
+          created_by?: string | null
+          data_sources?: string[] | null
+          description?: string | null
+          desired_outcome?: string | null
+          end_state?: string | null
+          final_output?: string | null
+          final_output_metadata?: Json | null
+          id?: string
+          is_stealth_mode?: boolean | null
+          mission_type?: Database["public"]["Enums"]["mission_type"]
+          name: string
+          next_actions?: Json | null
+          phase?: Database["public"]["Enums"]["mission_phase"]
+          priority?: string
+          rules_of_engagement?: Json | null
+          started_at?: string | null
+          task_breakdown?: Json | null
+          time_horizon?: string | null
+          updated_at?: string
+        }
+        Update: {
+          assumptions?: string[] | null
+          audience?: string | null
+          client_id?: string | null
+          commanders_intent?: string | null
+          completed_at?: string | null
+          constraints?: string | null
+          created_at?: string
+          created_by?: string | null
+          data_sources?: string[] | null
+          description?: string | null
+          desired_outcome?: string | null
+          end_state?: string | null
+          final_output?: string | null
+          final_output_metadata?: Json | null
+          id?: string
+          is_stealth_mode?: boolean | null
+          mission_type?: Database["public"]["Enums"]["mission_type"]
+          name?: string
+          next_actions?: Json | null
+          phase?: Database["public"]["Enums"]["mission_phase"]
+          priority?: string
+          rules_of_engagement?: Json | null
+          started_at?: string | null
+          task_breakdown?: Json | null
+          time_horizon?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_force_missions_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_force_missions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       travel_alerts: {
         Row: {
           acknowledged: boolean | null
@@ -2861,12 +3068,36 @@ export type Database = {
         | "contained"
         | "resolved"
         | "closed"
+      mission_phase:
+        | "intake"
+        | "briefing"
+        | "execution"
+        | "synthesis"
+        | "completed"
+      mission_type:
+        | "risk_snapshot"
+        | "incident_response"
+        | "site_assessment"
+        | "executive_brief"
+        | "client_onboarding"
+        | "threat_assessment"
+        | "custom"
       signal_status:
         | "new"
         | "triaged"
         | "investigating"
         | "resolved"
         | "false_positive"
+      task_force_role:
+        | "leader"
+        | "intelligence_analyst"
+        | "operations_officer"
+        | "client_liaison"
+        | "cyber_specialist"
+        | "physical_security"
+        | "travel_security"
+        | "communications"
+        | "legal"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -3017,12 +3248,39 @@ export const Constants = {
         "resolved",
         "closed",
       ],
+      mission_phase: [
+        "intake",
+        "briefing",
+        "execution",
+        "synthesis",
+        "completed",
+      ],
+      mission_type: [
+        "risk_snapshot",
+        "incident_response",
+        "site_assessment",
+        "executive_brief",
+        "client_onboarding",
+        "threat_assessment",
+        "custom",
+      ],
       signal_status: [
         "new",
         "triaged",
         "investigating",
         "resolved",
         "false_positive",
+      ],
+      task_force_role: [
+        "leader",
+        "intelligence_analyst",
+        "operations_officer",
+        "client_liaison",
+        "cyber_specialist",
+        "physical_security",
+        "travel_security",
+        "communications",
+        "legal",
       ],
     },
   },
