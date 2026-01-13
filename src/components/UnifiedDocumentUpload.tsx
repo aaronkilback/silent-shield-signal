@@ -150,6 +150,11 @@ export const UnifiedDocumentUpload = () => {
   };
 
   const handleArchiveUpload = async () => {
+    if (!user) {
+      toast.error("Please sign in to upload documents");
+      return;
+    }
+
     if (files.length === 0 || !tags.trim()) {
       toast.error("Please select files and add tags");
       return;
