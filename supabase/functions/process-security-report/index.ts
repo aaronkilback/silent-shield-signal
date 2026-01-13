@@ -20,119 +20,91 @@ function uint8ToBase64(uint8: Uint8Array): string {
   return btoa(result);
 }
 
-// Improved PDF text extraction - AI-first approach for reliability
-async function extractPdfTextImproved(blob: Blob, lovableApiKey: string): Promise<string> {
-  // Use smaller size for AI to avoid timeouts (1MB max)
-  const maxBytes = 1 * 1024 * 1024;
-  const arrayBuffer = await blob.slice(0, maxBytes).arrayBuffer();
-  const uint8 = new Uint8Array(arrayBuffer);
-  
-  console.log(`Processing PDF: ${blob.size} bytes, using ${uint8.length} bytes for extraction`);
-  
-  // Primary Strategy: Use AI vision to extract text (most reliable for complex PDFs)
-  try {
-    console.log('Using AI vision for PDF text extraction...');
-    const base64Pdf = uint8ToBase64(uint8);
-    
-    const aiExtractionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${lovableApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: `Extract ALL text content from this PDF document. This is a security report that may contain:
-- Entity names (people, organizations, locations)
-- Security incidents and threats
-- Risk assessments and recommendations
+// Improved PDF text extraction using pdfjs (reliable for most PDFs)
+async function extractPdfTextImproved(blob: Blob): Promise<string> {
+  const maxPdfBytes = 12 * 1024 * 1024; // safety cap
+  const blobToRead = blob.size > maxPdfBytes ? blob.slice(0, maxPdfBytes) : blob;
+  const arrayBuffer = await blobToRead.arrayBuffer();
 
-Return ONLY the extracted text content, maintaining paragraph structure. Do not summarize or omit any content - extract everything verbatim. If there are tables, preserve them as structured text.`
-              },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: `data:application/pdf;base64,${base64Pdf}`
-                }
-              }
-            ]
-          }
-        ],
-        max_tokens: 32000
-      }),
+  console.log(`Processing PDF: ${blob.size} bytes, reading ${arrayBuffer.byteLength} bytes for extraction`);
+
+  // Primary: pdfjs extraction
+  try {
+    const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
+
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(arrayBuffer),
+      disableWorker: true,
     });
-    
-    if (aiExtractionResponse.ok) {
-      const aiData = await aiExtractionResponse.json();
-      const aiText = aiData.choices?.[0]?.message?.content;
-      if (aiText && aiText.length > 200) {
-        console.log(`AI extraction successful: ${aiText.length} characters`);
-        return normalizeExtractedText(aiText);
-      } else {
-        console.warn('AI extraction returned insufficient content:', aiText?.length || 0);
-      }
-    } else {
-      const errorText = await aiExtractionResponse.text();
-      console.warn(`AI extraction failed: ${aiExtractionResponse.status} - ${errorText}`);
+
+    const pdf = await loadingTask.promise;
+    const maxPages = Math.min(pdf.numPages || 0, 30);
+
+    const pages: string[] = [];
+    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const tc = await page.getTextContent();
+      const pageText = (tc.items || [])
+        .map((it: any) => (typeof it?.str === 'string' ? it.str : ''))
+        .join(' ');
+      if (pageText.trim()) pages.push(pageText);
     }
-  } catch (aiError) {
-    console.warn('AI text extraction error:', aiError);
+
+    const text = pages
+      .join('\n\n')
+      .replace(/\s+/g, ' ')
+      .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (text.length > 200) {
+      console.log(`pdfjs extraction successful: ${text.length} characters (${maxPages}/${pdf.numPages} pages)`);
+      return text;
+    }
+
+    console.warn('pdfjs extraction returned insufficient content');
+  } catch (pdfJsError) {
+    console.warn('pdfjs extraction error:', pdfJsError);
   }
-  
-  // Fallback Strategy: Basic text extraction from PDF structure
+
+  // Fallback: heuristic extraction from PDF operators
   console.log('Falling back to basic PDF text extraction...');
+  const uint8 = new Uint8Array(arrayBuffer);
   const pdfString = new TextDecoder('latin1').decode(uint8);
   let extractedText = '';
-  
-  // Extract text from BT/ET blocks (text objects)
+
   const textBlocks = pdfString.match(/BT([\s\S]*?)ET/g) || [];
-  for (const block of textBlocks.slice(0, 1000)) {
+  for (const block of textBlocks.slice(0, 1500)) {
     const parenStrings = block.match(/\((?:\\.|[^\\)])*\)/g) || [];
     for (const str of parenStrings) {
-      const text = str.slice(1, -1)
-        .replace(/\\n/g, '\n')
+      const t = str
+        .slice(1, -1)
+        .replace(/\\n/g, ' ')
         .replace(/\\r/g, ' ')
         .replace(/\\t/g, ' ')
         .replace(/\\\(/g, '(')
         .replace(/\\\)/g, ')')
         .replace(/\\\\/g, '\\');
-      extractedText += text + ' ';
+      extractedText += t + ' ';
     }
-    
-    const hexStrings = block.match(/<[0-9A-Fa-f]+>/g) || [];
-    for (const hex of hexStrings) {
-      const hexContent = hex.slice(1, -1);
-      let decoded = '';
-      for (let i = 0; i < hexContent.length; i += 2) {
-        const charCode = parseInt(hexContent.substr(i, 2), 16);
-        if (charCode >= 32 && charCode < 127) {
-          decoded += String.fromCharCode(charCode);
-        }
-      }
-      if (decoded.length > 2) {
-        extractedText += decoded + ' ';
-      }
-    }
-    
-    if (extractedText.length > 100000) break;
+
+    if (extractedText.length > 200000) break;
   }
-  
-  extractedText = normalizeExtractedText(extractedText);
-  
+
+  extractedText = extractedText
+    .replace(/\s+/g, ' ')
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
   // Validate extracted text quality
   const wordCount = extractedText.split(/\s+/).filter(w => /^[a-zA-Z]{2,}$/.test(w)).length;
   console.log(`Fallback extraction: ${extractedText.length} chars, ${wordCount} valid words`);
-  
+
   if (extractedText.length < 200 || wordCount < 20) {
     throw new Error('Could not extract meaningful text from PDF. The file may be image-based or encrypted.');
   }
-  
+
   return extractedText;
 }
 
@@ -214,7 +186,7 @@ serve(async (req) => {
         if (doc.file_type === 'application/pdf') {
           console.log('Extracting text from PDF using improved extractor...');
           try {
-            content = await extractPdfTextImproved(fileData, LOVABLE_API_KEY);
+            content = await extractPdfTextImproved(fileData);
 
             console.log(`Extracted ${content.length} characters from PDF`);
 
