@@ -21,8 +21,17 @@ function uint8ToBase64(uint8: Uint8Array): string {
 }
 
 // OCR using Gemini Vision for scanned/image-based PDFs
+// Maximum PDF size for OCR (10MB - larger files will exceed memory limits)
+const MAX_OCR_PDF_SIZE = 10 * 1024 * 1024;
+
 async function extractTextWithOCR(pdfBlob: Blob, apiKey: string): Promise<string> {
   console.log('Starting OCR extraction using Gemini Vision...');
+  
+  // Check file size before processing
+  if (pdfBlob.size > MAX_OCR_PDF_SIZE) {
+    const sizeMB = (pdfBlob.size / (1024 * 1024)).toFixed(1);
+    throw new Error(`PDF is too large for OCR (${sizeMB}MB). Maximum supported size is 10MB. Please try uploading a smaller document or a PDF with selectable text.`);
+  }
   
   // Convert PDF to base64
   const arrayBuffer = await pdfBlob.arrayBuffer();
