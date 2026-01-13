@@ -166,6 +166,26 @@ serve(async (req) => {
 
             // Only process if we have a matched client
             if (matchedClient) {
+              // CRITICAL FIX: Generate content hash BEFORE checking for duplicates
+              const contentToHash = `${link}|${title}`;
+              const encoder = new TextEncoder();
+              const data = encoder.encode(contentToHash);
+              const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+              const hashArray = Array.from(new Uint8Array(hashBuffer));
+              const contentHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+              // Check for existing signal with same content hash
+              const { data: existingSignal } = await supabase
+                .from('signals')
+                .select('id')
+                .eq('content_hash', contentHash)
+                .single();
+
+              if (existingSignal) {
+                console.log(`Skipping duplicate news signal: ${title.substring(0, 50)}...`);
+                continue; // Skip duplicate
+              }
+
               let category = 'news';
               let severity = 'low';
 
@@ -188,6 +208,7 @@ serve(async (req) => {
                   category,
                   severity,
                   location: 'Google News',
+                  content_hash: contentHash, // CRITICAL: Include content hash
                   raw_json: {
                     source: 'news',
                     url: link,
