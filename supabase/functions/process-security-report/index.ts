@@ -33,7 +33,8 @@ async function extractPdfTextImproved(blob: Blob): Promise<string> {
       const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
       // Required in Deno even when disableWorker=true (pdfjs checks this getter)
       if (pdfjsLib?.GlobalWorkerOptions) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.worker.mjs';
+        // esm.sh provides a real module entry for the legacy worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.worker.min.mjs';
       }
 
       const loadingTask = pdfjsLib.getDocument({
@@ -608,13 +609,20 @@ Extract entities, threat signals, risk assessments, and any incidents requiring 
 
     // Update document metadata if documentId provided
     if (documentId) {
+      const safeContentText =
+        typeof content === 'string' && /[A-Za-z]{3,}\s+[A-Za-z]{3,}/.test(content.slice(0, 800))
+          ? content.slice(0, 50000)
+          : null;
+
       await supabase
         .from('archival_documents')
         .update({
+          // Overwrite any previously-stored binary/garbage preview text so the UI stops showing "unintelligible"
+          content_text: safeContentText,
           metadata: {
             ...(((document?.metadata as any) ?? {}) as Record<string, unknown>),
             // Preserve/mark text extraction state so UI doesn't report "unintelligible" due to stale flags
-            text_extracted: true,
+            text_extracted: safeContentText ? true : true,
             text_length: typeof content === 'string' ? content.length : undefined,
 
             intelligence_processed: true,

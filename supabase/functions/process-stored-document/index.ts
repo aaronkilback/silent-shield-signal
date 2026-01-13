@@ -221,7 +221,8 @@ serve(async (req) => {
          const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
          // Required in Deno even when disableWorker=true
          if (pdfjsLib?.GlobalWorkerOptions) {
-           pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.worker.mjs';
+           // esm.sh provides a real module entry for the legacy worker
+           pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.worker.min.mjs';
          }
 
          const loadingTask = pdfjsLib.getDocument({
