@@ -240,7 +240,11 @@ export const DashboardAIAssistant = () => {
       if (!response.ok || !response.body) {
         const errorText = await response.text();
         console.error("Response not ok:", response.status, errorText);
-        throw new Error(`Failed to start stream: ${response.status} ${errorText}`);
+        // Add user-friendly error message instead of throwing
+        const errorMsg = { role: "assistant" as const, content: `I encountered an issue connecting to the AI service. Please try again in a moment.\n\n_Error: ${response.status}_` };
+        setMessages([...newMessages, errorMsg]);
+        await saveMessageToDb(errorMsg);
+        return;
       }
 
       console.log("Starting to read stream...");
@@ -311,7 +315,17 @@ export const DashboardAIAssistant = () => {
       setStreamingContent("");
     } catch (error) {
       console.error("Chat error:", error);
-      toast.error("Failed to get response. Please try again.");
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      
+      // Add error message to chat instead of just showing toast
+      const errorMsg = { 
+        role: "assistant" as const, 
+        content: `I'm having trouble connecting. This could be a network issue or the service may be temporarily unavailable.\n\nPlease try again. If the problem persists, try refreshing the page.\n\n_Technical details: ${errorMessage}_`
+      };
+      setMessages([...newMessages, errorMsg]);
+      await saveMessageToDb(errorMsg);
+      
+      toast.error("Connection issue - see message for details");
       setStreamingContent("");
       
       if (pendingUpdate) {
