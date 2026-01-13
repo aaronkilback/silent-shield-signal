@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Header } from "@/components/Header";
 import { AgentRoster } from "@/components/agents/AgentRoster";
@@ -33,6 +33,7 @@ export default function CommandCenter() {
   const [editingAgent, setEditingAgent] = useState<AIAgent | null>(null);
   const [isAdminDialogOpen, setIsAdminDialogOpen] = useState(false);
   const { isAdmin, isSuperAdmin } = useUserRole();
+  const queryClient = useQueryClient();
 
   const { data: agents, isLoading, refetch } = useQuery({
     queryKey: ["ai-agents"],
@@ -50,6 +51,30 @@ export default function CommandCenter() {
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
   });
+
+  // Subscribe to realtime changes for instant agent updates
+  useEffect(() => {
+    const channel = supabase
+      .channel('ai-agents-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'ai_agents'
+        },
+        (payload) => {
+          console.log('[CommandCenter] Agent change detected:', payload.eventType);
+          // Invalidate and refetch the agents query
+          queryClient.invalidateQueries({ queryKey: ["ai-agents"] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
 
   const handleAddAgent = () => {
     setEditingAgent(null);
