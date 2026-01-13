@@ -6,6 +6,60 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// --- Rule matching helpers (deterministic, no AI credits) ---
+const escapeRegex = (input: string) => input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const priorityRank = (priority: string | null | undefined): number => {
+  const p = (priority || '').toLowerCase();
+  if (p === 'critical' || p === 'p1') return 4;
+  if (p === 'high' || p === 'p2') return 3;
+  if (p === 'medium' || p === 'p3') return 2;
+  if (p === 'low' || p === 'p4') return 1;
+  return 0;
+};
+
+const normalizePriorityToSeverity = (
+  priority: string | null | undefined,
+  fallback: string | null | undefined
+): 'critical' | 'high' | 'medium' | 'low' => {
+  const p = (priority || '').toLowerCase();
+  if (p === 'critical') return 'critical';
+  if (p === 'high') return 'high';
+  if (p === 'medium') return 'medium';
+  if (p === 'low') return 'low';
+  if (p === 'p1') return 'critical';
+  if (p === 'p2') return 'high';
+  if (p === 'p3') return 'medium';
+  if (p === 'p4') return 'low';
+
+  const fb = (fallback || 'low').toLowerCase();
+  if (fb === 'critical') return 'critical';
+  if (fb === 'high') return 'high';
+  if (fb === 'medium') return 'medium';
+  return 'low';
+};
+
+const keywordMatches = (textLower: string, keyword: string): boolean => {
+  const k = keyword.toLowerCase().trim();
+  if (!k) return false;
+
+  // If it's a phrase, keep it simple.
+  if (k.includes(' ') || k.includes('-')) {
+    return textLower.includes(k);
+  }
+
+  // Very small morphology support (e.g. "protest" -> "protesting", "blockade" -> "blocking")
+  const stems: string[] = [k];
+  if (k.endsWith('ade') && k.length > 5) {
+    // "blockade" -> "block" (covers block/blocked/blocking/blockade)
+    stems.push(k.slice(0, -3));
+  }
+
+  return stems.some((stem) => {
+    const rx = new RegExp(`\\b${escapeRegex(stem)}(s|es|ed|ing|er|ers)?\\b`, 'i');
+    return rx.test(textLower);
+  });
+};
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -31,7 +85,7 @@ serve(async (req) => {
     // Fetch recent signals for the same client to enable pattern detection (last 30 days)
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
+
     const { data: recentSignals } = await supabase
       .from('signals')
       .select('id, normalized_text, category, severity, entity_tags, confidence, created_at')
@@ -43,16 +97,119 @@ serve(async (req) => {
 
     console.log(`Found ${recentSignals?.length || 0} recent signals for pattern analysis`);
 
-    // SMART FILTERING: Only use AI for high-priority signals
-    const shouldUseAI = force_ai || 
-      signal.severity === 'critical' || 
+    // 1) ALWAYS load + apply approved rules first (rules must take precedence over AI inference)
+    console.log('Loading approved signal categorization rules...');
+    const { data: ruleConfigs } = await supabase
+      .from('intelligence_config')
+      .select('key, value')
+      .like('key', 'signal_categorization_rules_proposal_%');
+
+    const approvedRules: any[] = [];
+    if (ruleConfigs && ruleConfigs.length > 0) {
+      for (const config of ruleConfigs) {
+        const configValue = config.value as any;
+        if (configValue.status === 'approved' && configValue.proposals) {
+          approvedRules.push(...configValue.proposals);
+        }
+      }
+    }
+
+    console.log(`Found ${approvedRules.length} approved rules`);
+
+    const matchedRules: string[] = [];
+    let ruleCategory: string | null = null;
+    let rulePriority: string | null = null;
+    const ruleTags: string[] = [];
+    let routedToTeam: string | null = null;
+
+    const signalTextLower = (signal.normalized_text || '').toLowerCase();
+
+    for (const rule of approvedRules) {
+      const conditions = rule.conditions || {};
+      const actions = rule.actions || {};
+
+      let matches = true;
+
+      // Keywords are REQUIRED if present
+      if (conditions.keywords && Array.isArray(conditions.keywords)) {
+        const hasKeyword = conditions.keywords.some((kw: string) => keywordMatches(signalTextLower, kw));
+        if (!hasKeyword) matches = false;
+      }
+
+      // Client industry (only enforce when client has an industry value)
+      if (conditions.client_industry && signal.clients?.industry) {
+        if (signal.clients.industry.toLowerCase() !== String(conditions.client_industry).toLowerCase()) {
+          matches = false;
+        }
+      }
+
+      // Source type (only enforce when we can resolve it)
+      if (conditions.source_type && signal.source_id) {
+        // TODO: add source lookup if/when we store source_type on the signal row.
+      }
+
+      if (matches) {
+        console.log(`Rule matched: ${rule.rule_name}`);
+        matchedRules.push(rule.rule_name);
+
+        if (actions.add_tags && Array.isArray(actions.add_tags)) ruleTags.push(...actions.add_tags);
+        if (actions.route_to_team) routedToTeam = actions.route_to_team;
+
+        // Keep the strongest priority when multiple rules match
+        if (actions.set_priority) {
+          if (priorityRank(actions.set_priority) >= priorityRank(rulePriority)) {
+            rulePriority = actions.set_priority;
+          }
+        }
+
+        // First matching category wins (unless later rules explicitly override — keep simple & deterministic)
+        if (!ruleCategory && actions.set_category) {
+          ruleCategory = actions.set_category;
+        }
+      }
+    }
+
+    // Apply rule updates to the signal row (deterministic, should never be skipped)
+    if (matchedRules.length > 0) {
+      const nextSeverity = normalizePriorityToSeverity(rulePriority, signal.severity);
+      const nextCategory = ruleCategory || signal.category;
+
+      const updateResult = await supabase
+        .from('signals')
+        .update({
+          applied_rules: matchedRules,
+          rule_category: ruleCategory,
+          rule_priority: rulePriority,
+          rule_tags: Array.from(new Set(ruleTags)),
+          routed_to_team: routedToTeam,
+          category: nextCategory,
+          severity: nextSeverity,
+          status: 'triaged'
+        })
+        .eq('id', signal_id);
+
+      if (updateResult.error) {
+        console.error('Failed to update signal with rule data:', updateResult.error);
+      } else {
+        console.log(`✓ Signal ${signal_id} updated with rule: ${matchedRules.join(', ')}`);
+        // Keep local values aligned for downstream AI prompt
+        signal.category = nextCategory;
+        signal.severity = nextSeverity;
+      }
+    }
+
+    // 2) SMART FILTERING: Only use AI for high-priority signals
+    // NOTE: rules can elevate severity, so compute shouldUseAI AFTER rule application.
+    const shouldUseAI =
+      force_ai ||
+      signal.severity === 'critical' ||
       signal.severity === 'high' ||
-      (signal.confidence && signal.confidence >= 0.8);
+      (signal.confidence && signal.confidence >= 0.8) ||
+      priorityRank(rulePriority) >= 3; // treat high/p2+ as worthy of AI
 
     if (!shouldUseAI) {
       console.log(`Using rule-based logic for low-priority signal ${signal_id}`);
-      
-      // Rule-based decision for low-priority signals
+
       const ruleBasedDecision = {
         threat_level: signal.severity || 'low',
         confidence: signal.confidence || 0.5,
@@ -65,12 +222,11 @@ serve(async (req) => {
         reasoning: 'Auto-classified as low priority based on severity and confidence scores'
       };
 
-      // Update signal status
       await supabase
         .from('signals')
-        .update({ 
+        .update({
           status: 'triaged',
-          raw_json: { 
+          raw_json: {
             ...signal.raw_json,
             ai_decision: ruleBasedDecision,
             processing_method: 'rule-based'
@@ -79,7 +235,7 @@ serve(async (req) => {
         .eq('id', signal_id);
 
       return new Response(
-        JSON.stringify({ 
+        JSON.stringify({
           success: true,
           decision: ruleBasedDecision,
           processing_method: 'rule-based',
@@ -90,117 +246,6 @@ serve(async (req) => {
     }
 
     console.log(`Using AI analysis for high-priority signal ${signal_id}`);
-
-    // FIRST: Load and apply approved categorization rules
-    console.log('Loading approved signal categorization rules...');
-    const { data: ruleConfigs } = await supabase
-      .from('intelligence_config')
-      .select('key, value')
-      .like('key', 'signal_categorization_rules_proposal_%');
-
-    const approvedRules = [];
-    if (ruleConfigs && ruleConfigs.length > 0) {
-      for (const config of ruleConfigs) {
-        const configValue = config.value as any;
-        if (configValue.status === 'approved' && configValue.proposals) {
-          approvedRules.push(...configValue.proposals);
-        }
-      }
-    }
-
-    console.log(`Found ${approvedRules.length} approved rules`);
-
-    // Apply rules to this signal
-    const matchedRules = [];
-    let ruleCategory = null;
-    let rulePriority = null;
-    const ruleTags = [];
-    let routedToTeam = null;
-
-    for (const rule of approvedRules) {
-      const conditions = rule.conditions || {};
-      const actions = rule.actions || {};
-      
-      // Check if rule conditions match
-      let matches = true;
-      
-      // Check keywords
-      if (conditions.keywords && Array.isArray(conditions.keywords)) {
-        const signalText = (signal.normalized_text || '').toLowerCase();
-        const hasKeyword = conditions.keywords.some((kw: string) => 
-          signalText.includes(kw.toLowerCase())
-        );
-        if (!hasKeyword) matches = false;
-      }
-      
-      // Check client industry
-      if (conditions.client_industry && signal.clients?.industry) {
-        if (signal.clients.industry.toLowerCase() !== conditions.client_industry.toLowerCase()) {
-          matches = false;
-        }
-      }
-      
-      // Check source type
-      if (conditions.source_type && signal.source_id) {
-        // This would need source lookup - skip for now
-      }
-      
-      // Check entity type
-      if (conditions.entity_type && signal.entity_tags) {
-        // This would need more sophisticated entity type checking
-      }
-      
-      // Check entity status
-      if (conditions.entity_status) {
-        // This would need entity lookup - skip for now
-      }
-      
-      if (matches) {
-        console.log(`Rule matched: ${rule.rule_name}`);
-        matchedRules.push(rule.rule_name);
-        
-        // Apply actions
-        if (actions.set_category) {
-          ruleCategory = actions.set_category;
-        }
-        if (actions.set_priority) {
-          rulePriority = actions.set_priority;
-        }
-        if (actions.add_tags && Array.isArray(actions.add_tags)) {
-          ruleTags.push(...actions.add_tags);
-        }
-        if (actions.route_to_team) {
-          routedToTeam = actions.route_to_team;
-        }
-      }
-    }
-
-    // Update signal with rule-applied data
-    if (matchedRules.length > 0) {
-      console.log(`Applying ${matchedRules.length} matched rules to signal`);
-      console.log(`Setting category to: ${ruleCategory}, priority to: ${rulePriority}`);
-      
-      const updateResult = await supabase
-        .from('signals')
-        .update({
-          applied_rules: matchedRules,
-          rule_category: ruleCategory,
-          rule_priority: rulePriority,
-          rule_tags: Array.from(new Set(ruleTags)), // dedupe tags
-          routed_to_team: routedToTeam,
-          category: ruleCategory || signal.category, // Override category if rule matched
-          severity: rulePriority || signal.severity, // Also update severity to match rule priority
-          status: 'triaged'
-        })
-        .eq('id', signal_id);
-      
-      if (updateResult.error) {
-        console.error('Failed to update signal with rule data:', updateResult.error);
-      } else {
-        console.log(`✓ Signal ${signal_id} updated with rule: ${matchedRules.join(', ')}`);
-      }
-    }
-
     // Use Lovable AI to make autonomous decisions
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     

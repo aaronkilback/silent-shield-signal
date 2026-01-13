@@ -414,6 +414,11 @@ export const SignalHistory = () => {
                           {!signal.is_read && (
                             <Badge variant="default" className="h-5 px-2 text-xs">New</Badge>
                           )}
+                          {Array.isArray(signal.applied_rules) && signal.applied_rules.length > 0 && (
+                            <Badge variant="secondary" className="h-5 px-2 text-xs">
+                              ✓ Rule Applied
+                            </Badge>
+                          )}
                           <Badge variant={getSeverityColor(signal.severity)} className="h-5 px-2 text-xs">
                             {signal.severity}
                           </Badge>
@@ -433,7 +438,7 @@ export const SignalHistory = () => {
                             ))
                           )}
                           {signal.routed_to_team && (
-                            <Badge variant="outline" className="h-5 px-2 text-xs bg-blue-50">
+                            <Badge variant="outline" className="h-5 px-2 text-xs">
                               → {signal.routed_to_team}
                             </Badge>
                           )}
