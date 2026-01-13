@@ -1718,6 +1718,57 @@ Inform user of successful creation and instruct to refresh if needed
       }
     }
   },
+  {
+    type: "function",
+    function: {
+      name: "update_agent_configuration",
+      description: "Update an AI agent's configuration including role_description, allowed_tools, input_sources, output_types, persona, specialty, mission_scope, and system_prompt. Use this to dynamically tune agent capabilities and permissions. All changes are audit-logged.",
+      parameters: {
+        type: "object",
+        properties: {
+          agent_id: { 
+            type: "string", 
+            description: "UUID of the agent to update" 
+          },
+          updates: {
+            type: "object",
+            description: "Object containing fields to update",
+            properties: {
+              codename: { type: "string", description: "Agent codename" },
+              call_sign: { type: "string", description: "Agent call sign" },
+              persona: { type: "string", description: "Agent persona description" },
+              specialty: { type: "string", description: "Agent specialty/expertise" },
+              mission_scope: { type: "string", description: "Agent mission scope" },
+              interaction_style: { type: "string", description: "Interaction style (chat, voice, etc.)" },
+              input_sources: { 
+                type: "array", 
+                items: { type: "string" },
+                description: "Array of input sources (OSINT, signals, incidents, entities, clients, etc.)" 
+              },
+              output_types: { 
+                type: "array", 
+                items: { type: "string" },
+                description: "Array of output types" 
+              },
+              is_client_facing: { type: "boolean", description: "Whether agent is client-facing" },
+              is_active: { type: "boolean", description: "Whether agent is active" },
+              avatar_color: { type: "string", description: "Avatar color" },
+              system_prompt: { type: "string", description: "Custom system prompt" }
+            }
+          },
+          reason: { 
+            type: "string", 
+            description: "Reason for the configuration change (for audit trail)" 
+          },
+          requested_by: { 
+            type: "string", 
+            description: "Who requested the change (e.g., 'Aegis', user name)" 
+          }
+        },
+        required: ["agent_id", "updates"]
+      }
+    }
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -6078,6 +6129,34 @@ The signal is now in the database with status 'triaged' and rules have been appl
         remediation_plan: remediationResult.remediation_plan,
         generated_at: remediationResult.generated_at,
         message: `Generated comprehensive compliance remediation plan.`,
+      };
+    }
+
+    case "update_agent_configuration": {
+      const { agent_id, updates, reason, requested_by } = args;
+      
+      console.log(`Updating agent configuration for: ${agent_id}`);
+      
+      const { data: configResult, error: configError } = await supabaseClient.functions.invoke(
+        "update-agent-configuration",
+        { body: { agent_id, updates, reason: reason || "Configuration update via Aegis", requested_by: requested_by || "Aegis" } }
+      );
+
+      if (configError) {
+        console.error("Error updating agent configuration:", configError);
+        return {
+          error: configError.message,
+          message: `Failed to update agent configuration: ${configError.message}`,
+        };
+      }
+
+      return {
+        success: true,
+        agent_id,
+        updated_agent: configResult.agent,
+        changes: configResult.changes,
+        audit_key: configResult.audit_key,
+        message: configResult.message || `Successfully updated agent configuration.`,
       };
     }
 
