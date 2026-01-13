@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
 import {
   ArrowLeft,
   Play,
@@ -22,10 +21,12 @@ import {
   Users,
   Eye,
   EyeOff,
+  Shield,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import ReactMarkdown from "react-markdown";
+import { ValidationStatusPill } from "./ValidationStatusPill";
 
 interface MissionViewProps {
   missionId: string;
