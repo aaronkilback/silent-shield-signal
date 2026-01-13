@@ -7128,18 +7128,78 @@ serve(async (req) => {
 
     const supabaseClient = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
 
+    // Helper to truncate content to avoid token limits
+    const truncateContent = (content: string, maxChars: number = 50000): string => {
+      if (content.length <= maxChars) return content;
+      return content.substring(0, maxChars) + "\n\n... [Content truncated due to size limits. Query with more specific filters for complete results.]";
+    };
+
+    // Helper to limit message history to avoid token overflow
+    const limitMessageHistory = (msgs: any[], maxMessages: number = 10): any[] => {
+      if (msgs.length <= maxMessages) return msgs;
+      // Keep first message (often context) and last N-1 messages
+      const firstMsg = msgs[0];
+      const recentMsgs = msgs.slice(-(maxMessages - 1));
+      console.log(`Truncating message history from ${msgs.length} to ${maxMessages} messages`);
+      return [firstMsg, ...recentMsgs];
+    };
+
+    // Helper to truncate tool results
+    const truncateToolResult = (result: any, maxChars: number = 30000): string => {
+      const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+      if (resultStr.length <= maxChars) return resultStr;
+      
+      // Try to preserve structure for objects
+      if (typeof result === 'object' && result !== null) {
+        // If it's an array, limit items
+        if (Array.isArray(result)) {
+          const truncated = result.slice(0, 20);
+          return JSON.stringify({
+            items: truncated,
+            _truncation_note: `Showing first 20 of ${result.length} results. Use more specific filters for complete data.`
+          });
+        }
+        // If it has a data/results property, truncate that
+        if (result.data && Array.isArray(result.data)) {
+          const truncatedData = result.data.slice(0, 20);
+          return JSON.stringify({
+            ...result,
+            data: truncatedData,
+            _truncation_note: `Showing first 20 of ${result.data.length} results.`
+          });
+        }
+        if (result.results && Array.isArray(result.results)) {
+          const truncatedResults = result.results.slice(0, 20);
+          return JSON.stringify({
+            ...result,
+            results: truncatedResults,
+            _truncation_note: `Showing first 20 of ${result.results.length} results.`
+          });
+        }
+      }
+      
+      return resultStr.substring(0, maxChars) + "\n\n... [Result truncated. Use specific filters for complete data.]";
+    };
+
+    // Limit incoming messages to prevent token overflow
+    const limitedMessages = limitMessageHistory(messages, 12);
+
     // Process messages to extract file attachments and format for vision
     const processedMessages = await Promise.all(
-      messages.map(async (msg: any) => {
+      limitedMessages.map(async (msg: any) => {
+        // Truncate excessively long messages
+        const content = typeof msg.content === 'string' ? truncateContent(msg.content, 20000) : msg.content;
+        
         // Look for image URLs in markdown format
         const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)|<img[^>]+src="([^"]+)"/g;
         const markdownLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
         
         const imageUrls: string[] = [];
         let match;
+        const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
         
         // Extract images from markdown/HTML
-        while ((match = imageRegex.exec(msg.content)) !== null) {
+        while ((match = imageRegex.exec(contentStr)) !== null) {
           const url = match[2] || match[3];
           if (url && (url.includes('ai-chat-attachments') || url.match(/\.(jpg|jpeg|png|gif|webp)$/i))) {
             imageUrls.push(url);
@@ -7148,14 +7208,14 @@ serve(async (req) => {
         
         // If we have images, format as vision message
         if (imageUrls.length > 0 && msg.role === 'user') {
-          const textContent = msg.content.replace(imageRegex, '').replace(markdownLinkRegex, '[$1]').trim();
+          const textContent = contentStr.replace(imageRegex, '').replace(markdownLinkRegex, '[$1]').trim();
           const contentParts: any[] = [];
           
           if (textContent) {
             contentParts.push({ type: "text", text: textContent });
           }
           
-          for (const imageUrl of imageUrls) {
+          for (const imageUrl of imageUrls.slice(0, 5)) { // Limit to 5 images
             contentParts.push({
               type: "image_url",
               image_url: { url: imageUrl }
@@ -7164,11 +7224,11 @@ serve(async (req) => {
           
           return {
             role: msg.role,
-            content: contentParts.length > 0 ? contentParts : msg.content
+            content: contentParts.length > 0 ? contentParts : content
           };
         }
         
-        return msg;
+        return { ...msg, content };
       })
     );
 
@@ -7586,7 +7646,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
             tool_call_id: "forced_inject_test_signal",
             role: "tool",
             name: "inject_test_signal",
-            content: JSON.stringify(forcedResult),
+            content: truncateToolResult(forcedResult, 25000),
           },
         ];
 
@@ -7631,7 +7691,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
             tool_call_id: "forced_create_agent",
             role: "tool",
             name: "create_agent",
-            content: JSON.stringify(forcedResult),
+            content: truncateToolResult(forcedResult, 25000),
           },
         ];
 
@@ -7676,7 +7736,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
             tool_call_id: "forced_query_fortress_data",
             role: "tool",
             name: "query_fortress_data",
-            content: JSON.stringify(forcedResult),
+            content: truncateToolResult(forcedResult, 30000),
           },
         ];
 
@@ -7742,7 +7802,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
               tool_call_id: toolCall.id,
               role: "tool",
               name: toolCall.function.name,
-              content: JSON.stringify(result),
+              content: truncateToolResult(result, 25000),
             };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
