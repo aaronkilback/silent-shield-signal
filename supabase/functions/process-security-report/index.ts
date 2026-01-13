@@ -9,9 +9,21 @@ function normalizeExtractedText(input: string): string {
     .trim();
 }
 
+// Helper to convert Uint8Array to base64 without stack overflow
+function uint8ToBase64(uint8: Uint8Array): string {
+  const chunkSize = 8192;
+  let result = '';
+  for (let i = 0; i < uint8.length; i += chunkSize) {
+    const chunk = uint8.subarray(i, Math.min(i + chunkSize, uint8.length));
+    result += String.fromCharCode(...chunk);
+  }
+  return btoa(result);
+}
+
 // Improved PDF text extraction - AI-first approach for reliability
 async function extractPdfTextImproved(blob: Blob, lovableApiKey: string): Promise<string> {
-  const maxBytes = 2 * 1024 * 1024; // 2MB limit for AI processing
+  // Use smaller size for AI to avoid timeouts (1MB max)
+  const maxBytes = 1 * 1024 * 1024;
   const arrayBuffer = await blob.slice(0, maxBytes).arrayBuffer();
   const uint8 = new Uint8Array(arrayBuffer);
   
@@ -20,7 +32,7 @@ async function extractPdfTextImproved(blob: Blob, lovableApiKey: string): Promis
   // Primary Strategy: Use AI vision to extract text (most reliable for complex PDFs)
   try {
     console.log('Using AI vision for PDF text extraction...');
-    const base64Pdf = btoa(String.fromCharCode(...uint8));
+    const base64Pdf = uint8ToBase64(uint8);
     
     const aiExtractionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
@@ -63,7 +75,7 @@ Return ONLY the extracted text content, maintaining paragraph structure. Do not 
         console.log(`AI extraction successful: ${aiText.length} characters`);
         return normalizeExtractedText(aiText);
       } else {
-        console.warn('AI extraction returned insufficient content');
+        console.warn('AI extraction returned insufficient content:', aiText?.length || 0);
       }
     } else {
       const errorText = await aiExtractionResponse.text();
