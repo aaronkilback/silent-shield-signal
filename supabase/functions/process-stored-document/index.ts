@@ -218,12 +218,16 @@ serve(async (req) => {
         const blobToRead = fileData.size > maxPdfBytes ? fileData.slice(0, maxPdfBytes) : fileData;
         const arrayBuffer = await blobToRead.arrayBuffer();
 
-        const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
+         const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
+         // Required in Deno even when disableWorker=true
+         if (pdfjsLib?.GlobalWorkerOptions) {
+           pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.worker.mjs';
+         }
 
-        const loadingTask = pdfjsLib.getDocument({
-          data: new Uint8Array(arrayBuffer),
-          disableWorker: true,
-        });
+         const loadingTask = pdfjsLib.getDocument({
+           data: new Uint8Array(arrayBuffer),
+           disableWorker: true,
+         });
 
         const pdf = await loadingTask.promise;
         const maxPages = Math.min(pdf.numPages || 0, 25);
@@ -366,7 +370,7 @@ serve(async (req) => {
         .update({
           content_text: textContent, // Store whatever text we have
           metadata: {
-            ...document.metadata,
+            ...(document.metadata ?? {}),
             entities_processed: true,
             processing_note: 'Document too short for analysis',
             processed_at: new Date().toISOString(),
@@ -768,7 +772,7 @@ Think like a professional intelligence analyst reading an opposition research do
           .from('archival_documents')
           .update({
             metadata: {
-              ...document.metadata,
+              ...(document.metadata ?? {}),
               detected_relationships: relationships,
               relationships_detected_at: new Date().toISOString()
             }
@@ -802,7 +806,7 @@ Think like a professional intelligence analyst reading an opposition research do
         content_text: textContent, // Store the extracted text for AI analysis
         entity_mentions: entityNames,
         metadata: {
-          ...document.metadata,
+          ...(document.metadata ?? {}),
           entities_processed: true,
           entities_processed_at: new Date().toISOString(),
           text_extracted: true,
