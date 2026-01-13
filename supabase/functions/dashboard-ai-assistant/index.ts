@@ -6025,28 +6025,56 @@ The signal is now in the database with status 'triaged' and rules have been appl
   }
 }
 
-function extractPlannedTestSignalFromText(text: string): { text: string; client_name?: string; severity?: string; category?: string } | null {
+function extractPlannedTestSignalFromText(
+  text: string,
+): { text: string; client_name?: string; severity?: string; category?: string } | null {
   // Detect the common failure mode: model says it is injecting, but returns no tool_calls.
   const looksLikeInjection = /\b(inject|injecting)\b/i.test(text) && /\bsignal\b/i.test(text);
   if (!looksLikeInjection) return null;
 
-  const clientNameMatch = text.match(/client_name\s*[:=]\s*["“]?([^"”\n]+)["”]?/i);
-  const headlineMatch = text.match(/headline\s*[:=][^\n]*["“]([^"”\n]+)["”]/i);
-  const bodyMatch = text.match(/body\s*[:=][^\n]*["“]([^"”\n]+)["”]/i);
-  const severityMatch = text.match(/severity\s*[:=]\s*["“]?(critical|high|medium|low)["”]?/i);
-  const categoryMatch = text.match(/category\s*[:=]\s*["“]?([^"”\n]+)["”]?/i);
+  const normalized = text.replace(/\r/g, "");
 
-  if (!headlineMatch && !bodyMatch) return null;
+  const extractValue = (key: string) => {
+    // Supports:
+    //   client_name: "Petronas Canada"
+    //   `client_name`: "Petronas Canada"
+    //   *   `headline`: "..."
+    const re = new RegExp(
+      String.raw`(?:\)?` // no-op (keeps formatter stable)
+        .replace(/\/g, "") +
+        String.raw`(?:\`?` + key + String.raw`\`?)` +
+        String.raw`\s*[:=]\s*(?:"([^"\n]+)"|“([^”\n]+)”|([^\n]+))`,
+      "i",
+    );
+    const m = normalized.match(re);
+    const value = (m?.[1] || m?.[2] || m?.[3] || "").trim();
+    return value || null;
+  };
 
-  const headline = headlineMatch?.[1]?.trim() || "(Test Signal)";
-  const body = bodyMatch?.[1]?.trim() || "";
+  const client_name = extractValue("client_name") || extractValue("client") || extractValue("clientName");
+  if (!client_name) return null;
+
+  const headline = extractValue("headline") || extractValue("title");
+  const body = extractValue("body") || extractValue("text") || extractValue("description");
+
+  const severityRaw = (extractValue("severity") || "medium").toLowerCase();
+  const categoryRaw = extractValue("category") || "physical_security";
+
+  if (!headline && !body) return null;
+
+  const severity = ["critical", "high", "medium", "low"].includes(severityRaw)
+    ? severityRaw
+    : "medium";
+  const category = categoryRaw.trim() || "physical_security";
+
   const unique = `UID:${Date.now()}`;
+  const combinedText = `${headline || "(Test Signal)"}\n\n${body || ""}\n\n${unique}\nFORCED_FROM_ASSISTANT_TEXT:true`;
 
   return {
-    client_name: clientNameMatch?.[1]?.trim(),
-    severity: (severityMatch?.[1] || "medium").toLowerCase(),
-    category: categoryMatch?.[1]?.trim() || "physical_security",
-    text: `${headline}\n\n${body}\n\n${unique}`.trim(),
+    client_name,
+    severity,
+    category,
+    text: combinedText.trim(),
   };
 }
 
