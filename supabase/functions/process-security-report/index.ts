@@ -102,12 +102,19 @@ async function extractPdfTextImproved(blob: Blob): Promise<string> {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Validate extracted text quality
-  const wordCount = extractedText.split(/\s+/).filter(w => /^[a-zA-Z]{2,}$/.test(w)).length;
-  console.log(`Fallback extraction: ${extractedText.length} chars, ${wordCount} valid words`);
+  // Validate extracted text quality - check for REAL English words, not just character patterns
+  // Common English words that should appear in any real document
+  const commonWords = ['the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'are', 'was', 'were', 'been', 'being', 'has', 'had', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'not', 'but', 'what', 'which', 'when', 'where', 'who', 'how', 'all', 'each', 'every', 'both', 'few', 'more', 'most', 'other', 'some', 'such', 'than', 'too', 'very', 'just', 'about', 'into', 'over', 'after', 'before', 'between', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'only', 'also', 'security', 'report', 'threat', 'risk', 'incident', 'company', 'organization', 'project', 'information'];
+  
+  const lowerText = extractedText.toLowerCase();
+  const foundCommonWords = commonWords.filter(w => lowerText.includes(` ${w} `) || lowerText.startsWith(`${w} `) || lowerText.endsWith(` ${w}`));
+  const realWordCount = foundCommonWords.length;
+  
+  console.log(`Fallback extraction: ${extractedText.length} chars, found ${realWordCount}/${commonWords.length} common English words`);
 
-  if (extractedText.length < 200 || wordCount < 20) {
-    throw new Error('Could not extract meaningful text from PDF. The file may be image-based or encrypted.');
+  // Require at least 10 common English words to consider it readable text
+  if (extractedText.length < 200 || realWordCount < 10) {
+    throw new Error('Could not extract meaningful text from PDF. The file may be image-based (scanned) or encrypted. Please upload a PDF with selectable text, or provide a text export of the document.');
   }
 
   return extractedText;
@@ -196,15 +203,35 @@ serve(async (req) => {
             console.log(`Extracted ${content.length} characters from PDF`);
 
             if (!content || content.trim().length < 200) {
-              throw new Error(
-                'Failed to extract meaningful text from PDF. The file may be scanned/image-based or encrypted. Please upload a PDF with selectable text (or upload a text export).'
+              // Return user-friendly response instead of throwing error
+              return new Response(
+                JSON.stringify({
+                  success: false,
+                  error: 'This PDF appears to be image-based (scanned) or encrypted. The system cannot extract text from scanned documents without OCR. Please upload a PDF with selectable text, or provide a text export of the document.',
+                  isImageBased: true,
+                  documentId
+                }),
+                { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
               );
             }
           } catch (pdfError) {
             console.error('PDF parsing error:', pdfError);
-            throw new Error(
-              `Failed to parse PDF: ${pdfError instanceof Error ? pdfError.message : 'Unknown error'}`
-            );
+            const errorMsg = pdfError instanceof Error ? pdfError.message : 'Unknown error';
+            
+            // Check if it's the "image-based" error and return friendly response
+            if (errorMsg.includes('image-based') || errorMsg.includes('scanned') || errorMsg.includes('meaningful text')) {
+              return new Response(
+                JSON.stringify({
+                  success: false,
+                  error: 'This PDF appears to be image-based (scanned) or encrypted. The system cannot extract text from scanned documents without OCR. Please upload a PDF with selectable text, or provide a text export of the document.',
+                  isImageBased: true,
+                  documentId
+                }),
+                { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+              );
+            }
+            
+            throw new Error(`Failed to parse PDF: ${errorMsg}`);
           }
         } else if (doc.file_type.includes('text')) {
           content = await fileData.text();

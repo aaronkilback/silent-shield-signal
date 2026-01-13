@@ -290,15 +290,28 @@ serve(async (req) => {
             .trim()
             .slice(0, 50000);
 
-          console.log(`Extracted ${textContent.length} characters from PDF text streams (fallback)`);
+          // Validate text quality - check for real English words
+          const commonWords = ['the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'are', 'was', 'were', 'been', 'has', 'will', 'would', 'could', 'should', 'not', 'but', 'what', 'which', 'when', 'where', 'who', 'how', 'all', 'each', 'every', 'some', 'such', 'than', 'very', 'about', 'into', 'over', 'after', 'before', 'security', 'report', 'threat', 'risk', 'incident'];
+          const lowerText = textContent.toLowerCase();
+          const foundCommonWords = commonWords.filter(w => lowerText.includes(` ${w} `));
+          
+          if (foundCommonWords.length < 8) {
+            console.log(`PDF text extraction produced garbage (only ${foundCommonWords.length} common words found). This appears to be a scanned/image-based PDF.`);
+            textContent = ''; // Clear garbage text
+          } else {
+            console.log(`Extracted ${textContent.length} characters from PDF text streams (fallback), ${foundCommonWords.length} common words found`);
+          }
         } else {
-          textContent = pdfString
-            .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .slice(0, 50000);
-          console.log(`Fallback (raw): extracted ${textContent.length} characters`);
+          // Raw extraction usually produces garbage for image-based PDFs
+          console.log('No text streams found in PDF - likely image-based/scanned document');
+          textContent = '';
         }
+      }
+      
+      // If text extraction failed or produced garbage, provide clear feedback
+      if (!textContent || textContent.length < 100) {
+        console.log('PDF appears to be image-based or encrypted. Text extraction not possible without OCR.');
+        textContent = `[This PDF appears to be image-based/scanned and cannot be automatically processed. File: ${document.filename}. Please upload a PDF with selectable text or provide a text export.]`;
       }
     }
 
