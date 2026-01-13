@@ -6025,6 +6025,31 @@ The signal is now in the database with status 'triaged' and rules have been appl
   }
 }
 
+function extractPlannedTestSignalFromText(text: string): { text: string; client_name?: string; severity?: string; category?: string } | null {
+  // Detect the common failure mode: model says it is injecting, but returns no tool_calls.
+  const looksLikeInjection = /\b(inject|injecting)\b/i.test(text) && /\bsignal\b/i.test(text);
+  if (!looksLikeInjection) return null;
+
+  const clientNameMatch = text.match(/client_name\s*[:=]\s*["“]?([^"”\n]+)["”]?/i);
+  const headlineMatch = text.match(/headline\s*[:=][^\n]*["“]([^"”\n]+)["”]/i);
+  const bodyMatch = text.match(/body\s*[:=][^\n]*["“]([^"”\n]+)["”]/i);
+  const severityMatch = text.match(/severity\s*[:=]\s*["“]?(critical|high|medium|low)["”]?/i);
+  const categoryMatch = text.match(/category\s*[:=]\s*["“]?([^"”\n]+)["”]?/i);
+
+  if (!headlineMatch && !bodyMatch) return null;
+
+  const headline = headlineMatch?.[1]?.trim() || "(Test Signal)";
+  const body = bodyMatch?.[1]?.trim() || "";
+  const unique = `UID:${Date.now()}`;
+
+  return {
+    client_name: clientNameMatch?.[1]?.trim(),
+    severity: (severityMatch?.[1] || "medium").toLowerCase(),
+    category: categoryMatch?.[1]?.trim() || "physical_security",
+    text: `${headline}\n\n${body}\n\n${unique}`.trim(),
+  };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -6487,6 +6512,52 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
     console.log("AI first response - tool_calls count:", firstMessage.tool_calls?.length || 0);
     if (firstMessage.content) {
       console.log("AI responded with text (no tools):", firstMessage.content.substring(0, 200));
+    }
+    // If the model didn't request tools but claimed it performed an action, force the tool call.
+    if (!firstMessage.tool_calls?.length && typeof firstMessage.content === "string") {
+      const forced = extractPlannedTestSignalFromText(firstMessage.content);
+      if (forced) {
+        console.log("FORCING inject_test_signal (model described injection but returned no tool_calls)");
+        const forcedResult = await executeTool("inject_test_signal", forced, supabaseClient);
+        const forcedToolResults = [
+          {
+            tool_call_id: "forced_inject_test_signal",
+            role: "tool",
+            name: "inject_test_signal",
+            content: JSON.stringify(forcedResult),
+          },
+        ];
+
+        const finalResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You are the Fortress AI Assistant. Summarize tool results in a clear, conversational way. Use markdown links: [Link Text](/path). Be concise and helpful.",
+              },
+              ...processedMessages,
+              firstMessage,
+              ...forcedToolResults,
+            ],
+            stream: true,
+          }),
+        });
+
+        if (!finalResponse.ok) {
+          throw new Error("Failed to get final response from AI");
+        }
+
+        return new Response(finalResponse.body, {
+          headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+        });
+      }
     }
 
     // Check if AI wants to use tools
