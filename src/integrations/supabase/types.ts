@@ -107,6 +107,7 @@ export type Database = {
       ai_agents: {
         Row: {
           avatar_color: string | null
+          avatar_image: string | null
           call_sign: string
           codename: string
           created_at: string
@@ -127,6 +128,7 @@ export type Database = {
         }
         Insert: {
           avatar_color?: string | null
+          avatar_image?: string | null
           call_sign: string
           codename: string
           created_at?: string
@@ -147,6 +149,7 @@ export type Database = {
         }
         Update: {
           avatar_color?: string | null
+          avatar_image?: string | null
           call_sign?: string
           codename?: string
           created_at?: string
