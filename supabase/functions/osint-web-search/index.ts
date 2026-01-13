@@ -62,32 +62,62 @@ serve(async (req) => {
     let contentCreated = 0;
     let signalsCreated = 0;
 
-    // Build comprehensive search queries using all available entity information
-    const searchQueries: string[] = [
-      // Basic name searches
-      `"${entity.name}"`,
-      `"${entity.name}" news`,
-    ];
+    // Helper function to extract meaningful keywords from entity name
+    const extractKeywords = (name: string): string[] => {
+      // Common words to exclude from searches
+      const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'for', 'of', 'in', 'on', 'at', 'to', 'with', 'by']);
+      return name
+        .split(/\s+/)
+        .filter(word => word.length > 2 && !stopWords.has(word.toLowerCase()))
+        .slice(0, 5); // Limit to 5 keywords
+    };
+
+    const keywords = extractKeywords(entity.name);
+    const keywordQuery = keywords.join(' ');
+    
+    // Build comprehensive search queries using flexible matching
+    const searchQueries: string[] = [];
+    
+    // For short names, use exact matching
+    if (entity.name.split(/\s+/).length <= 3) {
+      searchQueries.push(`"${entity.name}"`);
+      searchQueries.push(`"${entity.name}" news`);
+    } else {
+      // For longer names, use flexible matching with keywords
+      searchQueries.push(keywordQuery); // Unquoted keyword search
+      searchQueries.push(`${keywordQuery} news`);
+      
+      // Try first few words as potential organization short name
+      const shortName = entity.name.split(/\s+/).slice(0, 4).join(' ');
+      if (shortName !== entity.name) {
+        searchQueries.push(`"${shortName}"`);
+      }
+    }
+
+    // Always try the full name without quotes as a broad search
+    searchQueries.push(entity.name);
 
     // Add location-based searches if available
     if (location) {
-      searchQueries.push(`"${entity.name}" "${location}"`);
-      searchQueries.push(`"${entity.name}" location:"${location}"`);
+      searchQueries.push(`${keywordQuery} ${location}`);
+      if (entity.name.split(/\s+/).length <= 3) {
+        searchQueries.push(`"${entity.name}" "${location}"`);
+      }
     }
 
     // Add social media searches with handles if available
     if (socialMedia.facebook) {
       searchQueries.push(`site:facebook.com "${socialMedia.facebook}"`);
-      searchQueries.push(`site:facebook.com "${entity.name}"`);
+      searchQueries.push(`site:facebook.com ${keywordQuery}`);
     } else {
-      searchQueries.push(`site:facebook.com "${entity.name}"`);
+      searchQueries.push(`site:facebook.com ${keywordQuery}`);
     }
 
     if (socialMedia.linkedin) {
       searchQueries.push(`site:linkedin.com "${socialMedia.linkedin}"`);
-      searchQueries.push(`site:linkedin.com "${entity.name}"`);
+      searchQueries.push(`site:linkedin.com ${keywordQuery}`);
     } else {
-      searchQueries.push(`site:linkedin.com "${entity.name}"`);
+      searchQueries.push(`site:linkedin.com ${keywordQuery}`);
     }
 
     if (socialMedia.twitter) {
@@ -112,12 +142,17 @@ serve(async (req) => {
       });
     }
 
-    // Add aliases to searches
+    // Add aliases to searches - use flexible matching for long aliases
     if (entity.aliases && entity.aliases.length > 0) {
       entity.aliases.slice(0, 3).forEach((alias: string) => {
-        searchQueries.push(`"${alias}"`);
-        if (location) {
-          searchQueries.push(`"${alias}" "${location}"`);
+        if (alias.split(/\s+/).length <= 3) {
+          searchQueries.push(`"${alias}"`);
+          if (location) {
+            searchQueries.push(`"${alias}" "${location}"`);
+          }
+        } else {
+          const aliasKeywords = extractKeywords(alias).join(' ');
+          searchQueries.push(aliasKeywords);
         }
       });
     }
@@ -125,14 +160,14 @@ serve(async (req) => {
     // Add association-based searches
     if (associations.length > 0) {
       associations.slice(0, 2).forEach((assoc: string) => {
-        searchQueries.push(`"${entity.name}" "${assoc}"`);
+        searchQueries.push(`${keywordQuery} "${assoc}"`);
       });
     }
 
     // Add threat indicator searches for security context
     if (threatIndicators.length > 0) {
       threatIndicators.slice(0, 2).forEach((indicator: string) => {
-        searchQueries.push(`"${entity.name}" "${indicator}"`);
+        searchQueries.push(`${keywordQuery} "${indicator}"`);
       });
     }
 
@@ -141,8 +176,11 @@ serve(async (req) => {
       searchQueries.push(`"${entity.name}" profile`);
       searchQueries.push(`"${entity.name}" biography`);
     } else if (entity.type === 'organization') {
-      searchQueries.push(`"${entity.name}" company`);
-      searchQueries.push(`"${entity.name}" business`);
+      searchQueries.push(`${keywordQuery} organization`);
+      searchQueries.push(`${keywordQuery} group`);
+      // Try common variations
+      searchQueries.push(`${keywordQuery} BC`); // British Columbia context
+      searchQueries.push(`${keywordQuery} Canada`);
     }
 
     console.log(`Generated ${searchQueries.length} targeted search queries using entity details`);
