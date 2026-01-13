@@ -78,6 +78,11 @@ export const ArchivalDocumentUpload = () => {
   };
 
   const handleBulkUpload = async () => {
+    if (!user) {
+      toast.error("Please sign in to upload documents");
+      return;
+    }
+
     if (!files.length || !tags.trim()) {
       toast.error("Please select files and add at least one tag");
       return;
