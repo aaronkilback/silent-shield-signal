@@ -92,6 +92,15 @@ export const ArchivalDocumentsList = () => {
 
       if (error) throw error;
 
+      // Check for image-based PDF error
+      if (data?.isImageBased) {
+        toast.error(
+          `📄 ${filename} appears to be a scanned/image-based PDF. The system cannot extract text from scanned documents. Please upload a PDF with selectable text or provide a text export.`,
+          { duration: 10000 }
+        );
+        return;
+      }
+
       if (data?.success) {
         const { results } = data;
         const messages = [];
@@ -105,6 +114,8 @@ export const ArchivalDocumentsList = () => {
         if (data.risk_assessment?.overall_risk) {
           toast.info(`Risk Level: ${data.risk_assessment.overall_risk}`);
         }
+      } else if (data?.error) {
+        toast.error(`Failed to process: ${data.error}`, { duration: 8000 });
       }
 
       // Refresh all relevant data
