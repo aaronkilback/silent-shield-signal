@@ -84,6 +84,30 @@ serve(async (req) => {
       `## ${article.title}\n${article.summary}\nTags: ${article.tags?.join(', ')}`
     ).join('\n\n') || '';
 
+    // Fetch archival documents for reference
+    const { data: archivalDocs } = await supabase
+      .from('archival_documents')
+      .select('filename, summary, content_text, keywords, entity_mentions, date_of_document')
+      .not('content_text', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    
+    let docContext = '';
+    if (archivalDocs?.length) {
+      docContext = '\n\n**Uploaded Intelligence Documents:**\n';
+      archivalDocs.forEach(doc => {
+        docContext += `\n### ${doc.filename}\n`;
+        if (doc.date_of_document) docContext += `Date: ${doc.date_of_document}\n`;
+        if (doc.summary) docContext += `Summary: ${doc.summary}\n`;
+        if (doc.keywords?.length) docContext += `Keywords: ${doc.keywords.join(', ')}\n`;
+        if (doc.entity_mentions?.length) docContext += `Entities: ${doc.entity_mentions.join(', ')}\n`;
+        if (doc.content_text) {
+          const preview = doc.content_text.substring(0, 1000);
+          docContext += `Content: ${preview}${doc.content_text.length > 1000 ? '...' : ''}\n`;
+        }
+      });
+    }
+
     const systemPrompt = `You are a helpful support assistant for a Security Operations Center (SOC) platform with access to a comprehensive knowledge base.
 
 **Platform Overview:**
@@ -128,9 +152,14 @@ This is an autonomous security operations platform that helps organizations moni
 
 10. **Bug Reporting**: Users can report issues they encounter
 
+11. **Intelligence Documents**: Users can upload security reports, threat assessments, and other documents. These are processed and available for reference.
+
 **Knowledge Base Articles:**
 
 ${kbContext}
+
+**Uploaded Intelligence Documents:**
+${docContext}
 
 **Your Capabilities:**
 

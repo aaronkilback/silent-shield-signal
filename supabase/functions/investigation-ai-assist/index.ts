@@ -12,40 +12,85 @@ serve(async (req) => {
   }
 
   try {
-    const { action, context, existingText } = await req.json();
-    console.log('AI assist request:', { action, context: context?.substring(0, 100) });
+    const { action, context, existingText, investigation_id } = await req.json();
+    console.log('AI assist request:', { action, context: context?.substring(0, 100), investigation_id });
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
       throw new Error('LOVABLE_API_KEY not configured');
     }
 
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Fetch archival documents for reference context
+    let documentContext = '';
+    const { data: archivalDocs } = await supabase
+      .from('archival_documents')
+      .select('filename, summary, content_text, keywords, entity_mentions, date_of_document')
+      .not('content_text', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(15);
+    
+    if (archivalDocs?.length) {
+      documentContext = '\n\n=== REFERENCE DOCUMENTS ===\n';
+      archivalDocs.forEach(doc => {
+        documentContext += `\n--- ${doc.filename} ---\n`;
+        if (doc.date_of_document) documentContext += `Date: ${doc.date_of_document}\n`;
+        if (doc.summary) documentContext += `Summary: ${doc.summary}\n`;
+        if (doc.keywords?.length) documentContext += `Keywords: ${doc.keywords.join(', ')}\n`;
+        if (doc.entity_mentions?.length) documentContext += `Entities: ${doc.entity_mentions.join(', ')}\n`;
+        if (doc.content_text) {
+          const preview = doc.content_text.substring(0, 1500);
+          documentContext += `Content: ${preview}${doc.content_text.length > 1500 ? '...[truncated]' : ''}\n`;
+        }
+      });
+    }
+
+    // Fetch entities for context
+    let entityContext = '';
+    const { data: entities } = await supabase
+      .from('entities')
+      .select('name, type, description, risk_level')
+      .eq('is_active', true)
+      .limit(30);
+    
+    if (entities?.length) {
+      entityContext = '\n\n=== KNOWN ENTITIES ===\n';
+      entities.forEach(e => {
+        entityContext += `- ${e.name} (${e.type})${e.risk_level ? ` - Risk: ${e.risk_level}` : ''}\n`;
+      });
+    }
+
+    const referenceContext = documentContext + entityContext;
+
     let systemPrompt = '';
     let userPrompt = '';
 
     switch (action) {
       case 'expand':
-        systemPrompt = 'You are an expert security analyst helping to write detailed investigation entries. Expand brief notes into comprehensive, professional investigation reports.';
+        systemPrompt = `You are an expert security analyst helping to write detailed investigation entries. Expand brief notes into comprehensive, professional investigation reports. You have access to uploaded intelligence documents and entity data for reference.${referenceContext}`;
         userPrompt = `Expand this investigation note into a detailed professional entry:\n\n${existingText}\n\nContext: ${context || 'Security investigation'}`;
         break;
       
       case 'summarize':
-        systemPrompt = 'You are an expert security analyst. Create concise summaries of investigation information.';
+        systemPrompt = `You are an expert security analyst. Create concise summaries of investigation information. You have access to uploaded intelligence documents for cross-reference.${referenceContext}`;
         userPrompt = `Summarize this investigation information:\n\n${existingText}`;
         break;
       
       case 'suggest':
-        systemPrompt = 'You are an expert security analyst. Suggest next investigative steps based on the information provided.';
+        systemPrompt = `You are an expert security analyst. Suggest next investigative steps based on the information provided. Reference uploaded documents and known entities when relevant.${referenceContext}`;
         userPrompt = `Based on this investigation information, suggest 3-5 next investigative steps:\n\n${context}`;
         break;
       
       case 'write_synopsis':
-        systemPrompt = 'You are an expert security analyst. Write clear, concise synopsis sections for investigation reports.';
+        systemPrompt = `You are an expert security analyst. Write clear, concise synopsis sections for investigation reports. Cross-reference with uploaded intelligence documents when relevant.${referenceContext}`;
         userPrompt = `Write a synopsis for this investigation based on the following information:\n\n${context}`;
         break;
       
       case 'write_recommendations':
-        systemPrompt = 'You are an expert security analyst. Provide actionable recommendations based on investigation findings.';
+        systemPrompt = `You are an expert security analyst. Provide actionable recommendations based on investigation findings. Reference uploaded intelligence documents and known entities when making recommendations.${referenceContext}`;
         userPrompt = `Provide recommendations based on this investigation:\n\n${context}`;
         break;
       
