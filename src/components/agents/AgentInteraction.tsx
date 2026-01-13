@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 
 interface AIAgent {
   id: string;
+  header_name: string | null;
   codename: string;
   call_sign: string;
   avatar_color: string;
@@ -205,7 +206,8 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg flex items-center gap-2">
             <Bot className="h-5 w-5" style={{ color: agent.avatar_color }} />
-            {agent.call_sign} — Active Session
+            {agent.header_name || agent.codename}
+            <span className="text-sm font-normal text-muted-foreground">— Active Session</span>
           </CardTitle>
           {messages.length > 0 && (
             <Button
@@ -238,7 +240,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
                   className="h-12 w-12 mx-auto mb-4 opacity-50"
                   style={{ color: agent.avatar_color }}
                 />
-                <p className="font-medium mb-1">{agent.codename}</p>
+                <p className="font-medium mb-1">{agent.header_name || agent.codename}</p>
                 <p className="text-sm">
                   Ready for your command. What intelligence do you need?
                 </p>
@@ -320,7 +322,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={`Message ${agent.call_sign}...`}
+              placeholder={`Message ${agent.header_name || agent.codename}...`}
               className="min-h-[44px] max-h-32 resize-none"
               rows={1}
               disabled={isLoading}

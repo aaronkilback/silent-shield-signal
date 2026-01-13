@@ -25,6 +25,7 @@ import { toast } from "sonner";
 
 interface AIAgent {
   id: string;
+  header_name: string | null;
   codename: string;
   call_sign: string;
   persona: string;
@@ -91,6 +92,7 @@ export function AgentAdminDialog({
 }: AgentAdminDialogProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({
+    header_name: "",
     codename: "",
     call_sign: "",
     persona: "",
@@ -111,6 +113,7 @@ export function AgentAdminDialog({
   useEffect(() => {
     if (agent) {
       setFormData({
+        header_name: agent.header_name || "",
         codename: agent.codename,
         call_sign: agent.call_sign,
         persona: agent.persona,
@@ -126,6 +129,7 @@ export function AgentAdminDialog({
       });
     } else {
       setFormData({
+        header_name: "",
         codename: "",
         call_sign: "",
         persona: "",
@@ -215,6 +219,22 @@ export function AgentAdminDialog({
         </DialogHeader>
 
         <div className="space-y-6 py-4">
+          {/* Display Name */}
+          <div className="space-y-2">
+            <Label htmlFor="header_name">Display Name *</Label>
+            <Input
+              id="header_name"
+              value={formData.header_name}
+              onChange={(e) =>
+                setFormData((prev) => ({ ...prev, header_name: e.target.value }))
+              }
+              placeholder="e.g., McGraw, Jessica Pearson"
+            />
+            <p className="text-xs text-muted-foreground">
+              The primary name shown in chat tabs and headings
+            </p>
+          </div>
+
           {/* Basic Info */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -225,7 +245,7 @@ export function AgentAdminDialog({
                 onChange={(e) =>
                   setFormData((prev) => ({ ...prev, codename: e.target.value }))
                 }
-                placeholder="Special Agent Jack Ryan"
+                placeholder="e.g., Pathfinder, Oracle"
               />
             </div>
             <div className="space-y-2">
@@ -239,7 +259,7 @@ export function AgentAdminDialog({
                     call_sign: e.target.value.toUpperCase(),
                   }))
                 }
-                placeholder="RYAN-INTEL"
+                placeholder="e.g., LOCUS-INTEL"
               />
             </div>
           </div>

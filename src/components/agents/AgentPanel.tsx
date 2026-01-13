@@ -6,6 +6,7 @@ import { Bot, Settings, Target, MessageSquare, Database, FileOutput } from "luci
 
 interface AIAgent {
   id: string;
+  header_name: string | null;
   codename: string;
   call_sign: string;
   persona: string;
@@ -38,10 +39,12 @@ export function AgentPanel({ agent, onEdit, canEdit }: AgentPanelProps) {
               <Bot className="h-6 w-6" style={{ color: agent.avatar_color }} />
             </div>
             <div>
-              <CardTitle className="text-lg">{agent.codename}</CardTitle>
-              <code className="text-xs text-muted-foreground font-mono">
-                {agent.call_sign}
-              </code>
+              <CardTitle className="text-lg">{agent.header_name || agent.codename}</CardTitle>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <code className="font-mono">{agent.call_sign}</code>
+                <span>·</span>
+                <span>{agent.codename}</span>
+              </div>
             </div>
           </div>
           {canEdit && (

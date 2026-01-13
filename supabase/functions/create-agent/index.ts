@@ -7,6 +7,7 @@ const corsHeaders = {
 };
 
 interface CreateAgentRequest {
+  header_name?: string;
   codename: string;
   call_sign: string;
   persona: string;
@@ -87,6 +88,7 @@ serve(async (req) => {
 
     // Prepare agent data with defaults
     const agentData = {
+      header_name: requestData.header_name || requestData.codename,
       codename: requestData.codename,
       call_sign: requestData.call_sign,
       persona: requestData.persona,
