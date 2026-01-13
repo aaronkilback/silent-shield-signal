@@ -6538,6 +6538,21 @@ The signal is now in the database with status 'triaged' and rules have been appl
   }
 }
 
+// Helper function to extract key-value pairs from AI text output
+function extractValueFromText(normalized: string, key: string): string | null {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = `\`?${escapedKey}\`?\\s*[:=]\\s*(?:"([^"\\n]+)"|"([^"\\n]+)"|'([^'\\n]+)'|([^\\n,}]+))`;
+  try {
+    const re = new RegExp(pattern, "i");
+    const m = normalized.match(re);
+    const value = (m?.[1] || m?.[2] || m?.[3] || m?.[4] || "").trim();
+    // Remove trailing quotes, commas, etc.
+    return value.replace(/[",;]+$/, '').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 function extractPlannedTestSignalFromText(
   text: string,
 ): { text: string; client_name?: string; severity?: string; category?: string } | null {
@@ -6547,33 +6562,14 @@ function extractPlannedTestSignalFromText(
 
   const normalized = text.replace(/\r/g, "");
 
-  const extractValue = (key: string): string | null => {
-    // Supports:
-    //   client_name: "Petronas Canada"
-    //   `client_name`: "Petronas Canada"
-    //   *   `headline`: "..."
-    // Match key (optionally wrapped in backticks), followed by : or =, then value in quotes or unquoted
-    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = `\`?${escapedKey}\`?\\s*[:=]\\s*(?:"([^"\\n]+)"|"([^"\\n]+)"|([^\\n]+))`;
-    try {
-      const re = new RegExp(pattern, "i");
-      const m = normalized.match(re);
-      const value = (m?.[1] || m?.[2] || m?.[3] || "").trim();
-      return value || null;
-    } catch {
-      // If regex fails, return null
-      return null;
-    }
-  };
-
-  const client_name = extractValue("client_name") || extractValue("client") || extractValue("clientName");
+  const client_name = extractValueFromText(normalized, "client_name") || extractValueFromText(normalized, "client") || extractValueFromText(normalized, "clientName");
   if (!client_name) return null;
 
-  const headline = extractValue("headline") || extractValue("title");
-  const body = extractValue("body") || extractValue("text") || extractValue("description");
+  const headline = extractValueFromText(normalized, "headline") || extractValueFromText(normalized, "title");
+  const body = extractValueFromText(normalized, "body") || extractValueFromText(normalized, "text") || extractValueFromText(normalized, "description");
 
-  const severityRaw = (extractValue("severity") || "medium").toLowerCase();
-  const categoryRaw = extractValue("category") || "physical_security";
+  const severityRaw = (extractValueFromText(normalized, "severity") || "medium").toLowerCase();
+  const categoryRaw = extractValueFromText(normalized, "category") || "physical_security";
 
   if (!headline && !body) return null;
 
@@ -6590,6 +6586,64 @@ function extractPlannedTestSignalFromText(
     severity,
     category,
     text: combinedText.trim(),
+  };
+}
+
+// Extract agent creation details when AI describes creating an agent without calling the tool
+function extractPlannedAgentFromText(
+  text: string,
+): { header_name: string; codename: string; call_sign: string; persona: string; specialty: string; mission_scope: string; is_client_facing?: boolean; is_active?: boolean; requested_by?: string } | null {
+  // Detect patterns like "creating agent", "provisioning agent", "I am creating", "I will create agent"
+  const looksLikeAgentCreation = /\b(creat|provision|deploy|activat|initializ)(ing|e|ed)?\b/i.test(text) && /\bagent\b/i.test(text);
+  if (!looksLikeAgentCreation) return null;
+
+  const normalized = text.replace(/\r/g, "");
+
+  // Extract required fields
+  const header_name = extractValueFromText(normalized, "header_name") || extractValueFromText(normalized, "name") || extractValueFromText(normalized, "agent_name");
+  const codename = extractValueFromText(normalized, "codename");
+  const call_sign = extractValueFromText(normalized, "call_sign") || extractValueFromText(normalized, "callsign");
+  const persona = extractValueFromText(normalized, "persona");
+  const specialty = extractValueFromText(normalized, "specialty") || extractValueFromText(normalized, "specialization");
+  const mission_scope = extractValueFromText(normalized, "mission_scope") || extractValueFromText(normalized, "mission") || extractValueFromText(normalized, "scope");
+
+  // Must have at least header_name/codename and call_sign to be valid
+  if (!codename || !call_sign) {
+    console.log("extractPlannedAgentFromText: Missing codename or call_sign", { codename, call_sign });
+    return null;
+  }
+
+  // Use codename as fallback for header_name
+  const finalHeaderName = header_name || codename;
+
+  // Extract optional fields
+  const isClientFacingStr = extractValueFromText(normalized, "is_client_facing") || extractValueFromText(normalized, "client_facing");
+  const is_client_facing = isClientFacingStr ? isClientFacingStr.toLowerCase() === "true" : undefined;
+  
+  const isActiveStr = extractValueFromText(normalized, "is_active") || extractValueFromText(normalized, "active");
+  const is_active = isActiveStr ? isActiveStr.toLowerCase() !== "false" : true;
+
+  const requested_by = extractValueFromText(normalized, "requested_by") || "Aegis (auto-detected)";
+
+  console.log("extractPlannedAgentFromText: Extracted agent details", {
+    header_name: finalHeaderName,
+    codename,
+    call_sign,
+    persona: persona?.substring(0, 50),
+    specialty: specialty?.substring(0, 50),
+    mission_scope: mission_scope?.substring(0, 50),
+  });
+
+  return {
+    header_name: finalHeaderName,
+    codename,
+    call_sign,
+    persona: persona || `${codename} is a specialized AI agent for security intelligence operations.`,
+    specialty: specialty || `Security intelligence and threat analysis`,
+    mission_scope: mission_scope || `Provide security intelligence support and analysis`,
+    is_client_facing,
+    is_active,
+    requested_by,
   };
 }
 
@@ -7058,10 +7112,11 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
     }
     // If the model didn't request tools but claimed it performed an action, force the tool call.
     if (!firstMessage.tool_calls?.length && typeof firstMessage.content === "string") {
-      const forced = extractPlannedTestSignalFromText(firstMessage.content);
-      if (forced) {
+      // Check for forced signal injection
+      const forcedSignal = extractPlannedTestSignalFromText(firstMessage.content);
+      if (forcedSignal) {
         console.log("FORCING inject_test_signal (model described injection but returned no tool_calls)");
-        const forcedResult = await executeTool("inject_test_signal", forced, supabaseClient);
+        const forcedResult = await executeTool("inject_test_signal", forcedSignal, supabaseClient);
         const forcedToolResults = [
           {
             tool_call_id: "forced_inject_test_signal",
@@ -7084,6 +7139,51 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
                 role: "system",
                 content:
                   "You are the Fortress AI Assistant. Summarize tool results in a clear, conversational way. Use markdown links: [Link Text](/path). Be concise and helpful.",
+              },
+              ...processedMessages,
+              firstMessage,
+              ...forcedToolResults,
+            ],
+            stream: true,
+          }),
+        });
+
+        if (!finalResponse.ok) {
+          throw new Error("Failed to get final response from AI");
+        }
+
+        return new Response(finalResponse.body, {
+          headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+        });
+      }
+
+      // Check for forced agent creation
+      const forcedAgent = extractPlannedAgentFromText(firstMessage.content);
+      if (forcedAgent) {
+        console.log("FORCING create_agent (model described agent creation but returned no tool_calls)", forcedAgent);
+        const forcedResult = await executeTool("create_agent", forcedAgent, supabaseClient);
+        const forcedToolResults = [
+          {
+            tool_call_id: "forced_create_agent",
+            role: "tool",
+            name: "create_agent",
+            content: JSON.stringify(forcedResult),
+          },
+        ];
+
+        const finalResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You are the Fortress AI Assistant. Summarize tool results in a clear, conversational way. Report the actual agent creation result - if success, confirm with agent details; if error, explain the issue. Use markdown links: [Link Text](/path). Be concise and helpful.",
               },
               ...processedMessages,
               firstMessage,
