@@ -6418,17 +6418,70 @@ The signal is now in the database with status 'triaged' and rules have been appl
     }
 
     case "create_agent": {
-      const { codename, call_sign, persona, specialty, mission_scope, interaction_style, input_sources, output_types, is_client_facing, is_active, avatar_color, system_prompt, requested_by } = args;
+      const {
+        codename,
+        call_sign,
+        persona,
+        specialty,
+        mission_scope,
+        interaction_style,
+        input_sources,
+        output_types,
+        is_client_facing,
+        is_active,
+        avatar_color,
+        system_prompt,
+        requested_by,
+      } = args;
+
       console.log(`Creating new agent: ${codename} (${call_sign})`);
-      
+
       const { data, error } = await supabaseClient.functions.invoke("create-agent", {
-        body: { codename, call_sign, persona, specialty, mission_scope, interaction_style, input_sources, output_types, is_client_facing, is_active, avatar_color, system_prompt, requested_by }
+        body: {
+          codename,
+          call_sign,
+          persona,
+          specialty,
+          mission_scope,
+          interaction_style,
+          input_sources,
+          output_types,
+          is_client_facing,
+          is_active,
+          avatar_color,
+          system_prompt,
+          requested_by,
+        },
       });
-      
+
       if (error) {
+        // Compatibility: some regions may still return 409 for "already exists".
+        // When that happens, try to surface the JSON body so the caller can retrieve the existing agent id.
+        const anyErr: any = error;
+        const status = anyErr?.context?.status;
+
+        if (status === 409 && anyErr?.context) {
+          try {
+            const body = await anyErr.context.json();
+            return {
+              success: true,
+              already_exists: true,
+              ...body,
+              message: body?.message || "Agent already exists (409).",
+            };
+          } catch {
+            // fall through
+          }
+        }
+
         console.error("Error creating agent:", error);
-        return { error: error.message, message: `Failed to create agent: ${error.message}` };
+        return {
+          error: anyErr?.message || "Failed to create agent",
+          status,
+          message: `Failed to create agent: ${anyErr?.message || "Unknown error"}`,
+        };
       }
+
       return data;
     }
 
