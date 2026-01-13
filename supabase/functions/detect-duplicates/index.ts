@@ -16,7 +16,7 @@ async function hashContent(text: string): Promise<string> {
 }
 
 // Calculate similarity between two strings (Levenshtein distance)
-function calculateSimilarity(str1: string, str2: string): number {
+function calculateLevenshteinSimilarity(str1: string, str2: string): number {
   const len1 = str1.length;
   const len2 = str2.length;
   const matrix: number[][] = [];
@@ -42,6 +42,90 @@ function calculateSimilarity(str1: string, str2: string): number {
   const distance = matrix[len1][len2];
   const maxLength = Math.max(len1, len2);
   return maxLength === 0 ? 1 : 1 - (distance / maxLength);
+}
+
+// Normalize entity name for comparison
+function normalizeName(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    // Remove common prefixes
+    .replace(/^(the|a|an)\s+/i, '')
+    // Remove common suffixes for organizations
+    .replace(/\s+(inc|llc|ltd|corp|corporation|company|co|limited|group|foundation|association|society|organization|org)\.?$/i, '')
+    // Remove punctuation
+    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()'"]/g, '')
+    // Normalize whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Extract key words from a name for matching
+function extractKeywords(name: string): string[] {
+  const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'for', 'in', 'on', 'at', 'to', 'with', 'by']);
+  return normalizeName(name)
+    .split(' ')
+    .filter(word => word.length > 2 && !stopWords.has(word));
+}
+
+// Calculate Jaccard similarity between two sets of words
+function jaccardSimilarity(words1: string[], words2: string[]): number {
+  const set1 = new Set(words1);
+  const set2 = new Set(words2);
+  const intersection = new Set([...set1].filter(x => set2.has(x)));
+  const union = new Set([...set1, ...set2]);
+  return union.size === 0 ? 0 : intersection.size / union.size;
+}
+
+// Calculate word overlap ratio (useful for subset matching)
+function wordOverlapRatio(words1: string[], words2: string[]): number {
+  const set1 = new Set(words1);
+  const set2 = new Set(words2);
+  const intersection = [...set1].filter(x => set2.has(x)).length;
+  const smaller = Math.min(set1.size, set2.size);
+  return smaller === 0 ? 0 : intersection / smaller;
+}
+
+// Advanced entity name similarity calculation
+function calculateEntitySimilarity(name1: string, name2: string): { score: number; method: string } {
+  const norm1 = normalizeName(name1);
+  const norm2 = normalizeName(name2);
+  
+  // Exact normalized match
+  if (norm1 === norm2) {
+    return { score: 1.0, method: 'exact_normalized' };
+  }
+  
+  // Check if one contains the other (handles abbreviations vs full names)
+  if (norm1.includes(norm2) || norm2.includes(norm1)) {
+    const shorter = norm1.length < norm2.length ? norm1 : norm2;
+    const longer = norm1.length >= norm2.length ? norm1 : norm2;
+    const containmentScore = 0.85 + (0.15 * shorter.length / longer.length);
+    return { score: containmentScore, method: 'containment' };
+  }
+  
+  // Keyword-based matching
+  const keywords1 = extractKeywords(name1);
+  const keywords2 = extractKeywords(name2);
+  
+  if (keywords1.length > 0 && keywords2.length > 0) {
+    const jaccard = jaccardSimilarity(keywords1, keywords2);
+    const overlap = wordOverlapRatio(keywords1, keywords2);
+    
+    // If high word overlap, this is likely the same entity
+    if (overlap >= 0.8) {
+      return { score: 0.75 + (overlap * 0.2), method: 'keyword_overlap' };
+    }
+    
+    // Good Jaccard similarity
+    if (jaccard >= 0.5) {
+      return { score: 0.6 + (jaccard * 0.35), method: 'jaccard' };
+    }
+  }
+  
+  // Fall back to Levenshtein for shorter names or as final check
+  const levenshtein = calculateLevenshteinSimilarity(norm1, norm2);
+  return { score: levenshtein, method: 'levenshtein' };
 }
 
 serve(async (req) => {
@@ -183,7 +267,7 @@ serve(async (req) => {
         for (const signal of recentSignals) {
           if (signal.id === id) continue;
 
-          const similarity = calculateSimilarity(
+          const similarity = calculateLevenshteinSimilarity(
             contentLower,
             (signal.normalized_text || '').toLowerCase().trim()
           );
@@ -275,65 +359,50 @@ serve(async (req) => {
       // Sort best match first
       duplicates.sort((a, b) => (b.similarity_score || 0) - (a.similarity_score || 0));
     } else if (type === 'entity') {
-      // Improved fuzzy entity name matching with type consideration
+      // Improved fuzzy entity name matching with advanced algorithms
       const { data: entities } = await supabase
         .from('entities')
-        .select('id, name, aliases, type')
+        .select('id, name, aliases, type, description')
         .eq('is_active', true);
 
       if (entities && entities.length > 0) {
-        const contentLower = content.toLowerCase().trim();
+        const inputNormalized = normalizeName(content);
+        const inputKeywords = extractKeywords(content);
         
-        // First pass: exact or very high similarity matches
         for (const entity of entities) {
           const names = [entity.name, ...(entity.aliases || [])];
+          let bestMatch = { score: 0, name: '', method: '' };
+          
           for (const name of names) {
-            const nameLower = name.toLowerCase().trim();
-            
-            // Check for exact match
-            if (contentLower === nameLower) {
-              duplicates.push({
-                ...entity,
-                matched_name: name,
-                similarity_score: 1.0
-              });
-              break;
-            }
-            
-            // Check for high similarity (85%+)
-            const similarity = calculateSimilarity(contentLower, nameLower);
-            if (similarity > 0.85) {
-              duplicates.push({
-                ...entity,
-                matched_name: name,
-                similarity_score: similarity
-              });
-              break;
+            const { score, method } = calculateEntitySimilarity(content, name);
+            if (score > bestMatch.score) {
+              bestMatch = { score, name, method };
             }
           }
-        }
-        
-        // If no high matches, check for moderate similarity (75%+) only for same entity type
-        if (duplicates.length === 0) {
-          for (const entity of entities) {
-            const names = [entity.name, ...(entity.aliases || [])];
-            for (const name of names) {
-              const similarity = calculateSimilarity(contentLower, name.toLowerCase().trim());
-              
-              if (similarity > 0.75) {
-                duplicates.push({
-                  ...entity,
-                  matched_name: name,
-                  similarity_score: similarity
-                });
-                break;
-              }
-            }
+          
+          // Threshold based on matching method
+          // More lenient thresholds for better methods
+          const threshold = bestMatch.method === 'exact_normalized' ? 0.95 :
+                           bestMatch.method === 'containment' ? 0.70 :
+                           bestMatch.method === 'keyword_overlap' ? 0.65 :
+                           bestMatch.method === 'jaccard' ? 0.60 :
+                           0.75; // levenshtein
+          
+          if (bestMatch.score >= threshold) {
+            duplicates.push({
+              ...entity,
+              matched_name: bestMatch.name,
+              similarity_score: bestMatch.score,
+              match_method: bestMatch.method
+            });
           }
         }
         
         // Sort by similarity score descending
         duplicates.sort((a, b) => b.similarity_score - a.similarity_score);
+        
+        // Limit to top 10 matches
+        duplicates = duplicates.slice(0, 10);
       }
     }
 
