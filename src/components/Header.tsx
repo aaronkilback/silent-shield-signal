@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss, Plane, Bug, Database, Menu, CheckCircle, UserCog, Crosshair, Bot } from "lucide-react";
+import { Shield, Activity, LogOut, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Plane, Menu, Bot, ChevronDown, Settings, Database, Building2, Bug, CheckCircle, UserCog, Crosshair } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -11,6 +11,14 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useUserRole } from "@/hooks/useUserRole";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu";
 
 export const Header = () => {
   const { signOut } = useAuth();
@@ -32,24 +40,45 @@ export const Header = () => {
       if (error) throw error;
       return count || 0;
     },
-    refetchInterval: 30000 // Refetch every 30 seconds
+    refetchInterval: 30000
   });
 
-  const navItems = [
+  // Primary nav items (always visible)
+  const primaryItems = [
     { path: "/", icon: Home, label: "Dashboard" },
     { path: "/signals", icon: Radio, label: "Signals" },
     { path: "/incidents", icon: AlertTriangle, label: "Incidents" },
+  ];
+
+  // Intelligence dropdown items
+  const intelligenceItems = [
     { path: "/investigations", icon: ClipboardList, label: "Investigations", matchPrefix: true },
-    { path: "/travel", icon: Plane, label: "Travel" },
     { path: "/entities", icon: Users, label: "Entities", badge: pendingSuggestions },
     { path: "/sources", icon: Database, label: "Sources" },
     { path: "/reports", icon: FileText, label: "Reports" },
-    { path: "/clients", icon: Building2, label: "Clients" },
-    { path: "/rule-approvals", icon: CheckCircle, label: "Rules" },
-    { path: "/bug-reports", icon: Bug, label: "Bugs" },
+  ];
+
+  // Operations dropdown items
+  const operationsItems = [
     { path: "/command-center", icon: Bot, label: "Agents" },
     { path: "/task-force", icon: Crosshair, label: "Task Force" },
+    { path: "/travel", icon: Plane, label: "Travel" },
+    { path: "/clients", icon: Building2, label: "Clients" },
+  ];
+
+  // Admin dropdown items
+  const adminItems = [
+    { path: "/rule-approvals", icon: CheckCircle, label: "Rules" },
+    { path: "/bug-reports", icon: Bug, label: "Bugs" },
     ...((isSuperAdmin || isAdmin) ? [{ path: "/user-management", icon: UserCog, label: "Users" }] : []),
+  ];
+
+  // All items for mobile
+  const allNavItems = [
+    ...primaryItems,
+    ...intelligenceItems,
+    ...operationsItems,
+    ...adminItems,
   ];
 
   const handleNavClick = (path: string) => {
@@ -57,11 +86,72 @@ export const Header = () => {
     setMobileMenuOpen(false);
   };
 
-  const isActive = (item: typeof navItems[0]) => {
+  const isActive = (item: { path: string; matchPrefix?: boolean }) => {
     if (item.matchPrefix) {
       return location.pathname.startsWith(item.path);
     }
     return location.pathname === item.path;
+  };
+
+  const isGroupActive = (items: typeof primaryItems) => {
+    return items.some(item => isActive(item));
+  };
+
+  type NavItem = {
+    path: string;
+    icon: typeof Home;
+    label: string;
+    matchPrefix?: boolean;
+    badge?: number;
+  };
+
+  const NavDropdown = ({ 
+    label, 
+    icon: Icon, 
+    items 
+  }: { 
+    label: string; 
+    icon: typeof Home; 
+    items: NavItem[];
+  }) => {
+    const hasActivePath = isGroupActive(items);
+    const hasBadge = items.some(item => item.badge && item.badge > 0);
+    
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant={hasActivePath ? "default" : "ghost"}
+            size="sm"
+            className="gap-1.5 relative"
+          >
+            <Icon className="w-4 h-4" />
+            <span className="hidden lg:inline">{label}</span>
+            <ChevronDown className="w-3 h-3" />
+            {hasBadge && (
+              <span className="absolute -top-1 -right-1 h-2 w-2 bg-destructive rounded-full" />
+            )}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-[180px]">
+          {items.map((item) => (
+            <DropdownMenuItem
+              key={item.path}
+              onClick={() => navigate(item.path)}
+              className={`gap-2 cursor-pointer ${isActive(item) ? 'bg-accent' : ''}`}
+            >
+              <item.icon className="w-4 h-4" />
+              {item.label}
+              {item.badge && item.badge > 0 && (
+                <Badge variant="destructive" className="ml-auto h-5 px-1.5 text-xs">
+                  {item.badge}
+                </Badge>
+              )}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
   };
 
   return (
@@ -82,47 +172,43 @@ export const Header = () => {
 
           {/* Desktop Navigation */}
           {!isMobile && (
-            <div className="flex items-center gap-2 lg:gap-4">
-              <nav className="flex items-center gap-1 lg:gap-2">
-                {navItems.map((item) => (
+            <div className="flex items-center gap-2 lg:gap-3">
+              <nav className="flex items-center gap-1">
+                {/* Primary items */}
+                {primaryItems.map((item) => (
                   <Button
                     key={item.path}
                     onClick={() => navigate(item.path)}
                     variant={isActive(item) ? "default" : "ghost"}
                     size="sm"
-                    className="relative"
                   >
                     <item.icon className="w-4 h-4 lg:mr-2" />
                     <span className="hidden lg:inline">{item.label}</span>
-                    {item.badge && item.badge > 0 && (
-                      <Badge 
-                        variant="destructive" 
-                        className="absolute -top-1 -right-1 h-5 w-5 p-0 flex items-center justify-center text-xs"
-                      >
-                        {item.badge}
-                      </Badge>
-                    )}
                   </Button>
                 ))}
+                
+                {/* Grouped dropdowns */}
+                <NavDropdown label="Intel" icon={ClipboardList} items={intelligenceItems} />
+                <NavDropdown label="Ops" icon={Bot} items={operationsItems} />
+                <NavDropdown label="Admin" icon={Settings} items={adminItems} />
               </nav>
-              <EntityNotifications />
-              <div className="hidden xl:flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/50">
-                <Activity className="w-4 h-4 text-status-active animate-pulse" />
-                <span className="text-sm text-foreground font-medium">Systems Operational</span>
+
+              <div className="flex items-center gap-2 ml-2 pl-2 border-l border-border">
+                <EntityNotifications />
+                <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary/50">
+                  <Activity className="w-3.5 h-3.5 text-status-active animate-pulse" />
+                  <span className="text-xs text-foreground font-medium">Online</span>
+                </div>
+                <SettingsSheet />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={signOut}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <LogOut className="w-4 h-4" />
+                </Button>
               </div>
-              <Badge variant="outline" className="hidden lg:flex text-primary border-primary/50 font-mono">
-                {new Date().toLocaleTimeString()}
-              </Badge>
-              <SettingsSheet />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={signOut}
-                className="gap-2"
-              >
-                <LogOut className="w-4 h-4" />
-                <span className="hidden lg:inline">Sign Out</span>
-              </Button>
             </div>
           )}
 
@@ -143,24 +229,65 @@ export const Header = () => {
                       <span className="text-sm text-foreground font-medium">Systems Operational</span>
                     </div>
                     
-                    <nav className="flex flex-col gap-2">
-                      {navItems.map((item) => (
+                    <nav className="flex flex-col gap-1">
+                      <p className="text-xs text-muted-foreground font-medium px-3 pt-2">Main</p>
+                      {primaryItems.map((item) => (
+                        <Button
+                          key={item.path}
+                          onClick={() => handleNavClick(item.path)}
+                          variant={isActive(item) ? "default" : "ghost"}
+                          className="justify-start"
+                          size="sm"
+                        >
+                          <item.icon className="w-4 h-4 mr-3" />
+                          {item.label}
+                        </Button>
+                      ))}
+
+                      <p className="text-xs text-muted-foreground font-medium px-3 pt-4">Intelligence</p>
+                      {intelligenceItems.map((item) => (
                         <Button
                           key={item.path}
                           onClick={() => handleNavClick(item.path)}
                           variant={isActive(item) ? "default" : "ghost"}
                           className="justify-start relative"
+                          size="sm"
                         >
                           <item.icon className="w-4 h-4 mr-3" />
                           {item.label}
                           {item.badge && item.badge > 0 && (
-                            <Badge 
-                              variant="destructive" 
-                              className="ml-auto h-5 px-2 flex items-center justify-center text-xs"
-                            >
+                            <Badge variant="destructive" className="ml-auto h-5 px-2 text-xs">
                               {item.badge}
                             </Badge>
                           )}
+                        </Button>
+                      ))}
+
+                      <p className="text-xs text-muted-foreground font-medium px-3 pt-4">Operations</p>
+                      {operationsItems.map((item) => (
+                        <Button
+                          key={item.path}
+                          onClick={() => handleNavClick(item.path)}
+                          variant={isActive(item) ? "default" : "ghost"}
+                          className="justify-start"
+                          size="sm"
+                        >
+                          <item.icon className="w-4 h-4 mr-3" />
+                          {item.label}
+                        </Button>
+                      ))}
+
+                      <p className="text-xs text-muted-foreground font-medium px-3 pt-4">Admin</p>
+                      {adminItems.map((item) => (
+                        <Button
+                          key={item.path}
+                          onClick={() => handleNavClick(item.path)}
+                          variant={isActive(item) ? "default" : "ghost"}
+                          className="justify-start"
+                          size="sm"
+                        >
+                          <item.icon className="w-4 h-4 mr-3" />
+                          {item.label}
                         </Button>
                       ))}
                     </nav>
