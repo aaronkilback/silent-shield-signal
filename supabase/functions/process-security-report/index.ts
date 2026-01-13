@@ -31,22 +31,30 @@ async function extractTextWithOCR(pdfBlob: Blob, apiKey: string): Promise<string
   
   console.log(`PDF size for OCR: ${pdfBlob.size} bytes`);
   
-  // Use Gemini Vision to extract text from the PDF
-  const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'google/gemini-2.5-pro',
-      messages: [
-        {
-          role: 'user',
-          content: [
+  // Retry logic for transient errors
+  const maxRetries = 3;
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`OCR attempt ${attempt}/${maxRetries}...`);
+      
+      // Use Gemini Vision to extract text from the PDF
+      const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.5-pro',
+          messages: [
             {
-              type: 'text',
-              text: `You are an OCR system. Extract ALL text from this PDF document. 
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: `You are an OCR system. Extract ALL text from this PDF document. 
 
 INSTRUCTIONS:
 - Extract every word, number, and piece of text visible in the document
@@ -57,34 +65,62 @@ INSTRUCTIONS:
 - Maintain the reading order (top to bottom, left to right)
 
 Output ONLY the extracted text, nothing else.`
-            },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:application/pdf;base64,${base64Pdf}`
-              }
+                },
+                {
+                  type: 'image_url',
+                  image_url: {
+                    url: `data:application/pdf;base64,${base64Pdf}`
+                  }
+                }
+              ]
             }
           ]
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`OCR attempt ${attempt} failed:`, response.status, errorText.slice(0, 300));
+        
+        // Check for retryable errors (5xx)
+        if (response.status >= 500 && attempt < maxRetries) {
+          console.log(`Retrying after ${attempt * 2} seconds...`);
+          await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+          continue;
         }
-      ]
-    })
-  });
+        
+        throw new Error(`AI service temporarily unavailable (${response.status}). Please try again in a few minutes.`);
+      }
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('Gemini Vision OCR error:', response.status, errorText);
-    throw new Error(`OCR failed: ${response.status} - ${errorText}`);
+      const result = await response.json();
+      const extractedText = result.choices?.[0]?.message?.content || '';
+      
+      if (!extractedText || extractedText.length < 100) {
+        throw new Error('OCR produced insufficient text. The document may be unreadable or corrupted.');
+      }
+      
+      console.log(`OCR extracted ${extractedText.length} characters`);
+      return normalizeExtractedText(extractedText);
+      
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      
+      // Don't retry if it's a content issue
+      if (lastError.message.includes('insufficient text') || lastError.message.includes('unreadable')) {
+        throw lastError;
+      }
+      
+      if (attempt < maxRetries) {
+        console.log(`Retrying after error: ${lastError.message.slice(0, 100)}`);
+        await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+        continue;
+      }
+      
+      throw lastError;
+    }
   }
-
-  const result = await response.json();
-  const extractedText = result.choices?.[0]?.message?.content || '';
   
-  if (!extractedText || extractedText.length < 100) {
-    throw new Error('OCR produced insufficient text. The document may be unreadable or corrupted.');
-  }
-  
-  console.log(`OCR extracted ${extractedText.length} characters`);
-  return normalizeExtractedText(extractedText);
+  throw lastError || new Error('OCR failed after all retries');
 }
 
 // Improved PDF text extraction using pdfjs (reliable for most PDFs)
