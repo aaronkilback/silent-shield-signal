@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss, Plane, Bug, Database, Menu, CheckCircle, UserCog } from "lucide-react";
+import { Shield, Activity, LogOut, Building2, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Rss, Plane, Bug, Database, Menu, CheckCircle, UserCog, Crosshair, Bot } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -47,6 +47,8 @@ export const Header = () => {
     { path: "/clients", icon: Building2, label: "Clients" },
     { path: "/rule-approvals", icon: CheckCircle, label: "Rules" },
     { path: "/bug-reports", icon: Bug, label: "Bugs" },
+    { path: "/command-center", icon: Bot, label: "Agents" },
+    { path: "/task-force", icon: Crosshair, label: "Task Force" },
     ...((isSuperAdmin || isAdmin) ? [{ path: "/user-management", icon: UserCog, label: "Users" }] : []),
   ];
 
