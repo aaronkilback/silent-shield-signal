@@ -22,7 +22,25 @@ interface Signal {
   correlated_count: number | null;
   correlation_confidence: number | null;
   is_primary_signal: boolean | null;
+  // Rule-applied fields (take precedence over AI classification)
+  rule_category: string | null;
+  rule_priority: string | null;
+  rule_tags: string[] | null;
+  applied_rules: any; // JSONB
 }
+
+// Helper to get effective severity/priority (rule > AI)
+const getEffectiveSeverity = (signal: Signal): string | null => {
+  // Map rule_priority to severity (high -> high, etc.)
+  if (signal.rule_priority) {
+    return signal.rule_priority;
+  }
+  return signal.severity;
+};
+
+const getEffectiveCategory = (signal: Signal): string | null => {
+  return signal.rule_category || signal.category;
+};
 
 const getSeverityColor = (severity: string | null) => {
   switch (severity) {
@@ -156,14 +174,14 @@ export const LiveEventFeed = () => {
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 space-y-2">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Badge className={`${getSeverityColor(signal.severity)} font-mono text-xs`}>
+                    <Badge className={`${getSeverityColor(getEffectiveSeverity(signal))} font-mono text-xs`}>
                       <span className="flex items-center gap-1">
-                        {getSeverityIcon(signal.severity)}
-                        {signal.severity?.toUpperCase() || 'UNKNOWN'}
+                        {getSeverityIcon(getEffectiveSeverity(signal))}
+                        {getEffectiveSeverity(signal)?.toUpperCase() || 'UNKNOWN'}
                       </span>
                     </Badge>
                     <Badge variant="outline" className="text-xs font-mono">
-                      {signal.category || 'uncategorized'}
+                      {getEffectiveCategory(signal) || 'uncategorized'}
                     </Badge>
                     <Badge variant="outline" className="text-xs font-mono">
                       {signal.status}
@@ -182,6 +200,11 @@ export const LiveEventFeed = () => {
                       <Badge variant="outline" className="text-xs bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800">
                         <LinkIcon className="w-3 h-3 mr-1" />
                         {signal.correlated_count} correlated
+                      </Badge>
+                    )}
+                    {signal.applied_rules && Array.isArray(signal.applied_rules) && signal.applied_rules.length > 0 && (
+                      <Badge variant="outline" className="text-xs bg-green-50 dark:bg-green-950/30 border-green-300 dark:border-green-800 text-green-700 dark:text-green-300">
+                        ✓ Rule Applied
                       </Badge>
                     )}
                     <span className="text-xs text-muted-foreground font-mono ml-auto">
