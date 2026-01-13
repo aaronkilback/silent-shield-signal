@@ -9,32 +9,78 @@ function normalizeExtractedText(input: string): string {
     .trim();
 }
 
-// Improved PDF text extraction with multiple strategies
+// Improved PDF text extraction - AI-first approach for reliability
 async function extractPdfTextImproved(blob: Blob, lovableApiKey: string): Promise<string> {
-  const maxBytes = 4 * 1024 * 1024; // 4MB limit
+  const maxBytes = 2 * 1024 * 1024; // 2MB limit for AI processing
   const arrayBuffer = await blob.slice(0, maxBytes).arrayBuffer();
   const uint8 = new Uint8Array(arrayBuffer);
   
-  // Strategy 1: Try to extract text streams from PDF
+  console.log(`Processing PDF: ${blob.size} bytes, using ${uint8.length} bytes for extraction`);
+  
+  // Primary Strategy: Use AI vision to extract text (most reliable for complex PDFs)
+  try {
+    console.log('Using AI vision for PDF text extraction...');
+    const base64Pdf = btoa(String.fromCharCode(...uint8));
+    
+    const aiExtractionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${lovableApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `Extract ALL text content from this PDF document. This is a security report that may contain:
+- Entity names (people, organizations, locations)
+- Security incidents and threats
+- Risk assessments and recommendations
+
+Return ONLY the extracted text content, maintaining paragraph structure. Do not summarize or omit any content - extract everything verbatim. If there are tables, preserve them as structured text.`
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:application/pdf;base64,${base64Pdf}`
+                }
+              }
+            ]
+          }
+        ],
+        max_tokens: 32000
+      }),
+    });
+    
+    if (aiExtractionResponse.ok) {
+      const aiData = await aiExtractionResponse.json();
+      const aiText = aiData.choices?.[0]?.message?.content;
+      if (aiText && aiText.length > 200) {
+        console.log(`AI extraction successful: ${aiText.length} characters`);
+        return normalizeExtractedText(aiText);
+      } else {
+        console.warn('AI extraction returned insufficient content');
+      }
+    } else {
+      const errorText = await aiExtractionResponse.text();
+      console.warn(`AI extraction failed: ${aiExtractionResponse.status} - ${errorText}`);
+    }
+  } catch (aiError) {
+    console.warn('AI text extraction error:', aiError);
+  }
+  
+  // Fallback Strategy: Basic text extraction from PDF structure
+  console.log('Falling back to basic PDF text extraction...');
   const pdfString = new TextDecoder('latin1').decode(uint8);
   let extractedText = '';
   
-  // Look for FlateDecode streams (compressed text)
-  const streamMatches = pdfString.matchAll(/stream[\r\n]+([\s\S]*?)[\r\n]+endstream/gi);
-  for (const match of streamMatches) {
-    // Try to extract readable text from streams
-    const streamContent = match[1];
-    const readable = streamContent.replace(/[^\x20-\x7E\n\r]/g, ' ').replace(/\s+/g, ' ').trim();
-    if (readable.length > 20 && /[a-zA-Z]{3,}/.test(readable)) {
-      extractedText += readable + ' ';
-    }
-    if (extractedText.length > 50000) break;
-  }
-  
-  // Strategy 2: Extract text from BT/ET blocks (text objects)
+  // Extract text from BT/ET blocks (text objects)
   const textBlocks = pdfString.match(/BT([\s\S]*?)ET/g) || [];
   for (const block of textBlocks.slice(0, 1000)) {
-    // Extract parenthesized strings (literal strings)
     const parenStrings = block.match(/\((?:\\.|[^\\)])*\)/g) || [];
     for (const str of parenStrings) {
       const text = str.slice(1, -1)
@@ -47,7 +93,6 @@ async function extractPdfTextImproved(blob: Blob, lovableApiKey: string): Promis
       extractedText += text + ' ';
     }
     
-    // Extract hex strings <...>
     const hexStrings = block.match(/<[0-9A-Fa-f]+>/g) || [];
     for (const hex of hexStrings) {
       const hexContent = hex.slice(1, -1);
@@ -66,78 +111,14 @@ async function extractPdfTextImproved(blob: Blob, lovableApiKey: string): Promis
     if (extractedText.length > 100000) break;
   }
   
-  // Strategy 3: Look for ToUnicode CMap mappings
-  const cmapMatch = pdfString.match(/beginbfchar([\s\S]*?)endbfchar/gi);
-  if (cmapMatch) {
-    console.log('Found ToUnicode CMap - complex encoding detected');
-  }
-  
-  // Normalize and clean
   extractedText = normalizeExtractedText(extractedText);
   
-  // Check quality - if mostly garbage, try AI-based extraction
+  // Validate extracted text quality
   const wordCount = extractedText.split(/\s+/).filter(w => /^[a-zA-Z]{2,}$/.test(w)).length;
-  const totalWords = extractedText.split(/\s+/).length;
-  const qualityRatio = totalWords > 0 ? wordCount / totalWords : 0;
+  console.log(`Fallback extraction: ${extractedText.length} chars, ${wordCount} valid words`);
   
-  console.log(`PDF extraction: ${extractedText.length} chars, ${wordCount}/${totalWords} valid words (${(qualityRatio * 100).toFixed(1)}% quality)`);
-  
-  // If quality is low, use AI vision to extract text from PDF
-  if (qualityRatio < 0.3 && extractedText.length < 5000) {
-    console.log('Low quality extraction - attempting AI-based text extraction...');
-    
-    try {
-      // Convert PDF bytes to base64 for AI processing
-      const base64Pdf = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer.slice(0, 1024 * 1024)))); // 1MB limit for AI
-      
-      const aiExtractionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${lovableApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-2.5-flash',
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: 'Extract ALL readable text from this PDF document. Return ONLY the extracted text content, maintaining paragraph structure. Do not summarize - extract the full text.'
-                },
-                {
-                  type: 'image_url',
-                  image_url: {
-                    url: `data:application/pdf;base64,${base64Pdf}`
-                  }
-                }
-              ]
-            }
-          ],
-          max_tokens: 16000
-        }),
-      });
-      
-      if (aiExtractionResponse.ok) {
-        const aiData = await aiExtractionResponse.json();
-        const aiText = aiData.choices?.[0]?.message?.content;
-        if (aiText && aiText.length > extractedText.length) {
-          console.log(`AI extraction successful: ${aiText.length} characters`);
-          return aiText;
-        }
-      }
-    } catch (aiError) {
-      console.warn('AI text extraction failed:', aiError);
-    }
-  }
-  
-  // Fallback if still no good text
-  if (extractedText.length < 200) {
-    // Try raw text extraction as last resort
-    const rawText = pdfString.replace(/[^\x20-\x7E\n]/g, ' ').replace(/\s+/g, ' ');
-    const meaningfulText = rawText.match(/[A-Za-z][a-z]+(?:\s+[A-Za-z][a-z]+){2,}/g) || [];
-    return meaningfulText.join(' ').slice(0, 50000);
+  if (extractedText.length < 200 || wordCount < 20) {
+    throw new Error('Could not extract meaningful text from PDF. The file may be image-based or encrypted.');
   }
   
   return extractedText;
@@ -193,14 +174,19 @@ serve(async (req) => {
       document = doc;
       clientId = doc.client_id;
 
-      // Check if content_text exists and is meaningful
+      // Check if content_text exists and is meaningful (not raw PDF binary)
       const hasValidContent = doc.content_text && 
         doc.content_text.length > 500 && 
-        !doc.content_text.includes('content not processed');
+        !doc.content_text.includes('content not processed') &&
+        !doc.content_text.startsWith('%PDF') && // Not raw PDF data
+        !doc.content_text.includes('\\x00') && // Not binary garbage
+        /[a-zA-Z]{3,}\s+[a-zA-Z]{3,}/.test(doc.content_text.slice(0, 500)); // Contains actual words
 
       if (!content && hasValidContent) {
         content = doc.content_text;
+        console.log('Using existing valid content_text');
       } else if (!content) {
+        console.log(`Re-extracting content - hasValidContent: ${hasValidContent}, content_text starts with: ${doc.content_text?.slice(0, 20) || 'null'}`);
         // Need to extract text from file
         console.log('Content not extracted yet, downloading file...');
         
