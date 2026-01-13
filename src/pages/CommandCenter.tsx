@@ -23,6 +23,7 @@ interface AIAgent {
   is_client_facing: boolean;
   is_active: boolean;
   avatar_color: string;
+  avatar_image: string | null;
   system_prompt: string | null;
 }
 
@@ -96,6 +97,7 @@ export default function CommandCenter() {
                 agent={selectedAgent}
                 onEdit={() => handleEditAgent(selectedAgent)}
                 canEdit={isAdmin || isSuperAdmin}
+                onAvatarUpdate={refetch}
               />
             </div>
 

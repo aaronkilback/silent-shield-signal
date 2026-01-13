@@ -170,3 +170,6 @@ verify_jwt = false
 
 [functions.gemini-voice-conversation]
 verify_jwt = false
+
+[functions.generate-agent-avatar]
+verify_jwt = true
