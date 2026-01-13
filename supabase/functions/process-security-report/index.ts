@@ -20,8 +20,75 @@ function uint8ToBase64(uint8: Uint8Array): string {
   return btoa(result);
 }
 
+// OCR using Gemini Vision for scanned/image-based PDFs
+async function extractTextWithOCR(pdfBlob: Blob, apiKey: string): Promise<string> {
+  console.log('Starting OCR extraction using Gemini Vision...');
+  
+  // Convert PDF to base64
+  const arrayBuffer = await pdfBlob.arrayBuffer();
+  const uint8Array = new Uint8Array(arrayBuffer);
+  const base64Pdf = uint8ToBase64(uint8Array);
+  
+  console.log(`PDF size for OCR: ${pdfBlob.size} bytes`);
+  
+  // Use Gemini Vision to extract text from the PDF
+  const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'google/gemini-2.5-pro',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `You are an OCR system. Extract ALL text from this PDF document. 
+
+INSTRUCTIONS:
+- Extract every word, number, and piece of text visible in the document
+- Preserve the general structure (paragraphs, sections, headers)
+- Include tables, lists, and any formatted content
+- Do NOT summarize or interpret - just extract the raw text
+- If there are multiple pages, extract text from all of them
+- Maintain the reading order (top to bottom, left to right)
+
+Output ONLY the extracted text, nothing else.`
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:application/pdf;base64,${base64Pdf}`
+              }
+            }
+          ]
+        }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('Gemini Vision OCR error:', response.status, errorText);
+    throw new Error(`OCR failed: ${response.status} - ${errorText}`);
+  }
+
+  const result = await response.json();
+  const extractedText = result.choices?.[0]?.message?.content || '';
+  
+  if (!extractedText || extractedText.length < 100) {
+    throw new Error('OCR produced insufficient text. The document may be unreadable or corrupted.');
+  }
+  
+  console.log(`OCR extracted ${extractedText.length} characters`);
+  return normalizeExtractedText(extractedText);
+}
+
 // Improved PDF text extraction using pdfjs (reliable for most PDFs)
-async function extractPdfTextImproved(blob: Blob): Promise<string> {
+async function extractPdfTextImproved(blob: Blob): Promise<{ text: string; isScanned: boolean }> {
   const maxPdfBytes = 12 * 1024 * 1024; // safety cap
   const blobToRead = blob.size > maxPdfBytes ? blob.slice(0, maxPdfBytes) : blob;
   const arrayBuffer = await blobToRead.arrayBuffer();
@@ -64,7 +131,7 @@ async function extractPdfTextImproved(blob: Blob): Promise<string> {
 
     if (text.length > 200) {
       console.log(`pdfjs extraction successful: ${text.length} characters (${maxPages}/${pdf.numPages} pages)`);
-      return text;
+      return { text, isScanned: false };
     }
 
     console.warn('pdfjs extraction returned insufficient content');
@@ -114,10 +181,11 @@ async function extractPdfTextImproved(blob: Blob): Promise<string> {
 
   // Require at least 10 common English words to consider it readable text
   if (extractedText.length < 200 || realWordCount < 10) {
-    throw new Error('Could not extract meaningful text from PDF. The file may be image-based (scanned) or encrypted. Please upload a PDF with selectable text, or provide a text export of the document.');
+    // Return indication that this is a scanned PDF
+    return { text: '', isScanned: true };
   }
 
-  return extractedText;
+  return { text: extractedText, isScanned: false };
 }
 
 const corsHeaders = {
@@ -198,16 +266,50 @@ serve(async (req) => {
         if (doc.file_type === 'application/pdf') {
           console.log('Extracting text from PDF using improved extractor...');
           try {
-            content = await extractPdfTextImproved(fileData);
+            const extractionResult = await extractPdfTextImproved(fileData);
 
-            console.log(`Extracted ${content.length} characters from PDF`);
+            if (extractionResult.isScanned) {
+              // PDF is scanned/image-based - attempt OCR
+              console.log('PDF is scanned/image-based. Attempting OCR with Gemini Vision...');
+              
+              try {
+                content = await extractTextWithOCR(fileData, LOVABLE_API_KEY);
+                console.log(`OCR successfully extracted ${content.length} characters`);
+                
+                // Update metadata to indicate OCR was used
+                await supabase
+                  .from('archival_documents')
+                  .update({
+                    metadata: {
+                      ...(doc.metadata ?? {}),
+                      ocr_used: true,
+                      ocr_date: new Date().toISOString()
+                    }
+                  })
+                  .eq('id', documentId);
+              } catch (ocrError) {
+                console.error('OCR extraction failed:', ocrError);
+                return new Response(
+                  JSON.stringify({
+                    success: false,
+                    error: `OCR failed: ${ocrError instanceof Error ? ocrError.message : 'Unknown error'}. The document may be too large, corrupted, or unreadable.`,
+                    isImageBased: true,
+                    ocrAttempted: true,
+                    documentId
+                  }),
+                  { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+                );
+              }
+            } else {
+              content = extractionResult.text;
+              console.log(`Extracted ${content.length} characters from PDF`);
+            }
 
             if (!content || content.trim().length < 200) {
-              // Return user-friendly response instead of throwing error
               return new Response(
                 JSON.stringify({
                   success: false,
-                  error: 'This PDF appears to be image-based (scanned) or encrypted. The system cannot extract text from scanned documents without OCR. Please upload a PDF with selectable text, or provide a text export of the document.',
+                  error: 'Could not extract sufficient text from the PDF. The document may be corrupted or contain only images without readable text.',
                   isImageBased: true,
                   documentId
                 }),
@@ -217,20 +319,6 @@ serve(async (req) => {
           } catch (pdfError) {
             console.error('PDF parsing error:', pdfError);
             const errorMsg = pdfError instanceof Error ? pdfError.message : 'Unknown error';
-            
-            // Check if it's the "image-based" error and return friendly response
-            if (errorMsg.includes('image-based') || errorMsg.includes('scanned') || errorMsg.includes('meaningful text')) {
-              return new Response(
-                JSON.stringify({
-                  success: false,
-                  error: 'This PDF appears to be image-based (scanned) or encrypted. The system cannot extract text from scanned documents without OCR. Please upload a PDF with selectable text, or provide a text export of the document.',
-                  isImageBased: true,
-                  documentId
-                }),
-                { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-              );
-            }
-            
             throw new Error(`Failed to parse PDF: ${errorMsg}`);
           }
         } else if (doc.file_type.includes('text')) {
