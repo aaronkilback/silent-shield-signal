@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,14 +31,78 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { user } = useAuth();
 
-  // Reset messages when agent changes
+  // Load or create conversation when agent changes
+  const loadConversation = useCallback(async () => {
+    if (!user) return;
+    
+    setIsLoadingHistory(true);
+    try {
+      // Find existing conversation for this user + agent
+      const { data: existingConv, error: convError } = await supabase
+        .from("agent_conversations")
+        .select("id")
+        .eq("agent_id", agent.id)
+        .eq("user_id", user.id)
+        .eq("status", "active")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (convError) throw convError;
+
+      if (existingConv) {
+        setConversationId(existingConv.id);
+        
+        // Load messages for this conversation
+        const { data: msgs, error: msgsError } = await supabase
+          .from("agent_messages")
+          .select("role, content")
+          .eq("conversation_id", existingConv.id)
+          .order("created_at", { ascending: true });
+
+        if (msgsError) throw msgsError;
+
+        setMessages(msgs?.map(m => ({ 
+          role: m.role as "user" | "assistant", 
+          content: m.content 
+        })) || []);
+      } else {
+        // Create new conversation
+        const { data: newConv, error: newConvError } = await supabase
+          .from("agent_conversations")
+          .insert({
+            agent_id: agent.id,
+            user_id: user.id,
+            status: "active",
+            title: `Chat with ${agent.call_sign}`,
+          })
+          .select("id")
+          .single();
+
+        if (newConvError) throw newConvError;
+        setConversationId(newConv.id);
+        setMessages([]);
+      }
+    } catch (error) {
+      console.error("Error loading conversation:", error);
+      toast.error("Failed to load chat history");
+      setMessages([]);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [agent.id, agent.call_sign, user]);
+
   useEffect(() => {
     setMessages([]);
+    setConversationId(null);
     setInput("");
-  }, [agent.id]);
+    loadConversation();
+  }, [agent.id, loadConversation]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -48,7 +112,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
   }, [messages]);
 
   const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || !conversationId) return;
 
     const userMessage = input.trim();
     setInput("");
@@ -56,6 +120,19 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
     setIsLoading(true);
 
     try {
+      // Save user message to database
+      await supabase.from("agent_messages").insert({
+        conversation_id: conversationId,
+        role: "user",
+        content: userMessage,
+      });
+
+      // Update conversation timestamp
+      await supabase
+        .from("agent_conversations")
+        .update({ updated_at: new Date().toISOString() })
+        .eq("id", conversationId);
+
       const { data, error } = await supabase.functions.invoke("agent-chat", {
         body: {
           agent_id: agent.id,
@@ -66,15 +143,32 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
 
       if (error) throw error;
 
+      const assistantMessage = data.response;
+      
+      // Save assistant message to database
+      await supabase.from("agent_messages").insert({
+        conversation_id: conversationId,
+        role: "assistant",
+        content: assistantMessage,
+      });
+
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: data.response },
+        { role: "assistant", content: assistantMessage },
       ]);
     } catch (error) {
       console.error("Agent chat error:", error);
       toast.error("Failed to get response from agent");
       // Remove the user message on error
       setMessages((prev) => prev.slice(0, -1));
+      // Also delete from database
+      await supabase
+        .from("agent_messages")
+        .delete()
+        .eq("conversation_id", conversationId)
+        .eq("role", "user")
+        .order("created_at", { ascending: false })
+        .limit(1);
     } finally {
       setIsLoading(false);
     }
@@ -87,8 +181,22 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
     }
   };
 
-  const clearConversation = () => {
-    setMessages([]);
+  const clearConversation = async () => {
+    if (!conversationId) return;
+    
+    try {
+      // Delete all messages for this conversation
+      await supabase
+        .from("agent_messages")
+        .delete()
+        .eq("conversation_id", conversationId);
+      
+      setMessages([]);
+      toast.success("Conversation cleared");
+    } catch (error) {
+      console.error("Error clearing conversation:", error);
+      toast.error("Failed to clear conversation");
+    }
   };
 
   return (
@@ -116,7 +224,14 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
       <CardContent className="flex-1 flex flex-col min-h-0 p-0">
         {/* Messages Area */}
         <ScrollArea className="flex-1 px-6">
-          {messages.length === 0 ? (
+          {isLoadingHistory ? (
+            <div className="h-full flex items-center justify-center py-12">
+              <div className="text-center text-muted-foreground">
+                <Loader2 className="h-8 w-8 mx-auto mb-4 animate-spin" style={{ color: agent.avatar_color }} />
+                <p className="text-sm">Loading conversation history...</p>
+              </div>
+            </div>
+          ) : messages.length === 0 ? (
             <div className="h-full flex items-center justify-center py-12">
               <div className="text-center text-muted-foreground max-w-md">
                 <Bot
