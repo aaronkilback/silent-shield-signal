@@ -1898,6 +1898,73 @@ Inform user of successful creation and instruct to refresh if needed
       }
     }
   },
+  {
+    type: "function",
+    function: {
+      name: "create_agent",
+      description: "Create a new AI agent with full configuration. Use this to provision new specialized Agent AIs like Legion, Sentinel, etc. Required fields: codename, call_sign, persona, specialty, mission_scope.",
+      parameters: {
+        type: "object",
+        properties: {
+          codename: {
+            type: "string",
+            description: "Agent codename (e.g., 'Legion', 'Sentinel')"
+          },
+          call_sign: {
+            type: "string",
+            description: "Agent call sign (e.g., 'LEX-MAGNA', 'WATCH-ALPHA')"
+          },
+          persona: {
+            type: "string",
+            description: "Agent persona description"
+          },
+          specialty: {
+            type: "string",
+            description: "Agent specialty/expertise area"
+          },
+          mission_scope: {
+            type: "string",
+            description: "Agent mission scope and operational boundaries"
+          },
+          interaction_style: {
+            type: "string",
+            description: "Interaction style (default: 'chat')"
+          },
+          input_sources: {
+            type: "array",
+            items: { type: "string" },
+            description: "Array of input sources (e.g., 'signals', 'incidents', 'entities', 'legal_database')"
+          },
+          output_types: {
+            type: "array",
+            items: { type: "string" },
+            description: "Array of output types (e.g., 'analysis', 'recommendations', 'legal_opinions')"
+          },
+          is_client_facing: {
+            type: "boolean",
+            description: "Whether agent is client-facing (default: false)"
+          },
+          is_active: {
+            type: "boolean",
+            description: "Whether agent is active (default: true)"
+          },
+          avatar_color: {
+            type: "string",
+            description: "Avatar color hex code (optional, auto-generated if not provided)"
+          },
+          system_prompt: {
+            type: "string",
+            description: "Custom system prompt (optional, auto-generated if not provided)"
+          },
+          requested_by: {
+            type: "string",
+            description: "Who requested the agent creation (e.g., 'Aegis')"
+          }
+        },
+        required: ["codename", "call_sign", "persona", "specialty", "mission_scope"]
+      }
+    }
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -6346,6 +6413,21 @@ The signal is now in the database with status 'triaged' and rules have been appl
       if (error) {
         console.error("Error reviewing client policy:", error);
         return { error: error.message, message: `Failed to review policy: ${error.message}` };
+      }
+      return data;
+    }
+
+    case "create_agent": {
+      const { codename, call_sign, persona, specialty, mission_scope, interaction_style, input_sources, output_types, is_client_facing, is_active, avatar_color, system_prompt, requested_by } = args;
+      console.log(`Creating new agent: ${codename} (${call_sign})`);
+      
+      const { data, error } = await supabaseClient.functions.invoke("create-agent", {
+        body: { codename, call_sign, persona, specialty, mission_scope, interaction_style, input_sources, output_types, is_client_facing, is_active, avatar_color, system_prompt, requested_by }
+      });
+      
+      if (error) {
+        console.error("Error creating agent:", error);
+        return { error: error.message, message: `Failed to create agent: ${error.message}` };
       }
       return data;
     }
