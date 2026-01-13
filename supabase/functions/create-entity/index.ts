@@ -208,7 +208,8 @@ serve(async (req: Request) => {
           ...body.attributes
         },
         source_type: "aegis_ai",
-        source_id: "create-entity-function",
+        // entity_suggestions.source_id is a UUID in the database
+        source_id: crypto.randomUUID(),
         confidence: body.confidence_score ?? 0.85,
         context: body.source_context || `Created via create-entity function: ${body.description || 'No description provided'}`,
         status: "pending"
