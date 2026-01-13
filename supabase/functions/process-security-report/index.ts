@@ -255,14 +255,18 @@ serve(async (req) => {
         contentSample.toLowerCase().includes(` ${word} `) || contentSample.toLowerCase().startsWith(`${word} `)
       );
       
+      // OCR content starts with "==Start of OCR" and is always valid
+      const isOcrContent = doc.content_text?.startsWith('==Start of OCR') || false;
+      
       const hasValidContent = doc.content_text && 
         doc.content_text.length > 500 && 
         !doc.content_text.includes('content not processed') &&
         !doc.content_text.startsWith('%PDF') && // Not raw PDF data
-        !doc.content_text.startsWith('==Start of OCR') === false || doc.content_text.startsWith('==Start of OCR') && // OCR content is valid
-        wordMatches.length >= 10 && // At least 10 words of 4+ letters
-        specialCharRatio < 0.15 && // Less than 15% special characters
-        hasCommonWords; // Contains common English words
+        (isOcrContent || ( // Either OCR content (always valid) or meets quality checks
+          wordMatches.length >= 10 && // At least 10 words of 4+ letters
+          specialCharRatio < 0.15 && // Less than 15% special characters
+          hasCommonWords // Contains common English words
+        ));
 
       console.log(`Content validation: words=${wordMatches.length}, specialCharRatio=${specialCharRatio.toFixed(2)}, hasCommonWords=${hasCommonWords}, valid=${hasValidContent}`);
 
