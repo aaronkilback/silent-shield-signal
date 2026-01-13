@@ -50,6 +50,7 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (existingHash) {
+      console.log(`Duplicate detected: ${filename} matches existing ${existingHash.filename}`);
       return new Response(
         JSON.stringify({ 
           error: `Duplicate of ${existingHash.filename} (already uploaded)`,
