@@ -112,6 +112,70 @@ serve(async (req) => {
       }
     }
 
+    // Always include documents for reference (archival documents with extracted content)
+    const { data: archivalDocs } = await supabase
+      .from('archival_documents')
+      .select('id, filename, summary, content_text, keywords, tags, entity_mentions, date_of_document, created_at')
+      .not('content_text', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    
+    if (archivalDocs?.length) {
+      contextData += `\n\n=== ARCHIVAL DOCUMENTS (${archivalDocs.length}) ===\n`;
+      archivalDocs.forEach(doc => {
+        contextData += `\n--- Document: ${doc.filename} ---\n`;
+        if (doc.date_of_document) contextData += `Date: ${doc.date_of_document}\n`;
+        if (doc.summary) contextData += `Summary: ${doc.summary}\n`;
+        if (doc.keywords?.length) contextData += `Keywords: ${doc.keywords.join(', ')}\n`;
+        if (doc.entity_mentions?.length) contextData += `Entities Mentioned: ${doc.entity_mentions.join(', ')}\n`;
+        if (doc.content_text) {
+          // Include up to 2000 chars of content per document
+          const contentPreview = doc.content_text.substring(0, 2000);
+          contextData += `Content:\n${contentPreview}${doc.content_text.length > 2000 ? '...[truncated]' : ''}\n`;
+        }
+      });
+    }
+
+    // Include ingested intelligence documents
+    const { data: ingestedDocs } = await supabase
+      .from('ingested_documents')
+      .select('id, title, source, summary, content, processed_entities, processed_relationships, created_at')
+      .eq('processing_status', 'completed')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    
+    if (ingestedDocs?.length) {
+      contextData += `\n\n=== INTELLIGENCE DOCUMENTS (${ingestedDocs.length}) ===\n`;
+      ingestedDocs.forEach(doc => {
+        contextData += `\n--- ${doc.title || 'Untitled'} ---\n`;
+        if (doc.source) contextData += `Source: ${doc.source}\n`;
+        if (doc.summary) contextData += `Summary: ${doc.summary}\n`;
+        if (doc.processed_entities?.length) {
+          contextData += `Extracted Entities: ${JSON.stringify(doc.processed_entities).substring(0, 500)}\n`;
+        }
+        if (doc.content) {
+          const contentPreview = doc.content.substring(0, 1500);
+          contextData += `Content:\n${contentPreview}${doc.content.length > 1500 ? '...[truncated]' : ''}\n`;
+        }
+      });
+    }
+
+    // Include entity suggestions for context
+    const { data: entitySuggestions } = await supabase
+      .from('entity_suggestions')
+      .select('suggested_name, suggested_type, context, confidence, status')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(15);
+    
+    if (entitySuggestions?.length) {
+      contextData += `\n\n=== PENDING ENTITY SUGGESTIONS (${entitySuggestions.length}) ===\n`;
+      entitySuggestions.forEach(s => {
+        contextData += `- ${s.suggested_name} (${s.suggested_type}) - Confidence: ${Math.round((s.confidence || 0) * 100)}%\n`;
+        if (s.context) contextData += `  Context: ${s.context.substring(0, 200)}\n`;
+      });
+    }
+
     // Build system prompt
     const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}
 
