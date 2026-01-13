@@ -30,9 +30,13 @@ async function extractPdfTextImproved(blob: Blob): Promise<string> {
 
   // Primary: pdfjs extraction
   try {
-    const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
+      const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
+      // Required in Deno even when disableWorker=true (pdfjs checks this getter)
+      if (pdfjsLib?.GlobalWorkerOptions) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.worker.mjs';
+      }
 
-    const loadingTask = pdfjsLib.getDocument({
+      const loadingTask = pdfjsLib.getDocument({
       data: new Uint8Array(arrayBuffer),
       disableWorker: true,
     });
@@ -608,7 +612,11 @@ Extract entities, threat signals, risk assessments, and any incidents requiring 
         .from('archival_documents')
         .update({
           metadata: {
-            ...document?.metadata,
+            ...(((document?.metadata as any) ?? {}) as Record<string, unknown>),
+            // Preserve/mark text extraction state so UI doesn't report "unintelligible" due to stale flags
+            text_extracted: true,
+            text_length: typeof content === 'string' ? content.length : undefined,
+
             intelligence_processed: true,
             processed_at: new Date().toISOString(),
             extraction_results: results,
