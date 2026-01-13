@@ -21,6 +21,18 @@ import { useAuth } from "@/hooks/useAuth";
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { LocationsMap } from "@/components/LocationsMap";
+import DOMPurify from 'dompurify';
+
+// Configure DOMPurify for safe HTML rendering in reports
+const sanitizeHtml = (html: string): string => {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'p', 'br', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'div', 'span', 'img', 'style', 'head', 'body', 'html', 'meta', 'a'],
+    ALLOWED_ATTR: ['class', 'style', 'src', 'alt', 'width', 'height', 'href', 'charset', 'content', 'colspan'],
+    ALLOW_DATA_ATTR: false,
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'link'],
+    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover']
+  });
+};
 
 const InvestigationDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -763,7 +775,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
       container.style.position = 'absolute';
       container.style.left = '-9999px';
       container.style.width = '210mm';
-      container.innerHTML = reportHtml;
+      container.innerHTML = sanitizeHtml(reportHtml);
       document.body.appendChild(container);
 
       toast.loading("Generating PDF...");
