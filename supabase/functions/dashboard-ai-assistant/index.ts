@@ -5349,28 +5349,90 @@ serve(async (req) => {
       let resolvedClientId = client_id;
       
       if (client_name && !client_id) {
-        // Strip surrounding quotes that AI may include (e.g., '"Petronas Canada"' -> 'Petronas Canada')
-        const cleanClientName = String(client_name).replace(/^["']+|["']+$/g, '').trim();
-        console.log(`Looking up client_id for: ${cleanClientName} (original: ${client_name})`);
-        
-        const { data: clientData, error: clientError } = await supabaseClient
-          .from('clients')
-          .select('id, name')
-          .ilike('name', `%${cleanClientName}%`)
-          .limit(1)
-          .single();
-        
-        if (clientError || !clientData) {
+        const rawClientName = String(client_name ?? "").trim();
+
+        // The model sometimes sends extra punctuation/context, e.g.
+        //   `"Petronas Canada"` (This is the crucial part...)
+        // Normalize by extracting the first quoted segment when present, then trimming trailing commentary.
+        const quoted = rawClientName.match(/[`"']{1,3}([^`"']{2,160})[`"']{1,3}/);
+        let cleanClientName = (quoted?.[1] ?? rawClientName)
+          .split("\n")[0]
+          .split("(")[0]
+          .trim()
+          .replace(/^[`"']+|[`"']+$/g, "")
+          .trim();
+
+        // Also try a version with all quote characters removed.
+        const cleanClientNameNoQuotes = cleanClientName.replace(/[`"']/g, "").trim();
+
+        const attemptedNames = Array.from(
+          new Set([cleanClientName, cleanClientNameNoQuotes].filter(Boolean))
+        );
+
+        console.log(
+          `Looking up client_id for: ${attemptedNames.join(" | ")} (original: ${rawClientName})`
+        );
+
+        let clientData: { id: string; name: string } | null = null;
+
+        // Attempt exact-ish match first (case-insensitive pattern without wildcards), then fallback to contains.
+        for (const name of attemptedNames) {
+          const exact = await supabaseClient
+            .from("clients")
+            .select("id, name")
+            .ilike("name", name)
+            .limit(1)
+            .maybeSingle();
+
+          if (exact.data) {
+            clientData = exact.data;
+            break;
+          }
+
+          const contains = await supabaseClient
+            .from("clients")
+            .select("id, name")
+            .ilike("name", `%${name}%`)
+            .limit(1)
+            .maybeSingle();
+
+          if (contains.data) {
+            clientData = contains.data;
+            break;
+          }
+        }
+
+        // Final fallback: fetch a small list and match in-memory (helps when the model includes odd characters).
+        if (!clientData) {
+          const { data: clientsList } = await supabaseClient
+            .from("clients")
+            .select("id, name")
+            .order("name")
+            .limit(500);
+
+          const loweredAttempts = attemptedNames.map((n) => n.toLowerCase());
+          clientData =
+            (clientsList || []).find((c: { id: string; name: string }) =>
+              loweredAttempts.some((n) => c.name.toLowerCase() === n)
+            ) ||
+            (clientsList || []).find((c: { id: string; name: string }) =>
+              loweredAttempts.some(
+                (n) => c.name.toLowerCase().includes(n) || n.includes(c.name.toLowerCase())
+              )
+            ) ||
+            null;
+        }
+
+        if (!clientData) {
           return {
             error: "Client not found",
-            message: `Could not find client matching '${cleanClientName}'. Available clients can be found using search_clients tool.`,
+            message: `Could not find a client matching '${rawClientName}'. Please use the exact client name from your Clients list (e.g., Petronas Canada).`,
           };
         }
-        
+
         resolvedClientId = clientData.id;
-        console.log(`Resolved client '${cleanClientName}' to UUID: ${resolvedClientId}`);
+        console.log(`Resolved client to UUID: ${resolvedClientId} (${clientData.name})`);
       }
-      
       if (!resolvedClientId) {
         return {
           error: "Missing client identifier",
