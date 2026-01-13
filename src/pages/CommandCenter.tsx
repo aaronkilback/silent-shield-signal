@@ -38,11 +38,15 @@ export default function CommandCenter() {
       const { data, error } = await supabase
         .from("ai_agents")
         .select("*")
-        .order("created_at");
+        .order("created_at", { ascending: false });
 
       if (error) throw error;
       return data as AIAgent[];
     },
+    // Agents can be provisioned by backend tools outside the UI; poll to keep the roster in sync.
+    refetchInterval: 15000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 
   const handleAddAgent = () => {
