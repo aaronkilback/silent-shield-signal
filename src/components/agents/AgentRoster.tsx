@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 
 interface AIAgent {
   id: string;
+  header_name: string | null;
   codename: string;
   call_sign: string;
   persona: string;
@@ -79,9 +80,9 @@ export function AgentRoster({
               />
             </div>
             <div className="text-left">
-              <div className="font-medium text-sm">{agent.call_sign}</div>
+              <div className="font-medium text-sm">{agent.header_name || agent.codename}</div>
               <div className="text-xs text-muted-foreground truncate max-w-[140px]">
-                {agent.codename}
+                {agent.call_sign} · {agent.codename}
               </div>
             </div>
             {agent.is_client_facing && (

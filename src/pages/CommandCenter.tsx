@@ -11,6 +11,7 @@ import { Shield } from "lucide-react";
 
 interface AIAgent {
   id: string;
+  header_name: string | null;
   codename: string;
   call_sign: string;
   persona: string;

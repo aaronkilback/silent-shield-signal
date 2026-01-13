@@ -1902,17 +1902,21 @@ Inform user of successful creation and instruct to refresh if needed
     type: "function",
     function: {
       name: "create_agent",
-      description: "Create a new AI agent with full configuration. Use this to provision new specialized Agent AIs like Legion, Sentinel, etc. Required fields: codename, call_sign, persona, specialty, mission_scope.",
+      description: "Create a new AI agent with full configuration. Use this to provision new specialized Agent AIs like Legion, Sentinel, etc. Required fields: header_name, codename, call_sign, persona, specialty, mission_scope.",
       parameters: {
         type: "object",
         properties: {
+          header_name: {
+            type: "string",
+            description: "Primary display name shown in UI headings and chat tabs (e.g., 'McGraw', 'Jessica Pearson', 'Jack Ryan')"
+          },
           codename: {
             type: "string",
-            description: "Agent codename (e.g., 'Legion', 'Sentinel')"
+            description: "Agent codename (e.g., 'Pathfinder', 'Legion', 'Oracle')"
           },
           call_sign: {
             type: "string",
-            description: "Agent call sign (e.g., 'LEX-MAGNA', 'WATCH-ALPHA')"
+            description: "Agent call sign (e.g., 'LOCUS-INTEL', 'LEX-MAGNA', 'GLOBE-SAGE')"
           },
           persona: {
             type: "string",
@@ -1961,7 +1965,7 @@ Inform user of successful creation and instruct to refresh if needed
             description: "Who requested the agent creation (e.g., 'Aegis')"
           }
         },
-        required: ["codename", "call_sign", "persona", "specialty", "mission_scope"]
+        required: ["header_name", "codename", "call_sign", "persona", "specialty", "mission_scope"]
       }
     }
   },
@@ -6419,6 +6423,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
     case "create_agent": {
       const {
+        header_name,
         codename,
         call_sign,
         persona,
@@ -6434,7 +6439,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
         requested_by,
       } = args;
 
-      console.log(`Creating new agent: ${codename} (${call_sign})`);
+      console.log(`Creating new agent: ${header_name || codename} (${call_sign})`);
 
       // IMPORTANT: Avoid supabaseClient.functions.invoke() here.
       // functions.invoke throws FunctionsHttpError on non-2xx which often gets surfaced as a generic
@@ -6459,6 +6464,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
           Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
         },
         body: JSON.stringify({
+          header_name,
           codename,
           call_sign,
           persona,

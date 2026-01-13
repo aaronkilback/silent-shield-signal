@@ -111,6 +111,7 @@ export type Database = {
           codename: string
           created_at: string
           created_by: string | null
+          header_name: string | null
           id: string
           input_sources: string[] | null
           interaction_style: string
@@ -130,6 +131,7 @@ export type Database = {
           codename: string
           created_at?: string
           created_by?: string | null
+          header_name?: string | null
           id?: string
           input_sources?: string[] | null
           interaction_style?: string
@@ -149,6 +151,7 @@ export type Database = {
           codename?: string
           created_at?: string
           created_by?: string | null
+          header_name?: string | null
           id?: string
           input_sources?: string[] | null
           interaction_style?: string
