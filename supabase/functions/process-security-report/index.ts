@@ -9,46 +9,138 @@ function normalizeExtractedText(input: string): string {
     .trim();
 }
 
-async function extractPdfTextBasic(blob: Blob, maxBytes = 2 * 1024 * 1024): Promise<string> {
-  // Edge-runtime safe “best effort” PDF text extraction.
-  // Avoids Node-only PDF parsers that rely on fs.
+// Improved PDF text extraction with multiple strategies
+async function extractPdfTextImproved(blob: Blob, lovableApiKey: string): Promise<string> {
+  const maxBytes = 4 * 1024 * 1024; // 4MB limit
   const arrayBuffer = await blob.slice(0, maxBytes).arrayBuffer();
   const uint8 = new Uint8Array(arrayBuffer);
-
-  // latin1 keeps byte-to-char mapping stable for PDF streams
+  
+  // Strategy 1: Try to extract text streams from PDF
   const pdfString = new TextDecoder('latin1').decode(uint8);
-
-  const textBlocks = pdfString.match(/BT(.*?)ET/gs) || [];
-  let extracted = '';
-
-  for (const block of textBlocks.slice(0, 800)) {
+  let extractedText = '';
+  
+  // Look for FlateDecode streams (compressed text)
+  const streamMatches = pdfString.matchAll(/stream[\r\n]+([\s\S]*?)[\r\n]+endstream/gi);
+  for (const match of streamMatches) {
+    // Try to extract readable text from streams
+    const streamContent = match[1];
+    const readable = streamContent.replace(/[^\x20-\x7E\n\r]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (readable.length > 20 && /[a-zA-Z]{3,}/.test(readable)) {
+      extractedText += readable + ' ';
+    }
+    if (extractedText.length > 50000) break;
+  }
+  
+  // Strategy 2: Extract text from BT/ET blocks (text objects)
+  const textBlocks = pdfString.match(/BT([\s\S]*?)ET/g) || [];
+  for (const block of textBlocks.slice(0, 1000)) {
+    // Extract parenthesized strings (literal strings)
     const parenStrings = block.match(/\((?:\\.|[^\\)])*\)/g) || [];
-    for (const str of parenStrings.slice(0, 50)) {
-      const text = str.slice(1, -1);
-      const decoded = text
-        .replace(/\\n/g, ' ')
+    for (const str of parenStrings) {
+      const text = str.slice(1, -1)
+        .replace(/\\n/g, '\n')
         .replace(/\\r/g, ' ')
         .replace(/\\t/g, ' ')
         .replace(/\\\(/g, '(')
         .replace(/\\\)/g, ')')
         .replace(/\\\\/g, '\\');
-      extracted += decoded + ' ';
-      if (extracted.length > 120_000) break;
+      extractedText += text + ' ';
     }
-    if (extracted.length > 120_000) break;
+    
+    // Extract hex strings <...>
+    const hexStrings = block.match(/<[0-9A-Fa-f]+>/g) || [];
+    for (const hex of hexStrings) {
+      const hexContent = hex.slice(1, -1);
+      let decoded = '';
+      for (let i = 0; i < hexContent.length; i += 2) {
+        const charCode = parseInt(hexContent.substr(i, 2), 16);
+        if (charCode >= 32 && charCode < 127) {
+          decoded += String.fromCharCode(charCode);
+        }
+      }
+      if (decoded.length > 2) {
+        extractedText += decoded + ' ';
+      }
+    }
+    
+    if (extractedText.length > 100000) break;
   }
-
-  extracted = normalizeExtractedText(extracted);
-
-  // Fallback: strip control chars from the raw header slice
-  if (!extracted || extracted.length < 100) {
-    const fallback = normalizeExtractedText(
-      pdfString.replace(/[\x00-\x1F\x7F-\xFF]/g, ' ')
-    );
-    return fallback;
+  
+  // Strategy 3: Look for ToUnicode CMap mappings
+  const cmapMatch = pdfString.match(/beginbfchar([\s\S]*?)endbfchar/gi);
+  if (cmapMatch) {
+    console.log('Found ToUnicode CMap - complex encoding detected');
   }
-
-  return extracted;
+  
+  // Normalize and clean
+  extractedText = normalizeExtractedText(extractedText);
+  
+  // Check quality - if mostly garbage, try AI-based extraction
+  const wordCount = extractedText.split(/\s+/).filter(w => /^[a-zA-Z]{2,}$/.test(w)).length;
+  const totalWords = extractedText.split(/\s+/).length;
+  const qualityRatio = totalWords > 0 ? wordCount / totalWords : 0;
+  
+  console.log(`PDF extraction: ${extractedText.length} chars, ${wordCount}/${totalWords} valid words (${(qualityRatio * 100).toFixed(1)}% quality)`);
+  
+  // If quality is low, use AI vision to extract text from PDF
+  if (qualityRatio < 0.3 && extractedText.length < 5000) {
+    console.log('Low quality extraction - attempting AI-based text extraction...');
+    
+    try {
+      // Convert PDF bytes to base64 for AI processing
+      const base64Pdf = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer.slice(0, 1024 * 1024)))); // 1MB limit for AI
+      
+      const aiExtractionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${lovableApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.5-flash',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: 'Extract ALL readable text from this PDF document. Return ONLY the extracted text content, maintaining paragraph structure. Do not summarize - extract the full text.'
+                },
+                {
+                  type: 'image_url',
+                  image_url: {
+                    url: `data:application/pdf;base64,${base64Pdf}`
+                  }
+                }
+              ]
+            }
+          ],
+          max_tokens: 16000
+        }),
+      });
+      
+      if (aiExtractionResponse.ok) {
+        const aiData = await aiExtractionResponse.json();
+        const aiText = aiData.choices?.[0]?.message?.content;
+        if (aiText && aiText.length > extractedText.length) {
+          console.log(`AI extraction successful: ${aiText.length} characters`);
+          return aiText;
+        }
+      }
+    } catch (aiError) {
+      console.warn('AI text extraction failed:', aiError);
+    }
+  }
+  
+  // Fallback if still no good text
+  if (extractedText.length < 200) {
+    // Try raw text extraction as last resort
+    const rawText = pdfString.replace(/[^\x20-\x7E\n]/g, ' ').replace(/\s+/g, ' ');
+    const meaningfulText = rawText.match(/[A-Za-z][a-z]+(?:\s+[A-Za-z][a-z]+){2,}/g) || [];
+    return meaningfulText.join(' ').slice(0, 50000);
+  }
+  
+  return extractedText;
 }
 
 const corsHeaders = {
@@ -122,11 +214,11 @@ serve(async (req) => {
 
         // Extract text based on file type
         if (doc.file_type === 'application/pdf') {
-          console.log('Extracting text from PDF...');
+          console.log('Extracting text from PDF using improved extractor...');
           try {
-            content = await extractPdfTextBasic(fileData);
+            content = await extractPdfTextImproved(fileData, LOVABLE_API_KEY);
 
-            console.log(`Extracted ${content.length} characters from PDF (basic extractor)`);
+            console.log(`Extracted ${content.length} characters from PDF`);
 
             if (!content || content.trim().length < 200) {
               throw new Error(
@@ -372,8 +464,13 @@ Extract entities, threat signals, risk assessments, and any incidents requiring 
 
     // Process entities - create suggestions for review
     if (intelligence.entities && intelligence.entities.length > 0) {
+      console.log(`Processing ${intelligence.entities.length} extracted entities...`);
+      
       for (const entity of intelligence.entities) {
-        if (entity.confidence < 0.6) continue;
+        if (entity.confidence < 0.6) {
+          console.log(`Skipping entity "${entity.name}" - confidence ${entity.confidence} below threshold`);
+          continue;
+        }
 
         // Check if entity already exists
         let matchedEntityId = entity.matched_entity_id;
@@ -386,31 +483,39 @@ Extract entities, threat signals, risk assessments, and any incidents requiring 
           
           if (existingEntity) {
             matchedEntityId = existingEntity.id;
+            console.log(`Entity "${entity.name}" matched to existing entity ${matchedEntityId}`);
           }
         }
 
-        // Create entity suggestion
+        // Create entity suggestion with source_type that matches UI expectations
+        const suggestionData = {
+          source_id: documentId || 'manual',
+          source_type: 'archival_document', // Changed from 'security_report' to match UI
+          suggested_name: entity.name,
+          suggested_type: entity.type,
+          confidence: entity.confidence,
+          context: entity.context || entity.description,
+          suggested_aliases: entity.aliases || [],
+          suggested_attributes: {
+            risk_level: entity.risk_level,
+            threat_score: entity.threat_score,
+            description: entity.description
+          },
+          matched_entity_id: matchedEntityId,
+          status: 'pending'
+        };
+
+        console.log(`Creating entity suggestion for "${entity.name}" (${entity.type})`);
+        
         const { error: suggestionError } = await supabase
           .from('entity_suggestions')
-          .insert({
-            source_id: documentId || 'manual',
-            source_type: 'security_report',
-            suggested_name: entity.name,
-            suggested_type: entity.type,
-            confidence: entity.confidence,
-            context: entity.context || entity.description,
-            suggested_aliases: entity.aliases || [],
-            suggested_attributes: {
-              risk_level: entity.risk_level,
-              threat_score: entity.threat_score,
-              description: entity.description
-            },
-            matched_entity_id: matchedEntityId,
-            status: 'pending'
-          });
+          .insert(suggestionData);
 
-        if (!suggestionError) {
+        if (suggestionError) {
+          console.error(`Error creating suggestion for "${entity.name}":`, suggestionError);
+        } else {
           results.entity_suggestions_created++;
+          console.log(`Created entity suggestion for "${entity.name}"`);
         }
       }
     }
