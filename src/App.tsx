@@ -28,6 +28,7 @@ import UserManagement from "./pages/UserManagement";
 import CommandCenter from "./pages/CommandCenter";
 import TaskForce from "./pages/TaskForce";
 import NotFound from "./pages/NotFound";
+import { EnsureDefaultRole } from "@/components/EnsureDefaultRole";
 
 const queryClient = new QueryClient();
 
@@ -40,6 +41,7 @@ const App = () => (
         <BrowserRouter>
           <ClientSelectionProvider>
             <RealtimeNotifications />
+            <EnsureDefaultRole />
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/auth" element={<Auth />} />
