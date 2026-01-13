@@ -6846,6 +6846,81 @@ function extractPlannedTestSignalFromText(
   };
 }
 
+// Extract query_fortress_data parameters when AI describes querying but doesn't call the tool
+function extractPlannedFortressQueryFromText(
+  text: string,
+): { query_type: string; filters?: any; output_format?: string; reason_for_access: string; agent_id?: string } | null {
+  // Detect patterns like "query_fortress_data", "querying fortress", "executing query_fortress_data"
+  const looksLikeFortressQuery = /\b(query_fortress_data|query.*fortress|fortress.*query|executing.*query|fetch.*data|retrieve.*data)\b/i.test(text);
+  if (!looksLikeFortressQuery) return null;
+
+  const normalized = text.replace(/\r/g, "");
+
+  // Extract query type - look for mentions of data types
+  let query_type = "comprehensive";
+  if (/\bsignal/i.test(normalized)) query_type = "signals";
+  else if (/\bincident/i.test(normalized)) query_type = "incidents";
+  else if (/\bentit/i.test(normalized)) query_type = "entities";
+  else if (/\bclient/i.test(normalized)) query_type = "clients";
+  else if (/\bdocument/i.test(normalized)) query_type = "documents";
+  else if (/\binvestigation/i.test(normalized)) query_type = "investigations";
+  else if (/\bknowledge/i.test(normalized)) query_type = "knowledge_base";
+  else if (/\btravel/i.test(normalized)) query_type = "travel";
+
+  // Extract filters from text
+  const filters: any = {};
+  
+  // Extract keywords - look for quoted strings or specific entity names
+  const keywordMatches = normalized.match(/["']([^"']+)["']/g) || [];
+  const keywords = keywordMatches.map(k => k.replace(/["']/g, ''));
+  if (keywords.length > 0) {
+    filters.keywords = keywords;
+  }
+  
+  // Look for severity
+  const severityMatch = normalized.match(/\b(critical|high|medium|low)\b/i);
+  if (severityMatch) {
+    filters.severity = severityMatch[1].toLowerCase();
+  }
+  
+  // Look for time ranges
+  if (/\blast\s+(\d+)\s+(day|week|month|year)/i.test(normalized)) {
+    const timeMatch = normalized.match(/\blast\s+(\d+)\s+(day|week|month|year)s?/i);
+    if (timeMatch) {
+      filters.time_range = { last: `${timeMatch[1]} ${timeMatch[2]}s` };
+    }
+  } else if (/\b(7|seven)\s*day/i.test(normalized)) {
+    filters.time_range = { last: "7 days" };
+  } else if (/\b(30|thirty)\s*day/i.test(normalized)) {
+    filters.time_range = { last: "30 days" };
+  }
+
+  // Extract output format
+  let output_format = "detailed";
+  if (/\bsummary\b/i.test(normalized)) output_format = "summary";
+  if (/\bjson\b/i.test(normalized)) output_format = "json";
+
+  // Extract reason for access
+  const reason_for_access = extractValueFromText(normalized, "reason_for_access") || 
+                            extractValueFromText(normalized, "reason") || 
+                            "AI Assistant autonomous query (forced execution from text description)";
+
+  console.log("extractPlannedFortressQueryFromText: Extracted query details", {
+    query_type,
+    filters,
+    output_format,
+    reason_for_access: reason_for_access.substring(0, 50),
+  });
+
+  return {
+    query_type,
+    filters: Object.keys(filters).length > 0 ? filters : undefined,
+    output_format,
+    reason_for_access,
+    agent_id: "aegis_forced_query",
+  };
+}
+
 // Extract agent creation details when AI describes creating an agent without calling the tool
 function extractPlannedAgentFromText(
   text: string,
@@ -7441,6 +7516,51 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
                 role: "system",
                 content:
                   "You are the Fortress AI Assistant. Summarize tool results in a clear, conversational way. Report the actual agent creation result - if success, confirm with agent details; if error, explain the issue. Use markdown links: [Link Text](/path). Be concise and helpful.",
+              },
+              ...processedMessages,
+              firstMessage,
+              ...forcedToolResults,
+            ],
+            stream: true,
+          }),
+        });
+
+        if (!finalResponse.ok) {
+          throw new Error("Failed to get final response from AI");
+        }
+
+        return new Response(finalResponse.body, {
+          headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+        });
+      }
+
+      // Check for forced query_fortress_data execution
+      const forcedQuery = extractPlannedFortressQueryFromText(firstMessage.content);
+      if (forcedQuery) {
+        console.log("FORCING query_fortress_data (model described query but returned no tool_calls)", forcedQuery);
+        const forcedResult = await executeTool("query_fortress_data", forcedQuery, supabaseClient);
+        const forcedToolResults = [
+          {
+            tool_call_id: "forced_query_fortress_data",
+            role: "tool",
+            name: "query_fortress_data",
+            content: JSON.stringify(forcedResult),
+          },
+        ];
+
+        const finalResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You are the Fortress AI Assistant. Present the query_fortress_data results clearly and comprehensively. Format the data in a structured, readable way using markdown tables, bullet points, and headers. Highlight key findings, provide summaries, and offer follow-up analysis suggestions. Use markdown links: [Link Text](/path). Be thorough and actionable.",
               },
               ...processedMessages,
               firstMessage,
