@@ -56,6 +56,16 @@ CRITICAL CAPABILITIES - PHASE 4 & PHASE 5 ENHANCEMENTS:
    - Track playbook effectiveness using track_mitigation_effectiveness to continuously improve response procedures
    - Offload cognitive burden and accelerate decision-making during high-stress incidents
 
+7. ASSET & VULNERABILITY CONTEXT ENGINE (NEW - CRITICAL FOR PERSONALIZED INTELLIGENCE):
+   - Use query_internal_context to access real-time IT/OT asset inventory, vulnerability posture, and business criticality data
+   - When detecting external threats (CVEs, novel attack methods, TTPs), IMMEDIATELY determine which internal assets are affected
+   - Assess business criticality of potentially impacted systems for accurate impact analysis
+   - Understand vulnerability exposure for specific assets or asset types
+   - Perform comprehensive risk assessments with asset-specific context
+   - Query types: 'assets' (full inventory), 'vulnerabilities' (vuln focus), 'business_criticality' (critical systems), 'comprehensive' (all context)
+   - Filter by: asset_id, asset_name, asset_type, vulnerability_id (CVE), business_criticality_level, keywords
+   - ALWAYS correlate external threat intelligence with internal attack surface for personalized recommendations
+
 INTERACTION GUIDELINES:
 - If a query is ambiguous, ask targeted follow-up questions rather than stating inability
 - Build on previous conversation context without requiring users to repeat information
@@ -2041,6 +2051,83 @@ REQUIRED: reason_for_access parameter for audit logging.`,
           }
         },
         required: ["query_type", "reason_for_access"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "query_internal_context",
+      description: `ASSET & VULNERABILITY CONTEXT ENGINE: Provides real-time access to internal IT/OT asset inventory, vulnerability posture, and business criticality data. Essential for personalized threat intelligence and accurate impact assessments.
+
+USE CASES:
+- When detecting external threats (CVEs, TTPs), determine which internal assets are affected
+- Assess business criticality of potentially impacted systems
+- Understand vulnerability exposure for specific assets or asset types
+- Perform comprehensive risk assessments with asset-specific context
+- Correlate external threat intelligence with internal attack surface
+
+QUERY TYPES:
+- 'assets': Query IT/OT asset inventory (servers, databases, applications, OT devices, etc.)
+- 'vulnerabilities': Focus on vulnerability posture across assets
+- 'business_criticality': Filter by business-critical systems
+- 'comprehensive': Full asset context including all vulnerabilities and criticality data
+
+FILTERS:
+- asset_id: Specific asset UUID
+- asset_name: Human-readable asset name (e.g., 'prod-webserver-01', 'SCADA-PLC-5')
+- asset_type: server, database, network_device, application, cloud_resource, ot_device, workstation, container, iot_device
+- vulnerability_id: CVE or internal vulnerability ID (e.g., 'CVE-2024-3094')
+- business_criticality_level: mission_critical, high, medium, low
+- keywords: Search in asset descriptions and configurations
+- client_id: Filter by client organization
+
+OUTPUT includes: asset details, configuration (OS, software, network segment), known vulnerabilities with CVSS scores and exploit status, remediation status, business criticality, and risk summary.`,
+      parameters: {
+        type: "object",
+        properties: {
+          query_type: {
+            type: "string",
+            enum: ["assets", "vulnerabilities", "business_criticality", "comprehensive"],
+            description: "Type of internal context to retrieve"
+          },
+          asset_id: {
+            type: "string",
+            description: "Specific asset UUID"
+          },
+          asset_name: {
+            type: "string",
+            description: "Human-readable asset name (e.g., 'prod-webserver-01', 'SCADA-PLC-5')"
+          },
+          asset_type: {
+            type: "string",
+            enum: ["server", "database", "network_device", "application", "cloud_resource", "ot_device", "workstation", "container", "iot_device", "virtual_machine"],
+            description: "Filter by asset category"
+          },
+          vulnerability_id: {
+            type: "string",
+            description: "Specific vulnerability ID (CVE-2024-XXXX or internal ID)"
+          },
+          business_criticality_level: {
+            type: "string",
+            enum: ["mission_critical", "high", "medium", "low"],
+            description: "Filter by business criticality"
+          },
+          keywords: {
+            type: "array",
+            items: { type: "string" },
+            description: "Keywords to search in asset descriptions and configurations"
+          },
+          client_id: {
+            type: "string",
+            description: "Filter by client organization UUID"
+          },
+          limit: {
+            type: "number",
+            description: "Maximum results to return (default 10)"
+          }
+        },
+        required: ["query_type"]
       }
     }
   },
@@ -6784,6 +6871,195 @@ The signal is now in the database with status 'triaged' and rules have been appl
           }
         };
       }
+    }
+
+    case "query_internal_context": {
+      const { 
+        query_type, 
+        asset_id, 
+        asset_name, 
+        asset_type, 
+        vulnerability_id, 
+        business_criticality_level, 
+        keywords, 
+        client_id, 
+        limit = 10 
+      } = args;
+
+      console.log(`Executing query_internal_context: ${query_type}`, JSON.stringify(args));
+
+      // Build base query for assets with vulnerabilities
+      let assetsQuery = supabaseClient
+        .from('internal_assets')
+        .select(`
+          id,
+          asset_name,
+          asset_type,
+          description,
+          location,
+          owner_team,
+          business_criticality,
+          configuration_details,
+          network_segment,
+          cloud_provider,
+          cloud_service,
+          is_internet_facing,
+          is_active,
+          last_patched_date,
+          last_scanned,
+          tags,
+          metadata,
+          asset_vulnerabilities (
+            id,
+            vulnerability_id,
+            severity,
+            cvss_score,
+            description,
+            affected_component,
+            is_active_exploit_known,
+            remediation_status,
+            discovered_at
+          )
+        `)
+        .eq('is_active', true);
+
+      // Apply filters
+      if (asset_id) {
+        assetsQuery = assetsQuery.eq('id', asset_id);
+      }
+
+      if (asset_name) {
+        assetsQuery = assetsQuery.ilike('asset_name', `%${asset_name}%`);
+      }
+
+      if (asset_type) {
+        assetsQuery = assetsQuery.eq('asset_type', asset_type);
+      }
+
+      if (business_criticality_level) {
+        assetsQuery = assetsQuery.eq('business_criticality', business_criticality_level);
+      }
+
+      if (client_id) {
+        assetsQuery = assetsQuery.eq('client_id', client_id);
+      }
+
+      if (keywords && keywords.length > 0) {
+        const keywordFilters = keywords.map((kw: string) => 
+          `asset_name.ilike.%${kw}%,description.ilike.%${kw}%`
+        ).join(',');
+        assetsQuery = assetsQuery.or(keywordFilters);
+      }
+
+      // If querying by vulnerability_id, find affected assets first
+      if (vulnerability_id) {
+        const { data: vulnData } = await supabaseClient
+          .from('asset_vulnerabilities')
+          .select('asset_id')
+          .ilike('vulnerability_id', `%${vulnerability_id}%`);
+
+        if (vulnData && vulnData.length > 0) {
+          const assetIds = [...new Set(vulnData.map((v: any) => v.asset_id))];
+          assetsQuery = assetsQuery.in('id', assetIds);
+        } else {
+          return {
+            query_type,
+            results: [],
+            summary: `No assets found with vulnerability ${vulnerability_id}`,
+            total_count: 0,
+            filters_applied: { vulnerability_id }
+          };
+        }
+      }
+
+      assetsQuery = assetsQuery.limit(limit);
+
+      const { data: assetsData, error: assetsError } = await assetsQuery;
+
+      if (assetsError) {
+        console.error('[query_internal_context] Query error:', assetsError);
+        throw assetsError;
+      }
+
+      // Transform results
+      const results = (assetsData || []).map((asset: any) => {
+        const configDetails = asset.configuration_details || {};
+        
+        return {
+          asset_id: asset.id,
+          asset_name: asset.asset_name,
+          asset_type: asset.asset_type,
+          description: asset.description,
+          location: asset.location,
+          owner_team: asset.owner_team,
+          business_criticality: asset.business_criticality,
+          configuration_details: {
+            os: configDetails.os,
+            software_installed: configDetails.software_installed || [],
+            network_segment: asset.network_segment,
+            cloud_provider_service: asset.cloud_provider ? `${asset.cloud_provider}/${asset.cloud_service || ''}` : undefined,
+            last_patched_date: asset.last_patched_date,
+            ...configDetails
+          },
+          known_vulnerabilities: (asset.asset_vulnerabilities || []).map((vuln: any) => ({
+            vulnerability_id: vuln.vulnerability_id,
+            severity: vuln.severity,
+            cvss_score: vuln.cvss_score,
+            description: vuln.description,
+            is_active_exploit_known: vuln.is_active_exploit_known,
+            remediation_status: vuln.remediation_status
+          })),
+          last_scanned: asset.last_scanned,
+          tags: asset.tags || [],
+          is_internet_facing: asset.is_internet_facing
+        };
+      });
+
+      // Generate summary
+      const totalAssets = results.length;
+      const criticalAssets = results.filter((r: any) => r.business_criticality === 'mission_critical').length;
+      const highAssets = results.filter((r: any) => r.business_criticality === 'high').length;
+      const totalVulns = results.reduce((acc: number, r: any) => acc + r.known_vulnerabilities.length, 0);
+      const criticalVulns = results.reduce((acc: number, r: any) => 
+        acc + r.known_vulnerabilities.filter((v: any) => v.severity === 'critical').length, 0);
+      const activeExploits = results.reduce((acc: number, r: any) => 
+        acc + r.known_vulnerabilities.filter((v: any) => v.is_active_exploit_known).length, 0);
+      const internetFacing = results.filter((r: any) => r.is_internet_facing).length;
+
+      let summary = '';
+      switch (query_type) {
+        case 'assets':
+          summary = `Found ${totalAssets} assets. ${criticalAssets} mission-critical, ${highAssets} high-criticality. ${internetFacing} internet-facing. ${totalVulns} total vulnerabilities.`;
+          break;
+        case 'vulnerabilities':
+          summary = `Found ${totalAssets} assets with ${totalVulns} vulnerabilities. ${criticalVulns} critical. ${activeExploits} with active exploits. Prioritize internet-facing (${internetFacing}) and mission-critical (${criticalAssets}) systems.`;
+          break;
+        case 'business_criticality':
+          summary = `Business criticality: ${criticalAssets} mission-critical, ${highAssets} high-criticality. ${totalVulns} combined vulnerabilities, ${criticalVulns} critical. ${activeExploits} with active exploits.`;
+          break;
+        case 'comprehensive':
+          summary = `Comprehensive: ${totalAssets} assets. Criticality: ${criticalAssets} mission-critical, ${highAssets} high. Vulnerabilities: ${totalVulns} total, ${criticalVulns} critical, ${activeExploits} with exploits. Attack surface: ${internetFacing} internet-facing.`;
+          break;
+        default:
+          summary = `Query completed with ${totalAssets} results.`;
+      }
+
+      return {
+        query_type,
+        results,
+        summary,
+        total_count: results.length,
+        filters_applied: {
+          asset_id,
+          asset_name,
+          asset_type,
+          vulnerability_id,
+          business_criticality_level,
+          keywords,
+          client_id,
+          limit
+        }
+      };
     }
 
     default:

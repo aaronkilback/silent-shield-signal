@@ -343,6 +343,71 @@ export type Database = {
           },
         ]
       }
+      asset_vulnerabilities: {
+        Row: {
+          affected_component: string | null
+          asset_id: string
+          created_at: string
+          cvss_score: number | null
+          description: string | null
+          discovered_at: string
+          due_date: string | null
+          id: string
+          is_active_exploit_known: boolean | null
+          metadata: Json | null
+          patched_at: string | null
+          remediation_notes: string | null
+          remediation_status: Database["public"]["Enums"]["remediation_status"]
+          severity: Database["public"]["Enums"]["vulnerability_severity"]
+          updated_at: string
+          vulnerability_id: string
+        }
+        Insert: {
+          affected_component?: string | null
+          asset_id: string
+          created_at?: string
+          cvss_score?: number | null
+          description?: string | null
+          discovered_at?: string
+          due_date?: string | null
+          id?: string
+          is_active_exploit_known?: boolean | null
+          metadata?: Json | null
+          patched_at?: string | null
+          remediation_notes?: string | null
+          remediation_status?: Database["public"]["Enums"]["remediation_status"]
+          severity?: Database["public"]["Enums"]["vulnerability_severity"]
+          updated_at?: string
+          vulnerability_id: string
+        }
+        Update: {
+          affected_component?: string | null
+          asset_id?: string
+          created_at?: string
+          cvss_score?: number | null
+          description?: string | null
+          discovered_at?: string
+          due_date?: string | null
+          id?: string
+          is_active_exploit_known?: boolean | null
+          metadata?: Json | null
+          patched_at?: string | null
+          remediation_notes?: string | null
+          remediation_status?: Database["public"]["Enums"]["remediation_status"]
+          severity?: Database["public"]["Enums"]["vulnerability_severity"]
+          updated_at?: string
+          vulnerability_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "asset_vulnerabilities_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "internal_assets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       attachments: {
         Row: {
           created_at: string
@@ -1616,6 +1681,93 @@ export type Database = {
           {
             foreignKeyName: "intelligence_config_updated_by_fkey"
             columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      internal_assets: {
+        Row: {
+          asset_name: string
+          asset_type: Database["public"]["Enums"]["asset_type"]
+          business_criticality: Database["public"]["Enums"]["business_criticality_level"]
+          client_id: string | null
+          cloud_provider: string | null
+          cloud_service: string | null
+          configuration_details: Json | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          is_active: boolean | null
+          is_internet_facing: boolean | null
+          last_patched_date: string | null
+          last_scanned: string | null
+          location: string | null
+          metadata: Json | null
+          network_segment: string | null
+          owner_team: string | null
+          tags: string[] | null
+          updated_at: string
+        }
+        Insert: {
+          asset_name: string
+          asset_type: Database["public"]["Enums"]["asset_type"]
+          business_criticality?: Database["public"]["Enums"]["business_criticality_level"]
+          client_id?: string | null
+          cloud_provider?: string | null
+          cloud_service?: string | null
+          configuration_details?: Json | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_internet_facing?: boolean | null
+          last_patched_date?: string | null
+          last_scanned?: string | null
+          location?: string | null
+          metadata?: Json | null
+          network_segment?: string | null
+          owner_team?: string | null
+          tags?: string[] | null
+          updated_at?: string
+        }
+        Update: {
+          asset_name?: string
+          asset_type?: Database["public"]["Enums"]["asset_type"]
+          business_criticality?: Database["public"]["Enums"]["business_criticality_level"]
+          client_id?: string | null
+          cloud_provider?: string | null
+          cloud_service?: string | null
+          configuration_details?: Json | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_internet_facing?: boolean | null
+          last_patched_date?: string | null
+          last_scanned?: string | null
+          location?: string | null
+          metadata?: Json | null
+          network_segment?: string | null
+          owner_team?: string | null
+          tags?: string[] | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "internal_assets_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "internal_assets_created_by_fkey"
+            columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -3188,6 +3340,18 @@ export type Database = {
     Enums: {
       alert_status: "pending" | "sent" | "delivered" | "failed" | "acknowledged"
       app_role: "admin" | "analyst" | "viewer" | "super_admin"
+      asset_type:
+        | "server"
+        | "database"
+        | "network_device"
+        | "application"
+        | "cloud_resource"
+        | "ot_device"
+        | "workstation"
+        | "container"
+        | "iot_device"
+        | "virtual_machine"
+      business_criticality_level: "mission_critical" | "high" | "medium" | "low"
       entity_type:
         | "person"
         | "organization"
@@ -3221,6 +3385,14 @@ export type Database = {
         | "client_onboarding"
         | "threat_assessment"
         | "custom"
+      remediation_status:
+        | "patch_available"
+        | "patch_pending"
+        | "mitigated"
+        | "patched"
+        | "accepted_risk"
+        | "investigating"
+        | "no_fix_available"
       roe_audience: "INTERNAL" | "CLIENT"
       roe_classification: "PUBLIC" | "CONFIDENTIAL" | "RESTRICTED"
       roe_mode: "STRICT" | "STANDARD"
@@ -3241,6 +3413,12 @@ export type Database = {
         | "communications"
         | "legal"
       validation_status: "PASS" | "WARN" | "FAIL" | "PENDING"
+      vulnerability_severity:
+        | "critical"
+        | "high"
+        | "medium"
+        | "low"
+        | "informational"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -3370,6 +3548,19 @@ export const Constants = {
     Enums: {
       alert_status: ["pending", "sent", "delivered", "failed", "acknowledged"],
       app_role: ["admin", "analyst", "viewer", "super_admin"],
+      asset_type: [
+        "server",
+        "database",
+        "network_device",
+        "application",
+        "cloud_resource",
+        "ot_device",
+        "workstation",
+        "container",
+        "iot_device",
+        "virtual_machine",
+      ],
+      business_criticality_level: ["mission_critical", "high", "medium", "low"],
       entity_type: [
         "person",
         "organization",
@@ -3407,6 +3598,15 @@ export const Constants = {
         "threat_assessment",
         "custom",
       ],
+      remediation_status: [
+        "patch_available",
+        "patch_pending",
+        "mitigated",
+        "patched",
+        "accepted_risk",
+        "investigating",
+        "no_fix_available",
+      ],
       roe_audience: ["INTERNAL", "CLIENT"],
       roe_classification: ["PUBLIC", "CONFIDENTIAL", "RESTRICTED"],
       roe_mode: ["STRICT", "STANDARD"],
@@ -3429,6 +3629,13 @@ export const Constants = {
         "legal",
       ],
       validation_status: ["PASS", "WARN", "FAIL", "PENDING"],
+      vulnerability_severity: [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "informational",
+      ],
     },
   },
 } as const
