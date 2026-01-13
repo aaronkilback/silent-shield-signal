@@ -27,9 +27,8 @@ export const ReprocessDocuments = () => {
   });
 
   const unprocessedDocs = allDocuments?.filter(doc => {
-    const hasNoEntities = !doc.entity_mentions || doc.entity_mentions.length === 0;
     const isProcessed = doc.metadata && (doc.metadata as any).entities_processed;
-    return hasNoEntities && !isProcessed;
+    return !isProcessed;
   }) || [];
 
   const documents = processAll ? allDocuments : unprocessedDocs;
@@ -209,7 +208,8 @@ export const ReprocessDocuments = () => {
                   <ScrollArea className="h-[300px] border rounded-md p-2">
                     <div className="space-y-2">
                       {documents.map((doc, index) => {
-                        const isProcessed = doc.entity_mentions && doc.entity_mentions.length > 0;
+                        const hasBeenProcessed = doc.metadata && (doc.metadata as any).entities_processed;
+                        const entityCount = doc.entity_mentions?.length || 0;
                         const isCurrentlyProcessing = processing && index < processedCount;
                         const isNext = processing && index === processedCount;
                         
@@ -223,19 +223,19 @@ export const ReprocessDocuments = () => {
                               <div className="text-sm font-medium truncate">{doc.filename}</div>
                               <div className="text-xs text-muted-foreground">
                                 {(doc.file_size / (1024 * 1024)).toFixed(2)} MB • {new Date(doc.created_at).toLocaleDateString()}
-                                {doc.entity_mentions && doc.entity_mentions.length > 0 && (
-                                  <span className="ml-2">• {doc.entity_mentions.length} entities found</span>
+                                {entityCount > 0 && (
+                                  <span className="ml-2">• {entityCount} entities found</span>
                                 )}
                               </div>
                             </div>
                             <Badge variant={
                               isCurrentlyProcessing ? "default" : 
                               isNext ? "secondary" :
-                              isProcessed ? "outline" : "destructive"
+                              hasBeenProcessed ? "outline" : "destructive"
                             }>
                               {isCurrentlyProcessing ? "✓ Done" : 
                                isNext ? "Processing..." :
-                               isProcessed ? "Processed" : "Pending"}
+                               hasBeenProcessed ? (entityCount > 0 ? "Processed" : "No entities") : "Pending"}
                             </Badge>
                           </div>
                         );
