@@ -2318,6 +2318,92 @@ export type Database = {
         }
         Relationships: []
       }
+      predictive_threat_models: {
+        Row: {
+          accuracy_score: number | null
+          actual_outcome: string | null
+          client_id: string | null
+          confidence_interval_high: number | null
+          confidence_interval_low: number | null
+          contributing_factors: Json | null
+          created_at: string
+          earliest_estimated_date: string | null
+          expires_at: string | null
+          id: string
+          inhibiting_factors: Json | null
+          key_assumptions: string[] | null
+          latest_estimated_date: string | null
+          model_type: string
+          model_version: string | null
+          predicted_timeframe: string | null
+          prediction_accuracy: number | null
+          probability_score: number
+          target_asset_type: string | null
+          target_location: string | null
+          threat_scenario: string
+          training_data_range: Json | null
+          was_validated: boolean | null
+        }
+        Insert: {
+          accuracy_score?: number | null
+          actual_outcome?: string | null
+          client_id?: string | null
+          confidence_interval_high?: number | null
+          confidence_interval_low?: number | null
+          contributing_factors?: Json | null
+          created_at?: string
+          earliest_estimated_date?: string | null
+          expires_at?: string | null
+          id?: string
+          inhibiting_factors?: Json | null
+          key_assumptions?: string[] | null
+          latest_estimated_date?: string | null
+          model_type: string
+          model_version?: string | null
+          predicted_timeframe?: string | null
+          prediction_accuracy?: number | null
+          probability_score: number
+          target_asset_type?: string | null
+          target_location?: string | null
+          threat_scenario: string
+          training_data_range?: Json | null
+          was_validated?: boolean | null
+        }
+        Update: {
+          accuracy_score?: number | null
+          actual_outcome?: string | null
+          client_id?: string | null
+          confidence_interval_high?: number | null
+          confidence_interval_low?: number | null
+          contributing_factors?: Json | null
+          created_at?: string
+          earliest_estimated_date?: string | null
+          expires_at?: string | null
+          id?: string
+          inhibiting_factors?: Json | null
+          key_assumptions?: string[] | null
+          latest_estimated_date?: string | null
+          model_type?: string
+          model_version?: string | null
+          predicted_timeframe?: string | null
+          prediction_accuracy?: number | null
+          probability_score?: number
+          target_asset_type?: string | null
+          target_location?: string | null
+          threat_scenario?: string
+          training_data_range?: Json | null
+          was_validated?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "predictive_threat_models_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       processing_queue: {
         Row: {
           completed_at: string | null
@@ -2391,6 +2477,98 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "profiles_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      radical_activity_tracking: {
+        Row: {
+          activity_days: string[] | null
+          activity_peak_time: string | null
+          activity_type: string
+          analyst_notes: string | null
+          client_id: string | null
+          correlated_incidents: string[] | null
+          correlated_signals: string[] | null
+          created_at: string
+          credibility_score: number | null
+          escalation_velocity: number | null
+          first_detected_at: string
+          group_identifier: string | null
+          id: string
+          last_updated_at: string | null
+          mentioned_methods: string[] | null
+          mentioned_targets: string[] | null
+          message_volume: number | null
+          operational_indicators: boolean | null
+          participant_count: number | null
+          platform_type: string | null
+          status: string | null
+          threat_keywords: string[] | null
+          threat_level: string | null
+          topic_category: string | null
+          volume_change_pct: number | null
+        }
+        Insert: {
+          activity_days?: string[] | null
+          activity_peak_time?: string | null
+          activity_type: string
+          analyst_notes?: string | null
+          client_id?: string | null
+          correlated_incidents?: string[] | null
+          correlated_signals?: string[] | null
+          created_at?: string
+          credibility_score?: number | null
+          escalation_velocity?: number | null
+          first_detected_at?: string
+          group_identifier?: string | null
+          id?: string
+          last_updated_at?: string | null
+          mentioned_methods?: string[] | null
+          mentioned_targets?: string[] | null
+          message_volume?: number | null
+          operational_indicators?: boolean | null
+          participant_count?: number | null
+          platform_type?: string | null
+          status?: string | null
+          threat_keywords?: string[] | null
+          threat_level?: string | null
+          topic_category?: string | null
+          volume_change_pct?: number | null
+        }
+        Update: {
+          activity_days?: string[] | null
+          activity_peak_time?: string | null
+          activity_type?: string
+          analyst_notes?: string | null
+          client_id?: string | null
+          correlated_incidents?: string[] | null
+          correlated_signals?: string[] | null
+          created_at?: string
+          credibility_score?: number | null
+          escalation_velocity?: number | null
+          first_detected_at?: string
+          group_identifier?: string | null
+          id?: string
+          last_updated_at?: string | null
+          mentioned_methods?: string[] | null
+          mentioned_targets?: string[] | null
+          message_volume?: number | null
+          operational_indicators?: boolean | null
+          participant_count?: number | null
+          platform_type?: string | null
+          status?: string | null
+          threat_keywords?: string[] | null
+          threat_level?: string | null
+          topic_category?: string | null
+          volume_change_pct?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "radical_activity_tracking_client_id_fkey"
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
@@ -2534,6 +2712,115 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sentiment_tracking: {
+        Row: {
+          alert_reason: string | null
+          alert_triggered: boolean | null
+          asset_id: string | null
+          client_id: string | null
+          created_at: string
+          entity_id: string | null
+          geo_coordinates: unknown
+          id: string
+          location_name: string
+          location_type: string | null
+          measurement_period_end: string
+          measurement_period_start: string
+          mention_count: number | null
+          negative_mention_count: number | null
+          neutral_mention_count: number | null
+          overall_sentiment: string | null
+          positive_mention_count: number | null
+          previous_sentiment_score: number | null
+          radius_km: number | null
+          sample_mentions: Json | null
+          sentiment_score: number | null
+          sentiment_volatility: number | null
+          source_breakdown: Json | null
+          top_keywords: string[] | null
+          trend_direction: string | null
+          trend_velocity: number | null
+        }
+        Insert: {
+          alert_reason?: string | null
+          alert_triggered?: boolean | null
+          asset_id?: string | null
+          client_id?: string | null
+          created_at?: string
+          entity_id?: string | null
+          geo_coordinates?: unknown
+          id?: string
+          location_name: string
+          location_type?: string | null
+          measurement_period_end: string
+          measurement_period_start: string
+          mention_count?: number | null
+          negative_mention_count?: number | null
+          neutral_mention_count?: number | null
+          overall_sentiment?: string | null
+          positive_mention_count?: number | null
+          previous_sentiment_score?: number | null
+          radius_km?: number | null
+          sample_mentions?: Json | null
+          sentiment_score?: number | null
+          sentiment_volatility?: number | null
+          source_breakdown?: Json | null
+          top_keywords?: string[] | null
+          trend_direction?: string | null
+          trend_velocity?: number | null
+        }
+        Update: {
+          alert_reason?: string | null
+          alert_triggered?: boolean | null
+          asset_id?: string | null
+          client_id?: string | null
+          created_at?: string
+          entity_id?: string | null
+          geo_coordinates?: unknown
+          id?: string
+          location_name?: string
+          location_type?: string | null
+          measurement_period_end?: string
+          measurement_period_start?: string
+          mention_count?: number | null
+          negative_mention_count?: number | null
+          neutral_mention_count?: number | null
+          overall_sentiment?: string | null
+          positive_mention_count?: number | null
+          previous_sentiment_score?: number | null
+          radius_km?: number | null
+          sample_mentions?: Json | null
+          sentiment_score?: number | null
+          sentiment_volatility?: number | null
+          source_breakdown?: Json | null
+          top_keywords?: string[] | null
+          trend_direction?: string | null
+          trend_velocity?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sentiment_tracking_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "internal_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sentiment_tracking_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sentiment_tracking_entity_id_fkey"
+            columns: ["entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
             referencedColumns: ["id"]
           },
         ]
@@ -3124,6 +3411,185 @@ export type Database = {
             columns: ["roe_id"]
             isOneToOne: false
             referencedRelation: "rules_of_engagement"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      threat_precursor_indicators: {
+        Row: {
+          activity_trend: string | null
+          client_id: string | null
+          confidence_score: number | null
+          created_at: string
+          description: string | null
+          first_detected_at: string
+          geo_coordinates: unknown
+          geo_location: string | null
+          id: string
+          indicator_name: string
+          indicator_type: string
+          is_validated: boolean | null
+          last_activity_at: string | null
+          occurrence_count: number | null
+          severity_level: string | null
+          source_entities: string[] | null
+          source_signals: string[] | null
+          source_type: string | null
+          status: string | null
+          target_type: string | null
+          threat_category: string | null
+          updated_at: string
+          urgency_level: string | null
+          validated_at: string | null
+          validated_by: string | null
+        }
+        Insert: {
+          activity_trend?: string | null
+          client_id?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          description?: string | null
+          first_detected_at?: string
+          geo_coordinates?: unknown
+          geo_location?: string | null
+          id?: string
+          indicator_name: string
+          indicator_type: string
+          is_validated?: boolean | null
+          last_activity_at?: string | null
+          occurrence_count?: number | null
+          severity_level?: string | null
+          source_entities?: string[] | null
+          source_signals?: string[] | null
+          source_type?: string | null
+          status?: string | null
+          target_type?: string | null
+          threat_category?: string | null
+          updated_at?: string
+          urgency_level?: string | null
+          validated_at?: string | null
+          validated_by?: string | null
+        }
+        Update: {
+          activity_trend?: string | null
+          client_id?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          description?: string | null
+          first_detected_at?: string
+          geo_coordinates?: unknown
+          geo_location?: string | null
+          id?: string
+          indicator_name?: string
+          indicator_type?: string
+          is_validated?: boolean | null
+          last_activity_at?: string | null
+          occurrence_count?: number | null
+          severity_level?: string | null
+          source_entities?: string[] | null
+          source_signals?: string[] | null
+          source_type?: string | null
+          status?: string | null
+          target_type?: string | null
+          threat_category?: string | null
+          updated_at?: string
+          urgency_level?: string | null
+          validated_at?: string | null
+          validated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "threat_precursor_indicators_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "threat_precursor_indicators_validated_by_fkey"
+            columns: ["validated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      threat_radar_snapshots: {
+        Row: {
+          ai_analysis_summary: string | null
+          client_id: string | null
+          created_at: string
+          critical_assets_at_risk: string[] | null
+          data_sources: string[] | null
+          expires_at: string | null
+          id: string
+          infrastructure_risk_score: number | null
+          key_indicators: Json | null
+          overall_threat_level: string
+          precursor_activity_score: number | null
+          precursor_patterns_detected: number | null
+          predicted_escalation_probability: number | null
+          predicted_timeline_hours: number | null
+          radical_activity_score: number | null
+          radical_mentions_count: number | null
+          recommended_actions: Json | null
+          sentiment_shift_detected: boolean | null
+          sentiment_volatility_score: number | null
+          snapshot_type: string
+          threat_score: number
+        }
+        Insert: {
+          ai_analysis_summary?: string | null
+          client_id?: string | null
+          created_at?: string
+          critical_assets_at_risk?: string[] | null
+          data_sources?: string[] | null
+          expires_at?: string | null
+          id?: string
+          infrastructure_risk_score?: number | null
+          key_indicators?: Json | null
+          overall_threat_level?: string
+          precursor_activity_score?: number | null
+          precursor_patterns_detected?: number | null
+          predicted_escalation_probability?: number | null
+          predicted_timeline_hours?: number | null
+          radical_activity_score?: number | null
+          radical_mentions_count?: number | null
+          recommended_actions?: Json | null
+          sentiment_shift_detected?: boolean | null
+          sentiment_volatility_score?: number | null
+          snapshot_type?: string
+          threat_score?: number
+        }
+        Update: {
+          ai_analysis_summary?: string | null
+          client_id?: string | null
+          created_at?: string
+          critical_assets_at_risk?: string[] | null
+          data_sources?: string[] | null
+          expires_at?: string | null
+          id?: string
+          infrastructure_risk_score?: number | null
+          key_indicators?: Json | null
+          overall_threat_level?: string
+          precursor_activity_score?: number | null
+          precursor_patterns_detected?: number | null
+          predicted_escalation_probability?: number | null
+          predicted_timeline_hours?: number | null
+          radical_activity_score?: number | null
+          radical_mentions_count?: number | null
+          recommended_actions?: Json | null
+          sentiment_shift_detected?: boolean | null
+          sentiment_volatility_score?: number | null
+          snapshot_type?: string
+          threat_score?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "threat_radar_snapshots_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
             referencedColumns: ["id"]
           },
         ]
