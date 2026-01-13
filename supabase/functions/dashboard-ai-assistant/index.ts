@@ -5349,23 +5349,26 @@ serve(async (req) => {
       let resolvedClientId = client_id;
       
       if (client_name && !client_id) {
-        console.log(`Looking up client_id for: ${client_name}`);
+        // Strip surrounding quotes that AI may include (e.g., '"Petronas Canada"' -> 'Petronas Canada')
+        const cleanClientName = String(client_name).replace(/^["']+|["']+$/g, '').trim();
+        console.log(`Looking up client_id for: ${cleanClientName} (original: ${client_name})`);
+        
         const { data: clientData, error: clientError } = await supabaseClient
           .from('clients')
           .select('id, name')
-          .ilike('name', `%${client_name}%`)
+          .ilike('name', `%${cleanClientName}%`)
           .limit(1)
           .single();
         
         if (clientError || !clientData) {
           return {
             error: "Client not found",
-            message: `Could not find client matching '${client_name}'. Please check the client name and try again.`,
+            message: `Could not find client matching '${cleanClientName}'. Available clients can be found using search_clients tool.`,
           };
         }
         
         resolvedClientId = clientData.id;
-        console.log(`Resolved client '${client_name}' to UUID: ${resolvedClientId}`);
+        console.log(`Resolved client '${cleanClientName}' to UUID: ${resolvedClientId}`);
       }
       
       if (!resolvedClientId) {
