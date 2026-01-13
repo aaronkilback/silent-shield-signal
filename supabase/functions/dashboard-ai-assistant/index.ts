@@ -6436,8 +6436,29 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
       console.log(`Creating new agent: ${codename} (${call_sign})`);
 
-      const { data, error } = await supabaseClient.functions.invoke("create-agent", {
-        body: {
+      // IMPORTANT: Avoid supabaseClient.functions.invoke() here.
+      // functions.invoke throws FunctionsHttpError on non-2xx which often gets surfaced as a generic
+      // "Edge Function returned a non-2xx status code" without the JSON body.
+      // We use fetch so we can always return the actual status + body to the agent.
+      const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+      const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+      if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+        return {
+          error: "Missing backend configuration",
+          message: "SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured",
+          status: 500,
+        };
+      }
+
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/create-agent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+        },
+        body: JSON.stringify({
           codename,
           call_sign,
           persona,
@@ -6451,38 +6472,28 @@ The signal is now in the database with status 'triaged' and rules have been appl
           avatar_color,
           system_prompt,
           requested_by,
-        },
+        }),
       });
 
-      if (error) {
-        // Compatibility: some regions may still return 409 for "already exists".
-        // When that happens, try to surface the JSON body so the caller can retrieve the existing agent id.
-        const anyErr: any = error;
-        const status = anyErr?.context?.status;
+      const rawText = await res.text();
+      let body: any = null;
+      try {
+        body = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        body = { raw: rawText };
+      }
 
-        if (status === 409 && anyErr?.context) {
-          try {
-            const body = await anyErr.context.json();
-            return {
-              success: true,
-              already_exists: true,
-              ...body,
-              message: body?.message || "Agent already exists (409).",
-            };
-          } catch {
-            // fall through
-          }
-        }
-
-        console.error("Error creating agent:", error);
+      if (!res.ok) {
+        console.error("create-agent non-2xx response:", res.status, body);
         return {
-          error: anyErr?.message || "Failed to create agent",
-          status,
-          message: `Failed to create agent: ${anyErr?.message || "Unknown error"}`,
+          success: false,
+          status: res.status,
+          ...body,
+          message: body?.message || body?.error || `create-agent failed (${res.status})`,
         };
       }
 
-      return data;
+      return body;
     }
 
     default:
