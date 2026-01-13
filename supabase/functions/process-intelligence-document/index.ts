@@ -439,8 +439,9 @@ Extract all entities, signals, and their relationships.`
           .limit(50);
         
         // Simple similarity check - if any recent signal contains 80% of the same words, skip
+        let isNearDuplicate = false;
         if (recentSignals && recentSignals.length > 0) {
-          const signalWords = new Set(signal.description.toLowerCase().split(/\s+/));
+          const signalWords = new Set((signal.description || '').toLowerCase().split(/\s+/));
           for (const existing of recentSignals) {
             if (!existing.normalized_text) continue;
             const existingWords = new Set(existing.normalized_text.toLowerCase().split(/\s+/));
@@ -449,9 +450,15 @@ Extract all entities, signals, and their relationships.`
             
             if (similarity > 0.8) {
               console.log(`Skipping near-duplicate signal (${(similarity * 100).toFixed(0)}% similar): ${signal.title}`);
-              continue;
+              isNearDuplicate = true;
+              break; // Exit the comparison loop
             }
           }
+        }
+        
+        // CRITICAL FIX: Skip to next client if near-duplicate found
+        if (isNearDuplicate) {
+          continue; // Skip to next clientMatch
         }
 
         const { data: newSignal, error: signalError } = await supabase
