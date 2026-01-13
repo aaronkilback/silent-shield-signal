@@ -8,8 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Loader2, AlertTriangle, Search, Filter, ClipboardList } from "lucide-react";
+import { Loader2, AlertTriangle, Search, Filter, ClipboardList, Trash2 } from "lucide-react";
 import { IncidentActionDialog } from "@/components/IncidentActionDialog";
+import { DeleteIncidentDialog } from "@/components/DeleteIncidentDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { DashboardClientSelector } from "@/components/DashboardClientSelector";
@@ -47,6 +48,7 @@ const Incidents = () => {
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [reloadTrigger, setReloadTrigger] = useState(0);
   const [creatingInvestigation, setCreatingInvestigation] = useState<string | null>(null);
+  const [deleteIncident, setDeleteIncident] = useState<Incident | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -421,6 +423,17 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
                         <Button variant="outline" size="sm">
                           View Details
                         </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteIncident(incident);
+                          }}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
                       </div>
                     </div>
                   </div>
@@ -442,6 +455,14 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
           }}
         />
       )}
+
+      <DeleteIncidentDialog
+        incidentId={deleteIncident?.id || ""}
+        clientName={deleteIncident?.clients?.name}
+        open={!!deleteIncident}
+        onOpenChange={(open) => !open && setDeleteIncident(null)}
+        onDeleted={() => setReloadTrigger((prev) => prev + 1)}
+      />
     </div>
   );
 };
