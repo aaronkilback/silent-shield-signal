@@ -20,15 +20,140 @@ function uint8ToBase64(uint8: Uint8Array): string {
   return btoa(result);
 }
 
-// OCR using Gemini Vision for scanned/image-based PDFs
-// Maximum PDF size for OCR (10MB - larger files will exceed memory limits)
-const MAX_OCR_PDF_SIZE = 10 * 1024 * 1024;
+// Maximum file size for AI extraction (10MB - larger files will exceed memory limits)
+const MAX_AI_EXTRACT_SIZE = 10 * 1024 * 1024;
 
+// Word document MIME types
+const WORD_MIME_TYPES = [
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+  'application/msword', // .doc
+  'application/vnd.ms-word',
+];
+
+function isWordDocument(fileType: string, filename?: string): boolean {
+  if (WORD_MIME_TYPES.some(mime => fileType.includes(mime))) return true;
+  if (filename) {
+    const lower = filename.toLowerCase();
+    return lower.endsWith('.docx') || lower.endsWith('.doc');
+  }
+  return false;
+}
+
+// Extract text from Word documents using AI
+async function extractTextFromWord(blob: Blob, apiKey: string, filename?: string): Promise<string> {
+  console.log('Starting Word document text extraction using Gemini Vision...');
+  
+  if (blob.size > MAX_AI_EXTRACT_SIZE) {
+    const sizeMB = (blob.size / (1024 * 1024)).toFixed(1);
+    throw new Error(`Word document is too large (${sizeMB}MB). Maximum supported size is 10MB.`);
+  }
+  
+  // Convert to base64
+  const arrayBuffer = await blob.arrayBuffer();
+  const uint8Array = new Uint8Array(arrayBuffer);
+  const base64Doc = uint8ToBase64(uint8Array);
+  
+  console.log(`Word document size: ${blob.size} bytes`);
+  
+  // Determine MIME type
+  const mimeType = filename?.toLowerCase().endsWith('.doc') 
+    ? 'application/msword' 
+    : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  
+  const maxRetries = 3;
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`Word extraction attempt ${attempt}/${maxRetries}...`);
+      
+      const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.5-pro',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: `You are a document text extractor. Extract ALL text from this Word document.
+
+INSTRUCTIONS:
+- Extract every word, number, and piece of text from the document
+- Preserve the general structure (paragraphs, sections, headers, bullet points)
+- Include tables, lists, and any formatted content
+- Do NOT summarize or interpret - just extract the raw text
+- Maintain the reading order (top to bottom)
+- If there are multiple sections or pages, extract text from all of them
+
+Output ONLY the extracted text, nothing else.`
+                },
+                {
+                  type: 'image_url',
+                  image_url: {
+                    url: `data:${mimeType};base64,${base64Doc}`
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Word extraction attempt ${attempt} failed:`, response.status, errorText.slice(0, 300));
+        
+        if (response.status >= 500 && attempt < maxRetries) {
+          console.log(`Retrying after ${attempt * 2} seconds...`);
+          await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+          continue;
+        }
+        
+        throw new Error(`AI service temporarily unavailable (${response.status}). Please try again in a few minutes.`);
+      }
+
+      const result = await response.json();
+      const extractedText = result.choices?.[0]?.message?.content || '';
+      
+      if (!extractedText || extractedText.length < 50) {
+        throw new Error('Could not extract sufficient text from Word document. The file may be corrupted or empty.');
+      }
+      
+      console.log(`Word extraction successful: ${extractedText.length} characters`);
+      return normalizeExtractedText(extractedText);
+      
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      
+      if (lastError.message.includes('insufficient') || lastError.message.includes('corrupted')) {
+        throw lastError;
+      }
+      
+      if (attempt < maxRetries) {
+        console.log(`Retrying after error: ${lastError.message.slice(0, 100)}`);
+        await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+        continue;
+      }
+      
+      throw lastError;
+    }
+  }
+  
+  throw lastError || new Error('Word extraction failed after all retries');
+}
+
+// OCR using Gemini Vision for scanned/image-based PDFs
 async function extractTextWithOCR(pdfBlob: Blob, apiKey: string): Promise<string> {
   console.log('Starting OCR extraction using Gemini Vision...');
   
   // Check file size before processing
-  if (pdfBlob.size > MAX_OCR_PDF_SIZE) {
+  if (pdfBlob.size > MAX_AI_EXTRACT_SIZE) {
     const sizeMB = (pdfBlob.size / (1024 * 1024)).toFixed(1);
     throw new Error(`PDF is too large for OCR (${sizeMB}MB). Maximum supported size is 10MB. Please try uploading a smaller document or a PDF with selectable text.`);
   }
@@ -390,10 +515,33 @@ serve(async (req) => {
             const errorMsg = pdfError instanceof Error ? pdfError.message : 'Unknown error';
             throw new Error(`Failed to parse PDF: ${errorMsg}`);
           }
+        } else if (isWordDocument(doc.file_type, doc.filename)) {
+          // Word document extraction
+          console.log('Extracting text from Word document using AI...');
+          try {
+            content = await extractTextFromWord(fileData, LOVABLE_API_KEY, doc.filename);
+            console.log(`Extracted ${content.length} characters from Word document`);
+            
+            // Update metadata to indicate AI extraction was used
+            await supabase
+              .from('archival_documents')
+              .update({
+                metadata: {
+                  ...(doc.metadata ?? {}),
+                  ai_extraction_used: true,
+                  extraction_date: new Date().toISOString()
+                }
+              })
+              .eq('id', documentId);
+          } catch (wordError) {
+            console.error('Word extraction failed:', wordError);
+            const errorMsg = wordError instanceof Error ? wordError.message : 'Unknown error';
+            throw new Error(`Failed to extract text from Word document: ${errorMsg}`);
+          }
         } else if (doc.file_type.includes('text')) {
           content = await fileData.text();
         } else {
-          throw new Error(`Unsupported file type: ${doc.file_type}. Please upload PDF or text files.`);
+          throw new Error(`Unsupported file type: ${doc.file_type}. Please upload PDF, Word (.docx/.doc), or text files.`);
         }
 
         // Update document with extracted text
