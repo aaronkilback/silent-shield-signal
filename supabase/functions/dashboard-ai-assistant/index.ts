@@ -6501,12 +6501,13 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
 
       // Defensive verification: ensure the agent actually exists in the database.
-      // This prevents false-positive "success" responses if the downstream function misbehaves.
+      // Use service-role client for verification to bypass RLS (user may not have admin role).
       const createdId = body?.agent?.id || body?.agent_id || body?.id;
       if (createdId) {
-        const { data: verify, error: verifyError } = await supabaseClient
+        const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+        const { data: verify, error: verifyError } = await serviceClient
           .from("ai_agents")
-          .select("id")
+          .select("id, header_name, codename, call_sign")
           .eq("id", createdId)
           .maybeSingle();
 
@@ -6521,6 +6522,8 @@ The signal is now in the database with status 'triaged' and rules have been appl
             create_agent_response: body,
           };
         }
+
+        console.log(`Agent verified in database: ${verify.header_name || verify.codename} (${verify.call_sign}) - ID: ${verify.id}`);
       }
 
       return body;
