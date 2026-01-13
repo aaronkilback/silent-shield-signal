@@ -32,13 +32,15 @@ serve(async (req) => {
 
     console.log(`Scanning for photos of: ${entity.name} (${entity.type})`);
 
-    // Get ALL existing photos to use as references
+    // Get ONLY approved photos (positive feedback) to use as references
+    // This prevents propagating initial incorrect matches
     const { data: existingPhotos } = await supabaseClient
       .from('entity_photos')
       .select('storage_path, feedback_rating, source')
       .eq('entity_id', entityId)
+      .eq('feedback_rating', 1) // Only use photos that user has approved
       .order('created_at', { ascending: false })
-      .limit(10); // Load up to 10 reference photos
+      .limit(5); // Limit to 5 approved reference photos
     
     // Get all photos with feedback for learning patterns
     const { data: allPhotosWithFeedback } = await supabaseClient
@@ -321,10 +323,10 @@ serve(async (req) => {
             }
             
             if (referenceImages.length > 0) {
-              // Compare with multiple reference photos
+              // Compare with user-approved reference photos
               verificationPrompt = entity.type === 'person'
-                ? `I'm showing you ${referenceImages.length} reference photo(s) of the same person, followed by a new candidate photo. Does the candidate photo (the LAST image) show the SAME PERSON as the reference photos? Answer YES only if they are clearly the same person. Answer NO if different, or if the candidate is a logo, illustration, or unrelated.${feedbackContext}`
-                : `I'm showing you ${referenceImages.length} reference photo(s), followed by a new candidate. Does the candidate (the LAST image) show the SAME organization/entity as the references? Answer YES only if they match. Answer NO if different or unrelated.${feedbackContext}`;
+                ? `I'm showing you ${referenceImages.length} user-approved reference photo(s) of "${entity.name}", followed by a new candidate photo. Does the candidate photo (the LAST image) show the SAME PERSON as the reference photos? Answer YES only if they are clearly the same person with matching facial features. Answer NO if different person, or if the candidate is a logo, illustration, or unrelated.${feedbackContext}`
+                : `I'm showing you ${referenceImages.length} user-approved reference photo(s) of "${entity.name}", followed by a new candidate. Does the candidate (the LAST image) show the SAME organization/entity as the references? Answer YES only if they match. Answer NO if different or unrelated.${feedbackContext}`;
               
               aiContent.push({ type: 'text', text: verificationPrompt });
               
@@ -342,10 +344,28 @@ serve(async (req) => {
                 image_url: { url: `data:${mimeType};base64,${base64Image}` }
               });
             } else {
-              // No reference - use generic check with feedback context
+              // No user-approved reference photos - require name verification from image context
+              // Be VERY strict: only approve if the image clearly identifies the person by name
               verificationPrompt = entity.type === 'person' 
-                ? `Is this a professional photo of a real person (headshot, portrait, or profile photo)? Answer YES if it shows a clear photo of a person's face. Answer NO if it's a logo, illustration, group photo, stock image, or unrelated content.${feedbackContext}`
-                : `Is this a professional photo or logo of an organization/company? Answer YES if it's a clear organizational image. Answer NO if it's unrelated, stock, or illustration.${feedbackContext}`;
+                ? `This image was found in a web search for "${entity.name}". 
+
+CRITICAL: You must verify this is actually a photo OF "${entity.name}" specifically, not just any person.
+
+Look for:
+- Text/captions in or near the image mentioning "${entity.name}"
+- LinkedIn profile photos where the name "${entity.name}" is visible
+- News article photos with caption mentioning "${entity.name}"
+- Corporate headshots with name overlay
+
+Answer YES ONLY if you can confirm this specific image is of "${entity.name}".
+Answer NO if:
+- It could be any random person
+- The name doesn't match or isn't visible
+- It's a logo, illustration, stock photo, or group photo
+- You cannot verify the identity from the image itself
+
+When in doubt, answer NO.${feedbackContext}`
+                : `Is this a professional photo or logo of the organization "${entity.name}"? Answer YES if it clearly represents "${entity.name}". Answer NO if it's unrelated, stock, or doesn't match the organization name.${feedbackContext}`;
               
               aiContent.push(
                 { type: 'text', text: verificationPrompt },
