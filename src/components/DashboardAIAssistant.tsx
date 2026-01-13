@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { useAuth } from "@/hooks/useAuth";
+import { useUserRole } from "@/hooks/useUserRole";
 
 type Message = {
   role: "user" | "assistant";
@@ -20,6 +21,7 @@ export const DashboardAIAssistant = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, loading: authLoading } = useAuth();
+  const { isAdmin, isSuperAdmin } = useUserRole();
   const STORAGE_KEY = "fortress-ai-chat-history";
   
   const [messages, setMessages] = useState<Message[]>([]);
@@ -496,16 +498,187 @@ export const DashboardAIAssistant = () => {
 • "Search for open bugs"
 • "Analyze edge function errors"
 • "Diagnose issue with [feature]"
-• "Create fix proposal for bug [id]"`,
+• "Create fix proposal for bug [id]"
+
+🔧 **Admin Commands:**
+• \`/inject-test client="Name" text="Signal text" severity="medium"\` - Direct signal injection (bypasses AI)`,
       };
+
       
       setMessages([...messages, { role: "user", content: input }, helpMessage]);
       setInput("");
       return;
     }
 
+    // Handle "/inject-test" command - deterministic bypass for admins
+    if (input.trim().toLowerCase().startsWith('/inject-test') && attachments.length === 0) {
+      if (!isAdmin && !isSuperAdmin) {
+        const errorMsg: Message = {
+          role: "assistant",
+          content: "❌ **Permission Denied**\n\nThe `/inject-test` command is restricted to Admin and Super Admin users only.",
+        };
+        setMessages([...messages, { role: "user", content: input }, errorMsg]);
+        await saveMessageToDb({ role: "user", content: input });
+        await saveMessageToDb(errorMsg);
+        setInput("");
+        return;
+      }
+
+      // Parse command: /inject-test client="Name" text="Signal text" severity="medium"
+      const cmdInput = input.trim();
+      const clientMatch = cmdInput.match(/client\s*=\s*["']([^"']+)["']/i);
+      const textMatch = cmdInput.match(/text\s*=\s*["']([^"']+)["']/i);
+      const severityMatch = cmdInput.match(/severity\s*=\s*["']?(critical|high|medium|low)["']?/i);
+
+      if (!clientMatch || !textMatch) {
+        const helpMsg: Message = {
+          role: "assistant",
+          content: `**📋 /inject-test Command Usage (Admins Only)**
+
+This command **bypasses the AI entirely** and directly injects a test signal into the database.
+
+**Syntax:**
+\`\`\`
+/inject-test client="Client Name" text="Signal headline or text" severity="medium"
+\`\`\`
+
+**Parameters:**
+- \`client\` (required): Client name (e.g., "Petronas Canada")
+- \`text\` (required): Signal content/headline
+- \`severity\` (optional): critical, high, medium (default), or low
+
+**Examples:**
+\`\`\`
+/inject-test client="Petronas Canada" text="Test: Pipeline security alert near Fort St. John"
+/inject-test client="Dan Martell" text="Test: Social media threat detected" severity="high"
+\`\`\`
+
+**After injection:**
+1. Navigate to /signals
+2. Select the correct client from the dropdown
+3. Signal should appear immediately (refresh if needed)`,
+        };
+        setMessages([...messages, { role: "user", content: input }, helpMsg]);
+        await saveMessageToDb({ role: "user", content: input });
+        await saveMessageToDb(helpMsg);
+        setInput("");
+        return;
+      }
+
+      const clientName = clientMatch[1];
+      const signalText = textMatch[1];
+      const severity = (severityMatch?.[1] || "medium").toLowerCase();
+
+      // Show processing message
+      const processingMsg: Message = { role: "user", content: input };
+      setMessages([...messages, processingMsg]);
+      await saveMessageToDb(processingMsg);
+      setIsLoading(true);
+
+      try {
+        // Step 1: Look up client ID
+        const { data: clientData, error: clientError } = await supabase
+          .from('clients')
+          .select('id, name')
+          .ilike('name', `%${clientName}%`)
+          .limit(1)
+          .single();
+
+        if (clientError || !clientData) {
+          const errorMsg: Message = {
+            role: "assistant",
+            content: `❌ **Client Not Found**\n\nCould not find a client matching "${clientName}".\n\nPlease check the client name and try again.`,
+          };
+          setMessages(prev => [...prev, errorMsg]);
+          await saveMessageToDb(errorMsg);
+          setIsLoading(false);
+          setInput("");
+          return;
+        }
+
+        console.log(`[/inject-test] Found client: ${clientData.name} (${clientData.id})`);
+
+        // Step 2: Call ingest-signal edge function directly
+        const uniqueId = Date.now();
+        const fullText = `${signalText} [DirectInject:${uniqueId}]`;
+
+        const { data: ingestResult, error: ingestError } = await supabase.functions.invoke('ingest-signal', {
+          body: {
+            text: fullText,
+            client_id: clientData.id,
+            severity,
+            category: 'test',
+            is_test: true,
+          },
+        });
+
+        if (ingestError) {
+          console.error('[/inject-test] Ingest error:', ingestError);
+          const errorMsg: Message = {
+            role: "assistant",
+            content: `❌ **Injection Failed**\n\nError calling ingest-signal: ${ingestError.message}\n\nCheck edge function logs for details.`,
+          };
+          setMessages(prev => [...prev, errorMsg]);
+          await saveMessageToDb(errorMsg);
+          setIsLoading(false);
+          setInput("");
+          return;
+        }
+
+        console.log('[/inject-test] Ingest result:', ingestResult);
+
+        // Step 3: Verify signal exists in database
+        const signalId = ingestResult?.signal_id;
+        let verificationResult = null;
+
+        if (signalId) {
+          const { data: signalCheck } = await supabase
+            .from('signals')
+            .select('id, normalized_text, client_id, status, created_at')
+            .eq('id', signalId)
+            .single();
+          verificationResult = signalCheck;
+        }
+
+        const successMsg: Message = {
+          role: "assistant",
+          content: `✅ **Signal Injected Successfully**
+
+**Signal ID:** \`${signalId}\`
+**Client:** ${clientData.name}
+**Severity:** ${severity}
+**Text:** ${signalText}
+
+**Database Verification:** ${verificationResult ? '✅ CONFIRMED - Signal exists in database' : '⚠️ Could not verify (check manually)'}
+
+**To view the signal:**
+1. Navigate to [Signals Page](/signals)
+2. Select "${clientData.name}" from the client dropdown
+3. Signal should appear at the top of the feed
+
+If not visible, try: **Ctrl+Shift+R** (hard refresh)`,
+        };
+        setMessages(prev => [...prev, successMsg]);
+        await saveMessageToDb(successMsg);
+        toast.success(`Signal injected: ${signalId?.slice(0, 8)}...`);
+
+      } catch (error) {
+        console.error('[/inject-test] Unexpected error:', error);
+        const errorMsg: Message = {
+          role: "assistant",
+          content: `❌ **Unexpected Error**\n\n${error instanceof Error ? error.message : 'Unknown error occurred'}\n\nCheck console for details.`,
+        };
+        setMessages(prev => [...prev, errorMsg]);
+        await saveMessageToDb(errorMsg);
+      } finally {
+        setIsLoading(false);
+        setInput("");
+      }
+      return;
+    }
+
     let userMessage = input.trim();
-    
+
     // Upload files if present
     if (attachments.length > 0) {
       const { urls: uploadedUrls, documentIds } = await uploadFiles();
