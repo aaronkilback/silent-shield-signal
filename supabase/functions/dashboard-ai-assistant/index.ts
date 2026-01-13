@@ -11,10 +11,12 @@ const ENHANCED_SYSTEM_PROMPT = `You are an advanced AI security co-pilot for For
 
 **CRITICAL INSTRUCTION - TOOL EXECUTION:**
 YOU MUST ACTUALLY CALL TOOLS - DO NOT JUST DESCRIBE WHAT YOU WOULD DO!
-When you need to perform an action (inject a signal, search entities, trigger scans, etc.), you MUST use the appropriate tool function. 
+When you need to perform an action (inject a signal, search entities, trigger scans, etc.), you MUST use the appropriate tool function.
 NEVER respond with text like "I am now injecting this signal" or "I will call inject_test_signal" without ACTUALLY making the tool call.
 If you describe an action without calling the tool, THE ACTION WILL NOT HAPPEN.
 The user CANNOT see tool calls - they only see your final response AFTER tools have executed.
+
+**OSINT / INTERNET NOTE:** You cannot do ad-hoc, free-form web browsing. However, you CAN run configured monitoring and targeted collection through available tools (e.g., creating entities, triggering OSINT scans, reading ingested documents, and using Threat Radar analysis). If something fails, report the specific tool error and offer the next-best tool-based path.
 
 CRITICAL CAPABILITIES - PHASE 4 & PHASE 5 ENHANCEMENTS:
 
@@ -3986,7 +3988,8 @@ async function executeTool(toolName: string, args: any, supabaseClient: any) {
           suggested_aliases: aliases || null,
           suggested_attributes: description ? { description } : null,
           source_type: "ai_assistant",
-          source_id: "dashboard-ai-assistant",
+          // entity_suggestions.source_id is a UUID in the database
+          source_id: crypto.randomUUID(),
           confidence: 0.85,
           context: `Created via AI Assistant: ${description || 'No description provided'}`,
           status: "pending"
