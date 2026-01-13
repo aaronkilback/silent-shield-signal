@@ -78,6 +78,17 @@ CRITICAL CAPABILITIES - PHASE 4 & PHASE 5 ENHANCEMENTS:
    - ALWAYS provide comprehensive description including threat context, observations, and initial assessment
    - This automates the hand-off to incident response teams with valuable Fortress AI context
 
+9. PROACTIVE THREAT RADAR (PREDICTIVE INTELLIGENCE):
+   - Use analyze_threat_radar for comprehensive proactive threat assessment and early warning
+   - Correlates: radical group activity spikes, sentiment volatility, precursor indicators, infrastructure risks
+   - Analyzes dark web, surface web, deep web, and social media for emerging threats
+   - Provides escalation probability predictions with timeline estimates
+   - Identifies high-threat entities and critical assets at risk
+   - Geo-locates threat hotspots near critical infrastructure
+   - Enables "seeing around corners" - moving from reactive to PROACTIVE threat neutralization
+   - Use this tool when asked about: threat landscape, emerging risks, early warnings, predictions, proactive monitoring
+   - Returns: threat scores (0-100), predictions, precursor indicators, high-threat entities, critical assets at risk
+
 INTERACTION GUIDELINES:
 - If a query is ambiguous, ask targeted follow-up questions rather than stating inability
 - Build on previous conversation context without requiring users to repeat information
@@ -2232,6 +2243,63 @@ OUTPUT: Returns ticket_id in format INC-YYYY-XXXXXXXX with confirmation message.
           }
         },
         required: ["action", "description", "severity"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "analyze_threat_radar",
+      description: `PROACTIVE THREAT RADAR: Comprehensive proactive threat assessment with predictive intelligence for "seeing around corners."
+
+CAPABILITIES:
+- Correlates radical group activity spikes, sentiment volatility, precursor indicators, and infrastructure risks
+- Analyzes dark web, surface web, deep web, and social media signals for emerging threats
+- Provides escalation probability predictions with timeline estimates
+- Identifies high-threat entities and critical assets at risk
+- Geo-locates threat hotspots near critical infrastructure
+- Returns AI-generated threat forecasts and recommended preemptive actions
+
+USE WHEN ASKED ABOUT:
+- Threat landscape, threat assessment, threat analysis
+- Emerging risks, emerging threats
+- Early warnings, early warning indicators
+- Predictions, predictive analysis, forecasting
+- Proactive monitoring, proactive intelligence
+- "What threats should we be worried about?"
+- "What's the current risk level?"
+- Infrastructure security posture
+
+RETURNS:
+- Overall threat level (critical/high/elevated/moderate/low)
+- Threat scores (0-100): radical_activity, sentiment_volatility, precursor_activity, infrastructure_risk
+- Escalation probability and timeline predictions
+- High-threat entities requiring attention
+- Critical assets at risk
+- Top alerts and geo-located hotspots
+- AI-generated predictive analysis and recommended actions`,
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: {
+            type: "string",
+            description: "Filter analysis to specific client (UUID or name)"
+          },
+          timeframe_hours: {
+            type: "number",
+            description: "Analysis timeframe in hours (default: 168 = 7 days)"
+          },
+          focus_areas: {
+            type: "array",
+            items: { type: "string" },
+            description: "Focus areas: radical_activity, sentiment, precursors, infrastructure"
+          },
+          include_predictions: {
+            type: "boolean",
+            description: "Include AI-powered threat predictions (default: true)"
+          }
+        },
+        required: []
       }
     }
   },
@@ -7220,6 +7288,95 @@ The signal is now in the database with status 'triaged' and rules have been appl
       }
 
       return ticketResult;
+    }
+
+    case "analyze_threat_radar": {
+      const { client_id, timeframe_hours = 168, focus_areas, include_predictions = true } = args;
+      
+      // Resolve client_id if it's a name
+      let resolvedClientId = client_id;
+      if (client_id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(client_id)) {
+        const { data: clientLookup } = await supabaseClient
+          .from("clients")
+          .select("id")
+          .ilike("name", `%${client_id}%`)
+          .limit(1)
+          .single();
+        if (clientLookup) resolvedClientId = clientLookup.id;
+      }
+
+      // Call the threat-radar-analysis edge function
+      const { data: radarResult, error: radarError } = await supabaseClient.functions.invoke(
+        "threat-radar-analysis",
+        {
+          body: {
+            client_id: resolvedClientId,
+            timeframe_hours,
+            focus_areas: focus_areas || ['radical_activity', 'sentiment', 'precursors', 'infrastructure'],
+            include_predictions,
+            generate_snapshot: true
+          },
+        }
+      );
+
+      if (radarError) {
+        console.error("[analyze_threat_radar] Error:", radarError);
+        return {
+          error: `Failed to analyze threat radar: ${radarError.message}`,
+          threat_assessment: { overall_level: "unknown", overall_score: 0 }
+        };
+      }
+
+      // Format response for AI consumption
+      const assessment = radarResult?.threat_assessment || {};
+      const predictions = radarResult?.predictions || {};
+      const intelligence = radarResult?.intelligence_summary || {};
+
+      return {
+        timestamp: radarResult?.timestamp,
+        threat_assessment: {
+          overall_level: assessment.overall_level || "unknown",
+          overall_score: assessment.overall_score || 0,
+          scores: assessment.scores || {},
+          interpretation: assessment.overall_score >= 70 ? "CRITICAL - Immediate attention required" :
+                         assessment.overall_score >= 50 ? "HIGH - Elevated threat environment" :
+                         assessment.overall_score >= 30 ? "MODERATE - Enhanced monitoring recommended" :
+                         "LOW - Normal operations"
+        },
+        predictions: {
+          escalation_probability: predictions.escalation_probability || 0,
+          predicted_timeframe: predictions.predicted_timeframe || "unknown",
+          ai_assessment: predictions.ai_assessment?.substring(0, 3000) || "No prediction available"
+        },
+        intelligence_summary: {
+          total_signals: intelligence.total_signals || 0,
+          dark_web_signals: intelligence.dark_web_signals || 0,
+          radical_signals: intelligence.radical_signals || 0,
+          infrastructure_signals: intelligence.infrastructure_signals || 0,
+          social_media_signals: intelligence.social_media_signals || 0
+        },
+        high_threat_entities: (radarResult?.high_threat_entities || []).slice(0, 5).map((e: any) => ({
+          name: e.name,
+          type: e.type,
+          threat_score: e.threat_score,
+          risk_level: e.risk_level
+        })),
+        critical_assets: (radarResult?.critical_assets || []).slice(0, 5).map((a: any) => ({
+          name: a.asset_name,
+          type: a.asset_type,
+          criticality: a.business_criticality,
+          location: a.location
+        })),
+        top_alerts: (radarResult?.top_alerts || []).slice(0, 5),
+        geo_hotspots: (radarResult?.geo_intelligence?.hotspots || []).slice(0, 5),
+        recommended_actions: [
+          ...(assessment.scores?.radical_activity >= 50 ? ["Increase dark web channel monitoring"] : []),
+          ...(assessment.scores?.infrastructure_risk >= 50 ? ["Deploy additional security to critical assets"] : []),
+          ...(assessment.scores?.sentiment_volatility >= 50 ? ["Activate social media monitoring surge"] : []),
+          ...(assessment.scores?.precursor_activity >= 50 ? ["Brief leadership on emerging threats"] : [])
+        ],
+        snapshot_id: radarResult?.snapshot_id
+      };
     }
 
     default:
