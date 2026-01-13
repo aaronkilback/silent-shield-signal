@@ -67,17 +67,21 @@ serve(async (req) => {
 
     if (existingAgent && existingAgent.length > 0) {
       const conflict = existingAgent[0];
+
+      // Idempotency: treat "already exists" as a successful outcome so callers don't get blocked
+      // by non-2xx responses when retrying agent provisioning.
       return new Response(
-        JSON.stringify({ 
-          error: 'Agent already exists', 
-          conflict: {
+        JSON.stringify({
+          success: true,
+          already_exists: true,
+          agent: {
             id: conflict.id,
             codename: conflict.codename,
-            call_sign: conflict.call_sign
+            call_sign: conflict.call_sign,
           },
-          message: `An agent with codename "${conflict.codename}" or call sign "${conflict.call_sign}" already exists.`
+          message: `Agent already exists: "${conflict.codename}" (${conflict.call_sign}). Use update_agent_configuration to modify it, or choose a different codename/call_sign to create a new agent.`,
         }),
-        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
