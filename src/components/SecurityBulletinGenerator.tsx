@@ -13,6 +13,18 @@ import { format } from "date-fns";
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { Checkbox } from "@/components/ui/checkbox";
+import DOMPurify from 'dompurify';
+
+// Configure DOMPurify for safe HTML rendering in reports
+const sanitizeHtml = (html: string): string => {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'p', 'br', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'table', 'tr', 'td', 'th', 'div', 'span', 'img', 'style', 'head', 'body', 'html', 'meta', 'a'],
+    ALLOWED_ATTR: ['class', 'style', 'src', 'alt', 'width', 'height', 'href', 'charset', 'content'],
+    ALLOW_DATA_ATTR: false,
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'link'],
+    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover']
+  });
+};
 
 interface SecurityBulletinGeneratorProps {
   preselectedEntityId?: string;
@@ -306,7 +318,7 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
     container.style.position = 'absolute';
     container.style.left = '-9999px';
     container.style.width = '210mm';
-    container.innerHTML = generatedBulletin;
+    container.innerHTML = sanitizeHtml(generatedBulletin);
     document.body.appendChild(container);
 
     try {
