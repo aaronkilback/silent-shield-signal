@@ -7703,7 +7703,23 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
         });
 
         if (!finalResponse.ok) {
-          throw new Error("Failed to get final response from AI");
+          const errorText = await finalResponse.text();
+          console.error("Final AI response failed:", finalResponse.status, errorText);
+          
+          if (finalResponse.status === 429) {
+            return new Response(JSON.stringify({ error: "Rate limit exceeded. Please wait a moment before trying again." }), {
+              status: 429,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          if (finalResponse.status === 402) {
+            return new Response(JSON.stringify({ error: "AI service credits exhausted. Please contact support." }), {
+              status: 402,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          
+          throw new Error(`Failed to get final response from AI: ${finalResponse.status} - ${errorText.substring(0, 200)}`);
         }
 
         return new Response(finalResponse.body, {
