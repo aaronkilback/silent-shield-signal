@@ -6034,21 +6034,23 @@ function extractPlannedTestSignalFromText(
 
   const normalized = text.replace(/\r/g, "");
 
-  const extractValue = (key: string) => {
+  const extractValue = (key: string): string | null => {
     // Supports:
     //   client_name: "Petronas Canada"
     //   `client_name`: "Petronas Canada"
     //   *   `headline`: "..."
-    const re = new RegExp(
-      String.raw`(?:\)?` // no-op (keeps formatter stable)
-        .replace(/\/g, "") +
-        String.raw`(?:\`?` + key + String.raw`\`?)` +
-        String.raw`\s*[:=]\s*(?:"([^"\n]+)"|“([^”\n]+)”|([^\n]+))`,
-      "i",
-    );
-    const m = normalized.match(re);
-    const value = (m?.[1] || m?.[2] || m?.[3] || "").trim();
-    return value || null;
+    // Match key (optionally wrapped in backticks), followed by : or =, then value in quotes or unquoted
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = `\`?${escapedKey}\`?\\s*[:=]\\s*(?:"([^"\\n]+)"|"([^"\\n]+)"|([^\\n]+))`;
+    try {
+      const re = new RegExp(pattern, "i");
+      const m = normalized.match(re);
+      const value = (m?.[1] || m?.[2] || m?.[3] || "").trim();
+      return value || null;
+    } catch {
+      // If regex fails, return null
+      return null;
+    }
   };
 
   const client_name = extractValue("client_name") || extractValue("client") || extractValue("clientName");
