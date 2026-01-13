@@ -90,6 +90,8 @@ export const ArchivalDocumentUpload = () => {
 
     setUploading(true);
     const tagArray = tags.split(',').map(t => t.trim()).filter(t => t);
+    let successCount = 0;
+    let errorCount = 0;
     
     // Process 1 file at a time with 1 second delays
     const BATCH_SIZE = 1;
@@ -152,40 +154,21 @@ export const ArchivalDocumentUpload = () => {
           throw new Error(data.error || 'Duplicate file');
         }
 
-        // Trigger background entity processing with feedback
-        if (data?.documentId) {
-          console.log(`Triggering entity processing for document: ${data.documentId}`);
-          
-          // Call the edge function and handle response
-          supabase.functions.invoke('process-stored-document', {
-            body: { documentId: data.documentId }
-          }).then(({ data: processData, error: processError }) => {
-            if (processError) {
-              console.error('Entity processing error:', processError);
-              toast.error(`Entity extraction failed: ${processError.message}`);
-            } else {
-              console.log(`Entity processing result:`, processData);
-              if (processData?.entitiesFound > 0) {
-                toast.success(`✨ Extracted ${processData.entitiesFound} entities from ${file.file.name}!`);
-              } else {
-                toast.info(`No entities found in ${file.file.name} - may be a non-text document or contain no named entities.`);
-              }
-            }
-          }).catch(err => {
-            console.error('Background entity processing error:', err);
-            toast.error('Entity processing failed - check console for details');
-          });
-        }
+        // Background processing is triggered server-side when the record is created.
+        // Avoid client-side duplicate processing calls (and confusing transient errors).
+        toast.info(`📌 ${file.file.name} queued for background extraction`, { duration: 4000 });
 
         setFiles(prev => prev.map(f => 
           f.id === file.id ? { ...f, status: 'success' as const } : f
         ));
+        successCount += 1;
 
         console.log(`Successfully processed: ${file.file.name}`);
         
       } catch (error: any) {
         console.error('Upload error:', error);
         const errorMsg = error.message || 'Upload failed';
+        errorCount += 1;
         
         setFiles(prev => prev.map(f => 
           f.id === file.id 
@@ -206,13 +189,9 @@ export const ArchivalDocumentUpload = () => {
     setUploading(false);
     setProgress(100);
     
-    const finalSuccessCount = files.filter(f => f.status === 'success').length;
-    const finalErrorCount = files.filter(f => f.status === 'error').length;
-    
-    if (finalSuccessCount > 0) {
-      const totalEntities = finalSuccessCount * 5; // Rough estimate
+    if (successCount > 0) {
       toast.success(
-        `✅ Successfully uploaded ${finalSuccessCount} document${finalSuccessCount > 1 ? 's' : ''}!${finalErrorCount > 0 ? ` (${finalErrorCount} failed)` : ''}\n\n📋 Entity suggestions created - go to Entity Management to review and approve them.`,
+        `✅ Successfully uploaded ${successCount} document${successCount > 1 ? 's' : ''}!${errorCount > 0 ? ` (${errorCount} failed)` : ''}\n\n📋 Entity extraction runs in the background — check the Document Library for status.`,
         { duration: 8000 }
       );
       
@@ -222,8 +201,8 @@ export const ArchivalDocumentUpload = () => {
         setProgress(0);
         window.location.reload(); // Refresh to show new documents
       }, 3000);
-    } else if (finalErrorCount > 0) {
-      toast.error(`❌ All ${finalErrorCount} upload${finalErrorCount > 1 ? 's' : ''} failed. Please check file sizes and try again.`);
+    } else if (errorCount > 0) {
+      toast.error(`❌ All ${errorCount} upload${errorCount > 1 ? 's' : ''} failed. Please check file sizes and try again.`);
     }
   };
 

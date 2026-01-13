@@ -162,6 +162,8 @@ export const UnifiedDocumentUpload = () => {
 
     setUploading(true);
     const tagArray = tags.split(',').map(t => t.trim()).filter(t => t);
+    let successCount = 0;
+    let errorCount = 0;
     
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -213,9 +215,11 @@ export const UnifiedDocumentUpload = () => {
         setFiles(prev => prev.map(f => 
           f.id === file.id ? { ...f, status: 'success' as const } : f
         ));
+        successCount += 1;
 
       } catch (error: any) {
         console.error('Upload error:', error);
+        errorCount += 1;
         setFiles(prev => prev.map(f => 
           f.id === file.id 
             ? { ...f, status: 'error' as const, error: error.message }
@@ -232,7 +236,6 @@ export const UnifiedDocumentUpload = () => {
     setUploading(false);
     setProgress(100);
     
-    const successCount = files.filter(f => f.status === 'success').length;
     if (successCount > 0) {
       toast.success(
         `✅ Uploaded ${successCount} document(s)! Click the Brain 🧠 icon in the list below to extract intelligence.`,
@@ -244,6 +247,8 @@ export const UnifiedDocumentUpload = () => {
         setProgress(0);
         window.location.reload();
       }, 3000);
+    } else if (errorCount > 0) {
+      toast.error(`❌ All ${errorCount} upload${errorCount > 1 ? 's' : ''} failed. Please try again.`);
     }
   };
 
