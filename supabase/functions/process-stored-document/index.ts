@@ -211,47 +211,89 @@ serve(async (req) => {
       }
     } else if (document.file_type === 'application/pdf') {
       console.log('Extracting text from PDF...');
-      
-      // Limit PDF read to first 200KB to prevent memory issues
-      const arrayBuffer = await fileData.slice(0, 200 * 1024).arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
-      const pdfString = new TextDecoder('latin1').decode(uint8Array);
-      
-      // Extract text between BT (Begin Text) and ET (End Text) markers
-      const textMatches = pdfString.match(/BT(.*?)ET/gs);
-      if (textMatches && textMatches.length > 0) {
-        let extractedText = '';
-        for (const match of textMatches.slice(0, 500)) { // Limit to first 500 text blocks
-          const parenStrings = match.match(/\(([^)]*)\)/g);
-          if (parenStrings) {
-            for (const str of parenStrings) {
-              const text = str.slice(1, -1);
-              const decoded = text
-                .replace(/\\n/g, ' ')
-                .replace(/\\r/g, ' ')
-                .replace(/\\t/g, ' ')
-                .replace(/\\\(/g, '(')
-                .replace(/\\\)/g, ')')
-                .replace(/\\\\/g, '\\');
-              extractedText += decoded + ' ';
+
+      // Primary: pdfjs-based extraction (more reliable than regex parsing)
+      try {
+        const maxPdfBytes = 12 * 1024 * 1024; // safety cap
+        const blobToRead = fileData.size > maxPdfBytes ? fileData.slice(0, maxPdfBytes) : fileData;
+        const arrayBuffer = await blobToRead.arrayBuffer();
+
+        const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
+
+        const loadingTask = pdfjsLib.getDocument({
+          data: new Uint8Array(arrayBuffer),
+          disableWorker: true,
+        });
+
+        const pdf = await loadingTask.promise;
+        const maxPages = Math.min(pdf.numPages || 0, 25);
+
+        const pages: string[] = [];
+        for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+          const page = await pdf.getPage(pageNum);
+          const tc = await page.getTextContent();
+          const pageText = (tc.items || [])
+            .map((it: any) => (typeof it?.str === 'string' ? it.str : ''))
+            .join(' ');
+          if (pageText.trim()) pages.push(pageText);
+        }
+
+        textContent = pages
+          .join('\n\n')
+          .replace(/\s+/g, ' ')
+          // Keep only readable ASCII + whitespace to avoid binary garbage
+          .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 200000);
+
+        console.log(
+          `Extracted ${textContent.length} characters from PDF using pdfjs (${maxPages}/${pdf.numPages} pages)`
+        );
+      } catch (pdfJsError) {
+        console.warn('pdfjs extraction failed, falling back to heuristic extraction:', pdfJsError);
+
+        // Fallback: heuristic extraction from PDF text operators
+        const arrayBuffer = await fileData.slice(0, 1024 * 1024).arrayBuffer(); // 1MB
+        const uint8Array = new Uint8Array(arrayBuffer);
+        const pdfString = new TextDecoder('latin1').decode(uint8Array);
+
+        const textMatches = pdfString.match(/BT(.*?)ET/gs);
+        if (textMatches && textMatches.length > 0) {
+          let extractedText = '';
+          for (const match of textMatches.slice(0, 1500)) {
+            const parenStrings = match.match(/\((?:\\.|[^\\)])*\)/g);
+            if (parenStrings) {
+              for (const str of parenStrings) {
+                const text = str.slice(1, -1);
+                const decoded = text
+                  .replace(/\\n/g, ' ')
+                  .replace(/\\r/g, ' ')
+                  .replace(/\\t/g, ' ')
+                  .replace(/\\\(/g, '(')
+                  .replace(/\\\)/g, ')')
+                  .replace(/\\\\/g, '\\');
+                extractedText += decoded + ' ';
+              }
             }
           }
+
+          textContent = extractedText
+            .replace(/\s+/g, ' ')
+            .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 50000);
+
+          console.log(`Extracted ${textContent.length} characters from PDF text streams (fallback)`);
+        } else {
+          textContent = pdfString
+            .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 50000);
+          console.log(`Fallback (raw): extracted ${textContent.length} characters`);
         }
-        
-        textContent = extractedText
-          .replace(/\s+/g, ' ')
-          .replace(/[^\x20-\x7E\s]/g, '')
-          .trim()
-          .slice(0, 50000); // Hard limit at 50K chars
-        
-        console.log(`Extracted ${textContent.length} characters from PDF text streams`);
-      } else {
-        textContent = pdfString
-          .replace(/[\x00-\x1F\x7F-\xFF]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .slice(0, 50000);
-        console.log(`Fallback: extracted ${textContent.length} characters`);
       }
     }
 
