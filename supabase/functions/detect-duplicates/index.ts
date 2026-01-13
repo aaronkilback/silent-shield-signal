@@ -50,7 +50,17 @@ serve(async (req) => {
   }
 
   try {
-    const { type, content, id, autoCheck = true, client_id } = await req.json();
+    const {
+      type,
+      content,
+      id,
+      autoCheck = true,
+      client_id,
+      near_duplicate_threshold,
+      lookback_days,
+      max_candidates,
+      use_semantic,
+    } = await req.json();
     
     if (!type || !content) {
       return new Response(
@@ -64,6 +74,12 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
+
+    const signalMeta: {
+      near_duplicate_threshold_used?: number;
+      lookback_days_used?: number | null;
+      semantic_used?: boolean;
+    } = {};
 
     let duplicates: any[] = [];
     const contentHash = await hashContent(content);
@@ -98,13 +114,33 @@ serve(async (req) => {
         duplicates = existingDocs;
       }
     } else if (type === 'signal') {
+      const nearDupThreshold =
+        typeof near_duplicate_threshold === 'number'
+          ? Math.max(0, Math.min(1, near_duplicate_threshold))
+          : 0.90;
+
+      const candidateLimit =
+        typeof max_candidates === 'number' && Number.isFinite(max_candidates)
+          ? Math.max(10, Math.min(2000, Math.trunc(max_candidates)))
+          : 200;
+
+      const lookbackDays =
+        typeof lookback_days === 'number' && Number.isFinite(lookback_days)
+          ? Math.max(1, Math.min(365, Math.trunc(lookback_days)))
+          : null;
+
+      const semanticEnabled = Boolean(use_semantic);
+      signalMeta.near_duplicate_threshold_used = nearDupThreshold;
+      signalMeta.lookback_days_used = lookbackDays;
+      signalMeta.semantic_used = semanticEnabled;
+
       // Check for exact hash match in signals (same client only)
       let exactQuery = supabase
         .from('signals')
         .select('*')
         .eq('content_hash', contentHash)
         .limit(1);
-      
+
       if (client_id) {
         exactQuery = exactQuery.eq('client_id', client_id);
       }
@@ -113,49 +149,131 @@ serve(async (req) => {
 
       if (hashMatch && hashMatch.id !== id) {
         return new Response(
-          JSON.stringify({ 
+          JSON.stringify({
             isDuplicate: true,
             exactMatch: true,
             duplicate: hashMatch,
-            message: `This signal was already ingested on ${new Date(hashMatch.created_at).toLocaleDateString()}`
+            message: `This signal was already ingested on ${new Date(hashMatch.created_at).toLocaleDateString()}`,
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
-      // Check for near-duplicate signals using text similarity (same client only)
+      // Candidate pool for near-duplicate checks
       let similarQuery = supabase
         .from('signals')
         .select('id, normalized_text, created_at, client_id')
         .order('created_at', { ascending: false })
-        .limit(200);
-      
+        .limit(candidateLimit);
+
       if (client_id) {
         similarQuery = similarQuery.eq('client_id', client_id);
       }
 
+      if (lookbackDays) {
+        const sinceIso = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
+        similarQuery = similarQuery.gte('created_at', sinceIso);
+      }
+
       const { data: recentSignals } = await similarQuery;
 
+      // 1) Fast lexical similarity (Levenshtein)
       if (recentSignals && recentSignals.length > 0) {
         const contentLower = content.toLowerCase().trim();
         for (const signal of recentSignals) {
-          if (signal.id === id) continue; // Skip self
-          
+          if (signal.id === id) continue;
+
           const similarity = calculateSimilarity(
             contentLower,
             (signal.normalized_text || '').toLowerCase().trim()
           );
-          
-          // Block near-duplicates with >90% similarity
-          if (similarity > 0.90) {
+
+          if (similarity >= nearDupThreshold) {
             duplicates.push({
               ...signal,
               similarity_score: similarity,
-              detection_type: similarity > 0.98 ? 'near-exact' : 'similar'
+              detection_type: similarity >= 0.98 ? 'near-exact' : 'similar',
+              detection_method: 'text_similarity',
             });
           }
         }
       }
+
+      // 2) Semantic fallback (AI) when lexical similarity misses paraphrases
+      if (duplicates.length === 0 && semanticEnabled && recentSignals && recentSignals.length > 0) {
+        const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+
+        const candidates = recentSignals
+          .filter((s) => s.id !== id)
+          .filter((s) => (s.normalized_text || '').trim().length > 0)
+          .slice(0, 60)
+          .map((s) => ({ id: s.id, text: (s.normalized_text || '').toString() }));
+
+        if (LOVABLE_API_KEY && candidates.length > 0) {
+          try {
+            const resp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'google/gemini-2.5-flash',
+                messages: [
+                  {
+                    role: 'system',
+                    content:
+                      'You are a deduplication system. Compare an incoming signal summary to candidate summaries for the same client. Return ONLY JSON: {"best_match_id": string|null, "similarity": number, "rationale": string}. similarity is 0..1 semantic equivalence (1=essentially same event/info, 0=completely unrelated).',
+                  },
+                  {
+                    role: 'user',
+                    content: JSON.stringify(
+                      {
+                        incoming: String(content).slice(0, 2000),
+                        candidates,
+                      },
+                      null,
+                      2
+                    ),
+                  },
+                ],
+                max_completion_tokens: 200,
+              }),
+            });
+
+            if (resp.ok) {
+              const data = await resp.json();
+              let out = data.choices?.[0]?.message?.content?.trim?.() || '';
+              if (out.startsWith('```')) {
+                out = out.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+              }
+
+              const parsed = JSON.parse(out);
+              const bestId = parsed?.best_match_id as string | null;
+              const sim = Number(parsed?.similarity);
+
+              if (bestId && Number.isFinite(sim) && sim >= nearDupThreshold) {
+                const matched = recentSignals.find((s) => s.id === bestId);
+                duplicates.push({
+                  id: bestId,
+                  normalized_text: matched?.normalized_text ?? null,
+                  created_at: matched?.created_at ?? null,
+                  client_id: matched?.client_id ?? client_id ?? null,
+                  similarity_score: sim,
+                  detection_type: 'semantic',
+                  detection_method: 'semantic',
+                  rationale: parsed?.rationale ?? null,
+                });
+              }
+            }
+          } catch (e) {
+            console.error('Semantic duplicate check failed:', e);
+          }
+        }
+      }
+
+      // Sort best match first
+      duplicates.sort((a, b) => (b.similarity_score || 0) - (a.similarity_score || 0));
     } else if (type === 'entity') {
       // Improved fuzzy entity name matching with type consideration
       const { data: entities } = await supabase
@@ -233,13 +351,21 @@ serve(async (req) => {
       await supabase.from('duplicate_detections').insert(detections);
     }
 
+    const nearDuplicateMatch = type === 'signal' && duplicates.length > 0;
+
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         isDuplicate: duplicates.length > 0,
         exactMatch: false,
+        nearDuplicateMatch,
         duplicates: duplicates,
         count: duplicates.length,
-        contentHash: contentHash
+        contentHash: contentHash,
+        near_duplicate_threshold_used:
+          type === 'signal' ? signalMeta.near_duplicate_threshold_used : undefined,
+        lookback_days_used:
+          type === 'signal' ? signalMeta.lookback_days_used : undefined,
+        semantic_used: type === 'signal' ? signalMeta.semantic_used : undefined,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

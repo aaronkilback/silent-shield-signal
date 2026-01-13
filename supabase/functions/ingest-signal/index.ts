@@ -453,21 +453,45 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
     console.log(`Calculated content hash: ${contentHash.substring(0, 16)}...`);
     
     // Check for duplicates BEFORE insertion
+    // - Use normalized_text for near-duplicate detection (more stable than raw text)
+    // - Scope to the matched client
+    // - Enforce near-duplicate blocking at 80% over the last 30 days
     const dupCheck = await supabase.functions.invoke('detect-duplicates', {
       body: {
         type: 'signal',
-        content: signalText,
-        autoCheck: false  // Don't create detection records yet since signal doesn't exist
-      }
+        content: (classification.normalized_text || signalText).toString(),
+        client_id: clientId || undefined,
+        near_duplicate_threshold: 0.8,
+        lookback_days: 30,
+        use_semantic: true,
+        autoCheck: false, // Don't create detection records yet since signal doesn't exist
+      },
     });
-    
+
     if (dupCheck?.data?.isDuplicate && dupCheck?.data?.exactMatch) {
       console.log(`EXACT duplicate detected - blocking signal creation`);
       return new Response(
-        JSON.stringify({ 
+        JSON.stringify({
           error: 'Duplicate signal detected and blocked',
           duplicate_of: dupCheck.data.duplicate?.id,
-          message: dupCheck.data.message
+          message: dupCheck.data.message,
+        }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (dupCheck?.data?.nearDuplicateMatch && (dupCheck?.data?.duplicates || []).length > 0) {
+      const top = dupCheck.data.duplicates[0];
+      console.log(`NEAR duplicate detected (>=80%) - blocking signal creation`);
+      return new Response(
+        JSON.stringify({
+          error: 'Near-duplicate signal detected and blocked',
+          duplicate_of: top?.id,
+          similarity_score: top?.similarity_score,
+          lookback_days: dupCheck.data.lookback_days_used ?? 30,
+          threshold: dupCheck.data.near_duplicate_threshold_used ?? 0.8,
+          duplicates: dupCheck.data.duplicates,
+          message: `Near-duplicate detected (similarity ${(top?.similarity_score ?? 0).toFixed(2)}). Signal creation blocked.`,
         }),
         { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
