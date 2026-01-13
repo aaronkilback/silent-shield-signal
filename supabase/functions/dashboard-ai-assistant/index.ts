@@ -6856,60 +6856,192 @@ function extractPlannedFortressQueryFromText(
 
   const normalized = text.replace(/\r/g, "");
 
-  // Extract query type - look for mentions of data types
-  let query_type = "comprehensive";
-  if (/\bsignal/i.test(normalized)) query_type = "signals";
-  else if (/\bincident/i.test(normalized)) query_type = "incidents";
-  else if (/\bentit/i.test(normalized)) query_type = "entities";
-  else if (/\bclient/i.test(normalized)) query_type = "clients";
-  else if (/\bdocument/i.test(normalized)) query_type = "documents";
-  else if (/\binvestigation/i.test(normalized)) query_type = "investigations";
-  else if (/\bknowledge/i.test(normalized)) query_type = "knowledge_base";
-  else if (/\btravel/i.test(normalized)) query_type = "travel";
+  // PRIORITY 1: Extract EXPLICIT query_type from structured call syntax
+  // Look for patterns like: query_type="documents" or query_type: "documents" or query_type='documents'
+  let query_type = "comprehensive"; // Default only if nothing explicit found
+  
+  const explicitQueryTypeMatch = normalized.match(/query_type\s*[=:]\s*["']?(\w+)["']?/i);
+  if (explicitQueryTypeMatch) {
+    const explicitType = explicitQueryTypeMatch[1].toLowerCase();
+    const validTypes = ["signals", "incidents", "entities", "clients", "documents", "investigations", "knowledge_base", "travel", "comprehensive"];
+    if (validTypes.includes(explicitType)) {
+      query_type = explicitType;
+      console.log(`extractPlannedFortressQueryFromText: EXPLICIT query_type found: ${query_type}`);
+    }
+  } else {
+    // Fallback: Infer from context words near the query call (only if no explicit type)
+    // Look within 100 chars of "query_fortress_data" or similar
+    const queryCallMatch = normalized.match(/(query_fortress_data|query.*fortress|fortress.*query)[^.]{0,100}/i);
+    const queryContext = queryCallMatch ? queryCallMatch[0] : "";
+    
+    // Order matters - check most specific first
+    if (/\bdocument/i.test(queryContext)) query_type = "documents";
+    else if (/\bsignal/i.test(queryContext)) query_type = "signals";
+    else if (/\bincident/i.test(queryContext)) query_type = "incidents";
+    else if (/\bentit/i.test(queryContext)) query_type = "entities";
+    else if (/\bclient/i.test(queryContext)) query_type = "clients";
+    else if (/\binvestigation/i.test(queryContext)) query_type = "investigations";
+    else if (/\bknowledge/i.test(queryContext)) query_type = "knowledge_base";
+    else if (/\btravel/i.test(queryContext)) query_type = "travel";
+  }
 
-  // Extract filters from text
+  // Extract filters from STRUCTURED syntax only (not from general chat context)
   const filters: any = {};
   
-  // Extract keywords - look for quoted strings or specific entity names
-  const keywordMatches = normalized.match(/["']([^"']+)["']/g) || [];
-  const keywords = keywordMatches.map(k => k.replace(/["']/g, ''));
-  if (keywords.length > 0) {
-    filters.keywords = keywords;
-  }
-  
-  // Look for severity
-  const severityMatch = normalized.match(/\b(critical|high|medium|low)\b/i);
-  if (severityMatch) {
-    filters.severity = severityMatch[1].toLowerCase();
-  }
-  
-  // Look for time ranges
-  if (/\blast\s+(\d+)\s+(day|week|month|year)/i.test(normalized)) {
-    const timeMatch = normalized.match(/\blast\s+(\d+)\s+(day|week|month|year)s?/i);
-    if (timeMatch) {
-      filters.time_range = { last: `${timeMatch[1]} ${timeMatch[2]}s` };
+  // PRIORITY: Look for explicit filters={...} or filters: {...} blocks
+  const filtersBlockMatch = normalized.match(/filters\s*[=:]\s*\{([^}]+)\}/i);
+  if (filtersBlockMatch) {
+    const filtersContent = filtersBlockMatch[1];
+    console.log(`extractPlannedFortressQueryFromText: Found explicit filters block: ${filtersContent}`);
+    
+    // Extract keywords from filters block
+    const keywordsMatch = filtersContent.match(/keywords\s*[=:]\s*\[([^\]]+)\]/i);
+    if (keywordsMatch) {
+      const keywordsList = keywordsMatch[1].match(/["']([^"']+)["']/g);
+      if (keywordsList) {
+        filters.keywords = keywordsList.map(k => k.replace(/["']/g, ''));
+      }
     }
-  } else if (/\b(7|seven)\s*day/i.test(normalized)) {
-    filters.time_range = { last: "7 days" };
-  } else if (/\b(30|thirty)\s*day/i.test(normalized)) {
-    filters.time_range = { last: "30 days" };
+    
+    // Extract single keyword
+    const singleKeywordMatch = filtersContent.match(/keyword[s]?\s*[=:]\s*["']([^"']+)["']/i);
+    if (singleKeywordMatch && !filters.keywords) {
+      filters.keywords = [singleKeywordMatch[1]];
+    }
+    
+    // Extract entity_name
+    const entityNameMatch = filtersContent.match(/entity_name\s*[=:]\s*["']([^"']+)["']/i);
+    if (entityNameMatch) {
+      filters.entity_name = entityNameMatch[1];
+      // Also add to keywords for search
+      if (!filters.keywords) filters.keywords = [];
+      filters.keywords.push(entityNameMatch[1]);
+    }
+    
+    // Extract client_id
+    const clientIdMatch = filtersContent.match(/client_id\s*[=:]\s*["']([^"']+)["']/i);
+    if (clientIdMatch) {
+      filters.client_id = clientIdMatch[1];
+    }
+    
+    // Extract severity
+    const severityMatch = filtersContent.match(/severity\s*[=:]\s*["']?(critical|high|medium|low)["']?/i);
+    if (severityMatch) {
+      filters.severity = severityMatch[1].toLowerCase();
+    }
+    
+    // Extract time_range from filters block
+    const timeRangeMatch = filtersContent.match(/time_range\s*[=:]\s*\{([^}]+)\}/i);
+    if (timeRangeMatch) {
+      const timeContent = timeRangeMatch[1];
+      const startMatch = timeContent.match(/start\s*[=:]\s*["']([^"']+)["']/i);
+      const endMatch = timeContent.match(/end\s*[=:]\s*["']([^"']+)["']/i);
+      if (startMatch || endMatch) {
+        filters.time_range = {};
+        if (startMatch) filters.time_range.start = startMatch[1];
+        if (endMatch) filters.time_range.end = endMatch[1];
+      }
+    }
+  }
+  
+  // If no explicit filters block, look for standalone time_range
+  if (!filters.time_range) {
+    const standaloneTimeMatch = normalized.match(/time_range\s*[=:]\s*\{[^}]*start\s*[=:]\s*["']([^"']+)["'][^}]*end\s*[=:]\s*["']([^"']+)["'][^}]*\}/i);
+    if (standaloneTimeMatch) {
+      filters.time_range = { start: standaloneTimeMatch[1], end: standaloneTimeMatch[2] };
+    } else {
+      // Check for reversed order (end before start)
+      const reverseTimeMatch = normalized.match(/time_range\s*[=:]\s*\{[^}]*end\s*[=:]\s*["']([^"']+)["'][^}]*start\s*[=:]\s*["']([^"']+)["'][^}]*\}/i);
+      if (reverseTimeMatch) {
+        filters.time_range = { start: reverseTimeMatch[2], end: reverseTimeMatch[1] };
+      }
+    }
+  }
+  
+  // Look for explicit date patterns like "2025-01-01" to "2025-12-31"
+  if (!filters.time_range) {
+    const dateRangeMatch = normalized.match(/(\d{4}-\d{2}-\d{2})\s*(?:to|through|until|-)\s*(\d{4}-\d{2}-\d{2})/i);
+    if (dateRangeMatch) {
+      filters.time_range = { start: dateRangeMatch[1], end: dateRangeMatch[2] };
+    }
+  }
+  
+  // Fallback: Look for "last X days/weeks" patterns
+  if (!filters.time_range) {
+    const lastNMatch = normalized.match(/\blast\s+(\d+)\s+(day|week|month|year)s?/i);
+    if (lastNMatch) {
+      filters.time_range = { last: `${lastNMatch[1]} ${lastNMatch[2]}s` };
+    } else if (/\b(7|seven)\s*day/i.test(normalized)) {
+      filters.time_range = { last: "7 days" };
+    } else if (/\b(30|thirty)\s*day/i.test(normalized)) {
+      filters.time_range = { last: "30 days" };
+    }
+  }
+  
+  // Look for standalone severity if not in filters block
+  if (!filters.severity) {
+    const severityMatch = normalized.match(/severity\s*[=:]\s*["']?(critical|high|medium|low)["']?/i);
+    if (severityMatch) {
+      filters.severity = severityMatch[1].toLowerCase();
+    }
+  }
+  
+  // Look for explicit keywords if not already found
+  if (!filters.keywords) {
+    // Look for keywords=["..."] or keywords: ["..."]
+    const keywordsArrayMatch = normalized.match(/keywords\s*[=:]\s*\[([^\]]+)\]/i);
+    if (keywordsArrayMatch) {
+      const keywordsList = keywordsArrayMatch[1].match(/["']([^"']+)["']/g);
+      if (keywordsList) {
+        filters.keywords = keywordsList.map(k => k.replace(/["']/g, ''));
+      }
+    } else {
+      // Look for entity names in quotes near query context (within 50 chars)
+      const queryCallMatch = normalized.match(/(query_fortress_data|query.*fortress)[^.]{0,50}/i);
+      if (queryCallMatch) {
+        const nearContext = queryCallMatch[0];
+        const quotedMatch = nearContext.match(/["']([^"']{2,50})["']/);
+        if (quotedMatch) {
+          filters.keywords = [quotedMatch[1]];
+        }
+      }
+    }
   }
 
-  // Extract output format
-  let output_format = "detailed";
-  if (/\bsummary\b/i.test(normalized)) output_format = "summary";
-  if (/\bjson\b/i.test(normalized)) output_format = "json";
+  // Extract output format - look for explicit setting first
+  let output_format = "detailed"; // sensible default
+  const outputFormatMatch = normalized.match(/output_format\s*[=:]\s*["']?(summary|detailed|json)["']?/i);
+  if (outputFormatMatch) {
+    output_format = outputFormatMatch[1].toLowerCase();
+  } else if (/\bsummary\b/i.test(normalized)) {
+    output_format = "summary";
+  } else if (/\bjson\b/i.test(normalized)) {
+    output_format = "json";
+  }
 
-  // Extract reason for access
-  const reason_for_access = extractValueFromText(normalized, "reason_for_access") || 
-                            extractValueFromText(normalized, "reason") || 
-                            "AI Assistant autonomous query (forced execution from text description)";
+  // Extract reason for access - look for explicit setting
+  let reason_for_access = "AI Assistant autonomous query (forced execution from text description)";
+  const reasonMatch = normalized.match(/reason_for_access\s*[=:]\s*["']([^"']+)["']/i);
+  if (reasonMatch) {
+    reason_for_access = reasonMatch[1];
+  } else {
+    const reasonMatch2 = extractValueFromText(normalized, "reason_for_access") || extractValueFromText(normalized, "reason");
+    if (reasonMatch2) {
+      reason_for_access = reasonMatch2;
+    }
+  }
 
-  console.log("extractPlannedFortressQueryFromText: Extracted query details", {
+  console.log("extractPlannedFortressQueryFromText: Final extracted parameters", {
     query_type,
     filters,
     output_format,
     reason_for_access: reason_for_access.substring(0, 50),
+    parsing_success: {
+      explicit_query_type: !!explicitQueryTypeMatch,
+      has_filters: Object.keys(filters).length > 0,
+      has_time_range: !!filters.time_range,
+      has_keywords: !!filters.keywords,
+    }
   });
 
   return {
