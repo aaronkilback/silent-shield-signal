@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Dialog,
   DialogContent,
@@ -10,12 +10,14 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, CheckCircle, Shield, XCircle } from "lucide-react";
+import { Loader2, CheckCircle, Shield, XCircle, Brain, History, Link2, Users } from "lucide-react";
 import { IncidentLocationMap } from "./IncidentLocationMap";
 import { IncidentOutcomeDialog } from "./IncidentOutcomeDialog";
 import IncidentFeedbackDialog from "./IncidentFeedbackDialog";
+import { AIAnalysisTimeline } from "./incidents/AIAnalysisTimeline";
 
 interface Incident {
   id: string;
@@ -28,6 +30,12 @@ interface Incident {
   contained_at: string | null;
   resolved_at: string | null;
   timeline_json: any[];
+  title?: string;
+  summary?: string;
+  severity_level?: string;
+  investigation_status?: string;
+  assigned_agent_ids?: string[];
+  ai_analysis_log?: any[];
   clients?: {
     name: string;
   };
@@ -52,6 +60,27 @@ export const IncidentActionDialog = ({
   const [signalLocation, setSignalLocation] = useState<string | null>(null);
   const [signalText, setSignalText] = useState<string>("");
   const [showOutcomeDialog, setShowOutcomeDialog] = useState(false);
+  const [fullIncident, setFullIncident] = useState<Incident>(incident);
+  const [activeTab, setActiveTab] = useState("overview");
+
+  const fetchFullIncident = useCallback(async () => {
+    if (!incident.id) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from("incidents")
+        .select("*, clients(name)")
+        .eq("id", incident.id)
+        .single();
+
+      if (error) throw error;
+      if (data) {
+        setFullIncident(data as Incident);
+      }
+    } catch (error) {
+      console.error("Error fetching full incident:", error);
+    }
+  }, [incident.id]);
 
   useEffect(() => {
     const fetchSignalData = async () => {
@@ -74,8 +103,9 @@ export const IncidentActionDialog = ({
 
     if (open) {
       fetchSignalData();
+      fetchFullIncident();
     }
-  }, [incident.signal_id, open]);
+  }, [incident.signal_id, open, fetchFullIncident]);
 
   const handleAction = async (action: "acknowledge" | "contain" | "resolve") => {
     try {
@@ -98,7 +128,6 @@ export const IncidentActionDialog = ({
 
       setNote("");
       
-      // Show outcome dialog after resolving
       if (action === "resolve") {
         onClose();
         setShowOutcomeDialog(true);
@@ -132,224 +161,282 @@ export const IncidentActionDialog = ({
     }
   };
 
-  const canAcknowledge = incident.status === "open";
-  const canContain = incident.status === "acknowledged";
-  const canResolve = incident.status === "contained";
+  const canAcknowledge = fullIncident.status === "open";
+  const canContain = fullIncident.status === "acknowledged";
+  const canResolve = fullIncident.status === "contained";
+
+  const hasAIAnalysis = fullIncident.ai_analysis_log && fullIncident.ai_analysis_log.length > 0;
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Shield className="w-5 h-5" />
-            Incident Details
+            {fullIncident.title || "Incident Details"}
           </DialogTitle>
-          <DialogDescription>
-            View incident information and take action
+          <DialogDescription className="flex items-center gap-3 pt-1">
+            <Badge variant={getPriorityColor(fullIncident.priority)} className="text-sm">
+              {fullIncident.priority?.toUpperCase()}
+            </Badge>
+            <Badge variant="outline" className="text-sm">
+              {fullIncident.status?.toUpperCase()}
+            </Badge>
+            <span className="text-sm">
+              {fullIncident.clients?.name || "Unknown Client"}
+            </span>
+            {fullIncident.severity_level && (
+              <Badge variant="secondary" className="text-xs capitalize">
+                {fullIncident.severity_level}
+              </Badge>
+            )}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          {/* Header Info */}
-          <div className="flex items-center gap-3">
-            <Badge variant={getPriorityColor(incident.priority)} className="text-sm">
-              {incident.priority?.toUpperCase()}
-            </Badge>
-            <Badge variant="outline" className="text-sm">
-              {incident.status?.toUpperCase()}
-            </Badge>
-            <span className="text-sm text-muted-foreground">
-              {incident.clients?.name || "Unknown Client"}
-            </span>
-          </div>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 overflow-hidden flex flex-col">
+          <TabsList className="grid w-full grid-cols-4 flex-shrink-0">
+            <TabsTrigger value="overview" className="flex items-center gap-1.5">
+              <History className="w-4 h-4" />
+              Overview
+            </TabsTrigger>
+            <TabsTrigger value="ai-analysis" className="flex items-center gap-1.5">
+              <Brain className="w-4 h-4" />
+              AI Analysis
+              {hasAIAnalysis && (
+                <Badge variant="secondary" className="ml-1 text-xs px-1.5 py-0">
+                  {fullIncident.ai_analysis_log?.length}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="signals" className="flex items-center gap-1.5">
+              <Link2 className="w-4 h-4" />
+              Signal
+            </TabsTrigger>
+            <TabsTrigger value="actions" className="flex items-center gap-1.5">
+              <Users className="w-4 h-4" />
+              Actions
+            </TabsTrigger>
+          </TabsList>
 
-          {/* Timeline */}
-          <div>
-            <h3 className="text-sm font-semibold mb-2">Timeline</h3>
-            <div className="space-y-2">
-              <div className="text-sm">
-                <span className="text-muted-foreground">Opened:</span>{" "}
-                {new Date(incident.opened_at).toLocaleString()}
-              </div>
-              {incident.acknowledged_at && (
-                <div className="text-sm">
-                  <span className="text-muted-foreground">Acknowledged:</span>{" "}
-                  {new Date(incident.acknowledged_at).toLocaleString()}
+          <div className="flex-1 overflow-y-auto mt-4">
+            {/* Overview Tab */}
+            <TabsContent value="overview" className="m-0 space-y-4">
+              {/* Summary */}
+              {fullIncident.summary && (
+                <div className="p-3 bg-muted/50 rounded-lg">
+                  <h4 className="text-sm font-semibold mb-1">Summary</h4>
+                  <p className="text-sm text-muted-foreground">{fullIncident.summary}</p>
                 </div>
               )}
-              {incident.contained_at && (
-                <div className="text-sm">
-                  <span className="text-muted-foreground">Contained:</span>{" "}
-                  {new Date(incident.contained_at).toLocaleString()}
-                </div>
-              )}
-              {incident.resolved_at && (
-                <div className="text-sm">
-                  <span className="text-muted-foreground">Resolved:</span>{" "}
-                  {new Date(incident.resolved_at).toLocaleString()}
-                </div>
-              )}
-            </div>
-          </div>
 
-          <Separator />
-
-          {/* Location Map */}
-          {signalLocation && (
-            <>
-              <IncidentLocationMap location={signalLocation} />
-              <Separator />
-            </>
-          )}
-
-          {/* Event History */}
-          <div>
-            <h3 className="text-sm font-semibold mb-3">Event History</h3>
-            <div className="space-y-3 max-h-60 overflow-y-auto">
-              {incident.timeline_json && incident.timeline_json.length > 0 ? (
-                incident.timeline_json.map((entry, index) => (
-                  <div
-                    key={index}
-                    className="p-3 rounded-lg bg-muted/50 border border-border"
-                  >
-                    <div className="flex items-start justify-between gap-2 mb-1">
-                      <span className="text-xs font-semibold">
-                        {entry.event || entry.action}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(entry.timestamp).toLocaleString()}
-                      </span>
+              {/* Timeline */}
+              <div>
+                <h3 className="text-sm font-semibold mb-2">Status Timeline</h3>
+                <div className="space-y-2">
+                  <div className="text-sm flex justify-between">
+                    <span className="text-muted-foreground">Opened:</span>
+                    <span>{new Date(fullIncident.opened_at).toLocaleString()}</span>
+                  </div>
+                  {fullIncident.acknowledged_at && (
+                    <div className="text-sm flex justify-between">
+                      <span className="text-muted-foreground">Acknowledged:</span>
+                      <span>{new Date(fullIncident.acknowledged_at).toLocaleString()}</span>
                     </div>
-                    {entry.details && (
-                      <p className="text-xs text-muted-foreground whitespace-pre-wrap">
-                        {entry.details}
-                      </p>
-                    )}
-                    {entry.note && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Note: {entry.note}
-                      </p>
-                    )}
-                    {entry.actor && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        By: {entry.actor}
+                  )}
+                  {fullIncident.contained_at && (
+                    <div className="text-sm flex justify-between">
+                      <span className="text-muted-foreground">Contained:</span>
+                      <span>{new Date(fullIncident.contained_at).toLocaleString()}</span>
+                    </div>
+                  )}
+                  {fullIncident.resolved_at && (
+                    <div className="text-sm flex justify-between">
+                      <span className="text-muted-foreground">Resolved:</span>
+                      <span>{new Date(fullIncident.resolved_at).toLocaleString()}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Location Map */}
+              {signalLocation && <IncidentLocationMap location={signalLocation} />}
+
+              {/* Event History */}
+              <div>
+                <h3 className="text-sm font-semibold mb-3">Event History</h3>
+                <div className="space-y-3 max-h-60 overflow-y-auto">
+                  {fullIncident.timeline_json && fullIncident.timeline_json.length > 0 ? (
+                    fullIncident.timeline_json.map((entry, index) => (
+                      <div
+                        key={index}
+                        className="p-3 rounded-lg bg-muted/50 border border-border"
+                      >
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <span className="text-xs font-semibold">
+                            {entry.event || entry.action}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(entry.timestamp).toLocaleString()}
+                          </span>
+                        </div>
+                        {entry.details && (
+                          <p className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-3">
+                            {entry.details}
+                          </p>
+                        )}
+                        {entry.actor && (
+                          <p className="text-xs text-primary mt-1">
+                            By: {entry.actor}
+                          </p>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No timeline events</p>
+                  )}
+                </div>
+              </div>
+            </TabsContent>
+
+            {/* AI Analysis Tab */}
+            <TabsContent value="ai-analysis" className="m-0">
+              <AIAnalysisTimeline
+                incidentId={fullIncident.id}
+                analysisLog={fullIncident.ai_analysis_log || []}
+                investigationStatus={fullIncident.investigation_status || 'pending'}
+                assignedAgentIds={fullIncident.assigned_agent_ids || []}
+                onRefresh={fetchFullIncident}
+              />
+            </TabsContent>
+
+            {/* Signal Tab */}
+            <TabsContent value="signals" className="m-0 space-y-4">
+              {signalText ? (
+                <div className="space-y-4">
+                  <div className="p-4 bg-muted/50 rounded-lg border">
+                    <h4 className="text-sm font-semibold mb-2">Originating Signal</h4>
+                    <p className="text-sm">{signalText}</p>
+                    {signalLocation && (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        📍 Location: {signalLocation}
                       </p>
                     )}
                   </div>
-                ))
+                  {signalLocation && <IncidentLocationMap location={signalLocation} />}
+                </div>
               ) : (
-                <p className="text-sm text-muted-foreground">No timeline events</p>
+                <div className="text-center py-8 text-muted-foreground">
+                  <Link2 className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                  <p>No linked signal</p>
+                </div>
               )}
-            </div>
+            </TabsContent>
+
+            {/* Actions Tab */}
+            <TabsContent value="actions" className="m-0 space-y-4">
+              {fullIncident.status !== "resolved" && fullIncident.status !== "closed" ? (
+                <div className="space-y-4">
+                  <h3 className="text-sm font-semibold">Take Action</h3>
+                  <Textarea
+                    placeholder="Add a note (optional)"
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    rows={3}
+                  />
+                  <div className="flex gap-2 flex-wrap">
+                    {canAcknowledge && (
+                      <Button
+                        onClick={() => handleAction("acknowledge")}
+                        disabled={loading}
+                        className="gap-2"
+                      >
+                        {loading ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <CheckCircle className="w-4 h-4" />
+                        )}
+                        Acknowledge
+                      </Button>
+                    )}
+                    {canContain && (
+                      <Button
+                        onClick={() => handleAction("contain")}
+                        disabled={loading}
+                        variant="secondary"
+                        className="gap-2"
+                      >
+                        {loading ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Shield className="w-4 h-4" />
+                        )}
+                        Contain
+                      </Button>
+                    )}
+                    {canResolve && (
+                      <Button
+                        onClick={() => handleAction("resolve")}
+                        disabled={loading}
+                        variant="default"
+                        className="gap-2"
+                      >
+                        {loading ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <XCircle className="w-4 h-4" />
+                        )}
+                        Resolve
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {canAcknowledge && "Acknowledge this incident to begin investigation"}
+                    {canContain && "Mark as contained once the threat is neutralized"}
+                    {canResolve && "Resolve to close this incident"}
+                  </p>
+                  
+                  <Separator />
+                  
+                  <IncidentFeedbackDialog 
+                    incidentId={fullIncident.id}
+                    signalText={signalText}
+                    trigger={
+                      <Button variant="outline" size="sm" className="w-full">
+                        Provide AI Feedback
+                      </Button>
+                    }
+                  />
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 p-3 bg-status-success/10 rounded-lg border border-status-success/20">
+                    <CheckCircle className="w-5 h-5 text-status-success" />
+                    <span className="text-sm font-medium text-status-success">
+                      This incident has been resolved
+                    </span>
+                  </div>
+                  <IncidentFeedbackDialog 
+                    incidentId={fullIncident.id}
+                    signalText={signalText}
+                  />
+                </div>
+              )}
+            </TabsContent>
           </div>
-
-          <Separator />
-
-          {/* Action Section */}
-          {incident.status !== "resolved" && incident.status !== "closed" && (
-            <div className="space-y-3">
-              <h3 className="text-sm font-semibold">Take Action</h3>
-              <Textarea
-                placeholder="Add a note (optional)"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                rows={3}
-              />
-              <div className="flex gap-2">
-                {canAcknowledge && (
-                  <Button
-                    onClick={() => handleAction("acknowledge")}
-                    disabled={loading}
-                    className="gap-2"
-                  >
-                    {loading ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <CheckCircle className="w-4 h-4" />
-                    )}
-                    Acknowledge
-                  </Button>
-                )}
-                {canContain && (
-                  <Button
-                    onClick={() => handleAction("contain")}
-                    disabled={loading}
-                    variant="secondary"
-                    className="gap-2"
-                  >
-                    {loading ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Shield className="w-4 h-4" />
-                    )}
-                    Contain
-                  </Button>
-                )}
-                {canResolve && (
-                  <Button
-                    onClick={() => handleAction("resolve")}
-                    disabled={loading}
-                    variant="default"
-                    className="gap-2"
-                  >
-                    {loading ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <XCircle className="w-4 h-4" />
-                    )}
-                    Resolve
-                  </Button>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {canAcknowledge && "Acknowledge this incident to begin investigation"}
-                {canContain && "Mark as contained once the threat is neutralized"}
-                {canResolve && "Resolve to close this incident"}
-              </p>
-            </div>
-          )}
-
-          {incident.status === "resolved" && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 p-3 bg-status-success/10 rounded-lg border border-status-success/20">
-                <CheckCircle className="w-5 h-5 text-status-success" />
-                <span className="text-sm font-medium text-status-success">
-                  This incident has been resolved
-                </span>
-              </div>
-              <IncidentFeedbackDialog 
-                incidentId={incident.id}
-                signalText={signalText}
-              />
-            </div>
-          )}
-
-          {/* Feedback button available at any time */}
-          {incident.status !== "resolved" && (
-            <div className="pt-2">
-              <IncidentFeedbackDialog 
-                incidentId={incident.id}
-                signalText={signalText}
-                trigger={
-                  <Button variant="outline" size="sm" className="w-full">
-                    Provide AI Feedback
-                  </Button>
-                }
-              />
-            </div>
-          )}
-        </div>
+        </Tabs>
       </DialogContent>
 
       <IncidentOutcomeDialog
-        incidentId={incident.id}
+        incidentId={fullIncident.id}
         open={showOutcomeDialog}
         onClose={() => setShowOutcomeDialog(false)}
         onSuccess={() => {
           setShowOutcomeDialog(false);
           onSuccess();
         }}
-        openedAt={incident.opened_at}
+        openedAt={fullIncident.opened_at}
       />
     </Dialog>
   );

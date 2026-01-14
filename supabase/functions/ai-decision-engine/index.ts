@@ -424,7 +424,46 @@ Think like 3Si Security: provide intelligence that explains WHY this matters and
         console.log(`Incident already exists for signal ${signal.id}, skipping creation`);
         incident_id = existingIncident.id;
       } else {
-        // Automatically create incident
+        // Select initial AI agent for investigation based on signal characteristics
+        const selectInitialAgent = (signalData: any, decisionData: any): { agentCallSign: string; agentId: string; prompt: string } => {
+          const text = (signalData.normalized_text || '').toLowerCase();
+          const category = (signalData.category || '').toLowerCase();
+          const location = signalData.location || '';
+          
+          // Priority-based agent selection
+          if (location && (text.includes('location') || text.includes('area') || text.includes('site'))) {
+            return { 
+              agentCallSign: 'LOCUS-INTEL', 
+              agentId: '4fffd95a-c603-4f9d-857c-21de38e78747',
+              prompt: `Conduct location-based threat analysis for this ${decisionData.threat_level} severity incident. Focus on geographic patterns, regional threats, and proximity to client assets.`
+            };
+          }
+          if (category.includes('legal') || text.includes('lawsuit') || text.includes('regulation')) {
+            return { 
+              agentCallSign: 'LEX-MAGNA', 
+              agentId: 'd0d43def-fec5-4ae5-a32c-34980097b1c1',
+              prompt: `Analyze legal and regulatory implications for this incident. Identify applicable laws, potential liability, and compliance requirements.`
+            };
+          }
+          if (category.includes('geopolitical') || text.includes('government') || text.includes('political')) {
+            return { 
+              agentCallSign: 'GLOBE-SAGE', 
+              agentId: '664916cb-9395-47e1-b581-70dccad01f7c',
+              prompt: `Provide geopolitical analysis for this incident. Assess strategic implications, potential state actor involvement, and sector-wide impacts.`
+            };
+          }
+          // Default to pattern analysis
+          return { 
+            agentCallSign: 'BIRD-DOG', 
+            agentId: 'b304c547-ab87-41a6-805c-e65330ee0f05',
+            prompt: `Conduct pattern analysis for this ${decisionData.threat_level} severity incident. Identify behavioral indicators, anomalies, and potential coordinated activity.`
+          };
+        };
+
+        const initialAgent = selectInitialAgent(signal, decision);
+        console.log(`Selected initial agent: ${initialAgent.agentCallSign} for incident investigation`);
+
+        // Automatically create incident with AI Agent Task Force assignment
         const { data: incident, error: incidentError } = await supabase
           .from('incidents')
           .insert({
@@ -433,10 +472,24 @@ Think like 3Si Security: provide intelligence that explains WHY this matters and
             priority: decision.incident_priority || 'p3',
             status: 'open',
             is_test: signal.is_test || false,
+            title: `${signal.category || 'Security'} Incident - ${signal.clients?.name || 'Unknown Client'}`,
+            summary: decision.reasoning,
+            severity_level: decision.threat_level,
+            investigation_status: 'pending',
+            assigned_agent_ids: [initialAgent.agentId],
+            initial_agent_prompt: initialAgent.prompt,
+            ai_analysis_log: [{
+              timestamp: new Date().toISOString(),
+              agent_id: null,
+              agent_call_sign: 'AI Decision Engine',
+              agent_specialty: 'Threat Assessment & Incident Creation',
+              analysis: `## Initial Assessment\n\n**Threat Level:** ${decision.threat_level?.toUpperCase()}\n**Confidence:** ${Math.round((decision.confidence || 0) * 100)}%\n\n### Strategic Context\n${decision.strategic_context || 'N/A'}\n\n### Threat Correlation\n${decision.threat_correlation || 'N/A'}\n\n### Campaign Assessment\n${decision.campaign_assessment || 'N/A'}\n\n### Sector Implications\n${decision.sector_implications || 'N/A'}\n\n---\n\n**Next Step:** ${initialAgent.agentCallSign} assigned for specialized investigation.`,
+              investigation_focus: ['initial assessment', 'threat classification', 'agent assignment']
+            }],
             timeline_json: [{
               timestamp: new Date().toISOString(),
-              event: 'Incident automatically created by AI',
-              details: `${decision.reasoning}\n\n🎯 Strategic Context: ${decision.strategic_context}\n\n🔗 Threat Correlation: ${decision.threat_correlation}`,
+              event: 'Incident automatically created by AI Task Force',
+              details: `${decision.reasoning}\n\n🎯 Strategic Context: ${decision.strategic_context}\n\n🔗 Threat Correlation: ${decision.threat_correlation}\n\n🤖 Initial Agent Assigned: ${initialAgent.agentCallSign}`,
               actor: 'AI Decision Engine'
             }]
           })

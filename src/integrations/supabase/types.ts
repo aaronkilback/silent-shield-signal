@@ -1667,11 +1667,15 @@ export type Database = {
       incidents: {
         Row: {
           acknowledged_at: string | null
+          ai_analysis_log: Json | null
+          assigned_agent_ids: string[] | null
           client_id: string | null
           contained_at: string | null
           created_at: string
           id: string
           incident_type: string | null
+          initial_agent_prompt: string | null
+          investigation_status: string | null
           is_read: boolean | null
           is_test: boolean | null
           opened_at: string
@@ -1689,11 +1693,15 @@ export type Database = {
         }
         Insert: {
           acknowledged_at?: string | null
+          ai_analysis_log?: Json | null
+          assigned_agent_ids?: string[] | null
           client_id?: string | null
           contained_at?: string | null
           created_at?: string
           id?: string
           incident_type?: string | null
+          initial_agent_prompt?: string | null
+          investigation_status?: string | null
           is_read?: boolean | null
           is_test?: boolean | null
           opened_at?: string
@@ -1711,11 +1719,15 @@ export type Database = {
         }
         Update: {
           acknowledged_at?: string | null
+          ai_analysis_log?: Json | null
+          assigned_agent_ids?: string[] | null
           client_id?: string | null
           contained_at?: string | null
           created_at?: string
           id?: string
           incident_type?: string | null
+          initial_agent_prompt?: string | null
+          investigation_status?: string | null
           is_read?: boolean | null
           is_test?: boolean | null
           opened_at?: string
