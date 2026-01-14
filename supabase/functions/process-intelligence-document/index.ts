@@ -62,35 +62,83 @@ serve(async (req) => {
       .select('id, name, monitoring_keywords, competitor_names, high_value_assets')
       .eq('status', 'active');
 
-    // Match document against client keywords
+    // IMPROVED: Match document against client keywords with weighted scoring
+    // Returns only the BEST matching client to avoid cross-contamination
     function matchClientKeywords(text: string, clients: any[]) {
       const lowerText = text.toLowerCase();
-      const matches: Array<{ clientId: string; clientName: string; matchedKeywords: string[] }> = [];
+      
+      interface ClientScore {
+        clientId: string;
+        clientName: string;
+        matchedKeywords: string[];
+        score: number;
+      }
+      
+      const clientScores: ClientScore[] = [];
       
       for (const client of clients || []) {
+        let score = 0;
         const matchedKeywords: string[] = [];
-        const allKeywords = [
-          ...(client.monitoring_keywords || []),
-          ...(client.competitor_names || []),
-          ...(client.high_value_assets || [])
-        ];
         
-        for (const keyword of allKeywords) {
-          if (lowerText.includes(keyword.toLowerCase())) {
+        // Check client name (highest priority - 1000 points base + length bonus)
+        if (lowerText.includes(client.name.toLowerCase())) {
+          score += 1000 + client.name.length;
+          matchedKeywords.push(`client_name:${client.name}`);
+        }
+        
+        // Check monitoring keywords - score by specificity (length) and word count
+        for (const keyword of (client.monitoring_keywords || [])) {
+          if (keyword && lowerText.includes(keyword.toLowerCase())) {
+            const wordCount = keyword.split(/\s+/).length;
+            const keywordScore = keyword.length + (wordCount * 10);
+            score += keywordScore;
             matchedKeywords.push(keyword);
           }
         }
         
-        if (matchedKeywords.length > 0) {
-          matches.push({
+        // Check competitor names (slightly lower priority)
+        for (const competitor of (client.competitor_names || [])) {
+          if (competitor && lowerText.includes(competitor.toLowerCase())) {
+            score += competitor.length + 5;
+            matchedKeywords.push(`competitor:${competitor}`);
+          }
+        }
+        
+        // Check high value assets
+        for (const asset of (client.high_value_assets || [])) {
+          if (asset && lowerText.includes(asset.toLowerCase())) {
+            score += asset.length + 5;
+            matchedKeywords.push(`asset:${asset}`);
+          }
+        }
+        
+        if (score > 0) {
+          clientScores.push({
             clientId: client.id,
             clientName: client.name,
-            matchedKeywords
+            matchedKeywords,
+            score
           });
         }
       }
       
-      return matches;
+      // Sort by score descending and return only the best match
+      clientScores.sort((a, b) => b.score - a.score);
+      
+      if (clientScores.length > 0) {
+        const best = clientScores[0];
+        console.log(`✓ BEST CLIENT MATCH: ${best.clientName} (score: ${best.score})`);
+        console.log(`  Keywords: ${best.matchedKeywords.join(', ')}`);
+        
+        if (clientScores.length > 1) {
+          console.log(`  Runner-up: ${clientScores[1].clientName} (score: ${clientScores[1].score})`);
+        }
+        
+        // Return only the best match to avoid creating signals for wrong clients
+        return [{ clientId: best.clientId, clientName: best.clientName, matchedKeywords: best.matchedKeywords }];
+      }
+      
+      return [];
     }
 
     const clientMatches = matchClientKeywords(document.raw_text || '', clients || []);
