@@ -88,9 +88,10 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
         return;
       }
 
-      toast.success('AI analysis completed successfully!');
+      toast.success('AI analysis completed! View results below.');
+      // Trigger parent to refetch signal data, but keep dialog OPEN to show results
       onSignalUpdated?.();
-      onOpenChange(false);
+      // Don't close the dialog - let user see the AI analysis results
     } catch (error) {
       console.error('Error running AI analysis:', error);
       toast.error('Failed to run AI analysis');
@@ -114,8 +115,10 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
     }
   };
 
-  const aiAnalysis = signal.raw_json?.ai_analysis;
-  const aiDecision = aiAnalysis?.ai_decision || signal.raw_json?.ai_decision;
+  // AI analysis is stored in ai_decision by the ai-decision-engine
+  const aiDecision = signal.raw_json?.ai_decision;
+  // For backwards compatibility, also check ai_analysis
+  const aiAnalysis = signal.raw_json?.ai_analysis || aiDecision;
   const patternAnalysis = signal.raw_json?.pattern_analysis;
   const processingMethod = signal.raw_json?.processing_method;
   const urlAnalysis = signal.raw_json?.analysis; // Analysis from URL scanner
