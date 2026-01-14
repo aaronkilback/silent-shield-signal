@@ -2604,7 +2604,13 @@ Examples of when to use:
 ];
 
 // Execute tools by querying Supabase
-async function executeTool(toolName: string, args: any, supabaseClient: any) {
+// Optional userId parameter for memory-related tools
+async function executeTool(toolName: string, args: any, supabaseClient: any, userId?: string) {
+  // Inject user ID for memory tools
+  const memoryTools = ["get_user_memory", "remember_this", "update_user_preferences", "manage_project_context"];
+  if (memoryTools.includes(toolName) && userId) {
+    args._user_id = userId;
+  }
   console.log(`Executing tool: ${toolName}`, JSON.stringify(args));
 
   try {
@@ -8389,6 +8395,22 @@ serve(async (req) => {
     }
 
     const supabaseClient = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+    
+    // Extract authenticated user ID from Authorization header for memory tools
+    let authenticatedUserId: string | undefined;
+    const authHeader = req.headers.get("Authorization");
+    if (authHeader?.startsWith("Bearer ")) {
+      const token = authHeader.replace("Bearer ", "");
+      try {
+        const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token);
+        if (!authError && user) {
+          authenticatedUserId = user.id;
+          console.log("Authenticated user for memory tools:", authenticatedUserId);
+        }
+      } catch (authErr) {
+        console.log("Could not extract user from auth token (non-fatal):", authErr);
+      }
+    }
 
     // Helper to truncate content to avoid token limits
     const truncateContent = (content: string, maxChars: number = 50000): string => {
@@ -8920,7 +8942,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
       const forcedSignal = extractPlannedTestSignalFromText(firstMessage.content);
       if (forcedSignal) {
         console.log("FORCING inject_test_signal (model described injection but returned no tool_calls)");
-        const forcedResult = await executeTool("inject_test_signal", forcedSignal, supabaseClient);
+        const forcedResult = await executeTool("inject_test_signal", forcedSignal, supabaseClient, authenticatedUserId);
         const forcedToolResults = [
           {
             tool_call_id: "forced_inject_test_signal",
@@ -8965,7 +8987,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
       const forcedAgent = extractPlannedAgentFromText(firstMessage.content);
       if (forcedAgent) {
         console.log("FORCING create_agent (model described agent creation but returned no tool_calls)", forcedAgent);
-        const forcedResult = await executeTool("create_agent", forcedAgent, supabaseClient);
+        const forcedResult = await executeTool("create_agent", forcedAgent, supabaseClient, authenticatedUserId);
         const forcedToolResults = [
           {
             tool_call_id: "forced_create_agent",
@@ -9010,7 +9032,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
       const forcedQuery = extractPlannedFortressQueryFromText(firstMessage.content);
       if (forcedQuery) {
         console.log("FORCING query_fortress_data (model described query but returned no tool_calls)", forcedQuery);
-        const forcedResult = await executeTool("query_fortress_data", forcedQuery, supabaseClient);
+        const forcedResult = await executeTool("query_fortress_data", forcedQuery, supabaseClient, authenticatedUserId);
         const forcedToolResults = [
           {
             tool_call_id: "forced_query_fortress_data",
@@ -9077,7 +9099,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
         firstMessage.tool_calls.map(async (toolCall: any) => {
           try {
             const args = JSON.parse(toolCall.function.arguments);
-            const result = await executeTool(toolCall.function.name, args, supabaseClient);
+            const result = await executeTool(toolCall.function.name, args, supabaseClient, authenticatedUserId);
             return {
               tool_call_id: toolCall.id,
               role: "tool",
