@@ -7960,10 +7960,27 @@ serve(async (req) => {
       return content.substring(0, maxChars) + "\n\n... [Content truncated due to size limits. Query with more specific filters for complete results.]";
     };
 
-    // Helper to limit message history to avoid token overflow
+    // Helper to limit message history to avoid token overflow and context confusion
     const limitMessageHistory = (msgs: any[], maxMessages: number = 10): any[] => {
       if (msgs.length <= maxMessages) return msgs;
-      // Keep first message (often context) and last N-1 messages
+      
+      // Look for "New conversation started" markers and only keep messages after the last one
+      let lastNewChatIndex = -1;
+      msgs.forEach((msg, idx) => {
+        const content = typeof msg.content === 'string' ? msg.content : '';
+        if (content.includes('New Conversation Started') || content.includes('New conversation started')) {
+          lastNewChatIndex = idx;
+        }
+      });
+      
+      // If we found a new chat marker, only use messages from after that point
+      if (lastNewChatIndex >= 0 && msgs.length - lastNewChatIndex <= maxMessages) {
+        const recentMsgs = msgs.slice(lastNewChatIndex);
+        console.log(`Found new conversation marker at index ${lastNewChatIndex}, using ${recentMsgs.length} messages from new context`);
+        return recentMsgs;
+      }
+      
+      // Otherwise, keep first message (often context) and last N-1 messages
       const firstMsg = msgs[0];
       const recentMsgs = msgs.slice(-(maxMessages - 1));
       console.log(`Truncating message history from ${msgs.length} to ${maxMessages} messages`);

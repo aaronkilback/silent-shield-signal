@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Sparkles, Loader2, Paperclip, X, Phone } from "lucide-react";
+import { Send, Sparkles, Loader2, Paperclip, X, Phone, MessageSquarePlus } from "lucide-react";
 import { VoiceConversationInterface } from "./VoiceConversationInterface";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -36,6 +36,9 @@ export const DashboardAIAssistant = () => {
   const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const hasLoadedOnceRef = useRef(false);
   const [showVoiceInterface, setShowVoiceInterface] = useState(false);
+  
+  // Limit context sent to AI to prevent confusion between topics
+  const MAX_CONTEXT_MESSAGES = 20;
 
   // Load messages from database on mount and when returning to page
   useEffect(() => {
@@ -215,6 +218,15 @@ export const DashboardAIAssistant = () => {
 
     try {
       console.log("Fetching from edge function...");
+      
+      // Only send recent messages to prevent context confusion
+      // Keep first message (welcome) + last N messages for focused context
+      const contextMessages = newMessages.length > MAX_CONTEXT_MESSAGES
+        ? [newMessages[0], ...newMessages.slice(-MAX_CONTEXT_MESSAGES)]
+        : newMessages;
+      
+      console.log(`Sending ${contextMessages.length} of ${newMessages.length} messages for focused context`);
+      
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dashboard-ai-assistant`,
         {
@@ -223,7 +235,7 @@ export const DashboardAIAssistant = () => {
             "Content-Type": "application/json",
             Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
           },
-          body: JSON.stringify({ messages: newMessages }),
+          body: JSON.stringify({ messages: contextMessages }),
         }
       );
 
@@ -853,6 +865,33 @@ Type "help" anytime to see this again!`,
     toast.success("Conversation cleared - AI knowledge and tools intact");
   };
 
+  // Start a new conversation without deleting history (quick context reset)
+  const startNewChat = () => {
+    const welcomeMessage: Message = {
+      role: "assistant",
+      content: `🔄 **New Conversation Started**
+
+I've reset my context so we can focus on a new topic. Your chat history is preserved above for reference.
+
+How can I help you now?`,
+    };
+    
+    // Add visual separator and welcome message
+    setMessages(prev => [
+      ...prev,
+      { role: "assistant" as const, content: "---\n\n*New conversation started*\n\n---" },
+      welcomeMessage
+    ]);
+    
+    // Save to database
+    if (user) {
+      saveMessageToDb({ role: "assistant", content: "---\n\n*New conversation started*\n\n---" });
+      saveMessageToDb(welcomeMessage);
+    }
+    
+    toast.success("New conversation started - context reset");
+  };
+
   if (showVoiceInterface) {
     return (
       <VoiceConversationInterface 
@@ -888,6 +927,16 @@ Type "help" anytime to see this again!`,
             )}
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={startNewChat}
+              className="text-xs shrink-0"
+              title="Start fresh conversation (keeps history visible, resets AI context)"
+            >
+              <MessageSquarePlus className="w-3.5 h-3.5 mr-1.5" />
+              New Chat
+            </Button>
             <Button
               variant="outline"
               size="sm"
