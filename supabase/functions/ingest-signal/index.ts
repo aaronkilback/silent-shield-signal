@@ -759,6 +759,58 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
       }
     }
 
+    // ===== WEBHOOK TRIGGERS =====
+    // Trigger webhooks for critical/high severity signals or client matches
+    try {
+      const shouldTriggerWebhook = 
+        (classification.severity === 'critical' || classification.severity === 'high') ||
+        (clientId && matchConfidence !== 'none');
+      
+      if (shouldTriggerWebhook) {
+        const eventType = (classification.severity === 'critical' || classification.severity === 'high')
+          ? 'signal.critical_high'
+          : 'signal.client_match';
+        
+        console.log(`Triggering webhook for event: ${eventType}`);
+        
+        // Build signal payload for webhook
+        const webhookSignal = {
+          id: signal.id,
+          normalized_text: signal.normalized_text,
+          source: signal.source_id,
+          category: classification.category,
+          severity: classification.severity,
+          status: signal.status,
+          client_id: clientId,
+          match_confidence: matchConfidence === 'high' ? 0.9 : 
+                           matchConfidence === 'medium' ? 0.7 : 
+                           matchConfidence === 'low' ? 0.5 :
+                           matchConfidence === 'ai' ? 0.6 :
+                           matchConfidence === 'explicit' ? 1.0 : 0,
+          detected_at: signal.detected_at || new Date().toISOString(),
+        };
+        
+        // Dispatch webhook asynchronously
+        supabase.functions.invoke('webhook-dispatcher', {
+          body: {
+            event_type: eventType,
+            signal: webhookSignal,
+          }
+        }).then(({ data, error }) => {
+          if (error) {
+            console.error('Webhook dispatch error:', error);
+          } else {
+            console.log('Webhook dispatch result:', data);
+          }
+        }).catch(err => {
+          console.error('Webhook dispatch failed:', err);
+        });
+      }
+    } catch (webhookError) {
+      console.error('Error triggering webhooks:', webhookError);
+      // Don't fail the main request if webhook triggering fails
+    }
+
     // Trigger signal correlation (async, don't wait for it)
     try {
       console.log('Triggering signal correlation...');
