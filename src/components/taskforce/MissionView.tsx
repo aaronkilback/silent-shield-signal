@@ -95,6 +95,8 @@ export function MissionView({ missionId, onBack }: MissionViewProps) {
     refetchInterval: isRunning ? 3000 : false,
   });
 
+  const hasLeader = Boolean(agents?.some((a: any) => a.role === "leader"));
+
   const runMission = useMutation({
     mutationFn: async () => {
       const { data, error } = await supabase.functions.invoke("run-task-force", {
@@ -140,6 +142,11 @@ export function MissionView({ missionId, onBack }: MissionViewProps) {
   });
 
   const handleRunMission = async () => {
+    if (!hasLeader) {
+      toast.error("No Task Force Leader assigned. Create a new mission and assign a leader.");
+      return;
+    }
+
     setIsRunning(true);
     try {
       await runMission.mutateAsync();

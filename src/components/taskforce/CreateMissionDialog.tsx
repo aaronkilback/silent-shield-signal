@@ -114,6 +114,11 @@ export function CreateMissionDialog({
       return;
     }
 
+    if (!user) {
+      toast.error("Please sign in to create a mission");
+      return;
+    }
+
     if (agentAssignments.length === 0) {
       toast.error("Please assign at least one agent");
       return;
@@ -123,6 +128,8 @@ export function CreateMissionDialog({
       toast.error("Please assign a Task Force Leader");
       return;
     }
+
+    let createdMissionId: string | null = null;
 
     setIsLoading(true);
     try {
@@ -140,18 +147,23 @@ export function CreateMissionDialog({
           audience: formData.audience,
           is_stealth_mode: formData.is_stealth_mode,
           client_id: formData.client_id,
-          created_by: user?.id,
+          created_by: user.id,
         })
         .select()
         .single();
 
       if (missionError) throw missionError;
+      createdMissionId = mission.id;
 
       // Assign agents
       const agentInserts = agentAssignments.map((a) => ({
         mission_id: mission.id,
         agent_id: a.agent_id,
-        role: a.role as "leader" | "intelligence_analyst" | "operations_officer" | "client_liaison",
+        role: a.role as
+          | "leader"
+          | "intelligence_analyst"
+          | "operations_officer"
+          | "client_liaison",
       }));
 
       const { error: agentsError } = await supabase
@@ -165,6 +177,16 @@ export function CreateMissionDialog({
       resetForm();
     } catch (error: any) {
       console.error("Error creating mission:", error);
+
+      // Avoid leaving orphan missions behind if agent assignment fails.
+      if (createdMissionId) {
+        try {
+          await supabase.from("task_force_missions").delete().eq("id", createdMissionId);
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+
       toast.error(error.message || "Failed to create mission");
     } finally {
       setIsLoading(false);
