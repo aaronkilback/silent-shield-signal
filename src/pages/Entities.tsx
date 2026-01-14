@@ -45,18 +45,20 @@ export default function Entities() {
   const [activeTab, setActiveTab] = useState("entities");
   const [profileEntityId, setProfileEntityId] = useState<string>("");
 
-  // Note: Entities are global - not filtered by client as they can be referenced across multiple clients
-
+  // Filter entities by the selected client
   const { data: entities = [], refetch } = useQuery({
     queryKey: ['entities', searchTerm, selectedType, selectedClientId],
     queryFn: async () => {
-      // Show all entities - they are global resources that can be referenced across clients
       let query = supabase
         .from('entities')
-        // Avoid joins here so viewers without access to related tables can still see entities
         .select('*')
         .eq('is_active', true)
         .order('created_at', { ascending: false });
+
+      // Filter by selected client
+      if (selectedClientId) {
+        query = query.eq('client_id', selectedClientId);
+      }
 
       if (searchTerm) {
         query = query.or(`name.ilike.%${searchTerm}%,aliases.cs.{${searchTerm}}`);
@@ -72,15 +74,20 @@ export default function Entities() {
     }
   });
 
-  // Get total entity count
+  // Get entity count for selected client
   const { data: totalCount = 0 } = useQuery({
-    queryKey: ['entities-total-count'],
+    queryKey: ['entities-total-count', selectedClientId],
     queryFn: async () => {
-      const { count, error } = await supabase
+      let query = supabase
         .from('entities')
         .select('*', { count: 'exact', head: true })
         .eq('is_active', true);
       
+      if (selectedClientId) {
+        query = query.eq('client_id', selectedClientId);
+      }
+      
+      const { count, error } = await query;
       if (error) throw error;
       return count || 0;
     }
