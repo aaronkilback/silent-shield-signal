@@ -346,28 +346,90 @@ Respond ONLY with valid JSON.`
       if (clients && clients.length > 0) {
       const textLower = signalText.toLowerCase();
       
-      // CRITICAL: First check explicit keyword matches
+      // IMPROVED MATCHING: Score all clients and pick the best match
+      // This prevents generic keywords from incorrectly matching before specific ones
+      interface ClientScore {
+        client: typeof clients[0];
+        score: number;
+        matchedKeywords: string[];
+        matchType: 'name' | 'keyword' | 'asset' | 'location';
+      }
+      
+      const clientScores: ClientScore[] = [];
+      
       for (const client of clients) {
-        // Check client name
+        let score = 0;
+        const foundKeywords: string[] = [];
+        let matchType: 'name' | 'keyword' | 'asset' | 'location' = 'keyword';
+        
+        // Check client name (highest priority - 1000 points base + length bonus)
         if (textLower.includes(client.name.toLowerCase())) {
-          clientId = client.id;
-          matchedKeywords.push(`client_name:${client.name}`);
-          console.log(`✓ KEYWORD MATCH via client name: ${client.name}`);
-          break;
+          score += 1000 + client.name.length;
+          foundKeywords.push(`client_name:${client.name}`);
+          matchType = 'name';
         }
         
-        // Check monitoring keywords
+        // Check monitoring keywords - score by specificity (length) and count
         if (client.monitoring_keywords && Array.isArray(client.monitoring_keywords)) {
-          const foundKeywords = client.monitoring_keywords.filter((keyword: string) => 
-            textLower.includes(keyword.toLowerCase())
-          );
-          
-          if (foundKeywords.length > 0) {
-            clientId = client.id;
-            matchedKeywords = foundKeywords;
-            console.log(`✓ KEYWORD MATCH for ${client.name}: ${foundKeywords.join(', ')}`);
-            break;
+          for (const keyword of client.monitoring_keywords) {
+            if (keyword && textLower.includes(keyword.toLowerCase())) {
+              // Longer keywords are more specific, worth more points
+              // Also count word count - multi-word phrases are more specific
+              const wordCount = keyword.split(/\s+/).length;
+              const keywordScore = keyword.length + (wordCount * 10);
+              score += keywordScore;
+              foundKeywords.push(keyword);
+            }
           }
+        }
+        
+        // Check high value assets (slightly lower priority than keywords)
+        if (client.high_value_assets && Array.isArray(client.high_value_assets)) {
+          for (const asset of client.high_value_assets) {
+            if (asset && textLower.includes(asset.toLowerCase())) {
+              const assetScore = asset.length + 5;
+              score += assetScore;
+              foundKeywords.push(`asset:${asset}`);
+              if (matchType === 'keyword') matchType = 'asset';
+            }
+          }
+        }
+        
+        // Check locations
+        if (client.locations && Array.isArray(client.locations)) {
+          for (const location of client.locations) {
+            if (location && textLower.includes(location.toLowerCase())) {
+              score += 15; // Location match bonus
+              foundKeywords.push(`location:${location}`);
+              if (matchType === 'keyword') matchType = 'location';
+            }
+          }
+        }
+        
+        if (score > 0) {
+          clientScores.push({
+            client,
+            score,
+            matchedKeywords: foundKeywords,
+            matchType
+          });
+        }
+      }
+      
+      // Sort by score descending and pick the best match
+      if (clientScores.length > 0) {
+        clientScores.sort((a, b) => b.score - a.score);
+        const bestMatch = clientScores[0];
+        clientId = bestMatch.client.id;
+        matchedKeywords = bestMatch.matchedKeywords;
+        
+        console.log(`✓ BEST MATCH: ${bestMatch.client.name} (score: ${bestMatch.score}, type: ${bestMatch.matchType})`);
+        console.log(`  Matched keywords: ${matchedKeywords.join(', ')}`);
+        
+        // Log runner-up if there was competition
+        if (clientScores.length > 1) {
+          const runnerUp = clientScores[1];
+          console.log(`  Runner-up: ${runnerUp.client.name} (score: ${runnerUp.score})`);
         }
       }
       
