@@ -1341,3 +1341,319 @@ For issues with edge functions:
 3. Check external API status (Google, Resend, etc.)
 4. Verify secrets are configured correctly
 5. Test with smaller datasets first
+
+---
+
+## AI Agent Management Functions
+
+### create-agent
+
+Creates a new AI agent with specified configuration.
+
+**Endpoint:** `POST /create-agent`
+
+**Request Body:**
+```json
+{
+  "codename": "Phoenix",
+  "call_sign": "PHOENIX-1",
+  "header_name": "Phoenix",
+  "persona": "Strategic intelligence advisor with expertise in threat analysis",
+  "specialty": "Threat Intelligence, Pattern Analysis, Risk Assessment",
+  "mission_scope": "Analyze threats and provide actionable intelligence recommendations",
+  "interaction_style": "chat",
+  "input_sources": ["signals", "incidents", "entities", "clients"],
+  "output_types": ["analysis", "recommendations", "briefings"],
+  "is_client_facing": false,
+  "is_active": true,
+  "avatar_color": "#3B82F6",
+  "system_prompt": "You are Phoenix, a strategic intelligence advisor...",
+  "requested_by": "user_id"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Agent \"Phoenix\" (PHOENIX-1) created successfully",
+  "agent": {
+    "id": "uuid",
+    "codename": "Phoenix",
+    "call_sign": "PHOENIX-1",
+    ...
+  },
+  "audit_key": "agent_creation_uuid_timestamp"
+}
+```
+
+**Features:**
+- Auto-generates system prompt if not provided
+- Includes real-world operational context (NOT simulation)
+- Creates audit trail in intelligence_config table
+- Validates required fields (codename, call_sign, persona, specialty, mission_scope)
+
+---
+
+### update-agent-configuration
+
+Updates an existing AI agent's configuration.
+
+**Endpoint:** `POST /update-agent-configuration`
+
+**Request Body:**
+```json
+{
+  "agent_id": "uuid",
+  "updates": {
+    "persona": "Updated persona description",
+    "specialty": "New specialty areas",
+    "system_prompt": "Updated system prompt",
+    "is_active": true
+  },
+  "reason": "Configuration update for enhanced capabilities",
+  "requested_by": "user_id"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Agent \"Phoenix\" configuration updated successfully",
+  "agent": { ... },
+  "changes": {
+    "persona": {
+      "from": "Old persona",
+      "to": "Updated persona"
+    }
+  },
+  "audit_key": "agent_config_audit_uuid_timestamp"
+}
+```
+
+**Allowed update fields:**
+- `codename`, `call_sign`, `header_name`
+- `persona`, `specialty`, `mission_scope`
+- `interaction_style`, `input_sources`, `output_types`
+- `is_client_facing`, `is_active`, `avatar_color`
+- `system_prompt`
+
+---
+
+### agent-chat
+
+Sends a message to an AI agent for analysis and response.
+
+**Endpoint:** `POST /agent-chat`
+
+**Request Body:**
+```json
+{
+  "agent_id": "uuid",
+  "message": "Analyze the threat landscape for our financial sector clients",
+  "conversation_history": [
+    { "role": "user", "content": "Previous message" },
+    { "role": "assistant", "content": "Previous response" }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "response": "Based on my analysis of recent signals and incidents...",
+  "agent": {
+    "id": "uuid",
+    "codename": "Phoenix",
+    "call_sign": "PHOENIX-1"
+  }
+}
+```
+
+**Context Gathered (based on agent's input_sources):**
+- Recent signals (last 50)
+- Active incidents
+- Entities with high threat scores
+- Client information
+- Escalation rules
+- Recent documents
+
+---
+
+### generate-agent-avatar
+
+Generates an AI avatar image for an agent.
+
+**Endpoint:** `POST /generate-agent-avatar`
+
+**Request Body:**
+```json
+{
+  "agent_id": "uuid",
+  "agent_name": "Phoenix",
+  "persona": "Strategic intelligence advisor",
+  "specialty": "Threat Intelligence"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "avatar_url": "https://storage.supabase.co/agent-avatars/uuid.png"
+}
+```
+
+---
+
+## AI Task Force Functions
+
+### incident-agent-orchestrator
+
+Orchestrates AI agents to investigate incidents as a coordinated task force.
+
+**Endpoint:** `POST /incident-agent-orchestrator`
+
+**Request Body:**
+```json
+{
+  "incident_id": "uuid",
+  "agent_call_sign": "LOCUS-INTEL",  // Optional - auto-selects if not provided
+  "prompt": "Custom investigation prompt"  // Optional
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "agent": "LOCUS-INTEL",
+  "analysis": "Full agent analysis text...",
+  "investigation_focus": ["location analysis", "geographic patterns"],
+  "incident_id": "uuid",
+  "log_entry_count": 3
+}
+```
+
+**Available Agents:**
+| Call Sign | Specialty |
+|-----------|-----------|
+| `LOCUS-INTEL` | Location-based threat monitoring and geographic intelligence |
+| `LEX-MAGNA` | Legal analysis and regulatory compliance |
+| `GLOBE-SAGE` | Geopolitical analysis and strategic forecasting |
+| `BIRD-DOG` | Pattern detection and behavioral analysis |
+| `TIME-WARP` | Chronology reconstruction and temporal analysis |
+| `PATTERN-SEEKER` | Pattern detection and investigative correlation |
+| `AEGIS-CMD` | Incident response and protocol execution |
+
+**Task Force Naming:**
+When multiple agents are assigned (2+), the system automatically generates a task force name:
+- Prefixes: "Task Force", "Operation", "Project", "Initiative", "Response Team"
+- Examples: "Task Force Iron Shield", "Operation Phantom Storm", "Task Force Vigilant Eagle"
+
+**What it does:**
+1. Fetches incident with related signal and client data
+2. Auto-selects appropriate agent based on incident characteristics (or uses specified agent)
+3. Builds comprehensive investigation context
+4. Calls AI with specialized system prompt for agent's focus area
+5. Updates incident with:
+   - `ai_analysis_log` (append analysis entry)
+   - `timeline_json` (append investigation event)
+   - `assigned_agent_ids` (add agent to list)
+   - `task_force_name` (generated when 2+ agents assigned)
+   - `investigation_status` (set to "in_progress")
+
+---
+
+### ai-decision-engine (Enhanced)
+
+Enhanced AI decision engine with automatic incident creation and agent assignment.
+
+**Endpoint:** `POST /ai-decision-engine`
+
+**Request Body:**
+```json
+{
+  "signalId": "uuid"
+}
+```
+
+**Response:**
+```json
+{
+  "decision": "escalate",
+  "confidence": 0.92,
+  "reasoning": "High severity threat detected...",
+  "incident_created": true,
+  "incident_id": "uuid",
+  "initial_agent": "LOCUS-INTEL",
+  "initial_agent_prompt": "Investigate location-based threats..."
+}
+```
+
+**Enhanced Features:**
+- Automatically creates incidents for high-severity signals
+- Selects initial AI agent based on signal characteristics:
+  - Location keywords → LOCUS-INTEL
+  - Legal keywords → LEX-MAGNA
+  - Geopolitical keywords → GLOBE-SAGE
+  - Pattern keywords → BIRD-DOG
+- Populates incident with:
+  - AI-generated title and summary
+  - Severity level assessment
+  - Initial agent assignment
+  - Investigation prompt
+  - Initial `ai_analysis_log` entry
+
+---
+
+## Agent Database Schema
+
+### ai_agents Table
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | Primary key |
+| `codename` | TEXT | Unique agent codename (e.g., "Phoenix") |
+| `call_sign` | TEXT | Unique tactical identifier (e.g., "PHOENIX-1") |
+| `header_name` | TEXT | Display name in UI |
+| `persona` | TEXT | Agent personality/character description |
+| `specialty` | TEXT | Areas of expertise |
+| `mission_scope` | TEXT | Operational mission parameters |
+| `interaction_style` | TEXT | How agent communicates ("chat", "formal", etc.) |
+| `input_sources` | TEXT[] | Data sources agent can access |
+| `output_types` | TEXT[] | Types of output agent produces |
+| `is_client_facing` | BOOLEAN | Whether agent interacts with external clients |
+| `is_active` | BOOLEAN | Whether agent is operational |
+| `avatar_color` | TEXT | Hex color for avatar |
+| `avatar_image` | TEXT | URL to generated avatar image |
+| `system_prompt` | TEXT | Full system prompt for AI model |
+| `roe_id` | UUID | Link to Rules of Engagement |
+| `created_at` | TIMESTAMP | Creation timestamp |
+| `updated_at` | TIMESTAMP | Last update timestamp |
+| `created_by` | UUID | User who created agent |
+
+### incidents Table (Task Force Fields)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `task_force_name` | TEXT | Auto-generated task force name (e.g., "Task Force Iron Shield") |
+| `investigation_status` | TEXT | Status: pending, in_progress, completed, escalated |
+| `assigned_agent_ids` | UUID[] | Array of agent IDs investigating this incident |
+| `ai_analysis_log` | JSONB | Chronological log of agent analyses |
+| `initial_agent_prompt` | TEXT | Initial prompt used to dispatch first agent |
+
+### ai_analysis_log Entry Structure
+
+```json
+{
+  "timestamp": "2024-01-15T10:30:00Z",
+  "agent_id": "uuid",
+  "agent_call_sign": "LOCUS-INTEL",
+  "agent_specialty": "Location-based threat monitoring",
+  "analysis": "Full analysis text from agent...",
+  "investigation_focus": ["location analysis", "geographic patterns"],
+  "prompt_used": "Truncated prompt..."
+}
+```

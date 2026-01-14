@@ -279,11 +279,20 @@ process-client-onboarding/ # Client data processing
 **AI-Powered Functions**
 ```
 dashboard-ai-assistant/    # Natural language assistant
-ai-decision-engine/        # AI-driven decision making
+ai-decision-engine/        # AI-driven decision making (enhanced with incident creation)
 generate-learning-context/ # Learning context generation
 adaptive-confidence-adjuster/  # ML model tuning
 investigation-ai-assist/   # Investigation assistance
 suggest-investigation-references/  # Cross-reference suggestions
+```
+
+**AI Agent Management Functions**
+```
+create-agent/              # Create new AI agents with operational personas
+update-agent-configuration/ # Update agent configurations with audit trail
+agent-chat/                # Send messages to agents for analysis
+generate-agent-avatar/     # Generate AI avatar images for agents
+incident-agent-orchestrator/  # Orchestrate multi-agent incident investigations
 ```
 
 **Entity & Correlation Functions**
@@ -641,3 +650,121 @@ The Fortress architecture is designed for:
 - **Extensibility**: Easy to add new monitoring sources
 - **Performance**: Optimized queries and caching
 - **Reliability**: Automatic backups and failover
+
+---
+
+## AI Agent Task Force Architecture
+
+### Overview
+
+The AI Agent Task Force system enables coordinated multi-agent investigations where specialized AI agents work together to analyze incidents from different perspectives.
+
+### Agent Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                      AI AGENT TASK FORCE                            │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                 Agent Orchestrator                            │  │
+│  │  • Dispatches agents based on incident characteristics       │  │
+│  │  • Generates task force names for multi-agent ops            │  │
+│  │  • Coordinates analysis and updates incident records         │  │
+│  └──────────────────────────┬──────────────────────────────────┘  │
+│                              │                                      │
+│  ┌───────────┬───────────┬───┴───────┬───────────┬───────────┐    │
+│  │           │           │           │           │           │    │
+│  ▼           ▼           ▼           ▼           ▼           ▼    │
+│ ┌─────┐   ┌─────┐   ┌─────┐   ┌─────┐   ┌─────┐   ┌─────┐       │
+│ │LOCUS│   │ LEX │   │GLOBE│   │BIRD │   │TIME │   │AEGIS│       │
+│ │INTEL│   │MAGNA│   │SAGE │   │DOG  │   │WARP │   │CMD  │       │
+│ │     │   │     │   │     │   │     │   │     │   │     │       │
+│ │Geo  │   │Legal│   │Geopo│   │Patt │   │Time │   │Resp │       │
+│ │Intel│   │Comp │   │litcl│   │ern  │   │line │   │onse │       │
+│ └──┬──┘   └──┬──┘   └──┬──┘   └──┬──┘   └──┬──┘   └──┬──┘       │
+│    │         │         │         │         │         │          │
+│    └─────────┴─────────┴────┬────┴─────────┴─────────┘          │
+│                              │                                      │
+│                     ┌────────▼────────┐                            │
+│                     │  Incident Record │                            │
+│                     │  • ai_analysis_log                           │
+│                     │  • assigned_agent_ids                        │
+│                     │  • task_force_name                           │
+│                     │  • investigation_status                      │
+│                     └─────────────────┘                            │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### Agent Specializations
+
+| Agent | Call Sign | Specialty | Investigation Focus |
+|-------|-----------|-----------|---------------------|
+| Pathfinder | LOCUS-INTEL | Geographic Intelligence | Location patterns, regional threats, proximity assessment |
+| Legion | LEX-MAGNA | Legal & Compliance | Laws, regulations, liability, reporting obligations |
+| Oracle | GLOBE-SAGE | Geopolitical Analysis | State actors, political context, strategic implications |
+| Ignis | BIRD-DOG | Pattern Detection | Behavioral indicators, anomalies, coordinated activity |
+| Chronos | TIME-WARP | Temporal Analysis | Timeline reconstruction, sequence patterns, historical context |
+| Nexus | PATTERN-SEEKER | Correlation | Entity links, network mapping, hidden connections |
+| Aegis | AEGIS-CMD | Incident Response | Containment, protocols, mitigation, tactical recommendations |
+
+### Task Force Workflow
+
+```
+1. High-Severity Signal Detected
+   └─> ai-decision-engine triggers
+       └─> Creates Incident
+           └─> Assigns initial agent (auto-selected)
+               └─> Agent conducts investigation
+                   └─> Analysis logged to ai_analysis_log
+                       └─> Additional agents dispatched as needed
+                           └─> Task Force Name generated (2+ agents)
+                               └─> Coordinated investigation continues
+                                   └─> Human review via Task Forces page
+```
+
+### Task Force Naming Convention
+
+When multiple agents are assigned, the system generates tactical operation names:
+
+**Prefixes:**
+- Task Force, Operation, Project, Initiative, Response Team
+
+**Adjectives:**
+- Iron, Steel, Shadow, Silent, Swift, Crimson, Azure, Obsidian, Phantom, Thunder, Arctic, Desert, etc.
+
+**Nouns:**
+- Shield, Spear, Eagle, Falcon, Wolf, Storm, Fortress, Bastion, Horizon, Phoenix, Titan, etc.
+
+**Severity-Themed Names:**
+- Critical: Firestorm, Thunderbolt, Red Alert, Defcon
+- High: Rapid Strike, Storm Watch, High Tide
+- Medium: Steady Watch, Patrol, Recon
+- Low: Sentinel, Observer, Overwatch
+
+### Agent Configuration Principles
+
+All agents are configured with **real-world operational context**:
+
+1. **No Simulation Language**: Agents never reference simulations or training exercises
+2. **Operational Context**: Explicitly stated that all data has real-world implications
+3. **Actionable Output**: Focus on concrete, implementable recommendations
+4. **Evidence-Based**: Ground analysis in actual Fortress data
+5. **Confidence Levels**: Provide clear confidence assessments
+6. **Gap Identification**: Highlight information gaps needing human follow-up
+
+### UI Components
+
+| Page | Route | Purpose |
+|------|-------|---------|
+| Command Center | `/command-center` | Manage and interact with individual agents |
+| AI Task Forces | `/task-forces` | Monitor multi-agent investigations |
+| Incident Detail | Modal | View task force banner and AI analysis timeline |
+
+### Data Model Extensions
+
+**incidents table additions:**
+- `task_force_name` (TEXT) - Generated operation name
+- `investigation_status` (TEXT) - pending, in_progress, completed, escalated
+- `assigned_agent_ids` (UUID[]) - Agents investigating
+- `ai_analysis_log` (JSONB) - Chronological agent contributions
+- `initial_agent_prompt` (TEXT) - First agent's investigation prompt
