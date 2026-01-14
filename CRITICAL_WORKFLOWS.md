@@ -47,6 +47,15 @@ This document tracks improvements made to prevent bugs in critical workflows.
 - ✅ Covered by global error boundary
 - ✅ Real-time updates protected
 - ✅ Investigation creation error handling
+- ✅ AI Task Force orchestration with error handling
+- ✅ Multi-agent dispatch with graceful failures
+
+#### AI Agent Task Force (Task Forces Page)
+- ✅ Error boundary around task force list
+- ✅ Agent dispatch error handling with user feedback
+- ✅ Rate limiting protection (429/402 errors surfaced)
+- ✅ Real-time updates for investigation status
+- ✅ Graceful handling of AI API failures
 
 ## 🐛 Bug Reports Integration
 
