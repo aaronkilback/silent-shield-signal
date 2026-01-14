@@ -141,24 +141,61 @@ serve(async (req) => {
       return [];
     }
 
-    const clientMatches = matchClientKeywords(document.raw_text || '', clients || []);
+    // PRIORITY 1: Check if document came from an entity scan - use entity's client_id
+    let clientMatches: Array<{ clientId: string; clientName: string; matchedKeywords: string[] }> = [];
     
-    // Skip processing if no client keywords match
+    const sourceEntityId = document.metadata?.entity_id;
+    if (sourceEntityId) {
+      console.log(`Document from entity scan, checking entity ${sourceEntityId} for client_id`);
+      
+      const { data: sourceEntity } = await supabase
+        .from('entities')
+        .select('id, name, client_id')
+        .eq('id', sourceEntityId)
+        .single();
+      
+      if (sourceEntity?.client_id) {
+        // Use the entity's client_id - this takes priority over keyword matching
+        const { data: entityClient } = await supabase
+          .from('clients')
+          .select('id, name')
+          .eq('id', sourceEntity.client_id)
+          .single();
+        
+        if (entityClient) {
+          console.log(`✓ ENTITY CLIENT OVERRIDE: Using entity's client ${entityClient.name}`);
+          clientMatches = [{
+            clientId: entityClient.id,
+            clientName: entityClient.name,
+            matchedKeywords: [`entity:${sourceEntity.name}`]
+          }];
+        }
+      } else {
+        console.log(`Entity ${sourceEntity?.name || sourceEntityId} has no client_id, falling back to keyword matching`);
+      }
+    }
+    
+    // PRIORITY 2: If no entity client, use keyword matching
     if (clientMatches.length === 0) {
-      console.log('No client keyword matches found, skipping document');
+      clientMatches = matchClientKeywords(document.raw_text || '', clients || []);
+    }
+    
+    // Skip processing if no client matches at all
+    if (clientMatches.length === 0) {
+      console.log('No client matches found (entity or keyword), skipping document');
       await supabase
         .from('ingested_documents')
         .update({
           processing_status: 'completed',
           processed_at: new Date().toISOString(),
-          error_message: 'No client keyword matches'
+          error_message: 'No client matches'
         })
         .eq('id', documentId);
       
       return new Response(
         JSON.stringify({
           success: true,
-          results: { message: 'No client keyword matches', skipped: true }
+          results: { message: 'No client matches', skipped: true }
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
