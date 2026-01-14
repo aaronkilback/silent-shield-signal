@@ -7,8 +7,9 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
 };
 
-interface ApiKeyValidation {
+interface AuthValidation {
   valid: boolean;
+  authType: 'api_key' | 'oauth' | null;
   apiKey?: {
     id: string;
     name: string;
@@ -16,12 +17,17 @@ interface ApiKeyValidation {
     permissions: string[];
     rate_limit_per_minute: number;
   };
+  oauth?: {
+    client_id: string;
+    scopes: string[];
+    scoped_client_id: string | null;
+  };
   error?: string;
 }
 
-async function validateApiKey(supabase: any, apiKeyHeader: string): Promise<ApiKeyValidation> {
+async function validateApiKey(supabase: any, apiKeyHeader: string): Promise<AuthValidation> {
   if (!apiKeyHeader) {
-    return { valid: false, error: 'Missing X-API-Key header' };
+    return { valid: false, authType: null, error: 'Missing X-API-Key header' };
   }
 
   const encoder = new TextEncoder();
@@ -37,15 +43,15 @@ async function validateApiKey(supabase: any, apiKeyHeader: string): Promise<ApiK
     .single();
 
   if (error || !apiKey) {
-    return { valid: false, error: 'Invalid API key' };
+    return { valid: false, authType: null, error: 'Invalid API key' };
   }
 
   if (!apiKey.is_active) {
-    return { valid: false, error: 'API key is inactive' };
+    return { valid: false, authType: null, error: 'API key is inactive' };
   }
 
   if (apiKey.expires_at && new Date(apiKey.expires_at) < new Date()) {
-    return { valid: false, error: 'API key has expired' };
+    return { valid: false, authType: null, error: 'API key has expired' };
   }
 
   await supabase
@@ -55,6 +61,7 @@ async function validateApiKey(supabase: any, apiKeyHeader: string): Promise<ApiK
 
   return {
     valid: true,
+    authType: 'api_key',
     apiKey: {
       id: apiKey.id,
       name: apiKey.name,
@@ -63,6 +70,92 @@ async function validateApiKey(supabase: any, apiKeyHeader: string): Promise<ApiK
       rate_limit_per_minute: apiKey.rate_limit_per_minute,
     }
   };
+}
+
+async function validateOAuthToken(supabase: any, authHeader: string): Promise<AuthValidation> {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return { valid: false, authType: null, error: 'Invalid Authorization header' };
+  }
+
+  const token = authHeader.substring(7);
+  const parts = token.split('.');
+  if (parts.length !== 3) {
+    return { valid: false, authType: null, error: 'Invalid token format' };
+  }
+
+  try {
+    const payloadB64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(payloadB64));
+    
+    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
+      return { valid: false, authType: null, error: 'Token has expired' };
+    }
+
+    const secret = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || 'default-secret';
+    const encoder = new TextEncoder();
+    const signatureInput = `${parts[0]}.${parts[1]}`;
+    const keyData = encoder.encode(secret);
+    
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      keyData,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['verify']
+    );
+    
+    const signatureB64 = parts[2].replace(/-/g, '+').replace(/_/g, '/');
+    const signatureBytes = Uint8Array.from(atob(signatureB64), c => c.charCodeAt(0));
+    
+    const isValid = await crypto.subtle.verify(
+      'HMAC',
+      cryptoKey,
+      signatureBytes,
+      encoder.encode(signatureInput)
+    );
+
+    if (!isValid) {
+      return { valid: false, authType: null, error: 'Invalid token signature' };
+    }
+
+    const { data: oauthClient, error: clientError } = await supabase
+      .from('oauth_clients')
+      .select('id, client_id, scoped_client_id, is_active')
+      .eq('id', payload.sub)
+      .single();
+
+    if (clientError || !oauthClient || !oauthClient.is_active) {
+      return { valid: false, authType: null, error: 'OAuth client not found or inactive' };
+    }
+
+    return {
+      valid: true,
+      authType: 'oauth',
+      oauth: {
+        client_id: oauthClient.client_id,
+        scopes: payload.scope ? payload.scope.split(' ') : [],
+        scoped_client_id: oauthClient.scoped_client_id,
+      }
+    };
+  } catch (e) {
+    console.error('OAuth token validation error:', e);
+    return { valid: false, authType: null, error: 'Token validation failed' };
+  }
+}
+
+async function validateAuth(supabase: any, req: Request): Promise<AuthValidation> {
+  const apiKeyHeader = req.headers.get('x-api-key');
+  const authHeader = req.headers.get('authorization');
+
+  if (apiKeyHeader) {
+    return validateApiKey(supabase, apiKeyHeader);
+  }
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return validateOAuthToken(supabase, authHeader);
+  }
+
+  return { valid: false, authType: null, error: 'Missing authentication. Provide X-API-Key header or Authorization: Bearer token' };
 }
 
 async function logApiUsage(
@@ -104,8 +197,7 @@ serve(async (req) => {
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-  const apiKeyHeader = req.headers.get('x-api-key');
-  const authValidation = await validateApiKey(supabase, apiKeyHeader || '');
+  const authValidation = await validateAuth(supabase, req);
 
   if (!authValidation.valid) {
     const responseTime = Date.now() - startTime;
@@ -116,14 +208,21 @@ serve(async (req) => {
     );
   }
 
-  if (!authValidation.apiKey!.permissions.includes('read:clients')) {
+  const hasPermission = authValidation.authType === 'api_key'
+    ? authValidation.apiKey!.permissions.includes('read:clients')
+    : authValidation.oauth!.scopes.includes('read:clients');
+
+  if (!hasPermission) {
     const responseTime = Date.now() - startTime;
-    await logApiUsage(supabase, authValidation.apiKey!.id, '/api/v1/clients', req.method, 403, responseTime, null, ipAddress, userAgent, 'Insufficient permissions');
+    const authId = authValidation.authType === 'api_key' ? authValidation.apiKey!.id : null;
+    await logApiUsage(supabase, authId, '/api/v1/clients', req.method, 403, responseTime, null, ipAddress, userAgent, 'Insufficient permissions');
     return new Response(
       JSON.stringify({ error: 'Insufficient permissions', code: 'FORBIDDEN' }),
       { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
+
+  const authId = authValidation.authType === 'api_key' ? authValidation.apiKey!.id : null;
 
   try {
     const pathMatch = url.pathname.match(/\/api-v1-clients\/?([a-f0-9-]*)?$/i);
@@ -133,14 +232,14 @@ serve(async (req) => {
     const industry = url.searchParams.get('industry');
     const status = url.searchParams.get('status');
 
-    // If API key is scoped to a client, only return that client
-    const scopedClientId = authValidation.apiKey!.client_id;
+    const scopedClientId = authValidation.authType === 'api_key' 
+      ? authValidation.apiKey!.client_id
+      : authValidation.oauth!.scoped_client_id;
 
     if (clientId) {
-      // GET /api/v1/clients/{client_id}
       if (scopedClientId && clientId !== scopedClientId) {
         const responseTime = Date.now() - startTime;
-        await logApiUsage(supabase, authValidation.apiKey!.id, `/api/v1/clients/${clientId}`, req.method, 403, responseTime, null, ipAddress, userAgent, 'Access denied');
+        await logApiUsage(supabase, authId, `/api/v1/clients/${clientId}`, req.method, 403, responseTime, null, ipAddress, userAgent, 'Access denied');
         return new Response(
           JSON.stringify({ error: 'Access denied', code: 'FORBIDDEN' }),
           { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -160,7 +259,7 @@ serve(async (req) => {
 
       if (error || !client) {
         const responseTime = Date.now() - startTime;
-        await logApiUsage(supabase, authValidation.apiKey!.id, `/api/v1/clients/${clientId}`, req.method, 404, responseTime, null, ipAddress, userAgent, 'Client not found');
+        await logApiUsage(supabase, authId, `/api/v1/clients/${clientId}`, req.method, 404, responseTime, null, ipAddress, userAgent, 'Client not found');
         return new Response(
           JSON.stringify({ error: 'Client not found', code: 'NOT_FOUND' }),
           { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -168,7 +267,7 @@ serve(async (req) => {
       }
 
       const responseTime = Date.now() - startTime;
-      await logApiUsage(supabase, authValidation.apiKey!.id, `/api/v1/clients/${clientId}`, req.method, 200, responseTime, null, ipAddress, userAgent, null);
+      await logApiUsage(supabase, authId, `/api/v1/clients/${clientId}`, req.method, 200, responseTime, null, ipAddress, userAgent, null);
 
       return new Response(
         JSON.stringify({ data: client }),
@@ -176,7 +275,6 @@ serve(async (req) => {
       );
 
     } else {
-      // GET /api/v1/clients - List clients
       let query = supabase
         .from('clients')
         .select(`
@@ -197,7 +295,7 @@ serve(async (req) => {
 
       if (error) {
         const responseTime = Date.now() - startTime;
-        await logApiUsage(supabase, authValidation.apiKey!.id, '/api/v1/clients', req.method, 500, responseTime, { industry, status }, ipAddress, userAgent, error.message);
+        await logApiUsage(supabase, authId, '/api/v1/clients', req.method, 500, responseTime, { industry, status }, ipAddress, userAgent, error.message);
         return new Response(
           JSON.stringify({ error: 'Internal server error', code: 'INTERNAL_ERROR' }),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -205,7 +303,7 @@ serve(async (req) => {
       }
 
       const responseTime = Date.now() - startTime;
-      await logApiUsage(supabase, authValidation.apiKey!.id, '/api/v1/clients', req.method, 200, responseTime, { industry, status, limit, offset }, ipAddress, userAgent, null);
+      await logApiUsage(supabase, authId, '/api/v1/clients', req.method, 200, responseTime, { industry, status, limit, offset }, ipAddress, userAgent, null);
 
       return new Response(
         JSON.stringify({
@@ -224,7 +322,7 @@ serve(async (req) => {
   } catch (error) {
     console.error('API Error:', error);
     const responseTime = Date.now() - startTime;
-    await logApiUsage(supabase, authValidation.apiKey?.id || null, '/api/v1/clients', req.method, 500, responseTime, null, ipAddress, userAgent, error instanceof Error ? error.message : 'Unknown error');
+    await logApiUsage(supabase, authId, '/api/v1/clients', req.method, 500, responseTime, null, ipAddress, userAgent, error instanceof Error ? error.message : 'Unknown error');
     return new Response(
       JSON.stringify({ error: 'Internal server error', code: 'INTERNAL_ERROR' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
