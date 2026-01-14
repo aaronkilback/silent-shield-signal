@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Header } from "@/components/Header";
+import { PageLayout } from "@/components/PageLayout";
 import { AgentRoster } from "@/components/agents/AgentRoster";
 import { AgentPanel } from "@/components/agents/AgentPanel";
 import { AgentInteraction } from "@/components/agents/AgentInteraction";
@@ -87,21 +87,19 @@ export default function CommandCenter() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      <main className="container mx-auto px-4 py-6 space-y-6">
-        {/* Header */}
-        <div className="flex items-center gap-3 border-b border-border pb-4">
-          <div className="p-2 rounded-lg bg-primary/10">
-            <Shield className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Fortress AI Command Center</h1>
-            <p className="text-sm text-muted-foreground">
-              Multi-Agent Intelligence Operations
-            </p>
-          </div>
+    <PageLayout>
+      {/* Header */}
+      <div className="flex items-center gap-3 border-b border-border pb-4">
+        <div className="p-2 rounded-lg bg-primary/10">
+          <Shield className="h-6 w-6 text-primary" />
         </div>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Fortress AI Command Center</h1>
+          <p className="text-sm text-muted-foreground">
+            Multi-Agent Intelligence Operations
+          </p>
+        </div>
+      </div>
 
         {/* Agent Roster */}
         <AgentRoster
@@ -141,7 +139,6 @@ export default function CommandCenter() {
           </div>
         )}
 
-        {/* Admin Dialog */}
         <AgentAdminDialog
           open={isAdminDialogOpen}
           onOpenChange={setIsAdminDialogOpen}
@@ -151,7 +148,6 @@ export default function CommandCenter() {
             setIsAdminDialogOpen(false);
           }}
         />
-      </main>
-    </div>
+    </PageLayout>
   );
 }

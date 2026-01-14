@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Header } from "@/components/Header";
+import { PageLayout } from "@/components/PageLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -272,19 +272,13 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
     critical: incidents.filter((i) => i.priority === "p1").length,
   };
 
-  if (authLoading || !user) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+  if (!user && !authLoading) {
+    return null;
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      <main className="container mx-auto px-6 py-8 space-y-6">
-        <DashboardClientSelector />
+    <PageLayout loading={authLoading || loading}>
+      <DashboardClientSelector />
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
@@ -442,7 +436,6 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
             )}
           </CardContent>
         </Card>
-      </main>
 
       {selectedIncident && (
         <IncidentActionDialog
@@ -463,7 +456,7 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
         onOpenChange={(open) => !open && setDeleteIncident(null)}
         onDeleted={() => setReloadTrigger((prev) => prev + 1)}
       />
-    </div>
+    </PageLayout>
   );
 };
 
