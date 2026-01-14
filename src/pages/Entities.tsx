@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Header } from "@/components/Header";
+import { PageLayout } from "@/components/PageLayout";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -25,8 +25,13 @@ import { EntitySuggestionsPanel } from "@/components/EntitySuggestionsPanel";
 import { EntityUnifiedProfile } from "@/components/EntityUnifiedProfile";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { useAuth } from "@/hooks/useAuth";
+import { useNavigate } from "react-router-dom";
+import { useEffect } from "react";
 
 export default function Entities() {
+  const { user, loading: authLoading } = useAuth();
+  const navigate = useNavigate();
   const { selectedClientId } = useClientSelection();
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
@@ -92,6 +97,12 @@ export default function Entities() {
       return count || 0;
     }
   });
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate("/auth");
+    }
+  }, [user, authLoading, navigate]);
 
   const handleDocumentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -256,23 +267,25 @@ export default function Entities() {
     { value: 'ip_address', label: 'IP Addresses' }
   ];
 
+  if (!user && !authLoading) {
+    return null;
+  }
+
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      <main className="container mx-auto px-4 py-8">
-        <DashboardClientSelector />
-        <div className="flex items-center justify-between mb-6 mt-6">
-          <div>
-            <h1 className="text-3xl font-bold">Entity Management</h1>
-            <p className="text-muted-foreground">
-              Track entities, review suggestions, and manage duplicates
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button 
-              variant="outline"
-              disabled={loading}
-              onClick={() => setCrossReferenceDialogOpen(true)}
+    <PageLayout loading={authLoading}>
+      <DashboardClientSelector />
+      <div className="flex items-center justify-between mb-6 mt-6">
+        <div>
+          <h1 className="text-3xl font-bold">Entity Management</h1>
+          <p className="text-muted-foreground">
+            Track entities, review suggestions, and manage duplicates
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button 
+            variant="outline"
+            disabled={loading}
+            onClick={() => setCrossReferenceDialogOpen(true)}
             >
               <GitCompare className="w-4 h-4 mr-2" />
               Cross-Reference
@@ -655,9 +668,8 @@ export default function Entities() {
             )}
           </TabsContent>
         </Tabs>
-      </main>
 
-        <CreateEntityDialog 
+        <CreateEntityDialog
           open={createDialogOpen} 
           onOpenChange={setCreateDialogOpen}
         />
@@ -703,6 +715,6 @@ export default function Entities() {
         open={crossReferenceDialogOpen}
         onOpenChange={setCrossReferenceDialogOpen}
       />
-    </div>
+    </PageLayout>
   );
 }

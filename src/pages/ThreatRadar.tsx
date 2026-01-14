@@ -1,4 +1,4 @@
-import { Header } from "@/components/Header";
+import { PageLayout } from "@/components/PageLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
@@ -85,15 +85,7 @@ const ThreatRadar = () => {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  if (!user) {
+  if (!user && !loading) {
     return null;
   }
 
@@ -111,43 +103,41 @@ const ThreatRadar = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      <main className="container mx-auto px-6 py-8 space-y-6">
-        {/* Header Section */}
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-primary/10 border border-primary/20">
-              <Radar className="w-8 h-8 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold flex items-center gap-2">
-                Threat Radar
-                <Badge className={`ml-2 ${getThreatLevelColor(threatLevel)}`}>
-                  {threatLevel.toUpperCase()}
-                </Badge>
-              </h1>
-              <p className="text-muted-foreground">
-                Proactive threat intelligence & predictive analytics
-              </p>
-            </div>
+    <PageLayout loading={loading}>
+      {/* Header Section */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="p-3 rounded-xl bg-primary/10 border border-primary/20">
+            <Radar className="w-8 h-8 text-primary" />
           </div>
-          <div className="flex items-center gap-3">
-            <DashboardClientSelector />
-            <Button 
-              onClick={handleRefresh} 
-              disabled={isAnalyzing || isLoadingRadar}
-              variant="outline"
-            >
-              {isAnalyzing || isLoadingRadar ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4 mr-2" />
-              )}
-              Refresh Analysis
-            </Button>
+          <div>
+            <h1 className="text-3xl font-bold flex items-center gap-2">
+              Threat Radar
+              <Badge className={`ml-2 ${getThreatLevelColor(threatLevel)}`}>
+                {threatLevel.toUpperCase()}
+              </Badge>
+            </h1>
+            <p className="text-muted-foreground">
+              Proactive threat intelligence & predictive analytics
+            </p>
           </div>
         </div>
+        <div className="flex items-center gap-3">
+          <DashboardClientSelector />
+          <Button 
+            onClick={handleRefresh} 
+            disabled={isAnalyzing || isLoadingRadar}
+            variant="outline"
+          >
+            {isAnalyzing || isLoadingRadar ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4 mr-2" />
+            )}
+            Refresh Analysis
+          </Button>
+        </div>
+      </div>
 
         {/* Threat Score Cards */}
         <ErrorBoundary context="Threat Score Cards">
@@ -319,8 +309,7 @@ const ThreatRadar = () => {
             </CardContent>
           </Card>
         </div>
-      </main>
-    </div>
+    </PageLayout>
   );
 };
 
