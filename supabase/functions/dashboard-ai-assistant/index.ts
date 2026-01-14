@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, upsertProject, touchProject } from "../_shared/user-memory.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2461,6 +2462,145 @@ This tool bridges the gap between internal Fortress data and open-source intelli
       }
     }
   },
+  // ══════════════════════════════════════════════════════════════════════════
+  // PERSISTENT MEMORY TOOLS - For context retention across sessions
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    type: "function",
+    function: {
+      name: "get_user_memory",
+      description: `Retrieve the user's persistent memory context including preferences, active projects, and remembered facts. Use this at the start of conversations or when context is unclear to understand user's background, ongoing work, and preferences.`,
+      parameters: {
+        type: "object",
+        properties: {
+          current_client_id: {
+            type: "string",
+            description: "Optional: Current client context to prioritize client-specific memory"
+          }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "remember_this",
+      description: `Save important information to the user's persistent memory. Use when user shares key facts, project updates, preferences, or decisions that should be remembered across sessions. 
+      
+Examples of when to use:
+- User states a preference: "I prefer bullet points" → save as preference
+- User mentions an ongoing project: "I'm working on the security audit" → save as project context
+- User makes a decision: "We decided to escalate threats above 7.5" → save as key_fact
+- User shares important context: "Our client's CEO is traveling next week" → save with expiry`,
+      parameters: {
+        type: "object",
+        properties: {
+          memory_type: {
+            type: "string",
+            enum: ["summary", "key_fact", "preference", "decision"],
+            description: "Type of memory: summary (conversation summary), key_fact (important info), preference (user preference), decision (recorded decision)"
+          },
+          content: {
+            type: "string",
+            description: "The information to remember (be concise but complete)"
+          },
+          context_tags: {
+            type: "array",
+            items: { type: "string" },
+            description: "Tags for easier retrieval (e.g., 'security', 'client:xyz', 'travel')"
+          },
+          importance_score: {
+            type: "number",
+            description: "How important is this? 1-10 scale (default 5). High importance = remembered longer"
+          },
+          client_id: {
+            type: "string",
+            description: "Optional: Associate memory with a specific client for client-scoped context"
+          },
+          expires_in_days: {
+            type: "number",
+            description: "Optional: Memory expires after N days (use for temporary context like travel dates)"
+          }
+        },
+        required: ["memory_type", "content"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_user_preferences",
+      description: `Update the user's global preferences for communication style, format, and context. Use when user explicitly states preferences or when you learn them through interaction.`,
+      parameters: {
+        type: "object",
+        properties: {
+          communication_style: {
+            type: "string",
+            description: "How the user prefers communication: 'concise', 'detailed', 'technical', 'executive'"
+          },
+          preferred_format: {
+            type: "string",
+            description: "Preferred response format: 'bullet_points', 'paragraphs', 'structured', 'tables'"
+          },
+          role_context: {
+            type: "string",
+            description: "User's role/context (e.g., 'Security Analyst', 'CISO', 'Operations Manager')"
+          },
+          timezone: {
+            type: "string",
+            description: "User's timezone (e.g., 'America/Vancouver', 'UTC')"
+          },
+          custom_preferences: {
+            type: "object",
+            description: "Any custom key-value preferences"
+          }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "manage_project_context",
+      description: `Create, update, or manage a project in the user's persistent context. Use when user mentions ongoing work, starts new initiatives, or provides project updates.`,
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "update", "complete", "pause"],
+            description: "Action to take on the project"
+          },
+          project_id: {
+            type: "string",
+            description: "For update/complete/pause: existing project ID"
+          },
+          project_name: {
+            type: "string",
+            description: "Name of the project"
+          },
+          project_description: {
+            type: "string",
+            description: "Brief description of the project"
+          },
+          key_details: {
+            type: "object",
+            description: "Important details like deadlines, stakeholders, goals"
+          },
+          priority: {
+            type: "string",
+            enum: ["high", "medium", "low"],
+            description: "Project priority"
+          },
+          client_id: {
+            type: "string",
+            description: "Optional: Associate with a specific client"
+          }
+        },
+        required: ["action"]
+      }
+    }
+  }
 ];
 
 // Execute tools by querying Supabase
@@ -7728,6 +7868,184 @@ The signal is now in the database with status 'triaged' and rules have been appl
         total_matches: matchingMessages.length,
         results
       };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // PERSISTENT MEMORY TOOL IMPLEMENTATIONS
+    // ══════════════════════════════════════════════════════════════════════════
+    case "get_user_memory": {
+      // User ID should be passed in args from the handler
+      const userId = args._user_id;
+      if (!userId) {
+        return {
+          success: false,
+          message: "No authenticated user found. Memory context requires authentication."
+        };
+      }
+      
+      try {
+        const memoryContext = await fetchUserMemory(supabaseClient, userId, args.current_client_id);
+        const formattedMemory = formatMemoryForPrompt(memoryContext, args.current_client_id);
+        
+        return {
+          success: true,
+          has_preferences: !!memoryContext.preferences,
+          active_projects_count: memoryContext.activeProjects.length,
+          global_memories_count: memoryContext.recentMemories.length,
+          client_contexts_count: memoryContext.clientSpecificContext.length,
+          formatted_context: formattedMemory || "No persistent memory found for this user yet.",
+          raw_data: {
+            preferences: memoryContext.preferences,
+            projects: memoryContext.activeProjects.slice(0, 5),
+            memories: memoryContext.recentMemories.slice(0, 10)
+          }
+        };
+      } catch (err) {
+        console.error("Error fetching user memory:", err);
+        return {
+          success: false,
+          message: `Error retrieving memory: ${err instanceof Error ? err.message : 'Unknown error'}`
+        };
+      }
+    }
+
+    case "remember_this": {
+      const userId = args._user_id;
+      if (!userId) {
+        return { success: false, message: "No authenticated user found." };
+      }
+      
+      try {
+        // Calculate expiry if expires_in_days is provided
+        let expires_at: string | undefined;
+        if (args.expires_in_days) {
+          const expiryDate = new Date();
+          expiryDate.setDate(expiryDate.getDate() + args.expires_in_days);
+          expires_at = expiryDate.toISOString();
+        }
+        
+        const result = await saveMemory(supabaseClient, userId, {
+          memory_type: args.memory_type,
+          content: args.content,
+          context_tags: args.context_tags || [],
+          importance_score: args.importance_score || 5,
+          client_id: args.client_id,
+          expires_at
+        });
+        
+        if (result.success) {
+          return {
+            success: true,
+            message: `✓ Remembered: "${args.content.substring(0, 50)}${args.content.length > 50 ? '...' : ''}"`,
+            memory_id: result.id,
+            memory_type: args.memory_type,
+            importance: args.importance_score || 5,
+            expires: expires_at ? `in ${args.expires_in_days} days` : 'never'
+          };
+        } else {
+          return { success: false, message: result.error };
+        }
+      } catch (err) {
+        console.error("Error saving memory:", err);
+        return { success: false, message: `Error saving memory: ${err instanceof Error ? err.message : 'Unknown error'}` };
+      }
+    }
+
+    case "update_user_preferences": {
+      const userId = args._user_id;
+      if (!userId) {
+        return { success: false, message: "No authenticated user found." };
+      }
+      
+      try {
+        const prefsToUpdate: any = {};
+        if (args.communication_style) prefsToUpdate.communication_style = args.communication_style;
+        if (args.preferred_format) prefsToUpdate.preferred_format = args.preferred_format;
+        if (args.role_context) prefsToUpdate.role_context = args.role_context;
+        if (args.timezone) prefsToUpdate.timezone = args.timezone;
+        if (args.custom_preferences) prefsToUpdate.custom_preferences = args.custom_preferences;
+        
+        const result = await upsertPreferences(supabaseClient, userId, prefsToUpdate);
+        
+        if (result.success) {
+          const updatedFields = Object.keys(prefsToUpdate).join(', ');
+          return {
+            success: true,
+            message: `✓ Updated preferences: ${updatedFields}`,
+            updated_fields: prefsToUpdate
+          };
+        } else {
+          return { success: false, message: result.error };
+        }
+      } catch (err) {
+        console.error("Error updating preferences:", err);
+        return { success: false, message: `Error updating preferences: ${err instanceof Error ? err.message : 'Unknown error'}` };
+      }
+    }
+
+    case "manage_project_context": {
+      const userId = args._user_id;
+      if (!userId) {
+        return { success: false, message: "No authenticated user found." };
+      }
+      
+      try {
+        const action = args.action;
+        
+        if (action === "complete" || action === "pause") {
+          if (!args.project_id) {
+            return { success: false, message: "project_id required for complete/pause actions" };
+          }
+          
+          const newStatus = action === "complete" ? "completed" : "on_hold";
+          const { error } = await supabaseClient
+            .from("user_project_context")
+            .update({ current_status: newStatus, updated_at: new Date().toISOString() })
+            .eq("id", args.project_id)
+            .eq("user_id", userId);
+          
+          if (error) throw error;
+          
+          return {
+            success: true,
+            message: `✓ Project marked as ${newStatus}`,
+            project_id: args.project_id,
+            new_status: newStatus
+          };
+        }
+        
+        if (action === "create" || action === "update") {
+          if (!args.project_name && !args.project_id) {
+            return { success: false, message: "project_name required for create, or project_id for update" };
+          }
+          
+          const result = await upsertProject(supabaseClient, userId, {
+            id: args.project_id,
+            project_name: args.project_name,
+            project_description: args.project_description,
+            current_status: "active",
+            key_details: args.key_details || {},
+            priority: args.priority || "medium",
+            client_id: args.client_id
+          });
+          
+          if (result.success) {
+            return {
+              success: true,
+              message: `✓ Project ${action === "create" ? "created" : "updated"}: ${args.project_name}`,
+              project_id: result.id,
+              action: action
+            };
+          } else {
+            return { success: false, message: result.error };
+          }
+        }
+        
+        return { success: false, message: `Unknown action: ${action}` };
+      } catch (err) {
+        console.error("Error managing project:", err);
+        return { success: false, message: `Error managing project: ${err instanceof Error ? err.message : 'Unknown error'}` };
+      }
     }
 
     default:

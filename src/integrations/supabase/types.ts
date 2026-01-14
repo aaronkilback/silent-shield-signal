@@ -737,6 +737,56 @@ export type Database = {
         }
         Relationships: []
       }
+      conversation_memory: {
+        Row: {
+          client_id: string | null
+          content: string
+          context_tags: string[] | null
+          created_at: string
+          expires_at: string | null
+          id: string
+          importance_score: number | null
+          memory_type: string
+          source_conversation_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          client_id?: string | null
+          content: string
+          context_tags?: string[] | null
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          importance_score?: number | null
+          memory_type: string
+          source_conversation_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string | null
+          content?: string
+          context_tags?: string[] | null
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          importance_score?: number | null
+          memory_type?: string
+          source_conversation_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_memory_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       document_entity_mentions: {
         Row: {
           confidence: number | null
@@ -2322,6 +2372,48 @@ export type Database = {
           weight?: number | null
         }
         Relationships: []
+      }
+      memory_access_log: {
+        Row: {
+          accessed_at: string
+          id: string
+          memory_id: string | null
+          project_id: string | null
+          user_id: string
+          was_useful: boolean | null
+        }
+        Insert: {
+          accessed_at?: string
+          id?: string
+          memory_id?: string | null
+          project_id?: string | null
+          user_id: string
+          was_useful?: boolean | null
+        }
+        Update: {
+          accessed_at?: string
+          id?: string
+          memory_id?: string | null
+          project_id?: string | null
+          user_id?: string
+          was_useful?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "memory_access_log_memory_id_fkey"
+            columns: ["memory_id"]
+            isOneToOne: false
+            referencedRelation: "conversation_memory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "memory_access_log_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "user_project_context"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       monitoring_history: {
         Row: {
@@ -3948,6 +4040,95 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_preferences: {
+        Row: {
+          communication_style: string | null
+          created_at: string
+          custom_preferences: Json | null
+          id: string
+          language_preference: string | null
+          preferred_format: string | null
+          role_context: string | null
+          timezone: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          communication_style?: string | null
+          created_at?: string
+          custom_preferences?: Json | null
+          id?: string
+          language_preference?: string | null
+          preferred_format?: string | null
+          role_context?: string | null
+          timezone?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          communication_style?: string | null
+          created_at?: string
+          custom_preferences?: Json | null
+          id?: string
+          language_preference?: string | null
+          preferred_format?: string | null
+          role_context?: string | null
+          timezone?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_project_context: {
+        Row: {
+          client_id: string | null
+          created_at: string
+          current_status: string | null
+          id: string
+          key_details: Json | null
+          last_mentioned_at: string | null
+          priority: string | null
+          project_description: string | null
+          project_name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          client_id?: string | null
+          created_at?: string
+          current_status?: string | null
+          id?: string
+          key_details?: Json | null
+          last_mentioned_at?: string | null
+          priority?: string | null
+          project_description?: string | null
+          project_name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string | null
+          created_at?: string
+          current_status?: string | null
+          id?: string
+          key_details?: Json | null
+          last_mentioned_at?: string | null
+          priority?: string | null
+          project_description?: string | null
+          project_name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_project_context_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
             referencedColumns: ["id"]
           },
         ]
