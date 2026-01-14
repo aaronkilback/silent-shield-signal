@@ -6,6 +6,51 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Task Force Name Generation
+const TASK_FORCE_PREFIXES = [
+  'Task Force', 'Operation', 'Project', 'Initiative', 'Response Team'
+];
+
+const TASK_FORCE_ADJECTIVES = [
+  'Iron', 'Steel', 'Shadow', 'Silent', 'Swift', 'Crimson', 'Azure', 'Obsidian',
+  'Phantom', 'Thunder', 'Arctic', 'Desert', 'Coastal', 'Mountain', 'Urban',
+  'Tactical', 'Strategic', 'Rapid', 'Vigilant', 'Resolute', 'Steadfast',
+  'Valiant', 'Guardian', 'Sentinel', 'Vanguard', 'Apex', 'Prime', 'Alpha'
+];
+
+const TASK_FORCE_NOUNS = [
+  'Shield', 'Spear', 'Sword', 'Eagle', 'Falcon', 'Wolf', 'Lion', 'Bear',
+  'Storm', 'Thunder', 'Lightning', 'Fortress', 'Bastion', 'Citadel', 'Rampart',
+  'Horizon', 'Dawn', 'Dusk', 'Meridian', 'Zenith', 'Apex', 'Summit',
+  'Trident', 'Hammer', 'Arrow', 'Phoenix', 'Dragon', 'Titan', 'Colossus'
+];
+
+const SEVERITY_THEMED_NAMES: Record<string, string[]> = {
+  'critical': ['Firestorm', 'Thunderbolt', 'Red Alert', 'Crisis Response', 'Defcon'],
+  'high': ['Rapid Strike', 'Storm Watch', 'High Tide', 'Alert Force'],
+  'medium': ['Steady Watch', 'Patrol', 'Recon', 'Survey'],
+  'low': ['Sentinel', 'Observer', 'Monitor', 'Overwatch']
+};
+
+function generateTaskForceName(incident: any, signal: any): string {
+  const severity = signal?.severity?.toLowerCase() || incident.priority || 'medium';
+  
+  // 30% chance to use severity-themed name
+  if (Math.random() < 0.3 && SEVERITY_THEMED_NAMES[severity]) {
+    const themedNames = SEVERITY_THEMED_NAMES[severity];
+    const themedName = themedNames[Math.floor(Math.random() * themedNames.length)];
+    const prefix = TASK_FORCE_PREFIXES[Math.floor(Math.random() * TASK_FORCE_PREFIXES.length)];
+    return `${prefix} ${themedName}`;
+  }
+  
+  // Standard generation
+  const prefix = TASK_FORCE_PREFIXES[Math.floor(Math.random() * TASK_FORCE_PREFIXES.length)];
+  const adjective = TASK_FORCE_ADJECTIVES[Math.floor(Math.random() * TASK_FORCE_ADJECTIVES.length)];
+  const noun = TASK_FORCE_NOUNS[Math.floor(Math.random() * TASK_FORCE_NOUNS.length)];
+  
+  return `${prefix} ${adjective} ${noun}`;
+}
+
 // Agent specializations for incident investigation
 const AGENT_CAPABILITIES: Record<string, {
   specialty: string;
@@ -168,14 +213,25 @@ serve(async (req) => {
       .eq('call_sign', selectedAgent)
       .single();
 
+    // Calculate updated agent list
+    const updatedAgentIds = incident.assigned_agent_ids 
+      ? [...new Set([...incident.assigned_agent_ids, agentRecord?.id])]
+      : [agentRecord?.id];
+    
+    // Generate task force name if this is the second agent (multi-agent investigation)
+    let taskForceName = incident.task_force_name;
+    if (!taskForceName && updatedAgentIds.length > 1) {
+      taskForceName = generateTaskForceName(incident, incident.signals);
+      console.log(`Generated Task Force name: ${taskForceName} for incident ${incident_id}`);
+    }
+
     // Update incident status
     await supabase
       .from('incidents')
       .update({
         investigation_status: 'in_progress',
-        assigned_agent_ids: incident.assigned_agent_ids 
-          ? [...new Set([...incident.assigned_agent_ids, agentRecord?.id])]
-          : [agentRecord?.id]
+        assigned_agent_ids: updatedAgentIds,
+        task_force_name: taskForceName
       })
       .eq('id', incident_id);
 

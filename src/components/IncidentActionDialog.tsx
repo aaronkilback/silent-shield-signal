@@ -13,7 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, CheckCircle, Shield, XCircle, Brain, History, Link2, Users } from "lucide-react";
+import { Loader2, CheckCircle, Shield, XCircle, Brain, History, Link2, Users, Swords } from "lucide-react";
 import { IncidentLocationMap } from "./IncidentLocationMap";
 import { IncidentOutcomeDialog } from "./IncidentOutcomeDialog";
 import IncidentFeedbackDialog from "./IncidentFeedbackDialog";
@@ -36,6 +36,7 @@ interface Incident {
   investigation_status?: string;
   assigned_agent_ids?: string[];
   ai_analysis_log?: any[];
+  task_force_name?: string;
   clients?: {
     name: string;
   };
@@ -167,6 +168,8 @@ export const IncidentActionDialog = ({
 
   const hasAIAnalysis = fullIncident.ai_analysis_log && fullIncident.ai_analysis_log.length > 0;
 
+  const isMultiAgentTaskForce = (fullIncident.assigned_agent_ids?.length || 0) > 1;
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
@@ -175,6 +178,22 @@ export const IncidentActionDialog = ({
             <Shield className="w-5 h-5" />
             {fullIncident.title || "Incident Details"}
           </DialogTitle>
+          
+          {/* Task Force Banner */}
+          {(fullIncident.task_force_name || isMultiAgentTaskForce) && (
+            <div className="flex items-center gap-2 mt-2 p-2 bg-primary/10 rounded-lg border border-primary/20">
+              <Swords className="w-4 h-4 text-primary" />
+              <span className="font-semibold text-primary text-sm">
+                {fullIncident.task_force_name || `Multi-Agent Investigation (${fullIncident.assigned_agent_ids?.length} agents)`}
+              </span>
+              {fullIncident.investigation_status && (
+                <Badge variant="outline" className="ml-auto text-xs capitalize">
+                  {fullIncident.investigation_status.replace('_', ' ')}
+                </Badge>
+              )}
+            </div>
+          )}
+          
           <DialogDescription className="flex items-center gap-3 pt-1">
             <Badge variant={getPriorityColor(fullIncident.priority)} className="text-sm">
               {fullIncident.priority?.toUpperCase()}

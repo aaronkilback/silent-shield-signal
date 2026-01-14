@@ -27,6 +27,7 @@ import Benchmark from "./pages/Benchmark";
 import UserManagement from "./pages/UserManagement";
 import CommandCenter from "./pages/CommandCenter";
 import TaskForce from "./pages/TaskForce";
+import TaskForces from "./pages/TaskForces";
 import ThreatRadar from "./pages/ThreatRadar";
 import Integrations from "./pages/Integrations";
 import UnmatchedSignals from "./pages/UnmatchedSignals";
@@ -66,6 +67,7 @@ const App = () => (
               <Route path="/user-management" element={<UserManagement />} />
               <Route path="/command-center" element={<CommandCenter />} />
               <Route path="/task-force" element={<TaskForce />} />
+              <Route path="/task-forces" element={<TaskForces />} />
               <Route path="/threat-radar" element={<ThreatRadar />} />
               <Route path="/integrations" element={<Integrations />} />
               <Route path="/benchmark" element={<Benchmark />} />
