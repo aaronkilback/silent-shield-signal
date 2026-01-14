@@ -754,6 +754,7 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
             
             // Create immediate alert for delivery
             if (newIncident) {
+              // Insert email alert
               await supabase.from('alerts').insert({
                 incident_id: newIncident.id,
                 channel: 'email',
@@ -774,10 +775,33 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
                 }
               });
               
-              // Trigger alert delivery immediately
+              // Trigger email alert delivery immediately
               supabase.functions.invoke('alert-delivery', {
                 body: { priority: 'immediate' }
               }).catch(err => console.error('Alert delivery error:', err));
+              
+              // === SECURE MESSAGING FAST-PATH ===
+              // Parallel delivery to Teams/Slack/SMS for P1 critical alerts
+              supabase.functions.invoke('alert-delivery-secure', {
+                body: {
+                  incident_id: newIncident.id,
+                  signal_id: signal.id,
+                  priority: 'p1',
+                  title: signal.normalized_text?.substring(0, 100) || 'Critical Security Alert',
+                  summary: signal.normalized_text || 'Critical threat detected via fast-path processing',
+                  threat_level: 'critical',
+                  location: signal.location || 'Unknown',
+                  client_id: clientId,
+                  client_name: null, // Will be resolved in alert-delivery-secure
+                  recommended_actions: [
+                    'Verify threat validity immediately',
+                    'Notify client security team',
+                    'Activate incident response protocol',
+                    'Document all actions taken'
+                  ],
+                  channels: ['teams', 'slack', 'sms'] // All secure channels
+                }
+              }).catch(err => console.error('Secure alert delivery error:', err));
             }
             
             return { incident_id: newIncident?.id };
