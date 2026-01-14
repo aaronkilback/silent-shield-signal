@@ -103,6 +103,29 @@ serve(async (req) => {
 
     const { source_key, event, text, url, location, raw_json, is_test, client_id: explicitClientId } = validationResult.data;
     
+    // CRITICAL FIX: Validate explicit client_id if provided
+    let validatedExplicitClientId: string | null = null;
+    if (explicitClientId) {
+      const { data: clientCheck, error: clientCheckError } = await supabase
+        .from('clients')
+        .select('id, name')
+        .eq('id', explicitClientId)
+        .single();
+      
+      if (clientCheckError || !clientCheck) {
+        console.error(`⚠ INVALID CLIENT_ID: Provided client_id ${explicitClientId} does not exist`);
+        return new Response(
+          JSON.stringify({ 
+            error: 'Invalid client_id', 
+            message: `Client with id ${explicitClientId} not found` 
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      validatedExplicitClientId = clientCheck.id;
+      console.log(`✓ VALIDATED EXPLICIT CLIENT: ${clientCheck.name} (${clientCheck.id})`);
+    }
+    
     let signalText = text || JSON.stringify(event);
     let signalLocation = location || null;
     let signalRaw = raw_json || event || { text: signalText };
@@ -330,13 +353,15 @@ Respond ONLY with valid JSON.`
     }
 
     // Match signal to clients using keyword and AI-powered matching
-    let clientId: string | null = explicitClientId || null; // CRITICAL FIX: Use explicit client_id if provided
+    let clientId: string | null = validatedExplicitClientId || null; // Use validated explicit client_id if provided
     let matchedKeywords: string[] = [];
+    let matchConfidence: 'explicit' | 'high' | 'medium' | 'low' | 'ai' | 'none' = 'none';
     
     // If explicit client_id provided (e.g., from inject_test_signal), skip matching and use it directly
-    if (explicitClientId) {
-      console.log(`✓ EXPLICIT CLIENT OVERRIDE: Using provided client_id ${explicitClientId}`);
+    if (validatedExplicitClientId) {
+      console.log(`✓ EXPLICIT CLIENT OVERRIDE: Using validated client_id ${validatedExplicitClientId}`);
       matchedKeywords.push('explicit_client_override');
+      matchConfidence = 'explicit';
     } else {
       // Only perform client matching if no explicit client_id provided
       const { data: clients } = await supabase
@@ -423,13 +448,27 @@ Respond ONLY with valid JSON.`
         clientId = bestMatch.client.id;
         matchedKeywords = bestMatch.matchedKeywords;
         
-        console.log(`✓ BEST MATCH: ${bestMatch.client.name} (score: ${bestMatch.score}, type: ${bestMatch.matchType})`);
+        // Determine match confidence based on score and match type
+        if (bestMatch.matchType === 'name' || bestMatch.score >= 1000) {
+          matchConfidence = 'high';
+        } else if (bestMatch.score >= 50) {
+          matchConfidence = 'medium';
+        } else {
+          matchConfidence = 'low';
+        }
+        
+        console.log(`✓ BEST MATCH: ${bestMatch.client.name} (score: ${bestMatch.score}, type: ${bestMatch.matchType}, confidence: ${matchConfidence})`);
         console.log(`  Matched keywords: ${matchedKeywords.join(', ')}`);
         
         // Log runner-up if there was competition
         if (clientScores.length > 1) {
           const runnerUp = clientScores[1];
           console.log(`  Runner-up: ${runnerUp.client.name} (score: ${runnerUp.score})`);
+          
+          // Warn if scores are close - potential misattribution risk
+          if (bestMatch.score > 0 && runnerUp.score / bestMatch.score > 0.7) {
+            console.warn(`⚠ CLOSE MATCH WARNING: Runner-up score is ${Math.round(runnerUp.score / bestMatch.score * 100)}% of best match. Review may be needed.`);
+          }
         }
       }
       
@@ -492,18 +531,30 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
             
             const matchResult = JSON.parse(matchContent);
             if (matchResult.client_id) {
-              clientId = matchResult.client_id;
-              const matchedClient = clients.find(c => c.id === clientId);
-              matchedKeywords.push('ai_contextual_match');
-              console.log(`Signal matched to client via AI: ${matchedClient?.name}`);
+              // Validate AI-suggested client_id exists
+              const aiSuggestedClient = clients.find(c => c.id === matchResult.client_id);
+              if (aiSuggestedClient) {
+                clientId = matchResult.client_id;
+                matchedKeywords.push('ai_contextual_match');
+                matchConfidence = 'ai';
+                console.log(`✓ AI MATCH: Signal matched to client ${aiSuggestedClient.name}`);
+              } else {
+                console.warn(`⚠ AI suggested invalid client_id: ${matchResult.client_id}`);
+              }
             }
           }
         } catch (error) {
           console.error('AI client matching failed:', error);
         }
       }
+      
+      // Log unmatched signals for audit trail
+      if (!clientId) {
+        console.warn(`⚠ UNMATCHED SIGNAL: No client could be matched for signal. Text preview: ${signalText.substring(0, 200)}`);
+        matchConfidence = 'none';
+      }
     }
-    } // Close the explicitClientId else block
+    } // Close the validatedExplicitClientId else block
 
     // Calculate content hash BEFORE insertion for duplicate detection
     const encoder = new TextEncoder();
@@ -560,6 +611,7 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
     }
 
     // Insert signal WITH content_hash from the start
+    // Include match metadata for audit trail and potential re-assignment
     const { data: signal, error: insertError } = await supabase
       .from('signals')
       .insert({
@@ -567,7 +619,9 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
         client_id: clientId,
         raw_json: {
           ...signalRaw,
-          matched_keywords: matchedKeywords.length > 0 ? matchedKeywords : undefined
+          matched_keywords: matchedKeywords.length > 0 ? matchedKeywords : undefined,
+          match_confidence: matchConfidence,
+          match_timestamp: new Date().toISOString()
         },
         normalized_text: classification.normalized_text,
         entity_tags: classification.entity_tags,
