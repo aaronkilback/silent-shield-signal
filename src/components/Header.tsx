@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Plane, Menu, Bot, ChevronDown, Settings, Database, Building2, Bug, CheckCircle, UserCog, Crosshair, Radar, Plug } from "lucide-react";
+import { Shield, Activity, LogOut, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Plane, Menu, Bot, ChevronDown, Settings, Database, Building2, Bug, CheckCircle, UserCog, Crosshair, Radar, Plug, BarChart3, FileSearch } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -57,6 +57,8 @@ export const Header = () => {
     { path: "/entities", icon: Users, label: "Entities", badge: pendingSuggestions },
     { path: "/sources", icon: Database, label: "Sources" },
     { path: "/reports", icon: FileText, label: "Reports" },
+    { path: "/matching-dashboard", icon: BarChart3, label: "Match Analytics" },
+    { path: "/unmatched-signals", icon: FileSearch, label: "Unmatched Signals" },
   ];
 
   // Operations dropdown items
