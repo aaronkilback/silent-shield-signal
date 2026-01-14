@@ -662,16 +662,169 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
       }
     }
     
-    // Use intelligent entity correlation system
-    await supabase.functions.invoke('correlate-entities', {
+    // Use intelligent entity correlation system (async, non-blocking)
+    supabase.functions.invoke('correlate-entities', {
       body: {
         text: signalText,
         sourceType: 'signal',
         sourceId: signal.id,
         autoApprove: false
       }
-    });
+    }).catch(err => console.error('Entity correlation error:', err));
     
+    // ===== CRITICAL SIGNAL FAST-PATH (P0 Priority) =====
+    // For P1/Critical signals: Bypass queue, parallel execution for sub-10s latency
+    const isCriticalFastPath = 
+      rulesResult.priority === 'p1' || 
+      rulesResult.severity === 'critical' ||
+      classification.severity === 'critical';
+    
+    if (isCriticalFastPath) {
+      console.log('🚨 CRITICAL FAST-PATH ACTIVATED for signal:', signal.id);
+      const fastPathStartTime = Date.now();
+      
+      // Build critical signal payload
+      const criticalSignalPayload = {
+        id: signal.id,
+        normalized_text: signal.normalized_text,
+        source: signal.source_id,
+        category: classification.category || rulesResult.matchedRule,
+        severity: 'critical',
+        status: 'critical_processing',
+        client_id: clientId,
+        match_confidence: 1.0,
+        detected_at: signal.detected_at || new Date().toISOString(),
+        rule_matched: rulesResult.matchedRule,
+        keyword_matched: rulesResult.matchedKeyword,
+      };
+      
+      // PARALLEL EXECUTION: AI Decision + Webhook + Alert in parallel
+      const [aiResult, webhookResult, alertResult] = await Promise.allSettled([
+        // 1. AI Decision Engine with force_ai for immediate deep analysis
+        supabase.functions.invoke('ai-decision-engine', {
+          body: {
+            signal_id: signal.id,
+            force_ai: true
+          }
+        }),
+        
+        // 2. Webhook Dispatcher for external system integration
+        supabase.functions.invoke('webhook-dispatcher', {
+          body: {
+            event_type: 'signal.p1_critical',
+            signal: criticalSignalPayload,
+          }
+        }),
+        
+        // 3. Create immediate P1 incident for alert-delivery
+        (async () => {
+          // Check if incident exists
+          const { data: existingIncident } = await supabase
+            .from('incidents')
+            .select('id')
+            .eq('signal_id', signal.id)
+            .maybeSingle();
+          
+          if (!existingIncident) {
+            const { data: newIncident, error: incidentError } = await supabase
+              .from('incidents')
+              .insert({
+                signal_id: signal.id,
+                client_id: clientId,
+                priority: 'p1',
+                status: 'open',
+                severity_level: 'critical',
+                is_test: signal.is_test || false,
+                title: `🚨 CRITICAL: ${signal.normalized_text?.substring(0, 80)}`,
+                summary: `Fast-path critical signal detected. Rule: ${rulesResult.matchedRule || 'AI-classified'}. Keyword: ${rulesResult.matchedKeyword || 'N/A'}`,
+                sla_targets_json: { mttd: 5, mttr: 30 },
+                timeline_json: [{
+                  timestamp: new Date().toISOString(),
+                  action: 'critical_fast_path',
+                  details: `Critical signal detected via fast-path. Processing time target: <10s`
+                }]
+              })
+              .select('id')
+              .single();
+            
+            if (incidentError) {
+              console.error('Fast-path incident creation error:', incidentError);
+              return { error: incidentError };
+            }
+            
+            // Create immediate alert for delivery
+            if (newIncident) {
+              await supabase.from('alerts').insert({
+                incident_id: newIncident.id,
+                channel: 'email',
+                recipient: 'critical-alerts@fortress.ai', // Configurable
+                status: 'pending',
+                response_json: {
+                  subject: `🚨 P1 CRITICAL: ${signal.normalized_text?.substring(0, 50)}`,
+                  body: signal.normalized_text,
+                  threat_level: 'critical',
+                  location: signal.location || 'Unknown',
+                  reasoning: `Fast-path detection: ${rulesResult.matchedKeyword || 'AI-classified critical threat'}`,
+                  containment_actions: [
+                    'Verify threat validity immediately',
+                    'Notify client security team',
+                    'Prepare incident response resources'
+                  ],
+                  priority: 'immediate'
+                }
+              });
+              
+              // Trigger alert delivery immediately
+              supabase.functions.invoke('alert-delivery', {
+                body: { priority: 'immediate' }
+              }).catch(err => console.error('Alert delivery error:', err));
+            }
+            
+            return { incident_id: newIncident?.id };
+          }
+          return { existing_incident: existingIncident.id };
+        })()
+      ]);
+      
+      const fastPathDuration = Date.now() - fastPathStartTime;
+      console.log(`✅ CRITICAL FAST-PATH COMPLETE in ${fastPathDuration}ms`);
+      console.log('  AI Result:', aiResult.status === 'fulfilled' ? 'success' : aiResult.reason);
+      console.log('  Webhook Result:', webhookResult.status === 'fulfilled' ? 'success' : webhookResult.reason);
+      console.log('  Alert Result:', alertResult.status === 'fulfilled' ? 'success' : alertResult.reason);
+      
+      // Update signal with fast-path metadata
+      await supabase
+        .from('signals')
+        .update({
+          status: 'critical_processed',
+          raw_json: {
+            ...signalRaw,
+            fast_path_activated: true,
+            fast_path_duration_ms: fastPathDuration,
+            fast_path_timestamp: new Date().toISOString()
+          }
+        })
+        .eq('id', signal.id);
+      
+      // Return immediately with fast-path confirmation
+      return new Response(
+        JSON.stringify({ 
+          signal_id: signal.id,
+          status: 'critical_processed',
+          fast_path: true,
+          processing_time_ms: fastPathDuration,
+          message: `Critical signal processed via fast-path in ${fastPathDuration}ms`,
+          results: {
+            ai_decision: aiResult.status,
+            webhook_dispatch: webhookResult.status,
+            alert_creation: alertResult.status
+          }
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // ===== STANDARD PATH (Non-Critical Signals) =====
     // Apply AI decision engine for rule-based categorization and analysis
     console.log('Invoking AI decision engine for signal categorization...');
     try {
