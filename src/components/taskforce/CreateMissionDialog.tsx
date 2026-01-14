@@ -140,6 +140,7 @@ export function CreateMissionDialog({
           audience: formData.audience,
           is_stealth_mode: formData.is_stealth_mode,
           client_id: formData.client_id,
+          created_by: user?.id,
         })
         .select()
         .single();
