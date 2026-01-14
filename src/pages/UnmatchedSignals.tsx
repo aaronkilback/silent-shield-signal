@@ -99,16 +99,18 @@ const UnmatchedSignals = () => {
   });
 
   // Fetch unique sources for filter
-  const { data: sources } = useQuery({
+  type SourceItem = { id: string; name: string };
+  const fetchSources = async (): Promise<SourceItem[]> => {
+    const response = await (supabase as any)
+      .from("sources")
+      .select("id, name")
+      .eq("is_active", true);
+    if (response.error) throw response.error;
+    return (response.data || []) as SourceItem[];
+  };
+  const { data: sources } = useQuery<SourceItem[]>({
     queryKey: ["signal-sources"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("sources")
-        .select("id, name")
-        .eq("is_active", true);
-      if (error) throw error;
-      return data;
-    },
+    queryFn: fetchSources,
     enabled: !!user,
   });
 
