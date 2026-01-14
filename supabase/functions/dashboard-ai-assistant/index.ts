@@ -2437,6 +2437,30 @@ This tool bridges the gap between internal Fortress data and open-source intelli
       }
     }
   },
+  {
+    type: "function",
+    function: {
+      name: "search_chat_history",
+      description: "Search through the user's full chat history with this AI assistant. Use this when the user asks about previous conversations, what they discussed earlier, or needs to reference past topics. Can search by keyword or retrieve recent conversations.",
+      parameters: {
+        type: "object",
+        properties: {
+          search_query: {
+            type: "string",
+            description: "Keywords or phrase to search for in past messages (optional - if not provided, returns recent history)"
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of messages to return (default: 50)"
+          },
+          include_context: {
+            type: "boolean",
+            description: "If true, includes surrounding messages for context (default: true)"
+          }
+        }
+      }
+    }
+  },
 ];
 
 // Execute tools by querying Supabase
@@ -7612,6 +7636,100 @@ The signal is now in the database with status 'triaged' and rules have been appl
       return data;
     }
 
+    case "search_chat_history": {
+      const limit = args.limit || 50;
+      const includeContext = args.include_context !== false;
+      
+      // Get all non-deleted messages for the current user
+      let query = supabaseClient
+        .from("ai_assistant_messages")
+        .select("id, role, content, created_at")
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false })
+        .limit(limit * 2); // Get extra for context
+      
+      const { data: allMessages, error: fetchError } = await query;
+      
+      if (fetchError) throw fetchError;
+      
+      if (!allMessages || allMessages.length === 0) {
+        return {
+          message: "No chat history found.",
+          results: []
+        };
+      }
+      
+      // If no search query, return recent messages
+      if (!args.search_query || args.search_query.trim() === "") {
+        const recentMessages = allMessages.slice(0, limit).reverse();
+        return {
+          message: `Found ${recentMessages.length} recent messages in chat history.`,
+          results: recentMessages.map((m: any) => ({
+            role: m.role,
+            content: m.content.substring(0, 500) + (m.content.length > 500 ? "..." : ""),
+            timestamp: m.created_at
+          }))
+        };
+      }
+      
+      // Search for matching messages
+      const searchTerms = args.search_query.toLowerCase().split(/\s+/);
+      const matchingMessages: any[] = [];
+      const matchingIndices: Set<number> = new Set();
+      
+      allMessages.forEach((msg: any, idx: number) => {
+        const content = msg.content.toLowerCase();
+        const matchScore = searchTerms.filter((term: string) => content.includes(term)).length;
+        
+        if (matchScore > 0) {
+          matchingIndices.add(idx);
+          matchingMessages.push({
+            ...msg,
+            matchScore,
+            originalIndex: idx
+          });
+        }
+      });
+      
+      // Sort by match score (best matches first), then by recency
+      matchingMessages.sort((a, b) => {
+        if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+      
+      // Include context if requested (messages before and after matches)
+      const contextMessages: any[] = [];
+      if (includeContext && matchingMessages.length > 0) {
+        matchingMessages.slice(0, 10).forEach((match: any) => {
+          const idx = match.originalIndex;
+          // Include 2 messages before and after for context
+          for (let i = Math.max(0, idx - 2); i <= Math.min(allMessages.length - 1, idx + 2); i++) {
+            if (!matchingIndices.has(i)) {
+              contextMessages.push({
+                ...allMessages[i],
+                isContext: true
+              });
+            }
+          }
+        });
+      }
+      
+      const results = matchingMessages.slice(0, limit).map((m: any) => ({
+        role: m.role,
+        content: m.content.substring(0, 800) + (m.content.length > 800 ? "..." : ""),
+        timestamp: m.created_at,
+        matchScore: m.matchScore,
+        isMatch: true
+      }));
+      
+      return {
+        message: `Found ${matchingMessages.length} messages matching "${args.search_query}". Showing top ${results.length} results.`,
+        search_query: args.search_query,
+        total_matches: matchingMessages.length,
+        results
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -8154,6 +8272,7 @@ YOUR CAPABILITIES:
 19. **Bug Detection & Resolution**: Search bug reports, analyze edge function errors, diagnose issues, and suggest code fixes
 20. **Comprehensive Debugging**: Analyze logs, error messages, and related code to identify root causes and provide fix strategies
 21. **Fix Proposals**: Create detailed fix proposals that can be reviewed and approved for implementation by the Lovable editor
+22. **Chat History Search**: Search through user's full conversation history using search_chat_history tool when they ask about previous discussions
 
 CRITICAL DISTINCTIONS:
 1. CLIENTS are organizations actively monitored by Fortress (customers)
