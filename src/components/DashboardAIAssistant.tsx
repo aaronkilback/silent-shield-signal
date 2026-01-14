@@ -963,20 +963,24 @@ How can I help you now?`,
           </div>
         </div>
       </CardHeader>
-      <CardContent>
-        <div className="space-y-3 flex flex-col">
-            <div className="h-[400px] sm:h-[500px] lg:h-[600px] overflow-y-auto border rounded-md" ref={scrollRef}>
-              <div className="p-4 space-y-4">
+      <CardContent className="flex flex-col">
+        <div className="flex flex-col gap-3">
+            {/* Fixed height container prevents layout shifts */}
+            <div 
+              className="h-[400px] sm:h-[500px] lg:h-[600px] overflow-y-auto border rounded-md scroll-smooth" 
+              ref={scrollRef}
+            >
+              <div className="p-4 space-y-4 min-h-full">
                 {isLoadingHistory ? (
-                  <div className="flex items-center justify-center h-[380px]">
+                  <div className="flex items-center justify-center h-full min-h-[380px]">
                     <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                   </div>
                 ) : (
                   <>
                     {MessageList}
                     {streamingContent && (
-                      <div className="flex justify-start">
-                        <div className="max-w-[80%] rounded-lg p-3 bg-muted">
+                      <div className="flex justify-start animate-fade-in">
+                        <div className="max-w-[80%] rounded-lg p-3 bg-muted min-h-[40px]">
                           <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
                             <ReactMarkdown
                               components={{
@@ -1013,8 +1017,8 @@ How can I help you now?`,
                       </div>
                     )}
                     {isLoading && !streamingContent && messages[messages.length - 1]?.role === "user" && (
-                      <div className="flex justify-start">
-                        <div className="bg-muted rounded-lg p-3">
+                      <div className="flex justify-start animate-fade-in">
+                        <div className="bg-muted rounded-lg p-3 min-h-[40px] flex items-center">
                           <Loader2 className="w-4 h-4 animate-spin" />
                         </div>
                       </div>
