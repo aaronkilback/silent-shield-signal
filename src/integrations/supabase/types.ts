@@ -1687,6 +1687,7 @@ export type Database = {
           sla_targets_json: Json | null
           status: Database["public"]["Enums"]["incident_status"]
           summary: string | null
+          task_force_name: string | null
           timeline_json: Json | null
           title: string | null
           updated_at: string
@@ -1713,6 +1714,7 @@ export type Database = {
           sla_targets_json?: Json | null
           status?: Database["public"]["Enums"]["incident_status"]
           summary?: string | null
+          task_force_name?: string | null
           timeline_json?: Json | null
           title?: string | null
           updated_at?: string
@@ -1739,6 +1741,7 @@ export type Database = {
           sla_targets_json?: Json | null
           status?: Database["public"]["Enums"]["incident_status"]
           summary?: string | null
+          task_force_name?: string | null
           timeline_json?: Json | null
           title?: string | null
           updated_at?: string

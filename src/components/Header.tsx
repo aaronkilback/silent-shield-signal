@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Plane, Menu, Bot, ChevronDown, Settings, Database, Building2, Bug, CheckCircle, UserCog, Crosshair, Radar, Plug, BarChart3, FileSearch } from "lucide-react";
+import { Shield, Activity, LogOut, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Plane, Menu, Bot, ChevronDown, Settings, Database, Building2, Bug, CheckCircle, UserCog, Crosshair, Radar, Plug, BarChart3, FileSearch, Swords } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -64,7 +64,8 @@ export const Header = () => {
   // Operations dropdown items
   const operationsItems = [
     { path: "/command-center", icon: Bot, label: "Agents" },
-    { path: "/task-force", icon: Crosshair, label: "Task Force" },
+    { path: "/task-forces", icon: Swords, label: "AI Task Forces" },
+    { path: "/task-force", icon: Crosshair, label: "Mission Planner" },
     { path: "/travel", icon: Plane, label: "Travel" },
     { path: "/clients", icon: Building2, label: "Clients" },
   ];
