@@ -29,6 +29,8 @@ import CommandCenter from "./pages/CommandCenter";
 import TaskForce from "./pages/TaskForce";
 import ThreatRadar from "./pages/ThreatRadar";
 import Integrations from "./pages/Integrations";
+import UnmatchedSignals from "./pages/UnmatchedSignals";
+import MatchingDashboard from "./pages/MatchingDashboard";
 import NotFound from "./pages/NotFound";
 import { EnsureDefaultRole } from "@/components/EnsureDefaultRole";
 
@@ -67,6 +69,8 @@ const App = () => (
               <Route path="/threat-radar" element={<ThreatRadar />} />
               <Route path="/integrations" element={<Integrations />} />
               <Route path="/benchmark" element={<Benchmark />} />
+              <Route path="/unmatched-signals" element={<UnmatchedSignals />} />
+              <Route path="/matching-dashboard" element={<MatchingDashboard />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
