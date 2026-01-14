@@ -4358,6 +4358,7 @@ export type Database = {
         | "execution"
         | "synthesis"
         | "completed"
+        | "cancelled"
       mission_type:
         | "risk_snapshot"
         | "incident_response"
@@ -4569,6 +4570,7 @@ export const Constants = {
         "execution",
         "synthesis",
         "completed",
+        "cancelled",
       ],
       mission_type: [
         "risk_snapshot",

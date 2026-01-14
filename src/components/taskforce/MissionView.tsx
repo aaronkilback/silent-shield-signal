@@ -22,6 +22,8 @@ import {
   Eye,
   EyeOff,
   ShieldAlert,
+  XCircle,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -40,6 +42,7 @@ const PHASE_STEPS = [
   { key: "execution", label: "Execution", icon: Users },
   { key: "synthesis", label: "Synthesis", icon: FileText },
   { key: "completed", label: "Completed", icon: CheckCircle2 },
+  { key: "cancelled", label: "Aborted", icon: XCircle },
 ];
 
 const ROLE_LABELS: Record<string, string> = {
@@ -110,6 +113,32 @@ export function MissionView({ missionId, onBack }: MissionViewProps) {
     },
   });
 
+  const abortMission = useMutation({
+    mutationFn: async () => {
+      // Update mission phase to cancelled
+      const { error: missionError } = await supabase
+        .from("task_force_missions")
+        .update({ phase: "cancelled" })
+        .eq("id", missionId);
+      if (missionError) throw missionError;
+
+      // Update all agent statuses to cancelled
+      const { error: agentsError } = await supabase
+        .from("task_force_agents")
+        .update({ status: "cancelled" })
+        .eq("mission_id", missionId);
+      if (agentsError) throw agentsError;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mission", missionId] });
+      queryClient.invalidateQueries({ queryKey: ["mission-agents", missionId] });
+      toast.success("Mission aborted");
+    },
+    onError: (error: any) => {
+      toast.error(error.message || "Failed to abort mission");
+    },
+  });
+
   const handleRunMission = async () => {
     setIsRunning(true);
     try {
@@ -170,9 +199,30 @@ export function MissionView({ missionId, onBack }: MissionViewProps) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {String(mission?.phase) === 'cancelled' && (
+              <Badge variant="destructive" className="flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3" />
+                Aborted
+              </Badge>
+            )}
+            {!['completed', 'cancelled'].includes(String(mission?.phase)) && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => abortMission.mutate()}
+                disabled={abortMission.isPending}
+              >
+                {abortMission.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <XCircle className="h-4 w-4 mr-2" />
+                )}
+                Abort Mission
+              </Button>
+            )}
             <Button
               onClick={handleRunMission}
-              disabled={isRunning || mission?.phase === "completed"}
+              disabled={isRunning || ['completed', 'cancelled'].includes(String(mission?.phase))}
             >
               {isRunning ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />

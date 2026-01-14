@@ -380,30 +380,51 @@ export function CreateMissionDialog({
             <div className="space-y-4">
               <Label>Assign Agents to Roles</Label>
               
-              {AGENT_ROLES.map((role) => (
-                <div key={role.value} className="space-y-2">
-                  <Label className="text-sm text-muted-foreground">{role.label}</Label>
-                  <Select
-                    onValueChange={(agentId) => addAgentAssignment(agentId, role.value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={`Select ${role.label}...`} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {agents
-                        ?.filter((a) => !agentAssignments.some((aa) => aa.agent_id === a.id))
-                        .map((agent) => (
-                          <SelectItem key={agent.id} value={agent.id}>
-                            <div className="flex items-center gap-2">
-                              <Bot className="h-4 w-4" style={{ color: agent.avatar_color }} />
-                              {agent.call_sign} — {agent.codename}
-                            </div>
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              ))}
+              {AGENT_ROLES.map((role) => {
+                const assignedAgent = agentAssignments.find((a) => a.role === role.value);
+                const assignedAgentData = assignedAgent ? getAgentById(assignedAgent.agent_id) : null;
+                
+                return (
+                  <div key={role.value} className="space-y-2">
+                    <Label className="text-sm text-muted-foreground">{role.label}</Label>
+                    <Select
+                      value={assignedAgent?.agent_id || ""}
+                      onValueChange={(agentId) => {
+                        if (agentId) {
+                          // Remove any existing assignment for this role first
+                          if (assignedAgent) {
+                            removeAgentAssignment(assignedAgent.agent_id);
+                          }
+                          addAgentAssignment(agentId, role.value);
+                        }
+                      }}
+                    >
+                      <SelectTrigger>
+                        {assignedAgentData ? (
+                          <div className="flex items-center gap-2">
+                            <Bot className="h-4 w-4" style={{ color: assignedAgentData.avatar_color }} />
+                            {assignedAgentData.call_sign} — {assignedAgentData.codename}
+                          </div>
+                        ) : (
+                          <SelectValue placeholder={`Select ${role.label}...`} />
+                        )}
+                      </SelectTrigger>
+                      <SelectContent>
+                        {agents
+                          ?.filter((a) => !agentAssignments.some((aa) => aa.agent_id === a.id && aa.role !== role.value))
+                          .map((agent) => (
+                            <SelectItem key={agent.id} value={agent.id}>
+                              <div className="flex items-center gap-2">
+                                <Bot className="h-4 w-4" style={{ color: agent.avatar_color }} />
+                                {agent.call_sign} — {agent.codename}
+                              </div>
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                );
+              })}
             </div>
 
             {/* Assigned Agents */}
