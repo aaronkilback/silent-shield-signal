@@ -4580,34 +4580,67 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
         ].filter(Boolean) as string[])
       );
 
-      // Download the file from storage (try a small set of known buckets)
-      let fileData: Blob | null = null;
+      // Prefer signed URLs for images to avoid loading/encoding large binaries in memory.
+      // Large in-memory base64 strings can exceed runtime memory limits and surface as non-standard 546 errors.
+      const inferredIsImage = doc.file_type?.startsWith('image/') ||
+        /\.(jpg|jpeg|png|gif|webp|bmp|tiff?)$/i.test(doc.filename);
+
+      let signedFileUrl: string | null = null;
       let resolvedBucket: string | null = null;
       const bucketErrors: Record<string, string> = {};
 
-      for (const bucket of candidateBuckets) {
-        const { data: dlData, error: dlError } = await supabaseClient.storage
-          .from(bucket)
-          .download(doc.storage_path);
+      if (inferredIsImage) {
+        for (const bucket of candidateBuckets) {
+          const { data: signedData, error: signedError } = await supabaseClient.storage
+            .from(bucket)
+            .createSignedUrl(doc.storage_path, 60 * 10);
 
-        if (!dlError && dlData) {
-          fileData = dlData;
-          resolvedBucket = bucket;
-          break;
+          if (!signedError && signedData?.signedUrl) {
+            signedFileUrl = signedData.signedUrl;
+            resolvedBucket = bucket;
+            break;
+          }
+
+          bucketErrors[bucket] = signedError?.message ?? 'Unknown error';
         }
-
-        bucketErrors[bucket] = dlError?.message ?? 'Unknown error';
       }
 
-      if (!fileData) {
-        return {
-          success: false,
-          error: `Failed to download file from storage. Tried: ${candidateBuckets.join(', ')}`,
-          document_id: docId,
-          filename: doc.filename,
-          storage_path: doc.storage_path,
-          bucket_errors: bucketErrors,
-        };
+      // Download the file from storage only when necessary:
+      // - PDFs (we currently analyze via direct bytes)
+      // - Images when we couldn't create a signed URL
+      let fileBytes: ArrayBuffer | null = null;
+
+      if (inferredIsPdf || !signedFileUrl) {
+        let fileData: Blob | null = null;
+
+        for (const bucket of candidateBuckets) {
+          const { data: dlData, error: dlError } = await supabaseClient.storage
+            .from(bucket)
+            .download(doc.storage_path);
+
+          if (!dlError && dlData) {
+            fileData = dlData;
+            resolvedBucket = bucket;
+            break;
+          }
+
+          const existing = bucketErrors[bucket];
+          const next = dlError?.message ?? 'Unknown error';
+          bucketErrors[bucket] = existing ? `${existing} | download: ${next}` : `download: ${next}`;
+        }
+
+        if (!fileData) {
+          return {
+            success: false,
+            error: `Failed to access file in storage. Tried: ${candidateBuckets.join(', ')}`,
+            document_id: docId,
+            filename: doc.filename,
+            storage_path: doc.storage_path,
+            bucket_errors: bucketErrors,
+          };
+        }
+
+        fileBytes = await fileData.arrayBuffer();
       }
 
       // Persist resolved bucket so future tools/processors can find it
@@ -4627,18 +4660,7 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
         }
       }
 
-      const fileBytes = await fileData.arrayBuffer();
-      const fileSizeMB = fileBytes.byteLength / (1024 * 1024);
-
-      if (fileSizeMB > 20) {
-        return {
-          success: false,
-          error: `File too large (${fileSizeMB.toFixed(1)}MB). Maximum is 20MB.`,
-          document_id: docId,
-          filename: doc.filename,
-        };
-      }
-
+      const fileSizeMB = fileBytes ? (fileBytes.byteLength / (1024 * 1024)) : inferredSizeMb;
       console.log(`Analyzing visual document: ${doc.filename} (${fileSizeMB.toFixed(1)}MB)`);
 
       const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
@@ -4700,6 +4722,9 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
           // Use Gemini's native PDF support - send the PDF directly as base64
           // This avoids pdf.js which requires web workers not available in Deno
           const { encode: base64Encode } = await import('https://deno.land/std@0.168.0/encoding/base64.ts');
+          if (!fileBytes) {
+            throw new Error('Failed to load PDF bytes for analysis');
+          }
           const base64PDF = base64Encode(fileBytes);
 
           console.log(`Sending PDF directly to Gemini for analysis (${(base64PDF.length / 1024 / 1024).toFixed(2)}MB base64)`);
@@ -4798,9 +4823,20 @@ Extract ALL visible content including text, tables, map features, labels, and an
           }
         } else if (isImage) {
           // Direct image analysis
-          const { encode: base64Encode } = await import('https://deno.land/std@0.168.0/encoding/base64.ts');
-          const base64Image = base64Encode(fileBytes);
           const mimeType = doc.file_type || 'image/png';
+
+          let imageUrl: string;
+          if (signedFileUrl) {
+            // Avoid base64-in-memory for large images (prevents memory-limit crashes)
+            imageUrl = signedFileUrl;
+          } else {
+            if (!fileBytes) {
+              throw new Error('Failed to load image bytes for analysis');
+            }
+            const { encode: base64Encode } = await import('https://deno.land/std@0.168.0/encoding/base64.ts');
+            const base64Image = base64Encode(fileBytes);
+            imageUrl = `data:${mimeType};base64,${base64Image}`;
+          }
 
           const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
             method: 'POST',
@@ -4819,15 +4855,15 @@ Extract ALL visible content including text, tables, map features, labels, and an
 
 ${analysisPrompt}
 
-Be thorough and include every piece of visible text and data.`
+Be thorough and include every piece of visible text and data.`,
                   },
                   {
                     type: 'image_url',
-                    image_url: { url: `data:${mimeType};base64,${base64Image}` }
-                  }
-                ]
+                    image_url: { url: imageUrl },
+                  },
+                ],
               }],
-              max_tokens: 8000
+              max_tokens: 8000,
             }),
           });
 
