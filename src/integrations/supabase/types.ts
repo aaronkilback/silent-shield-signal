@@ -602,6 +602,7 @@ export type Database = {
           ai_responded_at: string | null
           ai_response: string | null
           asked_by: string
+          asking_agent_id: string | null
           created_at: string
           escalated_at: string | null
           escalated_to: string | null
@@ -611,7 +612,9 @@ export type Database = {
           human_response: string | null
           id: string
           mission_id: string
+          parent_query_id: string | null
           question: string
+          target_agent_id: string | null
           updated_at: string
         }
         Insert: {
@@ -619,6 +622,7 @@ export type Database = {
           ai_responded_at?: string | null
           ai_response?: string | null
           asked_by: string
+          asking_agent_id?: string | null
           created_at?: string
           escalated_at?: string | null
           escalated_to?: string | null
@@ -628,7 +632,9 @@ export type Database = {
           human_response?: string | null
           id?: string
           mission_id: string
+          parent_query_id?: string | null
           question: string
+          target_agent_id?: string | null
           updated_at?: string
         }
         Update: {
@@ -636,6 +642,7 @@ export type Database = {
           ai_responded_at?: string | null
           ai_response?: string | null
           asked_by?: string
+          asking_agent_id?: string | null
           created_at?: string
           escalated_at?: string | null
           escalated_to?: string | null
@@ -645,15 +652,38 @@ export type Database = {
           human_response?: string | null
           id?: string
           mission_id?: string
+          parent_query_id?: string | null
           question?: string
+          target_agent_id?: string | null
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "briefing_queries_asking_agent_id_fkey"
+            columns: ["asking_agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "briefing_queries_mission_id_fkey"
             columns: ["mission_id"]
             isOneToOne: false
             referencedRelation: "task_force_missions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "briefing_queries_parent_query_id_fkey"
+            columns: ["parent_query_id"]
+            isOneToOne: false
+            referencedRelation: "briefing_queries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "briefing_queries_target_agent_id_fkey"
+            columns: ["target_agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
             referencedColumns: ["id"]
           },
         ]
@@ -3582,6 +3612,7 @@ export type Database = {
           assigned_tasks: string[] | null
           created_at: string
           id: string
+          last_report: string | null
           mission_id: string
           role: Database["public"]["Enums"]["task_force_role"]
           status: string | null
@@ -3591,6 +3622,7 @@ export type Database = {
           assigned_tasks?: string[] | null
           created_at?: string
           id?: string
+          last_report?: string | null
           mission_id: string
           role: Database["public"]["Enums"]["task_force_role"]
           status?: string | null
@@ -3600,6 +3632,7 @@ export type Database = {
           assigned_tasks?: string[] | null
           created_at?: string
           id?: string
+          last_report?: string | null
           mission_id?: string
           role?: Database["public"]["Enums"]["task_force_role"]
           status?: string | null
