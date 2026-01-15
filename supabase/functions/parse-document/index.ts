@@ -64,7 +64,7 @@ serve(async (req) => {
   }
 
   try {
-    const { file, filename, mimeType, location } = await req.json();
+    const { file, filename, mimeType, location, client_id: explicitClientId } = await req.json();
     
     if (!file || !filename) {
       return new Response(
@@ -152,35 +152,55 @@ serve(async (req) => {
     const rulesResult = applyRules(text);
     console.log('Rules classification:', rulesResult);
 
-    // Get all clients for matching
-    const { data: clients } = await supabase
-      .from('clients')
-      .select('id, name, monitoring_keywords')
-      .eq('status', 'active');
+    // Use explicit client_id if provided, otherwise match by keywords
+    let matchedClientId = explicitClientId || null;
+    
+    // Validate explicit client_id if provided
+    if (explicitClientId) {
+      const { data: clientCheck } = await supabase
+        .from('clients')
+        .select('id, name')
+        .eq('id', explicitClientId)
+        .single();
+      
+      if (clientCheck) {
+        matchedClientId = clientCheck.id;
+        console.log('✓ Using explicit client_id:', clientCheck.name);
+      } else {
+        console.warn('⚠ Explicit client_id not found, falling back to keyword matching');
+        matchedClientId = null;
+      }
+    }
+    
+    // Fall back to keyword-based client matching if no explicit client
+    if (!matchedClientId) {
+      const { data: clients } = await supabase
+        .from('clients')
+        .select('id, name, monitoring_keywords')
+        .eq('status', 'active');
 
-    // Simple client matching based on keywords
-    let matchedClientId = null;
-    if (clients && clients.length > 0) {
-      for (const client of clients) {
-        const keywords = client.monitoring_keywords || [];
-        const clientNameLower = client.name.toLowerCase();
-        const textLower = text.toLowerCase();
-        
-        if (textLower.includes(clientNameLower)) {
-          matchedClientId = client.id;
-          console.log('Client matched by name:', client.name);
-          break;
-        }
-        
-        for (const keyword of keywords) {
-          if (textLower.includes(keyword.toLowerCase())) {
+      if (clients && clients.length > 0) {
+        for (const client of clients) {
+          const keywords = client.monitoring_keywords || [];
+          const clientNameLower = client.name.toLowerCase();
+          const textLower = text.toLowerCase();
+          
+          if (textLower.includes(clientNameLower)) {
             matchedClientId = client.id;
-            console.log('Client matched by keyword:', keyword);
+            console.log('Client matched by name:', client.name);
             break;
           }
+          
+          for (const keyword of keywords) {
+            if (textLower.includes(keyword.toLowerCase())) {
+              matchedClientId = client.id;
+              console.log('Client matched by keyword:', keyword);
+              break;
+            }
+          }
+          
+          if (matchedClientId) break;
         }
-        
-        if (matchedClientId) break;
       }
     }
 
