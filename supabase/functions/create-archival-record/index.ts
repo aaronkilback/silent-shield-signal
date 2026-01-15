@@ -15,7 +15,17 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { filename, storagePath, fileSize, mimeType, tags, clientId, userId, dateOfDocument } = await req.json();
+    const {
+      filename,
+      storagePath,
+      storageBucket,
+      fileSize,
+      mimeType,
+      tags,
+      clientId,
+      userId,
+      dateOfDocument,
+    } = await req.json();
     
     if (!filename || !storagePath || !fileSize) {
       return new Response(
@@ -87,7 +97,10 @@ Deno.serve(async (req) => {
           upload_timestamp: new Date().toISOString(),
           size_mb: sizeMB,
           direct_upload: true,
-          processed: false
+          processed: false,
+          storage_bucket: typeof storageBucket === 'string' && storageBucket.trim().length
+            ? storageBucket.trim()
+            : 'archival-documents',
         }
       })
       .select()
