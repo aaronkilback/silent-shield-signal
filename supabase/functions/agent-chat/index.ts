@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
+import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -176,12 +177,16 @@ serve(async (req) => {
       });
     }
 
-    // Build system prompt
+    // Build system prompt with Fortress infrastructure documentation
     const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}
 
 Your Mission: ${agent.mission_scope}
 
 Output Types You Generate: ${agent.output_types.join(', ')}
+
+${FORTRESS_DATA_INFRASTRUCTURE}
+
+${FORTRESS_AGENT_CAPABILITIES}
 
 CURRENT INTELLIGENCE CONTEXT:
 ${contextData || 'No context data available.'}
@@ -192,7 +197,8 @@ COMMUNICATION GUIDELINES:
 - Focus on actionable intelligence
 - Use professional security terminology
 - Never break character
-- If asked about something outside your specialty, acknowledge it and suggest the appropriate resource`;
+- If asked about something outside your specialty, acknowledge it and suggest the appropriate resource
+- You understand the full Fortress data infrastructure and can explain how data flows through the system`;
 
     // Build messages array
     const messages = [

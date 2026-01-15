@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, upsertProject, touchProject } from "../_shared/user-memory.ts";
+import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -175,7 +176,11 @@ User: "What's the threat landscape for our client?"
   → USE analyze_threat_radar(client_id="...")
   → Report: threat level, scores, predictions, recommendations
 
-Remember: You have REAL tools. USE THEM. Never say "I cannot" when you have a tool that can help.`;
+Remember: You have REAL tools. USE THEM. Never say "I cannot" when you have a tool that can help.
+
+${FORTRESS_DATA_INFRASTRUCTURE}
+
+${FORTRESS_AGENT_CAPABILITIES}`;
 
 
 // Tool definitions for querying the database
