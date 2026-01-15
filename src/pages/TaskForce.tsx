@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Users, Target, CheckCircle2, Clock, Loader2 } from "lucide-react";
+import { Plus, Users, Target, CheckCircle2, Clock, Loader2, Trash2, XCircle } from "lucide-react";
+import { toast } from "sonner";
 import { CreateMissionDialog } from "@/components/taskforce/CreateMissionDialog";
 import { MissionView } from "@/components/taskforce/MissionView";
 import { formatDistanceToNow } from "date-fns";
@@ -37,25 +38,28 @@ const PHASE_ICONS: Record<string, React.ReactNode> = {
   execution: <Users className="h-3 w-3" />,
   synthesis: <Users className="h-3 w-3" />,
   completed: <CheckCircle2 className="h-3 w-3" />,
+  cancelled: <XCircle className="h-3 w-3" />,
 };
 
 export default function TaskForce() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedMission, setSelectedMission] = useState<Mission | null>(null);
-  const [filter, setFilter] = useState<"active" | "completed">("active");
+  const [filter, setFilter] = useState<"active" | "completed" | "aborted">("active");
 
   const { data: missions, isLoading, refetch } = useQuery({
     queryKey: ["task-force-missions", filter],
     queryFn: async () => {
-      const query = supabase
+      let query = supabase
         .from("task_force_missions")
         .select("*, clients(name)")
         .order("created_at", { ascending: false });
 
       if (filter === "active") {
-        query.neq("phase", "completed");
-      } else {
-        query.eq("phase", "completed");
+        query = query.not("phase", "in", '("completed","cancelled")');
+      } else if (filter === "completed") {
+        query = query.eq("phase", "completed");
+      } else if (filter === "aborted") {
+        query = query.eq("phase", "cancelled");
       }
 
       const { data, error } = await query;
@@ -63,6 +67,19 @@ export default function TaskForce() {
       return data as Mission[];
     },
   });
+
+  const deleteMission = async (missionId: string) => {
+    // First delete task_force_agents for this mission
+    await supabase.from("task_force_agents").delete().eq("mission_id", missionId);
+    // Delete task_force_contributions
+    await supabase.from("task_force_contributions").delete().eq("mission_id", missionId);
+    // Delete briefing_queries
+    await supabase.from("briefing_queries").delete().eq("mission_id", missionId);
+    // Finally delete the mission
+    const { error } = await supabase.from("task_force_missions").delete().eq("id", missionId);
+    if (error) throw error;
+    refetch();
+  };
 
   const handleMissionCreated = (mission: Mission) => {
     refetch();
@@ -105,10 +122,11 @@ export default function TaskForce() {
         </div>
 
         {/* Tabs */}
-        <Tabs value={filter} onValueChange={(v) => setFilter(v as "active" | "completed")}>
+        <Tabs value={filter} onValueChange={(v) => setFilter(v as "active" | "completed" | "aborted")}>
           <TabsList>
             <TabsTrigger value="active">Active Missions</TabsTrigger>
             <TabsTrigger value="completed">Completed</TabsTrigger>
+            <TabsTrigger value="aborted">Aborted</TabsTrigger>
           </TabsList>
 
           <TabsContent value={filter} className="mt-4">
@@ -135,7 +153,7 @@ export default function TaskForce() {
                 {missions?.map((mission) => (
                   <Card
                     key={mission.id}
-                    className="cursor-pointer hover:border-primary/50 transition-colors"
+                    className="cursor-pointer hover:border-primary/50 transition-colors relative group"
                     onClick={() => setSelectedMission(mission)}
                   >
                     <CardHeader className="pb-2">
@@ -143,9 +161,28 @@ export default function TaskForce() {
                         <CardTitle className="text-base line-clamp-1">
                           {mission.name}
                         </CardTitle>
-                        <Badge className={PRIORITY_COLORS[mission.priority]}>
-                          {mission.priority}
-                        </Badge>
+                        <div className="flex items-center gap-1">
+                          <Badge className={PRIORITY_COLORS[mission.priority]}>
+                            {mission.priority}
+                          </Badge>
+                          {mission.phase === "cancelled" && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive hover:bg-destructive/10"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (confirm("Are you sure you want to delete this aborted mission?")) {
+                                  deleteMission(mission.id)
+                                    .then(() => toast.success("Mission deleted"))
+                                    .catch(() => toast.error("Failed to delete mission"));
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     </CardHeader>
                     <CardContent className="space-y-3">
@@ -157,9 +194,12 @@ export default function TaskForce() {
                         <Badge variant="outline" className="capitalize">
                           {mission.mission_type.replace("_", " ")}
                         </Badge>
-                        <Badge variant="secondary" className="flex items-center gap-1 capitalize">
+                        <Badge 
+                          variant={mission.phase === "cancelled" ? "destructive" : "secondary"} 
+                          className="flex items-center gap-1 capitalize"
+                        >
                           {PHASE_ICONS[mission.phase]}
-                          {mission.phase}
+                          {mission.phase === "cancelled" ? "Aborted" : mission.phase}
                         </Badge>
                         {mission.is_stealth_mode && (
                           <Badge variant="outline" className="text-xs">
