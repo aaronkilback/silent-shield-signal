@@ -84,6 +84,9 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
     import.meta.env.VITE_MAPBOX_TOKEN || localStorage.getItem('mapbox_token')
   );
   
+  // Track if map style is fully loaded to prevent "Style is not done loading" errors
+  const [styleLoaded, setStyleLoaded] = useState(false);
+  
   // Map style selection
   const [mapStyle, setMapStyle] = useState<MapStyleKey>('satellite');
   
@@ -400,6 +403,9 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
         },
         layout: { visibility: 'none' }
       });
+      
+      // Mark style as loaded - safe to manipulate layers now
+      setStyleLoaded(true);
     });
 
     return () => {
@@ -407,12 +413,16 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
         map.current.remove();
         map.current = null;
       }
+      setStyleLoaded(false);
     };
   }, [mapboxToken]);
 
   // Handle map style changes
   useEffect(() => {
     if (!map.current) return;
+    
+    // Mark style as loading during style change
+    setStyleLoaded(false);
     map.current.setStyle(MAP_STYLES[mapStyle]);
     
     // Re-add layers after style change
@@ -434,6 +444,11 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
 
       // Re-add all custom layers
       addCustomLayers();
+      
+      // Mark style as loaded again - safe to manipulate layers
+      setStyleLoaded(true);
+      
+      // Update data after style is ready
       updateFireMarkers();
       updatePerimeters();
       updateWeatherAlerts();
@@ -674,72 +689,79 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
 
   // Toggle heatmap visibility
   useEffect(() => {
-    if (!map.current || !map.current.getLayer('fire-heat-layer')) return;
+    if (!map.current || !styleLoaded || !map.current.getLayer('fire-heat-layer')) return;
     map.current.setLayoutProperty('fire-heat-layer', 'visibility', showHeatmap ? 'visible' : 'none');
-  }, [showHeatmap]);
+  }, [showHeatmap, styleLoaded]);
 
   // Toggle perimeters visibility
   useEffect(() => {
-    if (!map.current) return;
+    if (!map.current || !styleLoaded) return;
     if (map.current.getLayer('fire-perimeters-fill')) {
       map.current.setLayoutProperty('fire-perimeters-fill', 'visibility', showPerimeters ? 'visible' : 'none');
     }
     if (map.current.getLayer('fire-perimeters-outline')) {
       map.current.setLayoutProperty('fire-perimeters-outline', 'visibility', showPerimeters ? 'visible' : 'none');
     }
-  }, [showPerimeters]);
+  }, [showPerimeters, styleLoaded]);
 
   // Toggle weather alerts visibility
   useEffect(() => {
-    if (!map.current) return;
+    if (!map.current || !styleLoaded) return;
     if (map.current.getLayer('weather-alerts-fill')) {
       map.current.setLayoutProperty('weather-alerts-fill', 'visibility', showWeatherAlerts ? 'visible' : 'none');
     }
     if (map.current.getLayer('weather-alerts-outline')) {
       map.current.setLayoutProperty('weather-alerts-outline', 'visibility', showWeatherAlerts ? 'visible' : 'none');
     }
-  }, [showWeatherAlerts]);
+  }, [showWeatherAlerts, styleLoaded]);
 
   // Toggle smoke visibility
   useEffect(() => {
-    if (!map.current || !map.current.getLayer('smoke-plumes-layer')) return;
+    if (!map.current || !styleLoaded || !map.current.getLayer('smoke-plumes-layer')) return;
     map.current.setLayoutProperty('smoke-plumes-layer', 'visibility', showSmoke ? 'visible' : 'none');
-  }, [showSmoke]);
+  }, [showSmoke, styleLoaded]);
 
   // Toggle 3D terrain
   useEffect(() => {
-    if (!map.current) return;
-    if (showTerrain) {
-      if (!map.current.getSource('mapbox-dem')) {
-        map.current.addSource('mapbox-dem', {
-          type: 'raster-dem',
-          url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
-          tileSize: 512,
-          maxzoom: 14
-        });
+    if (!map.current || !styleLoaded) return;
+    try {
+      if (showTerrain) {
+        if (!map.current.getSource('mapbox-dem')) {
+          map.current.addSource('mapbox-dem', {
+            type: 'raster-dem',
+            url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+            tileSize: 512,
+            maxzoom: 14
+          });
+        }
+        map.current.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
+        map.current.easeTo({ pitch: 45 });
+      } else {
+        map.current.setTerrain(null);
+        map.current.easeTo({ pitch: 0 });
       }
-      map.current.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
-      map.current.easeTo({ pitch: 45 });
-    } else {
-      map.current.setTerrain(null);
-      map.current.easeTo({ pitch: 0 });
+    } catch (err) {
+      console.warn('Terrain toggle error:', err);
     }
-  }, [showTerrain]);
+  }, [showTerrain, styleLoaded]);
 
   // Update markers when data changes
   useEffect(() => {
+    if (!styleLoaded) return;
     updateFireMarkers();
-  }, [updateFireMarkers]);
+  }, [updateFireMarkers, styleLoaded]);
 
   // Update perimeters when data changes
   useEffect(() => {
+    if (!styleLoaded) return;
     updatePerimeters();
-  }, [updatePerimeters]);
+  }, [updatePerimeters, styleLoaded]);
 
   // Update weather alerts when data changes
   useEffect(() => {
+    if (!styleLoaded) return;
     updateWeatherAlerts();
-  }, [updateWeatherAlerts]);
+  }, [updateWeatherAlerts, styleLoaded]);
 
   const getRiskColor = (level: string) => {
     switch (level) {
