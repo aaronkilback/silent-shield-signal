@@ -1769,52 +1769,65 @@ Inform user of successful creation and instruct to refresh if needed
     type: "function",
     function: {
       name: "update_agent_configuration",
-      description: "Update an AI agent's configuration including role_description, allowed_tools, input_sources, output_types, persona, specialty, mission_scope, and system_prompt. Use this to dynamically tune agent capabilities and permissions. All changes are audit-logged.",
+      description:
+        "Update an AI agent's configuration (including header_name/display name). Use lookup (current values) when you don't know the agent_id. All changes are audit-logged.",
       parameters: {
         type: "object",
         properties: {
-          agent_id: { 
-            type: "string", 
-            description: "UUID of the agent to update" 
+          agent_id: {
+            type: "string",
+            description: "(Optional) UUID of the agent to update. If omitted, provide lookup.",
+          },
+          lookup: {
+            type: "object",
+            description:
+              "How to FIND the agent when agent_id is unknown. Use the agent's CURRENT header_name/codename/call_sign (before changes).",
+            properties: {
+              header_name: { type: "string", description: "Current display/header name" },
+              codename: { type: "string", description: "Current codename" },
+              call_sign: { type: "string", description: "Current call sign" },
+            },
           },
           updates: {
             type: "object",
-            description: "Object containing fields to update",
+            description: "Fields to update on the agent",
             properties: {
-              codename: { type: "string", description: "Agent codename" },
-              call_sign: { type: "string", description: "Agent call sign" },
+              header_name: { type: "string", description: "New display/header name" },
+              codename: { type: "string", description: "New agent codename" },
+              call_sign: { type: "string", description: "New agent call sign" },
               persona: { type: "string", description: "Agent persona description" },
               specialty: { type: "string", description: "Agent specialty/expertise" },
               mission_scope: { type: "string", description: "Agent mission scope" },
               interaction_style: { type: "string", description: "Interaction style (chat, voice, etc.)" },
-              input_sources: { 
-                type: "array", 
+              input_sources: {
+                type: "array",
                 items: { type: "string" },
-                description: "Array of input sources (OSINT, signals, incidents, entities, clients, etc.)" 
+                description:
+                  "Array of input sources (OSINT, signals, incidents, entities, clients, etc.)",
               },
-              output_types: { 
-                type: "array", 
+              output_types: {
+                type: "array",
                 items: { type: "string" },
-                description: "Array of output types" 
+                description: "Array of output types",
               },
               is_client_facing: { type: "boolean", description: "Whether agent is client-facing" },
               is_active: { type: "boolean", description: "Whether agent is active" },
               avatar_color: { type: "string", description: "Avatar color" },
-              system_prompt: { type: "string", description: "Custom system prompt" }
-            }
+              system_prompt: { type: "string", description: "Custom system prompt" },
+            },
           },
-          reason: { 
-            type: "string", 
-            description: "Reason for the configuration change (for audit trail)" 
+          reason: {
+            type: "string",
+            description: "Reason for the configuration change (for audit trail)",
           },
-          requested_by: { 
-            type: "string", 
-            description: "Who requested the change (e.g., 'Aegis', user name)" 
-          }
+          requested_by: {
+            type: "string",
+            description: "Who requested the change (e.g., 'Aegis', user name)",
+          },
         },
-        required: ["agent_id", "updates"]
-      }
-    }
+        required: ["updates"],
+      },
+    },
   },
   // LEGAL & REGULATORY TOOLS - For specialized legal research agents like Legion (LEX-MAGNA)
   {
@@ -2019,7 +2032,28 @@ Inform user of successful creation and instruct to refresh if needed
   {
     type: "function",
     function: {
-      name: "query_fortress_data",
+      name: "search_agents",
+      description:
+        "Search existing AI agents by header_name, codename, or call_sign. Use this BEFORE attempting updates/renames so the correct agent_id can be used.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search text (matches header_name, codename, or call_sign)",
+          },
+          limit: {
+            type: "number",
+            description: "Max results (default 10)",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       description: `COMPREHENSIVE DATA ACCESS: Query all Fortress data stores with flexible filtering. Provides unified access to signals, incidents, entities, clients, documents, investigations, knowledge base, monitoring history, and travel data. Use for cross-module analysis, historical deep dives, and holistic intelligence queries.
 
 QUERY TYPES:
@@ -2694,6 +2728,24 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
         .select("id, name, industry, status, locations")
         .ilike("name", `%${args.query}%`)
         .limit(10);
+
+      if (error) throw error;
+      return data;
+    }
+
+    case "search_agents": {
+      const q = (args.query || "").toString().trim();
+      const limit = Number(args.limit) > 0 ? Number(args.limit) : 10;
+
+      const escaped = q.replace(/%/g, "\\%")
+        .replace(/_/g, "\\_");
+
+      const { data, error } = await supabaseClient
+        .from("ai_agents")
+        .select("id, header_name, codename, call_sign, is_active, is_client_facing, updated_at")
+        .or(`header_name.ilike.%${escaped}%,codename.ilike.%${escaped}%,call_sign.ilike.%${escaped}%`)
+        .order("updated_at", { ascending: false })
+        .limit(limit);
 
       if (error) throw error;
       return data;
@@ -6972,7 +7024,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
     }
 
     case "update_agent_configuration": {
-      const { agent_id, updates, reason, requested_by } = args;
+      const { agent_id, updates, reason, requested_by, lookup } = args;
 
       const resolveAgentId = async (): Promise<
         | { ok: true; id: string }
@@ -6991,17 +7043,25 @@ The signal is now in the database with status 'triaged' and rules have been appl
           }
         }
 
-        // 2) Fallback lookup by known identifiers (helps when an LLM guesses a UUID)
+        // 2) Prefer resolving by CURRENT identifiers via `lookup` (so renames work)
         const orParts: string[] = [];
-        if (updates?.call_sign) orParts.push(`call_sign.eq.${updates.call_sign}`);
-        if (updates?.codename) orParts.push(`codename.eq.${updates.codename}`);
-        if ((updates as any)?.header_name) orParts.push(`header_name.eq.${(updates as any).header_name}`);
+        const lookupHeader = (lookup as any)?.header_name || (lookup as any)?.name;
+        if (lookup?.call_sign) orParts.push(`call_sign.eq.${lookup.call_sign}`);
+        if (lookup?.codename) orParts.push(`codename.eq.${lookup.codename}`);
+        if (lookupHeader) orParts.push(`header_name.eq.${lookupHeader}`);
+
+        // 3) Fallback lookup by update payload (less reliable if values are being renamed)
+        if (orParts.length === 0) {
+          if (updates?.call_sign) orParts.push(`call_sign.eq.${updates.call_sign}`);
+          if (updates?.codename) orParts.push(`codename.eq.${updates.codename}`);
+          if ((updates as any)?.header_name) orParts.push(`header_name.eq.${(updates as any).header_name}`);
+        }
 
         if (orParts.length === 0) {
           return {
             ok: false,
             message:
-              "Agent not found. Please provide a valid agent_id, or include codename/call_sign/header_name in the update so I can resolve the agent.",
+              "Agent not found. Provide agent_id, or provide lookup {header_name|codename|call_sign} using the agent's CURRENT values so I can find it before applying updates.",
           };
         }
 
