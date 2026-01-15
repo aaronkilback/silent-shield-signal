@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Flame, Wind, Thermometer, AlertTriangle, RefreshCw, Layers, MapPin, Mountain, Satellite, Map as MapIcon } from 'lucide-react';
+import { Loader2, Flame, Wind, Thermometer, AlertTriangle, RefreshCw, Layers, MapPin, Mountain, Satellite, Map as MapIcon, Fuel } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface FirePoint {
@@ -42,6 +42,16 @@ interface WeatherAlert {
   onset: string;
   expires: string;
   geometry?: GeoJSON.Geometry;
+}
+
+interface InfrastructurePoint {
+  name: string;
+  type: 'refinery' | 'pipeline' | 'terminal' | 'platform' | 'storage' | 'road';
+  latitude: number;
+  longitude: number;
+  operator: string;
+  capacity?: string;
+  status: 'active' | 'under_construction' | 'planned';
 }
 
 interface WildfireData {
@@ -79,6 +89,7 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
+  const infrastructureMarkersRef = useRef<mapboxgl.Marker[]>([]);
   
   const [mapboxToken] = useState<string | null>(
     import.meta.env.VITE_MAPBOX_TOKEN || localStorage.getItem('mapbox_token')
@@ -97,6 +108,7 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [showTerrain, setShowTerrain] = useState(true);
   const [showSmoke, setShowSmoke] = useState(false);
+  const [showInfrastructure, setShowInfrastructure] = useState(true);
 
   // Fetch wildfire data
   const { data: wildfireData, isLoading, refetch, isRefetching } = useQuery({
@@ -219,6 +231,17 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
     staleTime: 15 * 60 * 1000,
   });
 
+  // Fetch Petronas & Oil/Gas Infrastructure data
+  const { data: infrastructureData } = useQuery({
+    queryKey: ['oil-gas-infrastructure', region],
+    queryFn: async (): Promise<InfrastructurePoint[]> => {
+      // Petronas and major oil/gas infrastructure points
+      // In production, this would come from an API or database
+      return generatePetronasInfrastructure();
+    },
+    staleTime: 60 * 60 * 1000, // Cache for 1 hour
+  });
+
   // Generate mock fire points for demonstration
   function generateMockFirePoints(): FirePoint[] {
     const mockFires: FirePoint[] = [
@@ -245,6 +268,45 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
     return [
       { event: 'Red Flag Warning', severity: 'Severe', headline: 'Red Flag Warning in effect', areaDesc: 'Central California', onset: '2024-08-15T12:00:00', expires: '2024-08-16T20:00:00' },
       { event: 'Fire Weather Watch', severity: 'Moderate', headline: 'Fire Weather Watch in effect', areaDesc: 'Southern Oregon', onset: '2024-08-16T08:00:00', expires: '2024-08-17T18:00:00' },
+    ];
+  }
+
+  // Generate Petronas and Oil/Gas Infrastructure data
+  function generatePetronasInfrastructure(): InfrastructurePoint[] {
+    return [
+      // Petronas Malaysia Operations
+      { name: 'PETRONAS Carigali - Kerteh', type: 'refinery', latitude: 4.5200, longitude: 103.4267, operator: 'PETRONAS', capacity: '100,000 bpd', status: 'active' },
+      { name: 'PETRONAS Melaka Refinery', type: 'refinery', latitude: 2.1896, longitude: 102.2501, operator: 'PETRONAS', capacity: '270,000 bpd', status: 'active' },
+      { name: 'Bintulu LNG Complex', type: 'terminal', latitude: 3.1667, longitude: 113.0333, operator: 'PETRONAS', capacity: '23 MTPA', status: 'active' },
+      { name: 'PETRONAS FLNG Satu', type: 'platform', latitude: 5.9000, longitude: 114.5000, operator: 'PETRONAS', capacity: '1.2 MTPA', status: 'active' },
+      { name: 'Pengerang Integrated Complex', type: 'refinery', latitude: 1.4000, longitude: 104.2500, operator: 'PETRONAS', capacity: '300,000 bpd', status: 'active' },
+      { name: 'Sabah-Sarawak Gas Pipeline', type: 'pipeline', latitude: 5.0000, longitude: 116.0000, operator: 'PETRONAS', capacity: '880 mmscfd', status: 'active' },
+      { name: 'Peninsular Gas Utilisation (PGU)', type: 'pipeline', latitude: 4.0000, longitude: 103.0000, operator: 'PETRONAS', capacity: '2,000 mmscfd', status: 'active' },
+      { name: 'Kerteh Gas Terminal', type: 'terminal', latitude: 4.5150, longitude: 103.4300, operator: 'PETRONAS', capacity: '2,100 mmscfd', status: 'active' },
+      { name: 'Labuan Gas Terminal', type: 'terminal', latitude: 5.2831, longitude: 115.2308, operator: 'PETRONAS', capacity: '250 mmscfd', status: 'active' },
+      { name: 'Tapis-B Platform', type: 'platform', latitude: 5.7167, longitude: 105.0333, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Erb West Platform', type: 'platform', latitude: 5.8500, longitude: 105.2000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Dulang Platform', type: 'platform', latitude: 5.6667, longitude: 104.5000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Bekok-A Platform', type: 'platform', latitude: 4.9167, longitude: 105.2500, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Sepat Platform', type: 'platform', latitude: 5.0833, longitude: 104.8333, operator: 'PETRONAS Carigali', status: 'active' },
+      
+      // Petronas International Operations
+      { name: 'PETRONAS Egypt (Meseda)', type: 'platform', latitude: 28.0000, longitude: 33.0000, operator: 'PETRONAS Egypt', status: 'active' },
+      { name: 'PETRONAS Sudan Block 5B', type: 'platform', latitude: 11.5000, longitude: 28.5000, operator: 'PETRONAS Sudan', status: 'active' },
+      { name: 'PETRONAS Australia (Browse Basin)', type: 'platform', latitude: -14.0000, longitude: 122.0000, operator: 'PETRONAS Australia', status: 'active' },
+      { name: 'PETRONAS Canada LNG', type: 'terminal', latitude: 54.0000, longitude: -130.0000, operator: 'PETRONAS Canada', status: 'planned' },
+      
+      // Major Pipeline Routes (represented as points along route)
+      { name: 'East Coast Road (Kuantan-Kerteh)', type: 'road', latitude: 4.2000, longitude: 103.4000, operator: 'PETRONAS', status: 'active' },
+      { name: 'PGU Pipeline - Kerteh Section', type: 'pipeline', latitude: 4.5000, longitude: 103.4000, operator: 'PETRONAS', status: 'active' },
+      { name: 'PGU Pipeline - Segamat Junction', type: 'pipeline', latitude: 2.5000, longitude: 102.8000, operator: 'PETRONAS', status: 'active' },
+      { name: 'PGU Pipeline - Pasir Gudang', type: 'pipeline', latitude: 1.4700, longitude: 103.9000, operator: 'PETRONAS', status: 'active' },
+      { name: 'Trans-Thai-Malaysia Pipeline', type: 'pipeline', latitude: 6.0000, longitude: 100.5000, operator: 'PETRONAS/PTT', status: 'active' },
+      
+      // Storage Facilities
+      { name: 'Port Klang Oil Storage', type: 'storage', latitude: 3.0000, longitude: 101.4000, operator: 'PETRONAS Trading', status: 'active' },
+      { name: 'Tanjung Langsat Storage', type: 'storage', latitude: 1.4500, longitude: 104.0000, operator: 'PETRONAS', capacity: '2M barrels', status: 'active' },
+      { name: 'Kemaman Supply Base', type: 'storage', latitude: 4.2333, longitude: 103.4167, operator: 'PETRONAS Carigali', status: 'active' },
     ];
   }
 
@@ -763,6 +825,85 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
     updateWeatherAlerts();
   }, [updateWeatherAlerts, styleLoaded]);
 
+  // Update infrastructure markers
+  const updateInfrastructureMarkers = useCallback(() => {
+    if (!map.current || !infrastructureData) return;
+
+    // Clear existing infrastructure markers
+    infrastructureMarkersRef.current.forEach(marker => marker.remove());
+    infrastructureMarkersRef.current = [];
+
+    if (!showInfrastructure) return;
+
+    // Icon configuration for different infrastructure types
+    const getInfraIcon = (type: string) => {
+      switch (type) {
+        case 'refinery': return { icon: '🏭', color: '#3b82f6', size: 18 };
+        case 'pipeline': return { icon: '🔗', color: '#8b5cf6', size: 14 };
+        case 'terminal': return { icon: '⛽', color: '#10b981', size: 16 };
+        case 'platform': return { icon: '🛢️', color: '#f59e0b', size: 16 };
+        case 'storage': return { icon: '🏗️', color: '#6366f1', size: 14 };
+        case 'road': return { icon: '🛣️', color: '#64748b', size: 12 };
+        default: return { icon: '📍', color: '#64748b', size: 14 };
+      }
+    };
+
+    infrastructureData.forEach((infra) => {
+      const iconConfig = getInfraIcon(infra.type);
+      
+      const el = document.createElement('div');
+      el.className = 'infrastructure-marker';
+      el.style.cssText = `
+        width: ${iconConfig.size + 8}px;
+        height: ${iconConfig.size + 8}px;
+        background: ${iconConfig.color};
+        border: 2px solid white;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: ${iconConfig.size - 4}px;
+        cursor: pointer;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        transition: transform 0.2s;
+      `;
+      el.innerHTML = iconConfig.icon;
+      el.title = `${infra.name} (${infra.operator})`;
+
+      const popup = new mapboxgl.Popup({ offset: 25, maxWidth: '320px' }).setHTML(`
+        <div style="font-family: system-ui; padding: 8px;">
+          <h4 style="margin: 0 0 8px; color: ${iconConfig.color}; font-weight: 600;">
+            ${iconConfig.icon} ${infra.name}
+          </h4>
+          <div style="font-size: 12px; color: #666;">
+            <p style="margin: 4px 0;"><strong>Type:</strong> ${infra.type.charAt(0).toUpperCase() + infra.type.slice(1)}</p>
+            <p style="margin: 4px 0;"><strong>Operator:</strong> ${infra.operator}</p>
+            ${infra.capacity ? `<p style="margin: 4px 0;"><strong>Capacity:</strong> ${infra.capacity}</p>` : ''}
+            <p style="margin: 4px 0;"><strong>Status:</strong> 
+              <span style="color: ${infra.status === 'active' ? '#10b981' : infra.status === 'planned' ? '#f59e0b' : '#3b82f6'}">
+                ${infra.status.charAt(0).toUpperCase() + infra.status.slice(1).replace('_', ' ')}
+              </span>
+            </p>
+            <p style="margin: 4px 0;"><strong>Coords:</strong> ${infra.latitude.toFixed(4)}, ${infra.longitude.toFixed(4)}</p>
+          </div>
+        </div>
+      `);
+
+      const marker = new mapboxgl.Marker(el)
+        .setLngLat([infra.longitude, infra.latitude])
+        .setPopup(popup)
+        .addTo(map.current!);
+
+      infrastructureMarkersRef.current.push(marker);
+    });
+  }, [infrastructureData, showInfrastructure]);
+
+  // Update infrastructure markers when data or visibility changes
+  useEffect(() => {
+    if (!styleLoaded) return;
+    updateInfrastructureMarkers();
+  }, [updateInfrastructureMarkers, styleLoaded, showInfrastructure]);
+
   const getRiskColor = (level: string) => {
     switch (level) {
       case 'Extreme': return 'bg-red-600 text-white';
@@ -952,6 +1093,19 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
                 <Wind className="h-3 w-3 text-gray-400" /> Smoke
               </Label>
             </div>
+
+            <div className="h-6 w-px bg-border" />
+
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="infrastructure"
+                checked={showInfrastructure}
+                onCheckedChange={setShowInfrastructure}
+              />
+              <Label htmlFor="infrastructure" className="text-sm flex items-center gap-1">
+                <Fuel className="h-3 w-3 text-blue-500" /> Petronas/Oil & Gas
+              </Label>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -1002,36 +1156,59 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
             </div>
           </div>
         )}
+
+        {/* Infrastructure Count Badge */}
+        {showInfrastructure && infrastructureData && infrastructureData.length > 0 && (
+          <div className="absolute top-4 right-16 bg-blue-600/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg text-white">
+            <div className="flex items-center gap-2">
+              <Fuel className="h-4 w-4" />
+              <span className="text-sm font-medium">{infrastructureData.length} Petronas assets</span>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Legend */}
       <Card>
         <CardContent className="p-4">
           <h4 className="font-medium mb-3">Map Legend</h4>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 text-sm">
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 rounded-full bg-gradient-to-r from-orange-500 to-red-500 animate-pulse" />
-              <span>Active Fire (satellite)</span>
+              <span>Active Fire</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 rounded border-2 border-orange-500 bg-orange-500/30" />
-              <span>Fire Perimeter (NIFC)</span>
+              <span>Fire Perimeter</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 rounded border-2 border-red-600 bg-red-600/20" />
               <span>Red Flag Warning</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded border-2 border-orange-400 bg-orange-400/20" />
-              <span>Fire Weather Watch</span>
+              <div className="w-4 h-4 bg-gradient-to-r from-yellow-300 via-orange-500 to-red-600 rounded" />
+              <span>Fire Intensity</span>
+            </div>
+            {/* Infrastructure Legend */}
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center text-[8px]">🏭</div>
+              <span>Refinery</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-4 h-4 bg-gradient-to-r from-yellow-300 via-orange-500 to-red-600 rounded" />
-              <span>Fire Intensity (FRP)</span>
+              <div className="w-4 h-4 rounded-full bg-purple-500 flex items-center justify-center text-[8px]">🔗</div>
+              <span>Pipeline</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center text-[8px]">⛽</div>
+              <span>Terminal</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded-full bg-amber-500 flex items-center justify-center text-[8px]">🛢️</div>
+              <span>Platform</span>
             </div>
           </div>
           <div className="mt-3 text-xs text-muted-foreground">
-            Data sources: NASA FIRMS (VIIRS/MODIS), NIFC Active Fire Perimeters, NOAA Weather Alerts
+            Data sources: NASA FIRMS, NIFC Fire Perimeters, NOAA Weather Alerts, PETRONAS Infrastructure Database
           </div>
         </CardContent>
       </Card>
