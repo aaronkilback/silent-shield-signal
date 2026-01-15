@@ -51,7 +51,7 @@ interface InfrastructurePoint {
   longitude: number;
   operator: string;
   capacity?: string;
-  status: 'active' | 'under_construction' | 'planned';
+  status: 'active' | 'under_construction' | 'planned' | 'exploration';
 }
 
 interface WildfireData {
@@ -280,42 +280,147 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
     ];
   }
 
-  // Generate Petronas and Oil/Gas Infrastructure data
+  // Generate Petronas and Oil/Gas Infrastructure data - Comprehensive global dataset
   function generatePetronasInfrastructure(): InfrastructurePoint[] {
     return [
-      // Petronas Malaysia Operations
-      { name: 'PETRONAS Carigali - Kerteh', type: 'refinery', latitude: 4.5200, longitude: 103.4267, operator: 'PETRONAS', capacity: '100,000 bpd', status: 'active' },
-      { name: 'PETRONAS Melaka Refinery', type: 'refinery', latitude: 2.1896, longitude: 102.2501, operator: 'PETRONAS', capacity: '270,000 bpd', status: 'active' },
-      { name: 'Bintulu LNG Complex', type: 'terminal', latitude: 3.1667, longitude: 113.0333, operator: 'PETRONAS', capacity: '23 MTPA', status: 'active' },
-      { name: 'PETRONAS FLNG Satu', type: 'platform', latitude: 5.9000, longitude: 114.5000, operator: 'PETRONAS', capacity: '1.2 MTPA', status: 'active' },
-      { name: 'Pengerang Integrated Complex', type: 'refinery', latitude: 1.4000, longitude: 104.2500, operator: 'PETRONAS', capacity: '300,000 bpd', status: 'active' },
-      { name: 'Sabah-Sarawak Gas Pipeline', type: 'pipeline', latitude: 5.0000, longitude: 116.0000, operator: 'PETRONAS', capacity: '880 mmscfd', status: 'active' },
-      { name: 'Peninsular Gas Utilisation (PGU)', type: 'pipeline', latitude: 4.0000, longitude: 103.0000, operator: 'PETRONAS', capacity: '2,000 mmscfd', status: 'active' },
-      { name: 'Kerteh Gas Terminal', type: 'terminal', latitude: 4.5150, longitude: 103.4300, operator: 'PETRONAS', capacity: '2,100 mmscfd', status: 'active' },
-      { name: 'Labuan Gas Terminal', type: 'terminal', latitude: 5.2831, longitude: 115.2308, operator: 'PETRONAS', capacity: '250 mmscfd', status: 'active' },
+      // ===== PETRONAS MALAYSIA - REFINERIES =====
+      { name: 'PETRONAS Carigali - Kerteh Refinery', type: 'refinery', latitude: 4.5200, longitude: 103.4267, operator: 'PETRONAS', capacity: '100,000 bpd', status: 'active' },
+      { name: 'PETRONAS Melaka Refinery I', type: 'refinery', latitude: 2.1896, longitude: 102.2501, operator: 'PETRONAS', capacity: '100,000 bpd', status: 'active' },
+      { name: 'PETRONAS Melaka Refinery II', type: 'refinery', latitude: 2.1950, longitude: 102.2550, operator: 'PETRONAS', capacity: '170,000 bpd', status: 'active' },
+      { name: 'Pengerang Integrated Complex (RAPID)', type: 'refinery', latitude: 1.4000, longitude: 104.2500, operator: 'PETRONAS', capacity: '300,000 bpd', status: 'active' },
+      { name: 'Hengyuan Refining - Port Dickson', type: 'refinery', latitude: 2.5167, longitude: 101.8000, operator: 'Hengyuan/PETRONAS', capacity: '156,000 bpd', status: 'active' },
+      
+      // ===== PETRONAS MALAYSIA - LNG FACILITIES =====
+      { name: 'PETRONAS LNG Complex - Bintulu', type: 'terminal', latitude: 3.1667, longitude: 113.0333, operator: 'PETRONAS LNG', capacity: '29.3 MTPA', status: 'active' },
+      { name: 'PETRONAS FLNG Satu (PFLNG1)', type: 'platform', latitude: 5.9000, longitude: 114.5000, operator: 'PETRONAS', capacity: '1.2 MTPA', status: 'active' },
+      { name: 'PETRONAS FLNG Dua (PFLNG2)', type: 'platform', latitude: 6.0500, longitude: 115.0000, operator: 'PETRONAS', capacity: '1.5 MTPA', status: 'active' },
+      { name: 'PETRONAS FLNG Tiga (PFLNG3)', type: 'platform', latitude: 5.8500, longitude: 116.5000, operator: 'PETRONAS', capacity: '2.0 MTPA', status: 'planned' },
+      { name: 'MLNG Train 9', type: 'terminal', latitude: 3.1700, longitude: 113.0400, operator: 'PETRONAS LNG', capacity: '3.6 MTPA', status: 'active' },
+      
+      // ===== PETRONAS MALAYSIA - GAS TERMINALS =====
+      { name: 'Kerteh Gas Terminal', type: 'terminal', latitude: 4.5150, longitude: 103.4300, operator: 'PETRONAS Gas', capacity: '2,100 mmscfd', status: 'active' },
+      { name: 'Labuan Gas Terminal', type: 'terminal', latitude: 5.2831, longitude: 115.2308, operator: 'PETRONAS Gas', capacity: '250 mmscfd', status: 'active' },
+      { name: 'Kerteh Aromatics Complex', type: 'terminal', latitude: 4.5100, longitude: 103.4350, operator: 'PETRONAS Chemicals', status: 'active' },
+      { name: 'Gebeng Petrochemical Complex', type: 'terminal', latitude: 3.9500, longitude: 103.3833, operator: 'PETRONAS Chemicals', status: 'active' },
+      { name: 'PETRONAS Regasification Terminal - Melaka', type: 'terminal', latitude: 2.2500, longitude: 102.1500, operator: 'PETRONAS Gas', capacity: '3.8 MTPA', status: 'active' },
+      { name: 'PETRONAS Regasification Terminal - Pengerang', type: 'terminal', latitude: 1.3900, longitude: 104.2600, operator: 'PETRONAS Gas', capacity: '3.5 MTPA', status: 'active' },
+      
+      // ===== PETRONAS MALAYSIA - OFFSHORE PLATFORMS (Peninsular) =====
       { name: 'Tapis-B Platform', type: 'platform', latitude: 5.7167, longitude: 105.0333, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Tapis-R Platform', type: 'platform', latitude: 5.7200, longitude: 105.0500, operator: 'PETRONAS Carigali', status: 'active' },
       { name: 'Erb West Platform', type: 'platform', latitude: 5.8500, longitude: 105.2000, operator: 'PETRONAS Carigali', status: 'active' },
       { name: 'Dulang Platform', type: 'platform', latitude: 5.6667, longitude: 104.5000, operator: 'PETRONAS Carigali', status: 'active' },
       { name: 'Bekok-A Platform', type: 'platform', latitude: 4.9167, longitude: 105.2500, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Bekok-B Platform', type: 'platform', latitude: 4.9200, longitude: 105.2600, operator: 'PETRONAS Carigali', status: 'active' },
       { name: 'Sepat Platform', type: 'platform', latitude: 5.0833, longitude: 104.8333, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Angsi Platform', type: 'platform', latitude: 5.2000, longitude: 105.6000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Cendor Platform', type: 'platform', latitude: 4.7500, longitude: 104.9500, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Resak Platform', type: 'platform', latitude: 5.4000, longitude: 104.6000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'PM-3 CAA Platform', type: 'platform', latitude: 5.5000, longitude: 106.0000, operator: 'PETRONAS/PetroVietnam', status: 'active' },
+      { name: 'Jerneh Platform', type: 'platform', latitude: 4.8000, longitude: 105.1000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Sotong Platform', type: 'platform', latitude: 4.6500, longitude: 104.7500, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Bunga Kekwa Platform', type: 'platform', latitude: 4.5500, longitude: 104.8500, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Lawit Platform', type: 'platform', latitude: 5.3000, longitude: 104.4000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Tiong Platform', type: 'platform', latitude: 4.9500, longitude: 104.6500, operator: 'PETRONAS Carigali', status: 'active' },
       
-      // Petronas International Operations
-      { name: 'PETRONAS Egypt (Meseda)', type: 'platform', latitude: 28.0000, longitude: 33.0000, operator: 'PETRONAS Egypt', status: 'active' },
-      { name: 'PETRONAS Sudan Block 5B', type: 'platform', latitude: 11.5000, longitude: 28.5000, operator: 'PETRONAS Sudan', status: 'active' },
-      { name: 'PETRONAS Australia (Browse Basin)', type: 'platform', latitude: -14.0000, longitude: 122.0000, operator: 'PETRONAS Australia', status: 'active' },
-      { name: 'PETRONAS Canada LNG', type: 'terminal', latitude: 54.0000, longitude: -130.0000, operator: 'PETRONAS Canada', status: 'planned' },
+      // ===== PETRONAS MALAYSIA - OFFSHORE PLATFORMS (Sabah/Sarawak) =====
+      { name: 'Kikeh Platform', type: 'platform', latitude: 6.5000, longitude: 115.0000, operator: 'Murphy Oil/PETRONAS', status: 'active' },
+      { name: 'Kebabangan Platform (KBB)', type: 'platform', latitude: 6.1000, longitude: 116.8000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Gumusut-Kakap Platform', type: 'platform', latitude: 5.5500, longitude: 116.5000, operator: 'Shell/PETRONAS', capacity: '135,000 bpd', status: 'active' },
+      { name: 'Malikai Platform', type: 'platform', latitude: 5.4500, longitude: 116.6000, operator: 'Shell/PETRONAS', status: 'active' },
+      { name: 'Rotan Platform', type: 'platform', latitude: 6.3000, longitude: 117.0000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Kinabalu Platform', type: 'platform', latitude: 6.4000, longitude: 115.5000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'St Joseph Platform', type: 'platform', latitude: 6.2500, longitude: 116.0000, operator: 'Shell/PETRONAS', status: 'active' },
+      { name: 'Samarang Platform', type: 'platform', latitude: 6.1500, longitude: 116.2000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Baram Delta Platform', type: 'platform', latitude: 4.6000, longitude: 113.9000, operator: 'Shell/PETRONAS', status: 'active' },
+      { name: 'Balingian Platform', type: 'platform', latitude: 3.2000, longitude: 112.5000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'F23 Platform (Kumang)', type: 'platform', latitude: 4.3000, longitude: 112.0000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'E11 Platform', type: 'platform', latitude: 4.8500, longitude: 113.5000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'B11 Platform', type: 'platform', latitude: 5.2500, longitude: 113.0000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'D18 Platform', type: 'platform', latitude: 4.1000, longitude: 111.5000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'NC3 Platform', type: 'platform', latitude: 4.5500, longitude: 113.2000, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Rosmari-Marjoram Platform', type: 'platform', latitude: 6.0000, longitude: 117.5000, operator: 'PETRONAS Carigali', status: 'active' },
       
-      // Major Pipeline Routes (represented as points along route)
-      { name: 'East Coast Road (Kuantan-Kerteh)', type: 'road', latitude: 4.2000, longitude: 103.4000, operator: 'PETRONAS', status: 'active' },
-      { name: 'PGU Pipeline - Kerteh Section', type: 'pipeline', latitude: 4.5000, longitude: 103.4000, operator: 'PETRONAS', status: 'active' },
-      { name: 'PGU Pipeline - Segamat Junction', type: 'pipeline', latitude: 2.5000, longitude: 102.8000, operator: 'PETRONAS', status: 'active' },
-      { name: 'PGU Pipeline - Pasir Gudang', type: 'pipeline', latitude: 1.4700, longitude: 103.9000, operator: 'PETRONAS', status: 'active' },
+      // ===== PETRONAS MALAYSIA - MAJOR PIPELINES =====
+      { name: 'Peninsular Gas Utilisation (PGU) - Kerteh', type: 'pipeline', latitude: 4.5000, longitude: 103.4000, operator: 'PETRONAS Gas', capacity: '2,800 mmscfd', status: 'active' },
+      { name: 'PGU Pipeline - Kuantan Section', type: 'pipeline', latitude: 4.0000, longitude: 103.4200, operator: 'PETRONAS Gas', status: 'active' },
+      { name: 'PGU Pipeline - Segamat Junction', type: 'pipeline', latitude: 2.5000, longitude: 102.8000, operator: 'PETRONAS Gas', status: 'active' },
+      { name: 'PGU Pipeline - Pasir Gudang', type: 'pipeline', latitude: 1.4700, longitude: 103.9000, operator: 'PETRONAS Gas', status: 'active' },
+      { name: 'PGU Pipeline - Port Klang', type: 'pipeline', latitude: 3.0000, longitude: 101.4500, operator: 'PETRONAS Gas', status: 'active' },
+      { name: 'Sabah-Sarawak Gas Pipeline (SSGP)', type: 'pipeline', latitude: 5.0000, longitude: 116.0000, operator: 'PETRONAS Gas', capacity: '880 mmscfd', status: 'active' },
+      { name: 'SSGP - Labuan Section', type: 'pipeline', latitude: 5.2800, longitude: 115.2000, operator: 'PETRONAS Gas', status: 'active' },
+      { name: 'SSGP - Bintulu Section', type: 'pipeline', latitude: 3.1800, longitude: 113.0500, operator: 'PETRONAS Gas', status: 'active' },
       { name: 'Trans-Thai-Malaysia Pipeline', type: 'pipeline', latitude: 6.0000, longitude: 100.5000, operator: 'PETRONAS/PTT', status: 'active' },
+      { name: 'Berantai Gas Pipeline', type: 'pipeline', latitude: 5.1000, longitude: 104.5000, operator: 'PETRONAS Carigali', status: 'active' },
       
-      // Storage Facilities
-      { name: 'Port Klang Oil Storage', type: 'storage', latitude: 3.0000, longitude: 101.4000, operator: 'PETRONAS Trading', status: 'active' },
+      // ===== PETRONAS MALAYSIA - STORAGE FACILITIES =====
+      { name: 'Port Klang Oil Storage', type: 'storage', latitude: 3.0000, longitude: 101.4000, operator: 'PETRONAS Trading', capacity: '1.5M barrels', status: 'active' },
       { name: 'Tanjung Langsat Storage', type: 'storage', latitude: 1.4500, longitude: 104.0000, operator: 'PETRONAS', capacity: '2M barrels', status: 'active' },
       { name: 'Kemaman Supply Base', type: 'storage', latitude: 4.2333, longitude: 103.4167, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Labuan Crude Oil Terminal', type: 'storage', latitude: 5.2500, longitude: 115.2500, operator: 'PETRONAS', capacity: '7.5M barrels', status: 'active' },
+      { name: 'Miri Supply Base', type: 'storage', latitude: 4.4000, longitude: 113.9833, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Bintulu Supply Base', type: 'storage', latitude: 3.2100, longitude: 113.0600, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Kota Kinabalu Supply Base', type: 'storage', latitude: 5.9700, longitude: 116.0800, operator: 'PETRONAS Carigali', status: 'active' },
+      { name: 'Pasir Gudang Terminal', type: 'storage', latitude: 1.4650, longitude: 103.9200, operator: 'PETRONAS', capacity: '500,000 barrels', status: 'active' },
+      
+      // ===== PETRONAS MALAYSIA - KEY ROADS/CORRIDORS =====
+      { name: 'East Coast Corridor - Kuantan-Kerteh', type: 'road', latitude: 4.2000, longitude: 103.4000, operator: 'PETRONAS', status: 'active' },
+      { name: 'East Coast Corridor - Kemaman', type: 'road', latitude: 4.2200, longitude: 103.4200, operator: 'PETRONAS', status: 'active' },
+      { name: 'Pengerang Access Corridor', type: 'road', latitude: 1.3800, longitude: 104.2400, operator: 'PETRONAS', status: 'active' },
+      { name: 'Bintulu Industrial Corridor', type: 'road', latitude: 3.1500, longitude: 113.0200, operator: 'PETRONAS', status: 'active' },
+      
+      // ===== PETRONAS INTERNATIONAL - AFRICA =====
+      { name: 'PETRONAS Egypt - Meseda Field', type: 'platform', latitude: 28.0000, longitude: 33.0000, operator: 'PETRONAS Egypt', status: 'active' },
+      { name: 'PETRONAS Egypt - East Ras Budran', type: 'platform', latitude: 28.3000, longitude: 33.2000, operator: 'PETRONAS Egypt', status: 'active' },
+      { name: 'PETRONAS Sudan - Block 8', type: 'platform', latitude: 10.5000, longitude: 28.0000, operator: 'PETRONAS Sudan', status: 'active' },
+      { name: 'PETRONAS South Sudan - Block 5B', type: 'platform', latitude: 8.0000, longitude: 30.0000, operator: 'PETRONAS', status: 'active' },
+      { name: 'PETRONAS Algeria - Block 433a', type: 'platform', latitude: 27.5000, longitude: 9.0000, operator: 'PETRONAS Algeria', status: 'active' },
+      { name: 'PETRONAS Mauritania - Offshore', type: 'platform', latitude: 18.0000, longitude: -16.5000, operator: 'PETRONAS Mauritania', status: 'active' },
+      { name: 'PETRONAS Gabon - Diaman-1B', type: 'platform', latitude: -2.0000, longitude: 9.0000, operator: 'PETRONAS Gabon', status: 'active' },
+      { name: 'PETRONAS Chad - Doseo/Salamat', type: 'platform', latitude: 9.0000, longitude: 18.0000, operator: 'PETRONAS Chad', status: 'active' },
+      
+      // ===== PETRONAS INTERNATIONAL - MIDDLE EAST =====
+      { name: 'PETRONAS Iraq - Garraf Field', type: 'platform', latitude: 31.0000, longitude: 46.5000, operator: 'PETRONAS Iraq', capacity: '230,000 bpd', status: 'active' },
+      { name: 'PETRONAS Iraq - Majnoon Field', type: 'platform', latitude: 31.2000, longitude: 47.0000, operator: 'PETRONAS Iraq', status: 'active' },
+      { name: 'PETRONAS Turkmenistan - Block 1', type: 'platform', latitude: 38.0000, longitude: 54.5000, operator: 'PETRONAS Turkmenistan', status: 'active' },
+      { name: 'PETRONAS Azerbaijan - Shah Deniz', type: 'platform', latitude: 39.0000, longitude: 50.5000, operator: 'PETRONAS Azerbaijan', status: 'active' },
+      
+      // ===== PETRONAS INTERNATIONAL - ASIA PACIFIC =====
+      { name: 'PETRONAS Australia - Browse Basin', type: 'platform', latitude: -14.0000, longitude: 122.0000, operator: 'PETRONAS Australia', status: 'active' },
+      { name: 'PETRONAS Australia - Poseidon', type: 'platform', latitude: -13.5000, longitude: 124.0000, operator: 'PETRONAS Australia', status: 'active' },
+      { name: 'PETRONAS Australia - Chandon', type: 'platform', latitude: -14.5000, longitude: 123.5000, operator: 'PETRONAS Australia', status: 'active' },
+      { name: 'PETRONAS Myanmar - Yetagun', type: 'platform', latitude: 13.5000, longitude: 97.0000, operator: 'PETRONAS Myanmar', status: 'active' },
+      { name: 'PETRONAS Myanmar - Zawtika', type: 'platform', latitude: 14.0000, longitude: 97.5000, operator: 'PETRONAS Myanmar', status: 'active' },
+      { name: 'PETRONAS Vietnam - PM304', type: 'platform', latitude: 10.5000, longitude: 108.0000, operator: 'PETRONAS Vietnam', status: 'active' },
+      { name: 'PETRONAS Indonesia - Ketapang', type: 'platform', latitude: -7.0000, longitude: 112.5000, operator: 'PETRONAS Indonesia', status: 'active' },
+      { name: 'PETRONAS Indonesia - South Natuna Sea Block B', type: 'platform', latitude: 3.5000, longitude: 108.0000, operator: 'PETRONAS Indonesia', status: 'active' },
+      { name: 'PETRONAS China - LNG Import Terminal', type: 'terminal', latitude: 29.0000, longitude: 121.5000, operator: 'PETRONAS China', status: 'active' },
+      { name: 'PETRONAS India - Dahej LNG Terminal', type: 'terminal', latitude: 21.7000, longitude: 72.5000, operator: 'PETRONAS India', status: 'active' },
+      { name: 'PETRONAS Philippines - Malampaya', type: 'platform', latitude: 11.2000, longitude: 119.5000, operator: 'Shell/PETRONAS', status: 'active' },
+      
+      // ===== PETRONAS INTERNATIONAL - AMERICAS =====
+      { name: 'PETRONAS Canada LNG Project', type: 'terminal', latitude: 54.0000, longitude: -130.0000, operator: 'PETRONAS Canada', capacity: '12 MTPA', status: 'planned' },
+      { name: 'PETRONAS Canada - North Montney', type: 'platform', latitude: 56.5000, longitude: -120.5000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'PETRONAS Canada - Altares', type: 'platform', latitude: 56.0000, longitude: -121.0000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'PETRONAS Argentina - Neuquén Basin', type: 'platform', latitude: -38.5000, longitude: -68.5000, operator: 'PETRONAS Argentina', status: 'active' },
+      { name: 'PETRONAS Mexico - Block 29', type: 'platform', latitude: 19.5000, longitude: -96.5000, operator: 'PETRONAS Mexico', status: 'active' },
+      { name: 'PETRONAS Brazil - Pre-salt Basin', type: 'platform', latitude: -25.0000, longitude: -45.0000, operator: 'PETRONAS Brazil', status: 'active' },
+      { name: 'PETRONAS Suriname - Block 52', type: 'platform', latitude: 7.0000, longitude: -55.0000, operator: 'PETRONAS Suriname', status: 'exploration' },
+      
+      // ===== PETRONAS CHEMICALS - GLOBAL =====
+      { name: 'PETRONAS Chemicals - Pengerang', type: 'terminal', latitude: 1.4100, longitude: 104.2550, operator: 'PETRONAS Chemicals', status: 'active' },
+      { name: 'PETRONAS Chemicals - MTBE Plant Kerteh', type: 'terminal', latitude: 4.5050, longitude: 103.4250, operator: 'PETRONAS Chemicals', status: 'active' },
+      { name: 'PETRONAS Chemicals - Ethylene Plant Kerteh', type: 'terminal', latitude: 4.5080, longitude: 103.4280, operator: 'PETRONAS Chemicals', status: 'active' },
+      { name: 'PETRONAS Chemicals - Fertilizer Gurun', type: 'terminal', latitude: 5.8167, longitude: 100.4667, operator: 'PETRONAS Chemicals', status: 'active' },
+      { name: 'PETRONAS Chemicals - Bintulu Methanol', type: 'terminal', latitude: 3.1600, longitude: 113.0450, operator: 'PETRONAS Chemicals', status: 'active' },
+      
+      // ===== PETRONAS LUBRICANTS - GLOBAL =====
+      { name: 'PETRONAS Lubricants - Shah Alam Plant', type: 'storage', latitude: 3.0700, longitude: 101.5300, operator: 'PETRONAS Lubricants', status: 'active' },
+      { name: 'PETRONAS Lubricants - Turin, Italy', type: 'storage', latitude: 45.0700, longitude: 7.6870, operator: 'PETRONAS Lubricants', status: 'active' },
+      { name: 'PETRONAS Lubricants - Villaverde, Spain', type: 'storage', latitude: 40.3500, longitude: -3.7000, operator: 'PETRONAS Lubricants', status: 'active' },
+      { name: 'PETRONAS Lubricants - Pathumthani, Thailand', type: 'storage', latitude: 14.0000, longitude: 100.5500, operator: 'PETRONAS Lubricants', status: 'active' },
+      { name: 'PETRONAS Lubricants - São Paulo, Brazil', type: 'storage', latitude: -23.5505, longitude: -46.6333, operator: 'PETRONAS Lubricants', status: 'active' },
+      { name: 'PETRONAS Lubricants - Durban, South Africa', type: 'storage', latitude: -29.8600, longitude: 31.0300, operator: 'PETRONAS Lubricants', status: 'active' },
     ];
   }
 
@@ -889,7 +994,7 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
             <p style="margin: 4px 0;"><strong>Operator:</strong> ${infra.operator}</p>
             ${infra.capacity ? `<p style="margin: 4px 0;"><strong>Capacity:</strong> ${infra.capacity}</p>` : ''}
             <p style="margin: 4px 0;"><strong>Status:</strong> 
-              <span style="color: ${infra.status === 'active' ? '#10b981' : infra.status === 'planned' ? '#f59e0b' : '#3b82f6'}">
+              <span style="color: ${infra.status === 'active' ? '#10b981' : infra.status === 'planned' ? '#f59e0b' : infra.status === 'exploration' ? '#a855f7' : '#3b82f6'}">
                 ${infra.status.charAt(0).toUpperCase() + infra.status.slice(1).replace('_', ' ')}
               </span>
             </p>
