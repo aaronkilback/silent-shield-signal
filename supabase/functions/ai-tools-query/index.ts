@@ -35,7 +35,7 @@ serve(async (req) => {
         const { data: incidents } = await supabase
           .from("incidents")
           .select("id, title, priority, status, severity_level, opened_at, client_id, clients(name)")
-          .in("status", ["open", "investigating", "contained"])
+          .in("status", ["open", "acknowledged", "contained"])
           .order("opened_at", { ascending: false })
           .limit(parameters?.limit || 10);
         result = incidents;

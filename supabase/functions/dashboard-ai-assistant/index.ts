@@ -2825,7 +2825,7 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
       const { data, error } = await supabaseClient
         .from("incidents")
         .select("id, title, status, priority, severity_level, opened_at, client_id, clients(name)")
-        .in("status", ["open", "investigating", "contained"])
+        .in("status", ["open", "acknowledged", "contained"])
         .order("opened_at", { ascending: false })
         .limit(args.limit || 10);
 
