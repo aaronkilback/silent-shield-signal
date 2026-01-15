@@ -5,6 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -49,6 +51,9 @@ const Incidents = () => {
   const [reloadTrigger, setReloadTrigger] = useState(0);
   const [creatingInvestigation, setCreatingInvestigation] = useState<string | null>(null);
   const [deleteIncident, setDeleteIncident] = useState<Incident | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -272,6 +277,57 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
     critical: incidents.filter((i) => i.priority === "p1").length,
   };
 
+  // Bulk selection handlers
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredIncidents.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredIncidents.map((i) => i.id)));
+    }
+  };
+
+  const toggleSelectOne = (id: string) => {
+    const newSet = new Set(selectedIds);
+    if (newSet.has(id)) {
+      newSet.delete(id);
+    } else {
+      newSet.add(id);
+    }
+    setSelectedIds(newSet);
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+
+    setBulkDeleting(true);
+    try {
+      const { error } = await supabase
+        .from("incidents")
+        .delete()
+        .in("id", Array.from(selectedIds));
+
+      if (error) throw error;
+
+      toast({
+        title: "Incidents Deleted",
+        description: `Successfully deleted ${selectedIds.size} incident(s)`,
+      });
+
+      setSelectedIds(new Set());
+      setShowBulkDeleteDialog(false);
+      setReloadTrigger((prev) => prev + 1);
+    } catch (error: any) {
+      console.error("Error deleting incidents:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete incidents",
+        variant: "destructive",
+      });
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
   if (!user && !authLoading) {
     return null;
   }
@@ -353,6 +409,23 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
               </Select>
             </div>
 
+            {/* Bulk Actions Bar */}
+            {selectedIds.size > 0 && (
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border">
+                <span className="text-sm font-medium">
+                  {selectedIds.size} incident{selectedIds.size > 1 ? "s" : ""} selected
+                </span>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setShowBulkDeleteDialog(true)}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete Selected
+                </Button>
+              </div>
+            )}
+
             {/* Incidents List */}
             {loading ? (
               <div className="flex justify-center py-8">
@@ -364,36 +437,61 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
               </div>
             ) : (
               <div className="space-y-3">
+                {/* Select All Header */}
+                <div className="flex items-center gap-3 px-4 py-2 border-b">
+                  <Checkbox
+                    checked={selectedIds.size === filteredIncidents.length && filteredIncidents.length > 0}
+                    onCheckedChange={toggleSelectAll}
+                    aria-label="Select all incidents"
+                  />
+                  <span className="text-sm text-muted-foreground">
+                    {selectedIds.size === filteredIncidents.length && filteredIncidents.length > 0
+                      ? "Deselect all"
+                      : "Select all"}
+                  </span>
+                </div>
+                
                 {filteredIncidents.map((incident) => (
                   <div
                     key={incident.id}
-                    className="p-4 rounded-lg border bg-card hover:bg-accent/5 transition-colors cursor-pointer"
+                    className={`p-4 rounded-lg border bg-card hover:bg-accent/5 transition-colors cursor-pointer ${
+                      selectedIds.has(incident.id) ? "ring-2 ring-primary/50 bg-accent/10" : ""
+                    }`}
                     onClick={() => setSelectedIncident(incident)}
                   >
                     <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 space-y-2">
-                        <div className="flex items-center gap-2">
-                          <AlertTriangle className="w-4 h-4 text-destructive" />
-                          <span className="font-semibold">
-                            {incident.clients?.name || "Unknown Client"}
-                          </span>
+                      <div className="flex items-start gap-3">
+                        <Checkbox
+                          checked={selectedIds.has(incident.id)}
+                          onCheckedChange={() => toggleSelectOne(incident.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Select incident ${incident.id}`}
+                          className="mt-1"
+                        />
+                        <div className="flex-1 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <AlertTriangle className="w-4 h-4 text-destructive" />
+                            <span className="font-semibold">
+                              {incident.clients?.name || "Unknown Client"}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant={getPriorityColor(incident.priority)}>
+                              {incident.priority?.toUpperCase()}
+                            </Badge>
+                            <Badge variant="outline" className={getStatusColor(incident.status)}>
+                              {incident.status?.toUpperCase()}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              Opened: {new Date(incident.opened_at).toLocaleString()}
+                            </span>
+                          </div>
+                          {incident.timeline_json && incident.timeline_json.length > 0 && (
+                            <p className="text-sm text-muted-foreground">
+                              {incident.timeline_json[0].details?.substring(0, 150)}...
+                            </p>
+                          )}
                         </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant={getPriorityColor(incident.priority)}>
-                            {incident.priority?.toUpperCase()}
-                          </Badge>
-                          <Badge variant="outline" className={getStatusColor(incident.status)}>
-                            {incident.status?.toUpperCase()}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground">
-                            Opened: {new Date(incident.opened_at).toLocaleString()}
-                          </span>
-                        </div>
-                        {incident.timeline_json && incident.timeline_json.length > 0 && (
-                          <p className="text-sm text-muted-foreground">
-                            {incident.timeline_json[0].details?.substring(0, 150)}...
-                          </p>
-                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         <Button 
@@ -456,6 +554,38 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
         onOpenChange={(open) => !open && setDeleteIncident(null)}
         onDeleted={() => setReloadTrigger((prev) => prev + 1)}
       />
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <AlertDialog open={showBulkDeleteDialog} onOpenChange={setShowBulkDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selectedIds.size} Incident{selectedIds.size > 1 ? "s" : ""}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the selected incident{selectedIds.size > 1 ? "s" : ""} and all associated data.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleBulkDelete}
+              disabled={bulkDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {bulkDeleting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </PageLayout>
   );
 };
