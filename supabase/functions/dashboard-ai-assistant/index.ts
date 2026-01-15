@@ -2157,6 +2157,51 @@ REQUIRED: reason_for_access parameter for audit logging.`,
   {
     type: "function",
     function: {
+      name: "get_wildfire_intelligence",
+      description: `COMPREHENSIVE WILDFIRE MONITORING: Access real-time wildfire data from multiple authoritative sources including NASA FIRMS satellite detection, weather station fire weather alerts, fuel moisture data, and active fire perimeters.
+
+DATA SOURCES QUERIED:
+- NASA FIRMS: VIIRS/MODIS satellite-detected active fires with confidence scores, brightness temperature, and Fire Radiative Power (FRP)
+- Weather Stations: Red Flag Warnings, Fire Weather Watches from NWS/NOAA
+- Fire Weather Index: Canadian FWI system components (FFMC, DMC, DC, ISI, BUI, FWI)
+- Fire Perimeters: NIFC active fire boundaries with containment status, acres burned
+- Air Quality: Smoke impact forecasts and AQI readings
+
+USE WHEN:
+- Client has assets in wildfire-prone regions
+- Red Flag Warning season (summer/fall in western North America)
+- Monitoring infrastructure near active fires
+- Assessing evacuation risks for personnel
+- Tracking smoke/air quality impacts on operations
+
+OUTPUTS:
+- Risk Level: Low/Moderate/High/Extreme with numeric score (0-100)
+- Risk Factors: Specific conditions contributing to risk
+- Active Fires: Count and details from satellite detection
+- Weather Alerts: Fire weather warnings in effect
+- Fire Perimeters: Nearby large fires with containment status`,
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: {
+            type: "string",
+            description: "Filter to specific client (UUID or name)"
+          },
+          region: {
+            type: "string",
+            description: "Geographic region: 'world', 'canada', 'usa', or specific area. Default: 'world'"
+          },
+          include_fuel_data: {
+            type: "boolean",
+            description: "Include fuel moisture and FWI data. Default: true"
+          }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "query_internal_context",
       description: `ASSET & VULNERABILITY CONTEXT ENGINE: Provides real-time access to internal IT/OT asset inventory, vulnerability posture, and business criticality data. Essential for personalized threat intelligence and accurate impact assessments.
 
@@ -2889,6 +2934,85 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
         total_scans: data.length,
         recent_scans: data.slice(0, 10),
       };
+    }
+
+    case "get_wildfire_intelligence": {
+      const { client_id, region = 'world', include_fuel_data = true } = args;
+      
+      // Call the comprehensive wildfire monitoring function
+      const supabaseUrl = Deno.env.get('SUPABASE_URL');
+      const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      
+      try {
+        const response = await fetchWithTimeout(
+          `${supabaseUrl}/functions/v1/monitor-wildfire-comprehensive`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${serviceRoleKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ client_id, region, include_fuel_data })
+          },
+          30000
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          return {
+            success: false,
+            error: `Wildfire monitoring failed: ${errorText}`,
+            fallback_info: {
+              data_sources: {
+                NASA_FIRMS: 'https://firms.modaps.eosdis.nasa.gov/api/area/',
+                NWS_Alerts: 'https://api.weather.gov/alerts/active',
+                NIFC_Perimeters: 'NIFC Active Fire Perimeters API'
+              },
+              manual_check: 'Visit https://firms.modaps.eosdis.nasa.gov/map/ for live fire map'
+            }
+          };
+        }
+
+        const wildfireData = await response.json();
+        
+        return {
+          success: true,
+          risk_assessment: wildfireData.risk_assessment,
+          data_sources: wildfireData.data_sources,
+          signals_created: wildfireData.signals_created,
+          clients_scanned: wildfireData.clients_scanned,
+          source_descriptions: wildfireData.source_descriptions,
+          summary: `Wildfire Intelligence Report: Risk Level ${wildfireData.risk_assessment?.riskLevel || 'Unknown'} (${wildfireData.risk_assessment?.riskScore || 0}/100). ` +
+                   `Data from ${Object.keys(wildfireData.data_sources || {}).length} sources. ` +
+                   `${wildfireData.signals_created || 0} intelligence signals generated.`,
+          recommendations: wildfireData.risk_assessment?.riskLevel === 'Extreme' || wildfireData.risk_assessment?.riskLevel === 'High'
+            ? [
+                'Monitor evacuation orders for personnel in affected areas',
+                'Review business continuity plans for impacted facilities',
+                'Check air quality impacts on outdoor operations',
+                'Assess supply chain disruptions from road closures'
+              ]
+            : ['Continue routine monitoring', 'No immediate action required']
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error fetching wildfire data',
+          fallback_info: {
+            data_sources: {
+              NASA_FIRMS: 'Satellite fire detection (VIIRS/MODIS)',
+              Weather_Stations: 'Fire weather alerts (Red Flag Warnings)',
+              Fire_Perimeters: 'Active fire boundaries (NIFC)',
+              Fuel_Data: 'Fire Weather Index and fuel moisture'
+            },
+            manual_resources: [
+              'https://firms.modaps.eosdis.nasa.gov/map/',
+              'https://www.nifc.gov/fireInfo/nfn.htm',
+              'https://www.weather.gov/fire/'
+            ]
+          }
+        };
+      }
     }
 
     case "get_system_health": {

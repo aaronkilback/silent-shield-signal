@@ -29,6 +29,52 @@ architecture that underpins the Fortress Security Intelligence Platform.
 │ Travel Advisories       │ GAC, State Dept, etc       │ As updated           │
 └──────────────────────────────────────────────────────────────────────────────┘
 
+🔥 WILDFIRE & ENVIRONMENTAL MONITORING (Specialized Collection):
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Data Source             │ Provider                   │ Update Frequency     │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ NASA FIRMS              │ VIIRS/MODIS Satellites     │ Every 3 hours        │
+│ - Active fire detection │ VIIRS_SNPP_NRT, NOAA20     │ Global coverage      │
+│ - Fire Radiative Power  │ Thermal anomaly data       │ ~375m resolution     │
+│ - Confidence scoring    │ 0-100% detection confidence│                      │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Weather Stations        │ Multiple sources           │ Hourly               │
+│ - NOAA/NWS Alerts       │ Red Flag Warnings          │ Real-time            │
+│ - Environment Canada    │ Fire Weather bulletins     │ Multiple daily       │
+│ - RAWS Stations         │ Remote automated stations  │ 10-minute intervals  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Fuel/Vegetation Data    │ Forestry agencies          │ Daily                │
+│ - Fire Weather Index    │ FFMC, DMC, DC, ISI, BUI    │ Canadian FWI System  │
+│ - Live Fuel Moisture    │ LFMC satellite-derived     │ Weekly updates       │
+│ - NDVI Vegetation       │ Vegetation health index    │ 8-16 day composite   │
+│ - Drought Monitor       │ PDSI, soil moisture        │ Weekly               │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Fire Perimeters         │ Fire agencies              │ Daily                │
+│ - NIFC Active Fires     │ US interagency perimeters  │ GeoJSON/Shapefile    │
+│ - CIFFC Canada          │ Canadian fire perimeters   │ Provincial feeds     │
+│ - BC Wildfire Service   │ Detailed BC fire data      │ Real-time updates    │
+│ - Containment status    │ % contained, acres burned  │ Hourly during active │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Air Quality             │ EPA/ECCC                   │ Hourly               │
+│ - AQI Index             │ PM2.5, PM10 particulates   │ Station-based        │
+│ - Smoke Forecasts       │ NOAA HRRR-Smoke model      │ 6-hour updates       │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+🌡️ FIRE WEATHER INDEX (FWI) COMPONENTS EXPLAINED:
+- FFMC (Fine Fuel Moisture Code): Moisture in surface litter, affects ignition
+- DMC (Duff Moisture Code): Moisture in moderate depth organic layers
+- DC (Drought Code): Moisture in deep organic layers, seasonal drought indicator
+- ISI (Initial Spread Index): Rate of fire spread, combines wind and FFMC
+- BUI (Build Up Index): Total fuel available for burning
+- FWI (Fire Weather Index): General fire intensity, combines ISI and BUI
+
+Risk Thresholds:
+- FWI 0-5: Low risk
+- FWI 5-10: Moderate risk  
+- FWI 10-20: High risk
+- FWI 20-30: Very High risk
+- FWI 30+: Extreme risk
+
 🔌 API & CONNECTOR ARCHITECTURE:
 - Dedicated engineering teams develop and maintain robust connectors
 - Integrations with: meteorological services, government agencies, satellite providers,
