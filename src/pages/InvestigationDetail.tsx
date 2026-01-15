@@ -16,6 +16,7 @@ import {
   FileText, Image as ImageIcon, Video, Music, File,
   Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X, MapPin, Map
 } from "lucide-react";
+import { WorkspaceButton } from "@/components/workspace";
 import { format } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
 import jsPDF from 'jspdf';
@@ -853,6 +854,10 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                   Saving...
                 </span>
               )}
+              <WorkspaceButton
+                investigationId={id}
+                defaultTitle={`Investigation: ${investigation.file_number}`}
+              />
               <Button onClick={downloadInvestigationReport} disabled={isDownloading}>
                 {isDownloading ? (
                   <>

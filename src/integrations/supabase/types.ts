@@ -2338,6 +2338,57 @@ export type Database = {
           },
         ]
       }
+      investigation_workspaces: {
+        Row: {
+          created_at: string
+          created_by_user_id: string
+          description: string | null
+          id: string
+          incident_id: string | null
+          investigation_id: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by_user_id: string
+          description?: string | null
+          id?: string
+          incident_id?: string | null
+          investigation_id?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by_user_id?: string
+          description?: string | null
+          id?: string
+          incident_id?: string | null
+          investigation_id?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investigation_workspaces_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investigation_workspaces_investigation_id_fkey"
+            columns: ["investigation_id"]
+            isOneToOne: false
+            referencedRelation: "investigations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       investigations: {
         Row: {
           client_id: string | null
@@ -4670,6 +4721,162 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_audit_log: {
+        Row: {
+          action: string
+          details: Json | null
+          id: string
+          performed_at: string
+          user_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          action: string
+          details?: Json | null
+          id?: string
+          performed_at?: string
+          user_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          action?: string
+          details?: Json | null
+          id?: string
+          performed_at?: string
+          user_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_audit_log_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "investigation_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_members: {
+        Row: {
+          joined_at: string
+          role: string
+          user_id: string
+          workspace_id: string
+        }
+        Insert: {
+          joined_at?: string
+          role?: string
+          user_id: string
+          workspace_id: string
+        }
+        Update: {
+          joined_at?: string
+          role?: string
+          user_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_members_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "investigation_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_messages: {
+        Row: {
+          content: string
+          id: string
+          message_type: string
+          parent_message_id: string | null
+          sent_at: string
+          user_id: string
+          workspace_id: string
+        }
+        Insert: {
+          content: string
+          id?: string
+          message_type?: string
+          parent_message_id?: string | null
+          sent_at?: string
+          user_id: string
+          workspace_id: string
+        }
+        Update: {
+          content?: string
+          id?: string
+          message_type?: string
+          parent_message_id?: string | null
+          sent_at?: string
+          user_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_messages_parent_message_id_fkey"
+            columns: ["parent_message_id"]
+            isOneToOne: false
+            referencedRelation: "workspace_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspace_messages_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "investigation_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_tasks: {
+        Row: {
+          assigned_to_user_id: string | null
+          completed_at: string | null
+          created_at: string
+          created_by_user_id: string
+          description: string | null
+          due_date: string | null
+          id: string
+          status: string
+          title: string
+          workspace_id: string
+        }
+        Insert: {
+          assigned_to_user_id?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by_user_id: string
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          status?: string
+          title: string
+          workspace_id: string
+        }
+        Update: {
+          assigned_to_user_id?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by_user_id?: string
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          status?: string
+          title?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_tasks_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "investigation_workspaces"
             referencedColumns: ["id"]
           },
         ]
