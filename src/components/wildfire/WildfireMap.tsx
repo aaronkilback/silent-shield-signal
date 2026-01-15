@@ -398,10 +398,101 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
       { name: 'PETRONAS India - Dahej LNG Terminal', type: 'terminal', latitude: 21.7000, longitude: 72.5000, operator: 'PETRONAS India', status: 'active' },
       { name: 'PETRONAS Philippines - Malampaya', type: 'platform', latitude: 11.2000, longitude: 119.5000, operator: 'Shell/PETRONAS', status: 'active' },
       
-      // ===== PETRONAS INTERNATIONAL - AMERICAS =====
-      { name: 'PETRONAS Canada LNG Project', type: 'terminal', latitude: 54.0000, longitude: -130.0000, operator: 'PETRONAS Canada', capacity: '12 MTPA', status: 'planned' },
-      { name: 'PETRONAS Canada - North Montney', type: 'platform', latitude: 56.5000, longitude: -120.5000, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'PETRONAS Canada - Altares', type: 'platform', latitude: 56.0000, longitude: -121.0000, operator: 'PETRONAS Canada', status: 'active' },
+      // ===== PETRONAS CANADA - PRODUCTION PODS (Montney Formation, BC) =====
+      // Caribou/Green Pod - Northern Region (Blue zone on map)
+      { name: 'Caribou/Green Pod - Central Hub', type: 'platform', latitude: 57.1500, longitude: -121.2000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Caribou North Well Pad A', type: 'platform', latitude: 57.2500, longitude: -121.3500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Caribou North Well Pad B', type: 'platform', latitude: 57.2800, longitude: -121.2000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Tommy Lakes Compressor Station', type: 'terminal', latitude: 57.3000, longitude: -121.1500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Caribou East Well Pad', type: 'platform', latitude: 57.0500, longitude: -120.8000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Green Area Well Pad', type: 'platform', latitude: 57.3500, longitude: -121.5000, operator: 'PETRONAS Canada', status: 'active' },
+      
+      // Nel/Antine Pod - Western Region (Orange zone on map)
+      { name: 'Nel/Antine Pod - Central Hub', type: 'platform', latitude: 56.7500, longitude: -121.5000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Nel Compressor Station', type: 'terminal', latitude: 56.7800, longitude: -121.6000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Antine Well Pad A', type: 'platform', latitude: 56.7200, longitude: -121.4500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Antine Well Pad B', type: 'platform', latitude: 56.6800, longitude: -121.5500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Cameron Road Access', type: 'road', latitude: 56.6000, longitude: -121.6500, operator: 'PETRONAS Canada', status: 'active' },
+      
+      // Big/Kahuna Pod - Central Region (Purple/Pink zone on map)
+      { name: 'Big/Kahuna Pod - Central Hub', type: 'platform', latitude: 56.9000, longitude: -120.7000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Jedney Gas Plant', type: 'refinery', latitude: 56.9500, longitude: -120.6500, operator: 'PETRONAS Canada', capacity: '200 mmscfd', status: 'active' },
+      { name: 'Kahuna Compressor Station', type: 'terminal', latitude: 56.8500, longitude: -120.7500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Big Pod Well Pad A', type: 'platform', latitude: 56.9200, longitude: -120.8000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Big Pod Well Pad B', type: 'platform', latitude: 56.8800, longitude: -120.6000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Kahuna Well Pad C', type: 'platform', latitude: 56.9800, longitude: -120.5500, operator: 'PETRONAS Canada', status: 'active' },
+      
+      // Groundbirch Pod - Central Region (Green zone on map)
+      { name: 'Groundbirch Pod - Central Hub', type: 'platform', latitude: 56.5500, longitude: -120.9000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Groundbirch Gas Plant', type: 'refinery', latitude: 56.5200, longitude: -120.8500, operator: 'PETRONAS Canada', capacity: '150 mmscfd', status: 'active' },
+      { name: 'Groundbirch Compressor Station', type: 'terminal', latitude: 56.5800, longitude: -120.9500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Groundbirch Well Pad A', type: 'platform', latitude: 56.6000, longitude: -120.8000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Groundbirch Well Pad B', type: 'platform', latitude: 56.5000, longitude: -120.9200, operator: 'PETRONAS Canada', status: 'active' },
+      
+      // NBU (North Business Unit) - Red dashed area
+      { name: 'NBU - North Business Unit Hub', type: 'terminal', latitude: 56.6500, longitude: -120.4000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'NBU Compressor Station', type: 'terminal', latitude: 56.6800, longitude: -120.3500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'NBU Well Pad A', type: 'platform', latitude: 56.7000, longitude: -120.4500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'NBU Well Pad B', type: 'platform', latitude: 56.6200, longitude: -120.3800, operator: 'PETRONAS Canada', status: 'active' },
+      
+      // SBU (South Business Unit) - Red dashed area  
+      { name: 'SBU - South Business Unit Hub', type: 'terminal', latitude: 56.4500, longitude: -120.5000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'SBU Compressor Station', type: 'terminal', latitude: 56.4800, longitude: -120.4500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'SBU Well Pad A', type: 'platform', latitude: 56.4200, longitude: -120.5500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'SBU Well Pad B', type: 'platform', latitude: 56.5000, longitude: -120.4800, operator: 'PETRONAS Canada', status: 'active' },
+      
+      // Downtown Pod - Eastern Region (Pink zone on map)
+      { name: 'Downtown Pod - Central Hub', type: 'platform', latitude: 56.5000, longitude: -120.2000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Town Compressor Station', type: 'terminal', latitude: 56.4500, longitude: -120.1500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Downtown Well Pad A', type: 'platform', latitude: 56.5500, longitude: -120.2500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Downtown Well Pad B', type: 'platform', latitude: 56.4000, longitude: -120.1800, operator: 'PETRONAS Canada', status: 'active' },
+      
+      // Blueberry/Kores Pod - Southeast Region (Cyan zone on map)
+      { name: 'Blueberry/Kores Pod - Central Hub', type: 'platform', latitude: 56.2500, longitude: -120.0000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Blueberry Gas Plant', type: 'refinery', latitude: 56.2800, longitude: -119.9500, operator: 'PETRONAS Canada', capacity: '180 mmscfd', status: 'active' },
+      { name: 'Kores Compressor Station', type: 'terminal', latitude: 56.2200, longitude: -120.0500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Blueberry Well Pad A', type: 'platform', latitude: 56.3000, longitude: -119.9000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Blueberry Well Pad B', type: 'platform', latitude: 56.2000, longitude: -120.1000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Kores Well Pad C', type: 'platform', latitude: 56.1800, longitude: -119.8500, operator: 'PETRONAS Canada', status: 'active' },
+      
+      // Plant Pod - Southern Region (Coral zone on map - Altares area)
+      { name: 'Plant Pod - Central Hub (Altares)', type: 'platform', latitude: 55.9500, longitude: -120.3000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Altares Gas Plant', type: 'refinery', latitude: 55.9800, longitude: -120.2500, operator: 'PETRONAS Canada', capacity: '350 mmscfd', status: 'active' },
+      { name: 'Altares Compressor Station 1', type: 'terminal', latitude: 55.9200, longitude: -120.3500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Altares Compressor Station 2', type: 'terminal', latitude: 56.0000, longitude: -120.4000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Altares Well Pad A', type: 'platform', latitude: 55.9000, longitude: -120.2000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Altares Well Pad B', type: 'platform', latitude: 55.9500, longitude: -120.1500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Altares Well Pad C', type: 'platform', latitude: 56.0200, longitude: -120.2800, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Altares Well Pad D', type: 'platform', latitude: 55.8500, longitude: -120.3200, operator: 'PETRONAS Canada', status: 'active' },
+      
+      // ===== PETRONAS CANADA - MAJOR PIPELINES =====
+      { name: 'PCL Trunk Pipeline - Caribou Section', type: 'pipeline', latitude: 57.1000, longitude: -121.1000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'PCL Trunk Pipeline - Nel/Antine Section', type: 'pipeline', latitude: 56.7000, longitude: -121.4000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'PCL Trunk Pipeline - Groundbirch Section', type: 'pipeline', latitude: 56.5000, longitude: -120.8000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'PCL Trunk Pipeline - Downtown Section', type: 'pipeline', latitude: 56.4000, longitude: -120.3000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'PCL Trunk Pipeline - Blueberry Section', type: 'pipeline', latitude: 56.2000, longitude: -119.9000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'PCL Trunk Pipeline - Altares Section', type: 'pipeline', latitude: 55.9000, longitude: -120.2500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Enbridge T-North Pipeline Junction', type: 'pipeline', latitude: 56.8000, longitude: -120.5000, operator: 'Enbridge/PETRONAS', status: 'active' },
+      { name: 'Spectra Energy Pipeline Interconnect', type: 'pipeline', latitude: 56.3000, longitude: -120.4000, operator: 'Spectra/PETRONAS', status: 'active' },
+      { name: 'Third Party NGL Pipeline', type: 'pipeline', latitude: 56.1000, longitude: -120.1000, operator: 'Third Party/PETRONAS', status: 'active' },
+      
+      // ===== PETRONAS CANADA - ACCESS ROADS =====
+      { name: 'Highway 97 Access - Fort St. John', type: 'road', latitude: 56.2465, longitude: -120.8477, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Highway 29 Access - Hudson Hope', type: 'road', latitude: 56.0310, longitude: -121.9008, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Caribou Road Access', type: 'road', latitude: 57.0500, longitude: -121.2500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Jedney Road Access', type: 'road', latitude: 56.9000, longitude: -120.6000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Groundbirch Road Access', type: 'road', latitude: 56.5000, longitude: -120.9500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Blueberry Road Access', type: 'road', latitude: 56.2500, longitude: -120.0500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Altares Road Access', type: 'road', latitude: 55.9500, longitude: -120.3500, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Cameron FSR Road', type: 'road', latitude: 56.6500, longitude: -121.5000, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Town Road Access', type: 'road', latitude: 56.4500, longitude: -120.2000, operator: 'PETRONAS Canada', status: 'active' },
+      
+      // ===== PETRONAS CANADA - LNG EXPORT PROJECT =====
+      { name: 'PETRONAS Canada LNG Terminal - Prince Rupert', type: 'terminal', latitude: 54.3150, longitude: -130.3271, operator: 'PETRONAS Canada', capacity: '12 MTPA', status: 'planned' },
+      { name: 'Pacific NorthWest LNG Site', type: 'terminal', latitude: 54.2000, longitude: -130.2500, operator: 'PETRONAS Canada', status: 'planned' },
+      { name: 'Kitimat LNG Alternative Site', type: 'terminal', latitude: 54.0500, longitude: -128.6500, operator: 'PETRONAS Canada', status: 'planned' },
+      
+      // ===== PETRONAS INTERNATIONAL - OTHER AMERICAS =====
       { name: 'PETRONAS Argentina - Neuquén Basin', type: 'platform', latitude: -38.5000, longitude: -68.5000, operator: 'PETRONAS Argentina', status: 'active' },
       { name: 'PETRONAS Mexico - Block 29', type: 'platform', latitude: 19.5000, longitude: -96.5000, operator: 'PETRONAS Mexico', status: 'active' },
       { name: 'PETRONAS Brazil - Pre-salt Basin', type: 'platform', latitude: -25.0000, longitude: -45.0000, operator: 'PETRONAS Brazil', status: 'active' },
