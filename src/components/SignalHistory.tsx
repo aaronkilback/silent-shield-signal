@@ -278,21 +278,7 @@ export const SignalHistory = () => {
     );
   }
 
-  if (!selectedClientId) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <History className="w-5 h-5" />
-            Signal History
-          </CardTitle>
-          <CardDescription>
-            Select a client to view their signal history
-          </CardDescription>
-        </CardHeader>
-      </Card>
-    );
-  }
+  // Removed early return for no client - now shows all signals when none selected
 
   // Apply filters
   const filteredSignals = signals.filter(signal => {
