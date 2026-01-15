@@ -2,7 +2,7 @@ import { PageLayout } from "@/components/PageLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { Loader2, Radar, RefreshCw, AlertTriangle, Shield, TrendingUp, MapPin, Activity, Eye, Zap, Target, Radio } from "lucide-react";
+import { Loader2, Radar, RefreshCw, AlertTriangle, Shield, TrendingUp, MapPin, Activity, Eye, Zap, Target, Radio, Flame } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import { SentimentHeatmap } from "@/components/threat-radar/SentimentHeatmap";
 import { RadicalActivityMonitor } from "@/components/threat-radar/RadicalActivityMonitor";
 import { PredictiveInsightsPanel } from "@/components/threat-radar/PredictiveInsightsPanel";
 import { ThreatTimelineChart } from "@/components/threat-radar/ThreatTimelineChart";
+import { WildfireMap, WildfireDataPanel } from "@/components/wildfire";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
@@ -175,10 +176,14 @@ const ThreatRadar = () => {
 
         {/* Tabbed Content */}
         <Tabs defaultValue="precursors" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="precursors" className="flex items-center gap-2">
               <Eye className="w-4 h-4" />
               Precursor Activity
+            </TabsTrigger>
+            <TabsTrigger value="wildfire" className="flex items-center gap-2">
+              <Flame className="w-4 h-4" />
+              Wildfire Intel
             </TabsTrigger>
             <TabsTrigger value="radical" className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4" />
@@ -200,6 +205,15 @@ const ThreatRadar = () => {
                 precursors={radarData?.active_precursors}
                 isLoading={isLoadingRadar}
               />
+            </ErrorBoundary>
+          </TabsContent>
+
+          <TabsContent value="wildfire">
+            <ErrorBoundary context="Wildfire Intelligence">
+              <div className="space-y-6">
+                <WildfireMap clientId={selectedClientId} region="world" />
+                <WildfireDataPanel />
+              </div>
             </ErrorBoundary>
           </TabsContent>
 
