@@ -66,6 +66,10 @@ If you describe an action without calling the tool, IT DOES NOT HAPPEN.
 │ search_investigations           │ Find investigation case files              │
 ├─────────────────────────────────┼────────────────────────────────────────────┤
 │ get_client_details              │ Get client monitoring config, keywords     │
+├─────────────────────────────────┼────────────────────────────────────────────┤
+│ analyze_visual_document         │ Vision AI for maps, diagrams, scanned PDFs │
+│                                 │ Use when get_document_content has no text  │
+│                                 │ Supports up to 20MB, processes page-by-page│
 └─────────────────────────────────┴────────────────────────────────────────────┘
 
 🎯 CREATING & MANAGING DATA:
@@ -155,6 +159,11 @@ Pattern: "What's happening with [client name]?"
   
 Pattern: "Run a threat assessment"
   → analyze_threat_radar(include_predictions=true)
+  
+Pattern: "Analyze this document" / "What's in [map/diagram file]?" / Document has no text
+  → analyze_visual_document(document_id="[id]", analysis_focus="infrastructure")
+  → Use when get_document_content returns "No extracted text"
+  → Supports maps, ArcGIS exports, scanned PDFs, diagrams up to 20MB
 
 ═══════════════════════════════════════════════════════════════════════════════
                          💡 EXAMPLE INTERACTIONS
@@ -701,6 +710,45 @@ Inform user of successful creation and instruct to refresh if needed
           document_id: {
             type: "string",
             description: "The UUID of the document to retrieve",
+          },
+        },
+        required: ["document_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "analyze_visual_document",
+      description: `Analyze image-based documents (maps, diagrams, scanned PDFs, ArcGIS exports) using vision AI.
+      
+USE THIS TOOL WHEN:
+- A document has no extracted text (content_text is empty)
+- The document is a map, diagram, or visual document
+- The user specifically asks you to "look at" or "analyze" a visual document
+- get_document_content returned "No extracted text is stored for this document"
+
+This tool will:
+1. Download the document from storage
+2. Render pages as images (for PDFs)
+3. Send images to vision AI for analysis
+4. Extract text, data, infrastructure info, and other visual content
+
+Supports files up to 20MB and processes up to 10 pages for PDFs.`,
+      parameters: {
+        type: "object",
+        properties: {
+          document_id: {
+            type: "string",
+            description: "The UUID of the archival document to analyze",
+          },
+          analysis_focus: {
+            type: "string",
+            description: "Optional: specific focus for analysis (e.g., 'infrastructure', 'text extraction', 'map features')",
+          },
+          max_pages: {
+            type: "number",
+            description: "Maximum number of pages to analyze for PDFs (default 5, max 10)",
           },
         },
         required: ["document_id"],
@@ -4459,6 +4507,303 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
           !contentText || contentText.trim().length === 0
             ? "No extracted text is stored for this document (common with map/image-based PDFs)."
             : undefined,
+      };
+    }
+
+    case "analyze_visual_document": {
+      const docId = String(args.document_id || '').trim();
+      const analysisFocus = args.analysis_focus || 'general';
+      const maxPages = Math.min(Math.max(1, args.max_pages || 5), 10);
+      
+      if (!docId) {
+        return { success: false, error: "Missing document_id" };
+      }
+
+      // Get document info
+      const { data: doc, error: docError } = await supabaseClient
+        .from("archival_documents")
+        .select("*")
+        .eq("id", docId)
+        .maybeSingle();
+
+      if (docError || !doc) {
+        return {
+          success: false,
+          error: docError ? docError.message : "Document not found",
+          document_id: docId,
+        };
+      }
+
+      const meta: any = doc.metadata ?? {};
+      const storageBucket = meta.storage_bucket || "archival-documents";
+
+      // Download the file from storage
+      const { data: fileData, error: downloadError } = await supabaseClient.storage
+        .from(storageBucket)
+        .download(doc.storage_path);
+
+      if (downloadError || !fileData) {
+        return {
+          success: false,
+          error: `Failed to download file: ${downloadError?.message || 'Unknown error'}`,
+          document_id: docId,
+          filename: doc.filename,
+        };
+      }
+
+      const fileBytes = await fileData.arrayBuffer();
+      const fileSizeMB = fileBytes.byteLength / (1024 * 1024);
+
+      if (fileSizeMB > 20) {
+        return {
+          success: false,
+          error: `File too large (${fileSizeMB.toFixed(1)}MB). Maximum is 20MB.`,
+          document_id: docId,
+          filename: doc.filename,
+        };
+      }
+
+      console.log(`Analyzing visual document: ${doc.filename} (${fileSizeMB.toFixed(1)}MB)`);
+
+      const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+      if (!LOVABLE_API_KEY) {
+        return { success: false, error: "LOVABLE_API_KEY not configured" };
+      }
+
+      // Determine analysis prompt based on focus
+      const focusPrompts: Record<string, string> = {
+        infrastructure: `Focus on extracting:
+- Road names, highway numbers, route designations
+- Milepost (MP) markers and their values/ranges
+- Pipeline routes, facilities, infrastructure corridors
+- Geographic reference points and landmarks
+- Company names, operators, ownership info`,
+        'text extraction': `Extract ALL visible text from this document:
+- Headers, titles, labels
+- Data tables and their contents
+- Legends and annotations
+- Any numerical values or measurements`,
+        'map features': `Analyze map features:
+- Geographic boundaries and regions
+- Scale and coordinate systems
+- Legend symbols and their meanings
+- Key locations and landmarks
+- Transportation networks`,
+        general: `Perform comprehensive analysis:
+1. Extract all visible text
+2. Identify key geographic features
+3. List infrastructure elements (roads, pipelines, facilities)
+4. Note any entities (companies, locations, people)
+5. Describe the overall purpose and content`,
+      };
+
+      const analysisPrompt = focusPrompts[analysisFocus] || focusPrompts.general;
+
+      let analysisResults: string[] = [];
+      
+      try {
+        // Check if it's a PDF or image
+        const isPDF = doc.file_type === 'application/pdf' || doc.filename.toLowerCase().endsWith('.pdf');
+        const isImage = doc.file_type?.startsWith('image/') || 
+          /\.(jpg|jpeg|png|gif|webp|bmp|tiff?)$/i.test(doc.filename);
+
+        if (isPDF) {
+          // Import pdf.js for PDF processing
+          const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
+          if (pdfjsLib?.GlobalWorkerOptions) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.worker.min.mjs';
+          }
+
+          const loadingTask = pdfjsLib.getDocument({
+            data: new Uint8Array(fileBytes),
+            disableWorker: true,
+          });
+
+          const pdf = await loadingTask.promise;
+          const totalPages = pdf.numPages || 1;
+          const pagesToProcess = Math.min(totalPages, maxPages);
+
+          console.log(`PDF has ${totalPages} pages, processing ${pagesToProcess}`);
+
+          // Import canvas and base64 encoding
+          const { createCanvas } = await import('https://deno.land/x/canvas@v1.4.2/mod.ts');
+          const { encode: base64Encode } = await import('https://deno.land/std@0.168.0/encoding/base64.ts');
+
+          for (let pageNum = 1; pageNum <= pagesToProcess; pageNum++) {
+            try {
+              const page = await pdf.getPage(pageNum);
+              const scale = 2.0;
+              const viewport = page.getViewport({ scale });
+              
+              // Limit canvas size to prevent memory issues
+              const maxDim = 2000;
+              const actualScale = Math.min(scale, maxDim / Math.max(viewport.width / scale, viewport.height / scale) * scale);
+              const actualViewport = page.getViewport({ scale: actualScale });
+              
+              const canvas = createCanvas(Math.min(actualViewport.width, maxDim), Math.min(actualViewport.height, maxDim));
+              const ctx = canvas.getContext('2d');
+
+              await page.render({
+                canvasContext: ctx,
+                viewport: actualViewport,
+              }).promise;
+
+              const pngBuffer: Uint8Array = canvas.toBuffer('image/png');
+              const pngArrayBuffer = pngBuffer.buffer.slice(pngBuffer.byteOffset, pngBuffer.byteOffset + pngBuffer.byteLength);
+              const base64Image = base64Encode(pngArrayBuffer as ArrayBuffer);
+
+              console.log(`Page ${pageNum}: Rendered to ${(base64Image.length / 1024).toFixed(0)}KB`);
+
+              // Call vision API
+              const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  model: 'google/gemini-2.5-flash',
+                  messages: [{
+                    role: 'user',
+                    content: [
+                      {
+                        type: 'text',
+                        text: `You are analyzing page ${pageNum}/${totalPages} of "${doc.filename}".
+
+${analysisPrompt}
+
+Be thorough and include every piece of visible text and data.`
+                      },
+                      {
+                        type: 'image_url',
+                        image_url: { url: `data:image/png;base64,${base64Image}` }
+                      }
+                    ]
+                  }],
+                  max_tokens: 4000
+                }),
+              });
+
+              if (visionResponse.ok) {
+                const visionData = await visionResponse.json();
+                const pageContent = visionData.choices?.[0]?.message?.content;
+                if (pageContent && pageContent.length > 50) {
+                  analysisResults.push(`=== PAGE ${pageNum}/${totalPages} ===\n${pageContent}`);
+                  console.log(`Page ${pageNum}: Extracted ${pageContent.length} chars`);
+                }
+              } else {
+                console.warn(`Page ${pageNum}: Vision API error ${visionResponse.status}`);
+              }
+
+              // Rate limit protection
+              if (pageNum < pagesToProcess) {
+                await new Promise(r => setTimeout(r, 500));
+              }
+            } catch (pageErr) {
+              console.warn(`Page ${pageNum} error:`, pageErr);
+            }
+          }
+        } else if (isImage) {
+          // Direct image analysis
+          const { encode: base64Encode } = await import('https://deno.land/std@0.168.0/encoding/base64.ts');
+          const base64Image = base64Encode(fileBytes);
+          const mimeType = doc.file_type || 'image/png';
+
+          const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'google/gemini-2.5-pro',
+              messages: [{
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: `Analyze this image: "${doc.filename}"
+
+${analysisPrompt}
+
+Be thorough and include every piece of visible text and data.`
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: { url: `data:${mimeType};base64,${base64Image}` }
+                  }
+                ]
+              }],
+              max_tokens: 8000
+            }),
+          });
+
+          if (visionResponse.ok) {
+            const visionData = await visionResponse.json();
+            const content = visionData.choices?.[0]?.message?.content;
+            if (content) {
+              analysisResults.push(content);
+            }
+          }
+        } else {
+          return {
+            success: false,
+            error: `Unsupported file type: ${doc.file_type}. Only PDFs and images are supported for visual analysis.`,
+            document_id: docId,
+            filename: doc.filename,
+          };
+        }
+      } catch (analysisError) {
+        console.error('Vision analysis error:', analysisError);
+        return {
+          success: false,
+          error: `Analysis failed: ${analysisError instanceof Error ? analysisError.message : 'Unknown error'}`,
+          document_id: docId,
+          filename: doc.filename,
+        };
+      }
+
+      if (analysisResults.length === 0) {
+        return {
+          success: false,
+          error: "Vision analysis could not extract content from this document.",
+          document_id: docId,
+          filename: doc.filename,
+          suggestion: "The document may be corrupted or in an unsupported format.",
+        };
+      }
+
+      const fullAnalysis = analysisResults.join('\n\n');
+
+      // Optionally update the document with extracted content
+      try {
+        await supabaseClient
+          .from('archival_documents')
+          .update({
+            content_text: fullAnalysis.slice(0, 200000), // Limit storage
+            metadata: {
+              ...(doc.metadata || {}),
+              vision_analyzed: true,
+              vision_analysis_date: new Date().toISOString(),
+              analysis_focus: analysisFocus,
+              pages_analyzed: analysisResults.length,
+            },
+          })
+          .eq('id', docId);
+      } catch (updateErr) {
+        console.warn('Failed to save analysis to document:', updateErr);
+      }
+
+      return {
+        success: true,
+        document_id: docId,
+        filename: doc.filename,
+        file_type: doc.file_type,
+        file_size_mb: fileSizeMB.toFixed(1),
+        analysis_focus: analysisFocus,
+        pages_analyzed: analysisResults.length,
+        analysis: fullAnalysis,
+        note: "Visual analysis complete. Content has been saved to the document record.",
       };
     }
 
