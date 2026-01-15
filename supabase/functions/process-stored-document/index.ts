@@ -375,128 +375,73 @@ serve(async (req) => {
             console.log(`PDF too large for processing (${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB > 20MB limit)`);
             textContent = `[This PDF is too large for processing (${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB > 20MB limit). File: ${document.filename}. Please split into smaller files.]`;
           } else {
-            console.log(`Processing ${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB PDF using page-by-page vision analysis...`);
+            console.log(`Processing ${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB PDF using direct Gemini PDF analysis...`);
             
-            // Load PDF using pdf.js
-            const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
-            if (pdfjsLib?.GlobalWorkerOptions) {
-              pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.worker.min.mjs';
-            }
+            // Use Gemini's native PDF support - send the PDF directly as base64
+            // This avoids pdf.js which requires web workers not available in Deno
+            const base64Pdf = base64Encode(new Uint8Array(pdfBytes).buffer);
             
-            const loadingTask = pdfjsLib.getDocument({
-              data: new Uint8Array(pdfBytes),
-              disableWorker: true,
-            });
+            console.log(`Sending PDF directly to Gemini (${(base64Pdf.length / 1024 / 1024).toFixed(2)}MB base64)`);
             
-            const pdf = await loadingTask.promise;
-            const totalPages = pdf.numPages || 1;
-            const pagesToProcess = Math.min(totalPages, 10); // Process up to 10 pages for maps
-            
-            console.log(`PDF has ${totalPages} pages, will process ${pagesToProcess} pages`);
-            
-            const pageAnalyses: string[] = [];
-            
-            for (let pageNum = 1; pageNum <= pagesToProcess; pageNum++) {
-              try {
-                const page = await pdf.getPage(pageNum);
-                
-                // Render page to canvas at a reasonable resolution
-                const scale = 2.0; // 2x scale for readability
-                const viewport = page.getViewport({ scale });
-                
-                // Create offscreen canvas using Deno canvas library
-                const { createCanvas } = await import('https://deno.land/x/canvas@v1.4.2/mod.ts');
-                const canvas = createCanvas(Math.min(viewport.width, 2000), Math.min(viewport.height, 2000));
-                const ctx = canvas.getContext('2d');
-                
-                // Render PDF page to canvas
-                const renderContext = {
-                  canvasContext: ctx,
-                  viewport: page.getViewport({ scale: Math.min(scale, 2000 / Math.max(viewport.width, viewport.height) * scale) }),
-                };
-                
-                await page.render(renderContext).promise;
-                
-                // Convert canvas to PNG base64
-                const pngBuffer: Uint8Array = canvas.toBuffer('image/png');
-                // Convert Uint8Array to ArrayBuffer for base64Encode
-                const pngArrayBuffer = pngBuffer.buffer.slice(pngBuffer.byteOffset, pngBuffer.byteOffset + pngBuffer.byteLength);
-                const base64Image = base64Encode(pngArrayBuffer as ArrayBuffer);
-                
-                console.log(`Page ${pageNum}: Rendered to ${(base64Image.length / 1024).toFixed(0)}KB image`);
-                
-                // Send page image to vision API
-                const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-                  method: 'POST',
-                  headers: {
-                    'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    model: 'google/gemini-2.5-flash', // Use flash for speed on multiple pages
-                    messages: [
-                      {
-                        role: 'user',
-                        content: [
-                          {
-                            type: 'text',
-                            text: `You are analyzing page ${pageNum} of ${totalPages} from "${document.filename}" - an infrastructure/pipeline map document.
+            const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'google/gemini-2.5-flash',
+                messages: [{
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'text',
+                      text: `You are analyzing the document "${document.filename}" which is a PDF file.
+
+This document may contain maps, diagrams, tables, or image-based content.
+Analyze ALL pages thoroughly and extract every piece of visible text, data, labels, legends, and geographic/infrastructure information.
 
 EXTRACT ALL VISIBLE INFORMATION:
 1. Road names, highway numbers, access routes
 2. Milepost (MP) markers and their values/ranges
 3. Pipeline corridors, facilities, infrastructure
-4. Grid references, map sheet numbers (e.g., 094-G-15)
+4. Grid references, map sheet numbers
 5. Geographic features, waterways, landmarks
 6. Company names, operators, ownership info
 7. Scale information, coordinates, compass directions
 8. Legend items, symbols, and their meanings
 
-Be thorough - include every piece of text and numeric data visible on this page. Format as structured notes.`
-                          },
-                          {
-                            type: 'image_url',
-                            image_url: {
-                              url: `data:image/png;base64,${base64Image}`
-                            }
-                          }
-                        ]
+Be comprehensive - list all details visible in the document.`
+                    },
+                    {
+                      type: 'image_url',
+                      image_url: { 
+                        url: `data:application/pdf;base64,${base64Pdf}` 
                       }
-                    ],
-                    max_tokens: 4000
-                  }),
-                });
-                
-                if (visionResponse.ok) {
-                  const visionData = await visionResponse.json();
-                  const pageContent = visionData.choices?.[0]?.message?.content;
-                  if (pageContent && pageContent.length > 50) {
-                    pageAnalyses.push(`=== PAGE ${pageNum} ===\n${pageContent}`);
-                    console.log(`Page ${pageNum}: Extracted ${pageContent.length} characters`);
-                  }
-                } else {
-                  console.warn(`Page ${pageNum}: Vision API error ${visionResponse.status}`);
-                }
-                
-                // Small delay between pages to avoid rate limits
-                if (pageNum < pagesToProcess) {
-                  await new Promise(r => setTimeout(r, 500));
-                }
-              } catch (pageError) {
-                console.warn(`Page ${pageNum}: Rendering failed -`, pageError);
+                    }
+                  ]
+                }],
+                max_tokens: 8000
+              }),
+            });
+
+            if (visionResponse.ok) {
+              const visionData = await visionResponse.json();
+              const visionContent = visionData.choices?.[0]?.message?.content;
+              if (visionContent && visionContent.length > 100) {
+                textContent = `[VISION ANALYSIS - Map/Image Document: ${document.filename}]\n\n${visionContent}`;
+                console.log(`Direct PDF analysis successful: ${textContent.length} characters`);
+              } else {
+                console.warn('PDF analysis returned minimal content');
               }
-            }
-            
-            if (pageAnalyses.length > 0) {
-              textContent = `[VISION ANALYSIS - Map/Image Document: ${document.filename}]\n[Analyzed ${pageAnalyses.length}/${totalPages} pages]\n\n${pageAnalyses.join('\n\n')}`;
-              console.log(`Vision analysis complete: ${textContent.length} characters from ${pageAnalyses.length} pages`);
             } else {
-              // Fallback: try sending PDF directly (smaller files only)
-              if (pdfBytes.byteLength <= 5 * 1024 * 1024) {
-                console.log('Page rendering failed, trying direct PDF analysis...');
-                const base64Pdf = base64Encode(new Uint8Array(pdfBytes).buffer);
-                
-                const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+              const errText = await visionResponse.text();
+              console.error(`Vision API error ${visionResponse.status}: ${errText}`);
+              
+              // Fallback: Try with gemini-2.5-pro for more complex documents
+              if (visionResponse.status === 400 || visionResponse.status === 415) {
+                console.log('Retrying with Gemini 2.5 Pro...');
+                const fallbackResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
                   method: 'POST',
                   headers: {
                     'Authorization': `Bearer ${LOVABLE_API_KEY}`,
@@ -504,40 +449,38 @@ Be thorough - include every piece of text and numeric data visible on this page.
                   },
                   body: JSON.stringify({
                     model: 'google/gemini-2.5-pro',
-                    messages: [
-                      {
-                        role: 'user',
-                        content: [
-                          {
-                            type: 'text',
-                            text: `Analyze this map document "${document.filename}" and extract all infrastructure data, roads, mileposts, pipelines, and geographic information.`
-                          },
-                          {
-                            type: 'image_url',
-                            image_url: {
-                              url: `data:application/pdf;base64,${base64Pdf}`
-                            }
+                    messages: [{
+                      role: 'user',
+                      content: [
+                        {
+                          type: 'text',
+                          text: `Analyze this map/infrastructure document "${document.filename}" and extract all visible content including roads, mileposts, pipelines, and geographic information.`
+                        },
+                        {
+                          type: 'image_url',
+                          image_url: {
+                            url: `data:application/pdf;base64,${base64Pdf}`
                           }
-                        ]
-                      }
-                    ],
+                        }
+                      ]
+                    }],
                     max_tokens: 8000
                   }),
                 });
-                
-                if (visionResponse.ok) {
-                  const visionData = await visionResponse.json();
-                  const visionContent = visionData.choices?.[0]?.message?.content;
-                  if (visionContent && visionContent.length > 100) {
-                    textContent = `[VISION ANALYSIS - Map/Image Document: ${document.filename}]\n\n${visionContent}`;
-                    console.log(`Direct PDF analysis successful: ${textContent.length} characters`);
+
+                if (fallbackResponse.ok) {
+                  const fallbackData = await fallbackResponse.json();
+                  const fallbackContent = fallbackData.choices?.[0]?.message?.content;
+                  if (fallbackContent && fallbackContent.length > 100) {
+                    textContent = `[VISION ANALYSIS - Map/Image Document: ${document.filename}]\n\n${fallbackContent}`;
+                    console.log(`Fallback PDF analysis successful: ${textContent.length} characters`);
                   }
                 }
               }
-              
-              if (!textContent || textContent.length < 100) {
-                textContent = `[Image-based PDF could not be fully analyzed. File: ${document.filename}. Size: ${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB]`;
-              }
+            }
+            
+            if (!textContent || textContent.length < 100) {
+              textContent = `[Image-based PDF could not be fully analyzed. File: ${document.filename}. Size: ${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB]`;
             }
           }
         } catch (visionError) {

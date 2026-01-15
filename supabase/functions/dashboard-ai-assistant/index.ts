@@ -4653,99 +4653,103 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
           /\.(jpg|jpeg|png|gif|webp|bmp|tiff?)$/i.test(doc.filename);
 
         if (isPDF) {
-          // Import pdf.js for PDF processing
-          const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
-          if (pdfjsLib?.GlobalWorkerOptions) {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.worker.min.mjs';
-          }
+          // Use Gemini's native PDF support - send the PDF directly as base64
+          // This avoids pdf.js which requires web workers not available in Deno
+          const { encode: base64Encode } = await import('https://deno.land/std@0.168.0/encoding/base64.ts');
+          const base64PDF = base64Encode(fileBytes);
 
-          const loadingTask = pdfjsLib.getDocument({
-            data: new Uint8Array(fileBytes),
-            disableWorker: true,
+          console.log(`Sending PDF directly to Gemini for analysis (${(base64PDF.length / 1024 / 1024).toFixed(2)}MB base64)`);
+
+          // Gemini 2.5 models support PDF files directly via the file API format
+          const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'google/gemini-2.5-flash',
+              messages: [{
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: `You are analyzing the document "${doc.filename}" which is a PDF file.
+
+${analysisPrompt}
+
+IMPORTANT: This document may contain maps, diagrams, tables, or image-based content. 
+Analyze ALL pages thoroughly and extract every piece of visible text, data, labels, legends, and geographic/infrastructure information.
+Be comprehensive - list all road names, milepost markers, facility names, pipeline routes, and any other relevant details.`
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: { 
+                      url: `data:application/pdf;base64,${base64PDF}` 
+                    }
+                  }
+                ]
+              }],
+              max_tokens: 8000
+            }),
           });
 
-          const pdf = await loadingTask.promise;
-          const totalPages = pdf.numPages || 1;
-          const pagesToProcess = Math.min(totalPages, maxPages);
-
-          console.log(`PDF has ${totalPages} pages, processing ${pagesToProcess}`);
-
-          // Import canvas and base64 encoding
-          const { createCanvas } = await import('https://deno.land/x/canvas@v1.4.2/mod.ts');
-          const { encode: base64Encode } = await import('https://deno.land/std@0.168.0/encoding/base64.ts');
-
-          for (let pageNum = 1; pageNum <= pagesToProcess; pageNum++) {
-            try {
-              const page = await pdf.getPage(pageNum);
-              const scale = 2.0;
-              const viewport = page.getViewport({ scale });
-              
-              // Limit canvas size to prevent memory issues
-              const maxDim = 2000;
-              const actualScale = Math.min(scale, maxDim / Math.max(viewport.width / scale, viewport.height / scale) * scale);
-              const actualViewport = page.getViewport({ scale: actualScale });
-              
-              const canvas = createCanvas(Math.min(actualViewport.width, maxDim), Math.min(actualViewport.height, maxDim));
-              const ctx = canvas.getContext('2d');
-
-              await page.render({
-                canvasContext: ctx,
-                viewport: actualViewport,
-              }).promise;
-
-              const pngBuffer: Uint8Array = canvas.toBuffer('image/png');
-              const pngArrayBuffer = pngBuffer.buffer.slice(pngBuffer.byteOffset, pngBuffer.byteOffset + pngBuffer.byteLength);
-              const base64Image = base64Encode(pngArrayBuffer as ArrayBuffer);
-
-              console.log(`Page ${pageNum}: Rendered to ${(base64Image.length / 1024).toFixed(0)}KB`);
-
-              // Call vision API
-              const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+          if (visionResponse.ok) {
+            const visionData = await visionResponse.json();
+            const content = visionData.choices?.[0]?.message?.content;
+            if (content && content.length > 50) {
+              analysisResults.push(content);
+              console.log(`PDF analysis: Extracted ${content.length} chars`);
+            } else {
+              console.warn('PDF analysis returned minimal content');
+            }
+          } else {
+            const errText = await visionResponse.text();
+            console.error(`Vision API error ${visionResponse.status}: ${errText}`);
+            
+            // Fallback: Try as generic binary if PDF mime type not supported
+            if (visionResponse.status === 400 || visionResponse.status === 415) {
+              console.log('Retrying with octet-stream mime type...');
+              const fallbackResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
                 method: 'POST',
                 headers: {
                   'Authorization': `Bearer ${LOVABLE_API_KEY}`,
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                  model: 'google/gemini-2.5-flash',
+                  model: 'google/gemini-2.5-pro',
                   messages: [{
                     role: 'user',
                     content: [
                       {
                         type: 'text',
-                        text: `You are analyzing page ${pageNum}/${totalPages} of "${doc.filename}".
+                        text: `Analyze this PDF document named "${doc.filename}".
 
 ${analysisPrompt}
 
-Be thorough and include every piece of visible text and data.`
+Extract ALL visible content including text, tables, map features, labels, and annotations.`
                       },
                       {
-                        type: 'image_url',
-                        image_url: { url: `data:image/png;base64,${base64Image}` }
+                        type: 'file',
+                        file: {
+                          filename: doc.filename,
+                          data: base64PDF,
+                        }
                       }
                     ]
                   }],
-                  max_tokens: 4000
+                  max_tokens: 8000
                 }),
               });
 
-              if (visionResponse.ok) {
-                const visionData = await visionResponse.json();
-                const pageContent = visionData.choices?.[0]?.message?.content;
-                if (pageContent && pageContent.length > 50) {
-                  analysisResults.push(`=== PAGE ${pageNum}/${totalPages} ===\n${pageContent}`);
-                  console.log(`Page ${pageNum}: Extracted ${pageContent.length} chars`);
+              if (fallbackResponse.ok) {
+                const fallbackData = await fallbackResponse.json();
+                const fallbackContent = fallbackData.choices?.[0]?.message?.content;
+                if (fallbackContent) {
+                  analysisResults.push(fallbackContent);
+                  console.log(`PDF fallback analysis: Extracted ${fallbackContent.length} chars`);
                 }
-              } else {
-                console.warn(`Page ${pageNum}: Vision API error ${visionResponse.status}`);
               }
-
-              // Rate limit protection
-              if (pageNum < pagesToProcess) {
-                await new Promise(r => setTimeout(r, 500));
-              }
-            } catch (pageErr) {
-              console.warn(`Page ${pageNum} error:`, pageErr);
             }
           }
         } else if (isImage) {
