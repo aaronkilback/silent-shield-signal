@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { Loader2, Flame, Wind, Thermometer, AlertTriangle, RefreshCw, Layers, MapPin } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Loader2, Flame, Wind, Thermometer, AlertTriangle, RefreshCw, Layers, MapPin, Mountain, Satellite, Map as MapIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface FirePoint {
@@ -30,6 +31,7 @@ interface FirePerimeter {
   state: string;
   county: string;
   coordinates: number[][][];
+  geometry?: GeoJSON.Geometry;
 }
 
 interface WeatherAlert {
@@ -39,6 +41,7 @@ interface WeatherAlert {
   areaDesc: string;
   onset: string;
   expires: string;
+  geometry?: GeoJSON.Geometry;
 }
 
 interface WildfireData {
@@ -56,6 +59,17 @@ interface WildfireData {
   };
 }
 
+// Free Mapbox base styles
+const MAP_STYLES = {
+  satellite: 'mapbox://styles/mapbox/satellite-streets-v12',
+  terrain: 'mapbox://styles/mapbox/outdoors-v12',
+  dark: 'mapbox://styles/mapbox/dark-v11',
+  streets: 'mapbox://styles/mapbox/streets-v12',
+  light: 'mapbox://styles/mapbox/light-v11',
+} as const;
+
+type MapStyleKey = keyof typeof MAP_STYLES;
+
 interface WildfireMapProps {
   clientId?: string;
   region?: string;
@@ -70,11 +84,16 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
     import.meta.env.VITE_MAPBOX_TOKEN || localStorage.getItem('mapbox_token')
   );
   
+  // Map style selection
+  const [mapStyle, setMapStyle] = useState<MapStyleKey>('satellite');
+  
   // Layer visibility toggles
   const [showFirePoints, setShowFirePoints] = useState(true);
   const [showPerimeters, setShowPerimeters] = useState(true);
   const [showWeatherAlerts, setShowWeatherAlerts] = useState(true);
   const [showHeatmap, setShowHeatmap] = useState(false);
+  const [showTerrain, setShowTerrain] = useState(true);
+  const [showSmoke, setShowSmoke] = useState(false);
 
   // Fetch wildfire data
   const { data: wildfireData, isLoading, refetch, isRefetching } = useQuery({
@@ -86,8 +105,8 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
       if (error) throw error;
       return data as WildfireData;
     },
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    refetchInterval: 15 * 60 * 1000, // Refresh every 15 minutes
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 15 * 60 * 1000,
   });
 
   // Fetch NASA FIRMS data directly for the map
@@ -95,14 +114,12 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
     queryKey: ['nasa-firms-direct', region],
     queryFn: async () => {
       try {
-        // Fetch from public NASA FIRMS API (limited data for demo)
         const response = await fetch(
           `https://firms.modaps.eosdis.nasa.gov/api/area/csv/c6/VIIRS_SNPP_NRT/${region}/1`,
           { headers: { 'User-Agent': 'Fortress-Security-Platform' } }
         );
         
         if (!response.ok) {
-          // Return mock data for demo if API fails
           return generateMockFirePoints();
         }
         
@@ -137,9 +154,70 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
     staleTime: 10 * 60 * 1000,
   });
 
+  // Fetch NIFC Active Fire Perimeters (free public GeoJSON)
+  const { data: firePerimeters } = useQuery({
+    queryKey: ['nifc-perimeters'],
+    queryFn: async () => {
+      try {
+        // NIFC public GeoJSON feed for active fire perimeters
+        const response = await fetch(
+          'https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/Current_WildlandFire_Perimeters/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson'
+        );
+        
+        if (!response.ok) {
+          return generateMockPerimeters();
+        }
+        
+        const data = await response.json();
+        return data.features?.map((f: any) => ({
+          name: f.properties?.IncidentName || 'Unknown Fire',
+          acres: f.properties?.GISAcres || 0,
+          containment: f.properties?.PercentContained || 0,
+          discoveryDate: f.properties?.FireDiscoveryDateTime || '',
+          state: f.properties?.POOState || '',
+          county: f.properties?.POOCounty || '',
+          geometry: f.geometry,
+        })) || [];
+      } catch {
+        return generateMockPerimeters();
+      }
+    },
+    staleTime: 30 * 60 * 1000,
+  });
+
+  // Fetch NOAA Weather Alerts (free public API)
+  const { data: weatherAlerts } = useQuery({
+    queryKey: ['noaa-alerts'],
+    queryFn: async () => {
+      try {
+        // NOAA Weather Alerts API - fire weather specific
+        const response = await fetch(
+          'https://api.weather.gov/alerts/active?event=Red%20Flag%20Warning,Fire%20Weather%20Watch'
+        );
+        
+        if (!response.ok) {
+          return generateMockWeatherAlerts();
+        }
+        
+        const data = await response.json();
+        return data.features?.map((f: any) => ({
+          event: f.properties?.event || 'Weather Alert',
+          severity: f.properties?.severity || 'Unknown',
+          headline: f.properties?.headline || '',
+          areaDesc: f.properties?.areaDesc || '',
+          onset: f.properties?.onset || '',
+          expires: f.properties?.expires || '',
+          geometry: f.geometry,
+        })) || [];
+      } catch {
+        return generateMockWeatherAlerts();
+      }
+    },
+    staleTime: 15 * 60 * 1000,
+  });
+
   // Generate mock fire points for demonstration
   function generateMockFirePoints(): FirePoint[] {
-    // Sample coordinates for Western North America (fire-prone areas)
     const mockFires: FirePoint[] = [
       { latitude: 49.2827, longitude: -123.1207, brightness: 340, confidence: 85, frp: 45.2, acq_date: '2024-08-15', acq_time: '1430', satellite: 'VIIRS' },
       { latitude: 50.1163, longitude: -122.9574, brightness: 365, confidence: 92, frp: 78.5, acq_date: '2024-08-15', acq_time: '1432', satellite: 'VIIRS' },
@@ -153,6 +231,20 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
     return mockFires;
   }
 
+  function generateMockPerimeters(): FirePerimeter[] {
+    return [
+      { name: 'Park Fire', acres: 45000, containment: 35, discoveryDate: '2024-07-24', state: 'CA', county: 'Butte', coordinates: [] },
+      { name: 'Borel Fire', acres: 12000, containment: 20, discoveryDate: '2024-07-26', state: 'CA', county: 'Kern', coordinates: [] },
+    ];
+  }
+
+  function generateMockWeatherAlerts(): WeatherAlert[] {
+    return [
+      { event: 'Red Flag Warning', severity: 'Severe', headline: 'Red Flag Warning in effect', areaDesc: 'Central California', onset: '2024-08-15T12:00:00', expires: '2024-08-16T20:00:00' },
+      { event: 'Fire Weather Watch', severity: 'Moderate', headline: 'Fire Weather Watch in effect', areaDesc: 'Southern Oregon', onset: '2024-08-16T08:00:00', expires: '2024-08-17T18:00:00' },
+    ];
+  }
+
   // Initialize map
   useEffect(() => {
     if (!mapContainer.current || !mapboxToken || map.current) return;
@@ -161,17 +253,42 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
 
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
-      style: 'mapbox://styles/mapbox/satellite-streets-v12',
-      center: [-120, 45], // Default to Pacific Northwest
+      style: MAP_STYLES[mapStyle],
+      center: [-120, 45],
       zoom: 4,
+      pitch: showTerrain ? 45 : 0,
     });
 
     map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
     map.current.addControl(new mapboxgl.ScaleControl(), 'bottom-left');
+    map.current.addControl(new mapboxgl.FullscreenControl(), 'top-right');
 
-    // Add fire-themed styling when map loads
     map.current.on('load', () => {
       if (!map.current) return;
+
+      // Add terrain exaggeration for 3D effect
+      if (showTerrain && map.current.getStyle()?.terrain === undefined) {
+        map.current.addSource('mapbox-dem', {
+          type: 'raster-dem',
+          url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+          tileSize: 512,
+          maxzoom: 14
+        });
+        map.current.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
+      }
+
+      // Add sky layer for 3D terrain
+      if (!map.current.getLayer('sky')) {
+        map.current.addLayer({
+          id: 'sky',
+          type: 'sky',
+          paint: {
+            'sky-type': 'atmosphere',
+            'sky-atmosphere-sun': [0.0, 90.0],
+            'sky-atmosphere-sun-intensity': 15
+          }
+        });
+      }
 
       // Add heatmap source and layer
       map.current.addSource('fire-heat', {
@@ -198,9 +315,90 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
           'heatmap-radius': 30,
           'heatmap-opacity': 0.7
         },
-        layout: {
-          visibility: 'none'
-        }
+        layout: { visibility: 'none' }
+      });
+
+      // Add fire perimeters source and layer
+      map.current.addSource('fire-perimeters', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+
+      map.current.addLayer({
+        id: 'fire-perimeters-fill',
+        type: 'fill',
+        source: 'fire-perimeters',
+        paint: {
+          'fill-color': '#ff6b35',
+          'fill-opacity': 0.3
+        },
+        layout: { visibility: 'visible' }
+      });
+
+      map.current.addLayer({
+        id: 'fire-perimeters-outline',
+        type: 'line',
+        source: 'fire-perimeters',
+        paint: {
+          'line-color': '#ff4500',
+          'line-width': 2,
+          'line-dasharray': [2, 1]
+        },
+        layout: { visibility: 'visible' }
+      });
+
+      // Add weather alerts source and layer
+      map.current.addSource('weather-alerts', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+
+      map.current.addLayer({
+        id: 'weather-alerts-fill',
+        type: 'fill',
+        source: 'weather-alerts',
+        paint: {
+          'fill-color': ['case',
+            ['==', ['get', 'event'], 'Red Flag Warning'], '#dc2626',
+            ['==', ['get', 'event'], 'Fire Weather Watch'], '#f97316',
+            '#eab308'
+          ],
+          'fill-opacity': 0.2
+        },
+        layout: { visibility: 'visible' }
+      });
+
+      map.current.addLayer({
+        id: 'weather-alerts-outline',
+        type: 'line',
+        source: 'weather-alerts',
+        paint: {
+          'line-color': ['case',
+            ['==', ['get', 'event'], 'Red Flag Warning'], '#dc2626',
+            ['==', ['get', 'event'], 'Fire Weather Watch'], '#f97316',
+            '#eab308'
+          ],
+          'line-width': 2
+        },
+        layout: { visibility: 'visible' }
+      });
+
+      // Add smoke plume layer (simulated with circle gradients)
+      map.current.addSource('smoke-plumes', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+
+      map.current.addLayer({
+        id: 'smoke-plumes-layer',
+        type: 'circle',
+        source: 'smoke-plumes',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['get', 'frp'], 0, 20, 100, 80],
+          'circle-color': 'rgba(128, 128, 128, 0.4)',
+          'circle-blur': 1
+        },
+        layout: { visibility: 'none' }
       });
     });
 
@@ -211,6 +409,186 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
       }
     };
   }, [mapboxToken]);
+
+  // Handle map style changes
+  useEffect(() => {
+    if (!map.current) return;
+    map.current.setStyle(MAP_STYLES[mapStyle]);
+    
+    // Re-add layers after style change
+    map.current.once('style.load', () => {
+      if (!map.current) return;
+      
+      // Re-add terrain
+      if (showTerrain) {
+        if (!map.current.getSource('mapbox-dem')) {
+          map.current.addSource('mapbox-dem', {
+            type: 'raster-dem',
+            url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+            tileSize: 512,
+            maxzoom: 14
+          });
+        }
+        map.current.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
+      }
+
+      // Re-add all custom layers
+      addCustomLayers();
+      updateFireMarkers();
+      updatePerimeters();
+      updateWeatherAlerts();
+    });
+  }, [mapStyle]);
+
+  const addCustomLayers = useCallback(() => {
+    if (!map.current) return;
+
+    // Add heatmap source if not exists
+    if (!map.current.getSource('fire-heat')) {
+      map.current.addSource('fire-heat', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+
+      map.current.addLayer({
+        id: 'fire-heat-layer',
+        type: 'heatmap',
+        source: 'fire-heat',
+        paint: {
+          'heatmap-weight': ['interpolate', ['linear'], ['get', 'frp'], 0, 0, 100, 1],
+          'heatmap-intensity': 1,
+          'heatmap-color': [
+            'interpolate', ['linear'], ['heatmap-density'],
+            0, 'rgba(0,0,0,0)',
+            0.2, 'rgb(255,255,178)',
+            0.4, 'rgb(254,204,92)',
+            0.6, 'rgb(253,141,60)',
+            0.8, 'rgb(240,59,32)',
+            1, 'rgb(189,0,38)'
+          ],
+          'heatmap-radius': 30,
+          'heatmap-opacity': 0.7
+        },
+        layout: { visibility: showHeatmap ? 'visible' : 'none' }
+      });
+    }
+
+    // Add perimeters source if not exists
+    if (!map.current.getSource('fire-perimeters')) {
+      map.current.addSource('fire-perimeters', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+
+      map.current.addLayer({
+        id: 'fire-perimeters-fill',
+        type: 'fill',
+        source: 'fire-perimeters',
+        paint: { 'fill-color': '#ff6b35', 'fill-opacity': 0.3 },
+        layout: { visibility: showPerimeters ? 'visible' : 'none' }
+      });
+
+      map.current.addLayer({
+        id: 'fire-perimeters-outline',
+        type: 'line',
+        source: 'fire-perimeters',
+        paint: { 'line-color': '#ff4500', 'line-width': 2, 'line-dasharray': [2, 1] },
+        layout: { visibility: showPerimeters ? 'visible' : 'none' }
+      });
+    }
+
+    // Add weather alerts source if not exists
+    if (!map.current.getSource('weather-alerts')) {
+      map.current.addSource('weather-alerts', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+
+      map.current.addLayer({
+        id: 'weather-alerts-fill',
+        type: 'fill',
+        source: 'weather-alerts',
+        paint: {
+          'fill-color': ['case',
+            ['==', ['get', 'event'], 'Red Flag Warning'], '#dc2626',
+            '#f97316'
+          ],
+          'fill-opacity': 0.2
+        },
+        layout: { visibility: showWeatherAlerts ? 'visible' : 'none' }
+      });
+
+      map.current.addLayer({
+        id: 'weather-alerts-outline',
+        type: 'line',
+        source: 'weather-alerts',
+        paint: {
+          'line-color': ['case',
+            ['==', ['get', 'event'], 'Red Flag Warning'], '#dc2626',
+            '#f97316'
+          ],
+          'line-width': 2
+        },
+        layout: { visibility: showWeatherAlerts ? 'visible' : 'none' }
+      });
+    }
+
+    // Add smoke plumes source if not exists
+    if (!map.current.getSource('smoke-plumes')) {
+      map.current.addSource('smoke-plumes', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+
+      map.current.addLayer({
+        id: 'smoke-plumes-layer',
+        type: 'circle',
+        source: 'smoke-plumes',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['get', 'frp'], 0, 20, 100, 80],
+          'circle-color': 'rgba(128, 128, 128, 0.4)',
+          'circle-blur': 1
+        },
+        layout: { visibility: showSmoke ? 'visible' : 'none' }
+      });
+    }
+  }, [showHeatmap, showPerimeters, showWeatherAlerts, showSmoke]);
+
+  // Update fire perimeters on map
+  const updatePerimeters = useCallback(() => {
+    if (!map.current || !firePerimeters) return;
+
+    const source = map.current.getSource('fire-perimeters') as mapboxgl.GeoJSONSource;
+    if (!source) return;
+
+    const features = firePerimeters
+      .filter(p => p.geometry)
+      .map(p => ({
+        type: 'Feature' as const,
+        geometry: p.geometry!,
+        properties: { name: p.name, acres: p.acres, containment: p.containment }
+      }));
+
+    source.setData({ type: 'FeatureCollection', features });
+  }, [firePerimeters]);
+
+  // Update weather alerts on map
+  const updateWeatherAlerts = useCallback(() => {
+    if (!map.current || !weatherAlerts) return;
+
+    const source = map.current.getSource('weather-alerts') as mapboxgl.GeoJSONSource;
+    if (!source) return;
+
+    const features = weatherAlerts
+      .filter(a => a.geometry)
+      .map(a => ({
+        type: 'Feature' as const,
+        geometry: a.geometry!,
+        properties: { event: a.event, severity: a.severity, headline: a.headline }
+      }));
+
+    source.setData({ type: 'FeatureCollection', features });
+  }, [weatherAlerts]);
 
   // Update fire points on map
   const updateFireMarkers = useCallback(() => {
@@ -226,9 +604,10 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
     firePoints.forEach((fire) => {
       const el = document.createElement('div');
       el.className = 'fire-marker';
+      const size = 12 + (fire.confidence / 10);
       el.style.cssText = `
-        width: ${12 + (fire.confidence / 10)}px;
-        height: ${12 + (fire.confidence / 10)}px;
+        width: ${size}px;
+        height: ${size}px;
         background: radial-gradient(circle, #ff4500 0%, #ff6b35 50%, transparent 100%);
         border-radius: 50%;
         cursor: pointer;
@@ -275,22 +654,92 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
       };
       (map.current.getSource('fire-heat') as mapboxgl.GeoJSONSource).setData(heatmapData);
     }
+
+    // Update smoke plumes data
+    if (map.current.getSource('smoke-plumes')) {
+      const smokePlumeData = {
+        type: 'FeatureCollection' as const,
+        features: firePoints.filter(f => f.frp > 30).map(fire => ({
+          type: 'Feature' as const,
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [fire.longitude + 0.05, fire.latitude + 0.03] // Offset for smoke drift
+          },
+          properties: { frp: fire.frp }
+        }))
+      };
+      (map.current.getSource('smoke-plumes') as mapboxgl.GeoJSONSource).setData(smokePlumeData);
+    }
   }, [firePoints, showFirePoints]);
 
   // Toggle heatmap visibility
   useEffect(() => {
     if (!map.current || !map.current.getLayer('fire-heat-layer')) return;
-    map.current.setLayoutProperty(
-      'fire-heat-layer',
-      'visibility',
-      showHeatmap ? 'visible' : 'none'
-    );
+    map.current.setLayoutProperty('fire-heat-layer', 'visibility', showHeatmap ? 'visible' : 'none');
   }, [showHeatmap]);
+
+  // Toggle perimeters visibility
+  useEffect(() => {
+    if (!map.current) return;
+    if (map.current.getLayer('fire-perimeters-fill')) {
+      map.current.setLayoutProperty('fire-perimeters-fill', 'visibility', showPerimeters ? 'visible' : 'none');
+    }
+    if (map.current.getLayer('fire-perimeters-outline')) {
+      map.current.setLayoutProperty('fire-perimeters-outline', 'visibility', showPerimeters ? 'visible' : 'none');
+    }
+  }, [showPerimeters]);
+
+  // Toggle weather alerts visibility
+  useEffect(() => {
+    if (!map.current) return;
+    if (map.current.getLayer('weather-alerts-fill')) {
+      map.current.setLayoutProperty('weather-alerts-fill', 'visibility', showWeatherAlerts ? 'visible' : 'none');
+    }
+    if (map.current.getLayer('weather-alerts-outline')) {
+      map.current.setLayoutProperty('weather-alerts-outline', 'visibility', showWeatherAlerts ? 'visible' : 'none');
+    }
+  }, [showWeatherAlerts]);
+
+  // Toggle smoke visibility
+  useEffect(() => {
+    if (!map.current || !map.current.getLayer('smoke-plumes-layer')) return;
+    map.current.setLayoutProperty('smoke-plumes-layer', 'visibility', showSmoke ? 'visible' : 'none');
+  }, [showSmoke]);
+
+  // Toggle 3D terrain
+  useEffect(() => {
+    if (!map.current) return;
+    if (showTerrain) {
+      if (!map.current.getSource('mapbox-dem')) {
+        map.current.addSource('mapbox-dem', {
+          type: 'raster-dem',
+          url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+          tileSize: 512,
+          maxzoom: 14
+        });
+      }
+      map.current.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
+      map.current.easeTo({ pitch: 45 });
+    } else {
+      map.current.setTerrain(null);
+      map.current.easeTo({ pitch: 0 });
+    }
+  }, [showTerrain]);
 
   // Update markers when data changes
   useEffect(() => {
     updateFireMarkers();
   }, [updateFireMarkers]);
+
+  // Update perimeters when data changes
+  useEffect(() => {
+    updatePerimeters();
+  }, [updatePerimeters]);
+
+  // Update weather alerts when data changes
+  useEffect(() => {
+    updateWeatherAlerts();
+  }, [updateWeatherAlerts]);
 
   const getRiskColor = (level: string) => {
     switch (level) {
@@ -371,7 +820,46 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
       {/* Map Controls */}
       <Card>
         <CardContent className="p-4">
-          <div className="flex flex-wrap items-center gap-6">
+          <div className="flex flex-wrap items-center gap-4">
+            {/* Base Map Style Selector */}
+            <div className="flex items-center gap-2">
+              <MapIcon className="h-4 w-4 text-muted-foreground" />
+              <Select value={mapStyle} onValueChange={(v) => setMapStyle(v as MapStyleKey)}>
+                <SelectTrigger className="w-[140px] h-8">
+                  <SelectValue placeholder="Map Style" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="satellite">
+                    <div className="flex items-center gap-2">
+                      <Satellite className="h-3 w-3" /> Satellite
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="terrain">
+                    <div className="flex items-center gap-2">
+                      <Mountain className="h-3 w-3" /> Terrain
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="dark">
+                    <div className="flex items-center gap-2">
+                      <MapIcon className="h-3 w-3" /> Dark
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="streets">
+                    <div className="flex items-center gap-2">
+                      <MapIcon className="h-3 w-3" /> Streets
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="light">
+                    <div className="flex items-center gap-2">
+                      <MapIcon className="h-3 w-3" /> Light
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="h-6 w-px bg-border" />
+
             <div className="flex items-center gap-2">
               <Layers className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-medium">Layers:</span>
@@ -384,7 +872,7 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
                 onCheckedChange={setShowFirePoints}
               />
               <Label htmlFor="fire-points" className="text-sm flex items-center gap-1">
-                <Flame className="h-3 w-3 text-orange-500" /> Fire Points
+                <Flame className="h-3 w-3 text-orange-500" /> Fires
               </Label>
             </div>
 
@@ -395,7 +883,7 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
                 onCheckedChange={setShowHeatmap}
               />
               <Label htmlFor="heatmap" className="text-sm flex items-center gap-1">
-                <Thermometer className="h-3 w-3 text-red-500" /> Heat Map
+                <Thermometer className="h-3 w-3 text-red-500" /> Heat
               </Label>
             </div>
 
@@ -417,7 +905,29 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
                 onCheckedChange={setShowWeatherAlerts}
               />
               <Label htmlFor="weather" className="text-sm flex items-center gap-1">
-                <Wind className="h-3 w-3 text-blue-500" /> Weather Alerts
+                <Wind className="h-3 w-3 text-blue-500" /> Alerts
+              </Label>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="terrain-3d"
+                checked={showTerrain}
+                onCheckedChange={setShowTerrain}
+              />
+              <Label htmlFor="terrain-3d" className="text-sm flex items-center gap-1">
+                <Mountain className="h-3 w-3 text-green-500" /> 3D
+              </Label>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="smoke"
+                checked={showSmoke}
+                onCheckedChange={setShowSmoke}
+              />
+              <Label htmlFor="smoke" className="text-sm flex items-center gap-1">
+                <Wind className="h-3 w-3 text-gray-400" /> Smoke
               </Label>
             </div>
           </div>
@@ -425,7 +935,7 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
       </Card>
 
       {/* Map Container */}
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden relative">
         <div 
           ref={mapContainer} 
           className="h-[600px] w-full"
@@ -440,29 +950,66 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
             </div>
           </div>
         )}
+
+        {/* Active Fire Count Badge */}
+        {firePoints && firePoints.length > 0 && (
+          <div className="absolute top-4 left-4 bg-background/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg border">
+            <div className="flex items-center gap-2">
+              <Flame className="h-4 w-4 text-orange-500" />
+              <span className="text-sm font-medium">{firePoints.length} active fires detected</span>
+            </div>
+          </div>
+        )}
+
+        {/* Fire Perimeter Count */}
+        {firePerimeters && firePerimeters.length > 0 && (
+          <div className="absolute top-4 left-56 bg-background/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg border">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-4 w-4 text-yellow-500" />
+              <span className="text-sm font-medium">{firePerimeters.length} fire perimeters</span>
+            </div>
+          </div>
+        )}
+
+        {/* Weather Alert Count */}
+        {weatherAlerts && weatherAlerts.length > 0 && (
+          <div className="absolute top-14 left-4 bg-red-500/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg text-white">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4" />
+              <span className="text-sm font-medium">{weatherAlerts.length} active fire weather alerts</span>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Legend */}
       <Card>
         <CardContent className="p-4">
           <h4 className="font-medium mb-3">Map Legend</h4>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
             <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded-full bg-gradient-to-r from-orange-500 to-red-500" />
+              <div className="w-4 h-4 rounded-full bg-gradient-to-r from-orange-500 to-red-500 animate-pulse" />
               <span>Active Fire (satellite)</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded border-2 border-yellow-500 bg-yellow-500/20" />
-              <span>Fire Perimeter</span>
+              <div className="w-4 h-4 rounded border-2 border-orange-500 bg-orange-500/30" />
+              <span>Fire Perimeter (NIFC)</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 rounded border-2 border-red-600 bg-red-600/20" />
               <span>Red Flag Warning</span>
             </div>
             <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded border-2 border-orange-400 bg-orange-400/20" />
+              <span>Fire Weather Watch</span>
+            </div>
+            <div className="flex items-center gap-2">
               <div className="w-4 h-4 bg-gradient-to-r from-yellow-300 via-orange-500 to-red-600 rounded" />
               <span>Fire Intensity (FRP)</span>
             </div>
+          </div>
+          <div className="mt-3 text-xs text-muted-foreground">
+            Data sources: NASA FIRMS (VIIRS/MODIS), NIFC Active Fire Perimeters, NOAA Weather Alerts
           </div>
         </CardContent>
       </Card>
@@ -477,6 +1024,9 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
         .fire-marker:hover {
           transform: scale(1.5);
           z-index: 1000;
+        }
+        .mapboxgl-ctrl-fullscreen {
+          margin-top: 10px;
         }
       `}</style>
     </div>
