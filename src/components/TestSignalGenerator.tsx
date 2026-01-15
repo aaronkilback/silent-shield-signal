@@ -120,11 +120,13 @@ export const TestSignalGenerator = () => {
           // - Rule-based incident creation for critical/high signals
           // - Adding to processing queue
           // - Entity detection
+          // CRITICAL: client_id must be at the root level for proper attribution
           const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
             body: {
-              text: scenario.text,
+              text: `[${client.name}] ${scenario.text}`,
               location: scenario.location,
               is_test: true,
+              client_id: client.id, // FIXED: Pass client_id at root level for explicit attribution
               raw_json: {
                 scenario: scenario,
                 test_signal: true,

@@ -8,8 +8,10 @@ import { Progress } from "@/components/ui/progress";
 import { Upload, Send } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 export const SignalIngestForm = () => {
+  const { selectedClientId } = useClientSelection();
   const [text, setText] = useState("");
   const [location, setLocation] = useState("");
   const [url, setUrl] = useState("");
@@ -26,6 +28,11 @@ export const SignalIngestForm = () => {
       const body: any = {
         location: location.trim() || undefined,
       };
+
+      // Include selected client_id for proper attribution
+      if (selectedClientId) {
+        body.client_id = selectedClientId;
+      }
 
       if (url.trim()) {
         body.url = url.trim();
@@ -91,6 +98,7 @@ export const SignalIngestForm = () => {
             text: signal.text || signal.message || JSON.stringify(signal),
             location: signal.location,
             raw_json: signal,
+            client_id: selectedClientId || signal.client_id, // Use selected client or from JSON
           },
         });
 
@@ -161,6 +169,7 @@ export const SignalIngestForm = () => {
                 filename: file.name,
                 mimeType: file.type,
                 location: location.trim() || undefined,
+                client_id: selectedClientId || undefined, // Pass selected client for attribution
               },
             });
 
