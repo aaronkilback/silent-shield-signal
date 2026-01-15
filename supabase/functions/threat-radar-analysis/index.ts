@@ -57,7 +57,7 @@ serve(async (req) => {
       // Recent signals with emphasis on threat-related
       supabaseClient
         .from('signals')
-        .select('id, normalized_text, rule_category, rule_tags, source_type, priority, severity, confidence, created_at, geo_location, latitude, longitude')
+        .select('id, normalized_text, rule_category, rule_tags, signal_type, rule_priority, severity, confidence, created_at, location')
         .gte('created_at', timeframeCutoff)
         .order('created_at', { ascending: false })
         .limit(500),
