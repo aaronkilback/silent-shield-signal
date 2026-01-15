@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { encode as base64Encode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -333,10 +334,108 @@ serve(async (req) => {
         }
       }
       
-      // If text extraction failed or produced garbage, provide clear feedback
+      // If text extraction failed or produced garbage, try vision-based analysis
       if (!textContent || textContent.length < 100) {
-        console.log('PDF appears to be image-based or encrypted. Text extraction not possible without OCR.');
-        textContent = `[This PDF appears to be image-based/scanned and cannot be automatically processed. File: ${document.filename}. Please upload a PDF with selectable text or provide a text export.]`;
+        console.log('PDF appears to be image-based. Attempting vision-based analysis...');
+        
+        try {
+          // For PDFs, we need to use the full file (not truncated) for Gemini to parse it
+          // Gemini can accept PDFs up to 20MB, but we'll limit to 5MB for performance
+          const pdfBytes = await fileData.arrayBuffer();
+          const maxBytes = Math.min(pdfBytes.byteLength, 5 * 1024 * 1024); // Max 5MB for vision
+          
+          // Only proceed if we have the full PDF (truncation breaks PDF structure)
+          if (pdfBytes.byteLength > maxBytes) {
+            console.log(`PDF too large for vision analysis (${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB > 5MB limit)`);
+            textContent = `[This PDF is too large for vision analysis (${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB). File: ${document.filename}. Please provide a smaller file or text export.]`;
+          } else {
+            const uint8Array = new Uint8Array(pdfBytes);
+            
+            // Use Deno's standard base64 encoding (handles large arrays properly)
+            const base64Pdf = base64Encode(uint8Array.buffer);
+            
+            // Use vision model to analyze the PDF
+            console.log(`Calling vision AI for image-based PDF analysis (${(pdfBytes.byteLength / 1024).toFixed(0)}KB)...`);
+            const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'google/gemini-2.5-pro', // Multimodal model
+                messages: [
+                  {
+                    role: 'user',
+                    content: [
+                      {
+                        type: 'text',
+                        text: `You are an expert infrastructure and geospatial analyst. This document is "${document.filename}" which appears to be a map or visual document.
+
+ANALYZE THIS DOCUMENT AND EXTRACT:
+
+1. **INFRASTRUCTURE INFORMATION**:
+   - All road names, highway numbers, route designations
+   - Milepost (MP) markers and their values/ranges
+   - Pipeline routes, facilities, or infrastructure corridors
+   - Geographic reference points and landmarks
+
+2. **STRUCTURED DATA**:
+   - Create a structured summary of all roads/routes with their MP ranges
+   - List any facilities, access points, or infrastructure nodes
+   - Note any grid references, map sheet numbers (e.g., 094-G-15)
+
+3. **SPATIAL CONTEXT**:
+   - Geographic region or area covered
+   - Scale or extent of the map
+   - Any coordinate references visible
+
+4. **ENTITIES & ORGANIZATIONS**:
+   - Company names (e.g., PETRONAS, operators)
+   - Any referenced locations, towns, or landmarks
+
+Format your response as a detailed intelligence summary that can be searched and analyzed. Include ALL visible text and data from the map.`
+                      },
+                      {
+                        type: 'image_url',
+                        image_url: {
+                          url: `data:application/pdf;base64,${base64Pdf}`
+                        }
+                      }
+                    ]
+                  }
+                ],
+                max_tokens: 8000
+              }),
+            });
+
+            if (visionResponse.ok) {
+              const visionData = await visionResponse.json();
+              const visionContent = visionData.choices?.[0]?.message?.content;
+              
+              if (visionContent && visionContent.length > 100) {
+                textContent = `[VISION ANALYSIS - Map/Image Document: ${document.filename}]\n\n${visionContent}`;
+                console.log(`Vision analysis successful: extracted ${textContent.length} characters`);
+              } else {
+                console.log('Vision analysis returned insufficient content');
+                textContent = `[This PDF is an image-based document (map/diagram). Vision analysis was attempted but could not extract detailed content. File: ${document.filename}]`;
+              }
+            } else {
+              const errText = await visionResponse.text();
+              console.error('Vision API error:', visionResponse.status, errText);
+              
+              // Check for specific errors and provide helpful messages
+              if (errText.includes('no pages') || errText.includes('INVALID_ARGUMENT')) {
+                textContent = `[This PDF could not be parsed by vision AI. The file may be corrupted or in an unsupported format. File: ${document.filename}]`;
+              } else {
+                textContent = `[This PDF appears to be image-based/scanned. Vision analysis failed. File: ${document.filename}. Please provide a text export or description.]`;
+              }
+            }
+          }
+        } catch (visionError) {
+          console.error('Vision processing error:', visionError);
+          textContent = `[This PDF appears to be image-based/scanned and vision analysis encountered an error. File: ${document.filename}. Error: ${visionError instanceof Error ? visionError.message : 'Unknown error'}]`;
+        }
       }
     }
 
