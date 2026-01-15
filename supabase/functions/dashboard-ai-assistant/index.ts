@@ -4535,20 +4535,65 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
       }
 
       const meta: any = doc.metadata ?? {};
-      const storageBucket = meta.storage_bucket || "archival-documents";
 
-      // Download the file from storage
-      const { data: fileData, error: downloadError } = await supabaseClient.storage
-        .from(storageBucket)
-        .download(doc.storage_path);
+      const preferredBucket = typeof meta.storage_bucket === 'string' && meta.storage_bucket.trim().length
+        ? meta.storage_bucket.trim()
+        : undefined;
 
-      if (downloadError || !fileData) {
+      const candidateBuckets = Array.from(
+        new Set([
+          preferredBucket,
+          'archival-documents',
+          // Backward-compat for AI chat uploads
+          'ai-chat-attachments',
+        ].filter(Boolean) as string[])
+      );
+
+      // Download the file from storage (try a small set of known buckets)
+      let fileData: Blob | null = null;
+      let resolvedBucket: string | null = null;
+      const bucketErrors: Record<string, string> = {};
+
+      for (const bucket of candidateBuckets) {
+        const { data: dlData, error: dlError } = await supabaseClient.storage
+          .from(bucket)
+          .download(doc.storage_path);
+
+        if (!dlError && dlData) {
+          fileData = dlData;
+          resolvedBucket = bucket;
+          break;
+        }
+
+        bucketErrors[bucket] = dlError?.message ?? 'Unknown error';
+      }
+
+      if (!fileData) {
         return {
           success: false,
-          error: `Failed to download file: ${downloadError?.message || 'Unknown error'}`,
+          error: `Failed to download file from storage. Tried: ${candidateBuckets.join(', ')}`,
           document_id: docId,
           filename: doc.filename,
+          storage_path: doc.storage_path,
+          bucket_errors: bucketErrors,
         };
+      }
+
+      // Persist resolved bucket so future tools/processors can find it
+      if (resolvedBucket && resolvedBucket !== meta.storage_bucket) {
+        try {
+          await supabaseClient
+            .from('archival_documents')
+            .update({
+              metadata: {
+                ...(meta ?? {}),
+                storage_bucket: resolvedBucket,
+              },
+            })
+            .eq('id', docId);
+        } catch {
+          // non-fatal
+        }
       }
 
       const fileBytes = await fileData.arrayBuffer();

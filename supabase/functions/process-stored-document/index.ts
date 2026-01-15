@@ -59,37 +59,57 @@ serve(async (req) => {
 
     console.log(`Found document: ${document.filename}`);
 
-    const storageBucket =
+    const preferredBucket =
       (document.metadata as any)?.storage_bucket && typeof (document.metadata as any)?.storage_bucket === 'string'
         ? (document.metadata as any).storage_bucket
         : 'archival-documents';
 
-    // Download file from storage
-    const { data: fileData, error: downloadError } = await supabase.storage
-      .from(storageBucket)
-      .download(document.storage_path);
+    const candidateBuckets = Array.from(
+      new Set([
+        preferredBucket,
+        // Backward-compat for older AI chat uploads that stored the file in ai-chat-attachments
+        'ai-chat-attachments',
+        'archival-documents',
+      ].filter(Boolean))
+    );
 
-    if (downloadError) {
-      console.error(
-        `Storage download error for ${document.filename} (bucket=${storageBucket}, path=${document.storage_path}):`,
-        downloadError
-      );
+    // Download file from storage (try a small set of known buckets)
+    let fileData: Blob | null = null;
+    let resolvedBucket: string | null = null;
+    const bucketErrors: Record<string, string> = {};
 
-      // Surface HTTP status/body when storage-js wraps it as StorageUnknownError
-      const original = (downloadError as any)?.originalError;
-      if (original instanceof Response) {
-        try {
-          const bodyText = await original.text();
-          console.error('Storage HTTP error:', {
-            status: original.status,
-            statusText: original.statusText,
-            url: original.url,
-            bodyText,
-          });
-        } catch {
-          // ignore
-        }
+    for (const bucket of candidateBuckets) {
+      const { data, error } = await supabase.storage.from(bucket).download(document.storage_path);
+      if (!error && data) {
+        fileData = data;
+        resolvedBucket = bucket;
+        break;
       }
+      bucketErrors[bucket] = error?.message ?? 'Unknown error';
+    }
+
+    // If we had to fall back to a different bucket, persist it for future processing
+    if (fileData && resolvedBucket && preferredBucket !== resolvedBucket) {
+      try {
+        await supabase
+          .from('archival_documents')
+          .update({
+            metadata: {
+              ...(document.metadata ?? {}),
+              storage_bucket: resolvedBucket,
+            },
+          })
+          .eq('id', documentId);
+      } catch (e) {
+        console.warn('Failed to persist resolved storage bucket (non-fatal):', e);
+      }
+    }
+
+    if (!fileData) {
+      console.error(
+        `Storage download error for ${document.filename} (path=${document.storage_path}):`,
+        bucketErrors
+      );
 
       // Mark record so agents/users don't see null content_text
       await supabase
@@ -97,28 +117,37 @@ serve(async (req) => {
         .update({
           content_text:
             document.content_text ??
-            `[Document processing failed: could not download the file from storage. bucket=${storageBucket}, path=${document.storage_path}]`,
+            `[Document processing failed: could not download the file from storage. path=${document.storage_path}]`,
           metadata: {
             ...(document.metadata ?? {}),
             entities_processed: false,
-            processing_error: `Failed to download from storage (bucket=${storageBucket})`,
+            processing_error: `Failed to download from storage. Tried buckets: ${candidateBuckets.join(', ')}`,
+            bucket_errors: bucketErrors,
             processed_at: new Date().toISOString(),
           },
         })
         .eq('id', documentId);
 
-      // If file doesn't exist in storage, return a clear status
-      if (downloadError.message?.includes('not found') || downloadError.message?.includes('does not exist')) {
+      const notFound = Object.values(bucketErrors).some((m) =>
+        String(m).toLowerCase().includes('not found') || String(m).toLowerCase().includes('does not exist')
+      );
+
+      if (notFound) {
         return new Response(
-          JSON.stringify({ error: 'File not found in storage', documentId }),
+          JSON.stringify({
+            error: 'File not found in storage',
+            documentId,
+            storage_path: document.storage_path,
+            tried_buckets: candidateBuckets,
+          }),
           { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
-      throw new Error(`Failed to download file: ${downloadError.message}`);
+      throw new Error(`Failed to download file from storage. Tried buckets: ${candidateBuckets.join(', ')}`);
     }
 
-    console.log(`Downloaded file: ${document.filename}`);
+    console.log(`Downloaded file: ${document.filename} (bucket=${resolvedBucket})`);
 
     let textContent = '';
     
