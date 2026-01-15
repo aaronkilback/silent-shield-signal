@@ -458,24 +458,43 @@ ${entityContext}
    ✓ Project locations, study areas
    ✓ Areas of concern (pollution zones, impact areas)
    ✓ Indigenous territories, traditional lands
+   ✓ GPS coordinates (lat/long if mentioned)
+   ✓ Township/Range/Section identifiers (e.g., TWP 69 RGE 21 W5M)
 
-4. **EVENTS** (Temporal intelligence):
+4. **INFRASTRUCTURE** (Physical assets & facilities - CRITICAL FOR MAPS):
+   ✓ Production pods, well pads, well sites
+   ✓ Pipelines, gathering systems, transmission lines
+   ✓ Compressor stations, pump stations
+   ✓ Processing plants, gas plants, refineries
+   ✓ Tank farms, storage facilities
+   ✓ Roads, access routes, ROWs (right-of-ways)
+   ✓ Power lines, substations
+   ✓ Metering stations, valve sites
+   ✓ Injection wells, disposal wells
+   ✓ Flare stacks, vents
+   ✓ Camp facilities, modular buildings
+   ✓ Equipment identifiers (pod numbers, well IDs, UWI numbers)
+
+5. **EVENTS** (Temporal intelligence):
    ✓ Protests, demonstrations, rallies
    ✓ Public meetings, hearings, consultations
    ✓ Conferences, symposiums, webinars
    ✓ Press conferences, media events
    ✓ Research presentations, paper publications
    ✓ Legal actions, court cases, regulatory proceedings
+   ✓ Construction phases, drilling schedules
+   ✓ Operational milestones
 
-5. **INITIATIVES & CAMPAIGNS** (Strategic activity):
+6. **INITIATIVES & CAMPAIGNS** (Strategic activity):
    ✓ Research programs and studies
    ✓ Advocacy campaigns and movements
    ✓ Monitoring projects and watchdog activities
    ✓ Legal challenges and regulatory interventions
    ✓ Public awareness/education campaigns
    ✓ Petition drives, letter-writing campaigns
+   ✓ Development projects, expansion plans
 
-6. **CLAIMS, CONCERNS & ALLEGATIONS** (Intelligence content):
+7. **CLAIMS, CONCERNS & ALLEGATIONS** (Intelligence content):
    ✓ Health impacts claimed (specific conditions, populations affected)
    ✓ Environmental concerns (pollution, contamination, ecosystem damage)
    ✓ Safety issues and risks identified
@@ -484,29 +503,32 @@ ${entityContext}
    ✓ Transparency/accountability concerns
    ✓ Indigenous rights violations alleged
 
-7. **INFRASTRUCTURE & TECHNICAL** (Cyber/physical):
+8. **CYBER/DIGITAL ASSETS** (Technical):
    ✓ Domains, websites, IP addresses
    ✓ Email addresses, phone numbers
-   ✓ Physical infrastructure (pipelines, towers, facilities)
-   ✓ Systems, networks, software platforms
+   ✓ SCADA systems, control systems
+   ✓ Software platforms, monitoring systems
    ✓ Vehicles (if identified)
 
-8. **STRATEGIC RELATIONSHIPS** (Network intelligence):
+9. **STRATEGIC RELATIONSHIPS** (Network intelligence):
    ✓ Funding relationships (who funds whom)
    ✓ Partnerships and collaborations
    ✓ Opposition dynamics (who opposes whom)
    ✓ Support networks (who supports whom)
    ✓ Employment/affiliation connections
    ✓ Co-authorship and joint initiatives
+   ✓ Operator/owner relationships
+   ✓ Contractor/service provider relationships
 
-9. **DOCUMENTS & EVIDENCE** (Referenced materials):
-   ✓ Studies, reports, white papers cited
-   ✓ Legal documents, permits, filings
-   ✓ Media articles, press releases
-   ✓ Letters, submissions, testimonies
-   ✓ Scientific papers, research publications
+10. **DOCUMENTS & EVIDENCE** (Referenced materials):
+    ✓ Studies, reports, white papers cited
+    ✓ Legal documents, permits, filings
+    ✓ Media articles, press releases
+    ✓ Letters, submissions, testimonies
+    ✓ Scientific papers, research publications
+    ✓ Maps, surveys, engineering drawings
 
-10. **KEY NARRATIVE ELEMENTS** (Strategic framing):
+11. **KEY NARRATIVE ELEMENTS** (Strategic framing):
     ✓ Main arguments being made
     ✓ Evidence presented (studies, data, testimony)
     ✓ Tactics employed (legal, media, grassroots)
@@ -514,25 +536,49 @@ ${entityContext}
     ✓ Timelines and deadlines mentioned
 
 ═══════════════════════════════════════════════════════════
+🗺️ MAP & GEOGRAPHIC DOCUMENT SPECIAL HANDLING
+═══════════════════════════════════════════════════════════
+
+FOR MAPS, SITE PLANS, AND GEOGRAPHIC DOCUMENTS:
+✓ Extract ALL labeled features (pods, wells, pipelines, roads, etc.)
+✓ Capture naming conventions (e.g., "Pod 1A", "Well Pad 14-21")
+✓ Note geographic boundaries and areas
+✓ Extract coordinate systems and datums if shown
+✓ Identify scale and coverage area
+✓ Capture legend/key information
+✓ Extract dates shown on the map
+✓ Identify operator/owner information
+✓ Note any safety/exclusion zones
+✓ Capture infrastructure connections (what connects to what)
+
+MAP ENTITY TYPES TO USE:
+- "infrastructure" for: wells, pads, pods, pipelines, facilities
+- "location" for: geographic areas, townships, sections, regions
+- "organization" for: operators, contractors, service companies
+- "other" for: equipment IDs, UWI numbers, license numbers
+
+═══════════════════════════════════════════════════════════
 🎯 ANALYSIS APPROACH (Think like an intelligence analyst)
 ═══════════════════════════════════════════════════════════
 
 FOR EACH ENTITY EXTRACTED:
-1. **Name**: Use full, formal name with credentials
-2. **Type**: Most specific applicable type
+1. **Name**: Use full, formal name with identifiers
+2. **Type**: Most specific applicable type (infrastructure for physical assets)
 3. **Confidence**: Be realistic but inclusive (>= ${adjustedThreshold.toFixed(2)})
 4. **Context**: Rich, descriptive context explaining:
    - What they're doing in this document
    - Their position/stance
    - Their significance
    - Key quotes or actions attributed to them
-5. **Aliases**: Variations, acronyms, short forms
+   - For infrastructure: location, connections, status
+5. **Aliases**: Variations, acronyms, short forms, alternative IDs
 6. **Attributes**: Any additional intelligence (roles, affiliations, positions)
 
 FOR RELATIONSHIPS:
-- Map connections explicitly (A funds B, C opposes D)
+- Map connections explicitly (A connects to B, C operated by D)
 - Note the nature and strength of relationships
 - Capture temporal aspects (when relationships formed/ended)
+- For infrastructure: note physical connections and dependencies
 
 STRATEGIC EXTRACTION RULES:
 ✅ **Be Comprehensive**: Extract EVERYTHING that provides intelligence value
@@ -542,6 +588,7 @@ STRATEGIC EXTRACTION RULES:
 ✅ **Position Analysis**: Note whether entities support/oppose/are neutral
 ✅ **Evidence Chain**: Track who cites what evidence
 ✅ **Temporal Awareness**: Note when things happened or are planned
+✅ **Infrastructure Mapping**: For maps, extract ALL labeled features
 
 ❌ **Only Skip**:
 - Generic role terms without names ("a researcher", "the manager")
@@ -550,8 +597,8 @@ STRATEGIC EXTRACTION RULES:
 - Your own analytical comments
 
 INTELLIGENCE PRIORITY:
-🔴 HIGH: Opposition actors, coordinated campaigns, legal threats, media strategies
-🟡 MEDIUM: Academic research, community concerns, regulatory engagement
+🔴 HIGH: Opposition actors, coordinated campaigns, legal threats, media strategies, critical infrastructure
+🟡 MEDIUM: Academic research, community concerns, regulatory engagement, secondary infrastructure
 🟢 LOW: Neutral references, background context
 
 When uncertain → EXTRACT (intelligence value > precision in this context)`
@@ -599,10 +646,11 @@ Think like a professional intelligence analyst reading an opposition research do
                     items: {
                       type: "object",
                       properties: {
-                        name: { type: "string", description: "Entity name" },
+                        name: { type: "string", description: "Entity name or identifier" },
                         type: { 
                           type: "string",
-                          enum: ["person", "organization", "location", "infrastructure", "domain", "ip_address", "email", "phone", "vehicle", "other"]
+                          enum: ["person", "organization", "location", "infrastructure", "facility", "pipeline", "well", "domain", "ip_address", "email", "phone", "vehicle", "equipment", "other"],
+                          description: "Entity type - use 'infrastructure' for production pods, well pads, pipelines; 'facility' for plants, stations; 'well' for individual wells; 'equipment' for specific equipment"
                         },
                         confidence: { type: "number", minimum: 0, maximum: 1 },
                         context: { type: "string", description: "Where entity appears in incident" },
