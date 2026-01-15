@@ -7037,6 +7037,80 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
       const resolved = await resolveAgentId();
       if (!resolved.ok) {
+        // Check if we have enough info to CREATE the agent instead
+        const hasCreationRequirements = 
+          updates?.codename && 
+          updates?.call_sign && 
+          (updates?.persona || updates?.specialty || updates?.mission_scope);
+        
+        if (hasCreationRequirements) {
+          console.log("update_agent_configuration: Agent not found, auto-creating with provided config", { updates });
+          
+          // Redirect to create_agent
+          const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+          const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+          
+          if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+            return {
+              error: "Missing backend configuration for agent creation",
+              message: "Cannot auto-create agent: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured",
+            };
+          }
+          
+          const createRes = await fetch(`${SUPABASE_URL}/functions/v1/create-agent`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              apikey: SERVICE_ROLE_KEY,
+              Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+            },
+            body: JSON.stringify({
+              header_name: (updates as any)?.header_name || updates?.codename,
+              codename: updates?.codename,
+              call_sign: updates?.call_sign,
+              persona: updates?.persona || `${updates?.codename} is a specialized AI agent.`,
+              specialty: updates?.specialty || "General security intelligence",
+              mission_scope: updates?.mission_scope || "Provide security intelligence support",
+              interaction_style: updates?.interaction_style,
+              input_sources: updates?.input_sources,
+              output_types: updates?.output_types,
+              is_client_facing: updates?.is_client_facing,
+              is_active: updates?.is_active ?? true,
+              avatar_color: (updates as any)?.avatar_color,
+              system_prompt: updates?.system_prompt,
+              requested_by: requested_by || "Aegis (auto-create from update)",
+            }),
+          });
+          
+          const createRawText = await createRes.text();
+          let createBody: any = null;
+          try {
+            createBody = createRawText ? JSON.parse(createRawText) : null;
+          } catch {
+            createBody = { raw: createRawText };
+          }
+          
+          if (!createRes.ok) {
+            console.error("update_agent_configuration: Auto-create failed", createRes.status, createBody);
+            return {
+              success: false,
+              status: createRes.status,
+              error: createBody?.error || `Auto-create failed (${createRes.status})`,
+              message: `Agent not found and auto-creation failed: ${createBody?.message || createBody?.error || createRes.status}`,
+              original_resolution_error: resolved.message,
+            };
+          }
+          
+          console.log("update_agent_configuration: Auto-created agent successfully", createBody);
+          return {
+            success: true,
+            auto_created: true,
+            agent_id: createBody?.agent?.id || createBody?.id,
+            agent: createBody?.agent,
+            message: `Agent "${updates?.codename}" did not exist and was automatically created.`,
+          };
+        }
+        
         console.error("update_agent_configuration: unable to resolve agent", { agent_id, updates, resolved });
         return {
           error: resolved.message,
@@ -8425,6 +8499,19 @@ function extractPlannedFortressQueryFromText(
   };
 }
 
+// Strip markdown formatting (bold, italic, code) from extracted values
+function cleanMarkdownFormatting(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return value
+    .replace(/^\*+\s*/g, "") // Leading asterisks
+    .replace(/\s*\*+$/g, "") // Trailing asterisks
+    .replace(/\*\*/g, "") // Bold markers
+    .replace(/\*/g, "") // Italic markers
+    .replace(/`/g, "") // Code markers
+    .replace(/^#+\s*/g, "") // Heading markers
+    .trim();
+}
+
 // Extract agent creation details when AI describes creating an agent without calling the tool
 function extractPlannedAgentFromText(
   text: string,
@@ -8435,13 +8522,13 @@ function extractPlannedAgentFromText(
 
   const normalized = text.replace(/\r/g, "");
 
-  // Extract required fields
-  const header_name = extractValueFromText(normalized, "header_name") || extractValueFromText(normalized, "name") || extractValueFromText(normalized, "agent_name");
-  const codename = extractValueFromText(normalized, "codename");
-  const call_sign = extractValueFromText(normalized, "call_sign") || extractValueFromText(normalized, "callsign");
-  const persona = extractValueFromText(normalized, "persona");
-  const specialty = extractValueFromText(normalized, "specialty") || extractValueFromText(normalized, "specialization");
-  const mission_scope = extractValueFromText(normalized, "mission_scope") || extractValueFromText(normalized, "mission") || extractValueFromText(normalized, "scope");
+  // Extract required fields and clean markdown formatting
+  const header_name = cleanMarkdownFormatting(extractValueFromText(normalized, "header_name") || extractValueFromText(normalized, "name") || extractValueFromText(normalized, "agent_name"));
+  const codename = cleanMarkdownFormatting(extractValueFromText(normalized, "codename"));
+  const call_sign = cleanMarkdownFormatting(extractValueFromText(normalized, "call_sign") || extractValueFromText(normalized, "callsign"));
+  const persona = cleanMarkdownFormatting(extractValueFromText(normalized, "persona"));
+  const specialty = cleanMarkdownFormatting(extractValueFromText(normalized, "specialty") || extractValueFromText(normalized, "specialization"));
+  const mission_scope = cleanMarkdownFormatting(extractValueFromText(normalized, "mission_scope") || extractValueFromText(normalized, "mission") || extractValueFromText(normalized, "scope"));
 
   // Must have at least header_name/codename and call_sign to be valid
   if (!codename || !call_sign) {
@@ -8453,13 +8540,13 @@ function extractPlannedAgentFromText(
   const finalHeaderName = header_name || codename;
 
   // Extract optional fields
-  const isClientFacingStr = extractValueFromText(normalized, "is_client_facing") || extractValueFromText(normalized, "client_facing");
+  const isClientFacingStr = cleanMarkdownFormatting(extractValueFromText(normalized, "is_client_facing") || extractValueFromText(normalized, "client_facing"));
   const is_client_facing = isClientFacingStr ? isClientFacingStr.toLowerCase() === "true" : undefined;
   
-  const isActiveStr = extractValueFromText(normalized, "is_active") || extractValueFromText(normalized, "active");
+  const isActiveStr = cleanMarkdownFormatting(extractValueFromText(normalized, "is_active") || extractValueFromText(normalized, "active"));
   const is_active = isActiveStr ? isActiveStr.toLowerCase() !== "false" : true;
 
-  const requested_by = extractValueFromText(normalized, "requested_by") || "Aegis (auto-detected)";
+  const requested_by = cleanMarkdownFormatting(extractValueFromText(normalized, "requested_by")) || "Aegis (auto-detected)";
 
   console.log("extractPlannedAgentFromText: Extracted agent details", {
     header_name: finalHeaderName,
