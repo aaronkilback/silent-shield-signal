@@ -6973,25 +6973,129 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
     case "update_agent_configuration": {
       const { agent_id, updates, reason, requested_by } = args;
-      
-      console.log(`Updating agent configuration for: ${agent_id}`);
-      
+
+      const resolveAgentId = async (): Promise<
+        | { ok: true; id: string }
+        | { ok: false; message: string; candidates?: Array<{ id: string; codename: string | null; header_name: string | null; call_sign: string | null }> }
+      > => {
+        // 1) If an agent_id was provided, verify it exists (prevents confusing 404s later)
+        if (agent_id) {
+          const { data: existing, error } = await supabaseClient
+            .from("ai_agents")
+            .select("id")
+            .eq("id", agent_id)
+            .maybeSingle();
+
+          if (!error && existing?.id) {
+            return { ok: true, id: existing.id };
+          }
+        }
+
+        // 2) Fallback lookup by known identifiers (helps when an LLM guesses a UUID)
+        const orParts: string[] = [];
+        if (updates?.call_sign) orParts.push(`call_sign.eq.${updates.call_sign}`);
+        if (updates?.codename) orParts.push(`codename.eq.${updates.codename}`);
+        if ((updates as any)?.header_name) orParts.push(`header_name.eq.${(updates as any).header_name}`);
+
+        if (orParts.length === 0) {
+          return {
+            ok: false,
+            message:
+              "Agent not found. Please provide a valid agent_id, or include codename/call_sign/header_name in the update so I can resolve the agent.",
+          };
+        }
+
+        const { data: matches, error: matchError } = await supabaseClient
+          .from("ai_agents")
+          .select("id, codename, header_name, call_sign")
+          .or(orParts.join(","))
+          .limit(2);
+
+        if (matchError) {
+          return { ok: false, message: `Failed to resolve agent: ${matchError.message}` };
+        }
+
+        if (!matches || matches.length === 0) {
+          return {
+            ok: false,
+            message:
+              "Agent not found. The provided agent_id does not exist and no agent matched the provided codename/call_sign/header_name.",
+          };
+        }
+
+        if (matches.length > 1) {
+          return {
+            ok: false,
+            message:
+              "Multiple agents matched the provided identifiers. Please specify agent_id to avoid updating the wrong agent.",
+            candidates: matches,
+          };
+        }
+
+        return { ok: true, id: matches[0].id };
+      };
+
+      const resolved = await resolveAgentId();
+      if (!resolved.ok) {
+        console.error("update_agent_configuration: unable to resolve agent", { agent_id, updates, resolved });
+        return {
+          error: resolved.message,
+          message: resolved.message,
+          candidates: resolved.candidates,
+        };
+      }
+
+      console.log(`Updating agent configuration for: ${resolved.id}`);
+
       const { data: configResult, error: configError } = await supabaseClient.functions.invoke(
         "update-agent-configuration",
-        { body: { agent_id, updates, reason: reason || "Configuration update via Aegis", requested_by: requested_by || "Aegis" } }
+        {
+          body: {
+            agent_id: resolved.id,
+            updates,
+            reason: reason || "Configuration update via Aegis",
+            requested_by: requested_by || "Aegis",
+          },
+        }
       );
 
       if (configError) {
-        console.error("Error updating agent configuration:", configError);
+        // Try to surface the real status/body so users don't just see "non-2xx"
+        let details: unknown = undefined;
+        let status: number | undefined = undefined;
+        try {
+          status = (configError as any)?.context?.status;
+          if ((configError as any)?.context?.json) {
+            details = await (configError as any).context.json();
+          } else if ((configError as any)?.context?.text) {
+            const txt = await (configError as any).context.text();
+            try {
+              details = JSON.parse(txt);
+            } catch {
+              details = txt;
+            }
+          }
+        } catch {
+          // ignore
+        }
+
+        console.error("Error updating agent configuration:", { configError, status, details });
+
+        const detailsMsg = details ? ` Details: ${typeof details === "string" ? details : JSON.stringify(details)}` : "";
+        const statusMsg = status ? ` (status ${status})` : "";
+
         return {
           error: configError.message,
-          message: `Failed to update agent configuration: ${configError.message}`,
+          message: `Failed to update agent configuration${statusMsg}: ${configError.message}${detailsMsg}`,
+          status,
+          details,
+          agent_id: resolved.id,
         };
       }
 
       return {
         success: true,
-        agent_id,
+        agent_id: resolved.id,
         updated_agent: configResult.agent,
         changes: configResult.changes,
         audit_key: configResult.audit_key,
