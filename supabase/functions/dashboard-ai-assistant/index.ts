@@ -4399,16 +4399,38 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
     }
 
     case "get_document_content": {
+      const docId = String(args.document_id || '').trim();
+      if (!docId) {
+        return { success: false, error: "Missing document_id" };
+      }
+
+      // Use maybeSingle so "not found" becomes a clean response (instead of a thrown Postgrest error)
       const { data, error } = await supabaseClient
         .from("archival_documents")
         .select("*")
-        .eq("id", args.document_id)
-        .single();
+        .eq("id", docId)
+        .maybeSingle();
 
-      if (error) throw error;
-      if (!data) {
-        return { success: false, message: "Document not found" };
+      if (error) {
+        return {
+          success: false,
+          error: `Failed to load document: ${error.message}`,
+          code: (error as any).code,
+          hint: "Verify the document ID is correct and that you have access.",
+        };
       }
+
+      if (!data) {
+        return {
+          success: false,
+          error: "Document not found",
+          document_id: docId,
+          hint: "Double-check the ID (a single character difference will fail).",
+        };
+      }
+
+      const meta: any = data.metadata ?? {};
+      const contentText = data.content_text ?? "";
 
       return {
         success: true,
@@ -4418,15 +4440,25 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
           file_type: data.file_type,
           upload_date: data.upload_date,
           date_of_document: data.date_of_document,
-          content_text: data.content_text,
+          content_text: contentText,
           summary: data.summary,
           tags: data.tags,
           entity_mentions: data.entity_mentions,
           keywords: data.keywords,
           correlated_entity_ids: data.correlated_entity_ids,
           metadata: data.metadata,
-          client_id: data.client_id
-        }
+          client_id: data.client_id,
+          processing: {
+            entities_processed: Boolean(meta.entities_processed),
+            processing_error: meta.processing_error ?? null,
+            storage_bucket: meta.storage_bucket ?? "archival-documents",
+            text_length: typeof meta.text_length === 'number' ? meta.text_length : null,
+          },
+        },
+        note:
+          !contentText || contentText.trim().length === 0
+            ? "No extracted text is stored for this document (common with map/image-based PDFs)."
+            : undefined,
       };
     }
 
