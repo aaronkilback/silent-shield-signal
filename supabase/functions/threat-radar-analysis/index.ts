@@ -143,7 +143,7 @@ serve(async (req) => {
     const geoSignals: any[] = [];
 
     signals.forEach((signal: any) => {
-      const source = signal.source_type || 'unknown';
+      const source = signal.signal_type || 'unknown';
       const category = signal.rule_category || 'uncategorized';
       const severity = signal.severity || 'medium';
 
@@ -156,7 +156,8 @@ serve(async (req) => {
       if (!signalsBySeverity[severity]) signalsBySeverity[severity] = [];
       signalsBySeverity[severity].push(signal);
 
-      if (signal.latitude && signal.longitude) {
+      // Check if location contains geo coordinates
+      if (signal.location) {
         geoSignals.push(signal);
       }
     });
@@ -403,9 +404,7 @@ Be specific, actionable, and prioritize by impact and urgency.`;
       geo_intelligence: {
         geo_signals_count: geoSignals.length,
         hotspots: geoSignals.slice(0, 20).map((s: any) => ({
-          lat: s.latitude,
-          lng: s.longitude,
-          location: s.geo_location,
+          location: s.location,
           severity: s.severity,
           category: s.rule_category
         }))
@@ -420,14 +419,14 @@ Be specific, actionable, and prioritize by impact and urgency.`;
           type: 'radical_activity',
           title: s.normalized_text?.substring(0, 150),
           severity: s.severity,
-          source: s.source_type,
+          source: s.signal_type,
           created_at: s.created_at
         })),
         ...infrastructureSignals.slice(0, 3).map((s: any) => ({
           type: 'infrastructure_threat',
           title: s.normalized_text?.substring(0, 150),
           severity: s.severity,
-          source: s.source_type,
+          source: s.signal_type,
           created_at: s.created_at
         }))
       ]
