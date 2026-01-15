@@ -32,6 +32,7 @@ import ThreatRadar from "./pages/ThreatRadar";
 import Integrations from "./pages/Integrations";
 import UnmatchedSignals from "./pages/UnmatchedSignals";
 import MatchingDashboard from "./pages/MatchingDashboard";
+import Workspace from "./pages/Workspace";
 import NotFound from "./pages/NotFound";
 import { EnsureDefaultRole } from "@/components/EnsureDefaultRole";
 
@@ -73,6 +74,7 @@ const App = () => (
               <Route path="/benchmark" element={<Benchmark />} />
               <Route path="/unmatched-signals" element={<UnmatchedSignals />} />
               <Route path="/matching-dashboard" element={<MatchingDashboard />} />
+              <Route path="/workspace/:id" element={<Workspace />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
