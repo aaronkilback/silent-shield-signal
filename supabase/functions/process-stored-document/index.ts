@@ -339,96 +339,175 @@ serve(async (req) => {
         console.log('PDF appears to be image-based. Attempting vision-based analysis...');
         
         try {
-          // For PDFs, we need to use the full file (not truncated) for Gemini to parse it
-          // Gemini can accept PDFs up to 20MB, but we'll limit to 5MB for performance
           const pdfBytes = await fileData.arrayBuffer();
-          const maxBytes = Math.min(pdfBytes.byteLength, 5 * 1024 * 1024); // Max 5MB for vision
+          const maxBytes = 20 * 1024 * 1024; // Support up to 20MB PDFs
           
-          // Only proceed if we have the full PDF (truncation breaks PDF structure)
           if (pdfBytes.byteLength > maxBytes) {
-            console.log(`PDF too large for vision analysis (${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB > 5MB limit)`);
-            textContent = `[This PDF is too large for vision analysis (${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB). File: ${document.filename}. Please provide a smaller file or text export.]`;
+            console.log(`PDF too large for processing (${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB > 20MB limit)`);
+            textContent = `[This PDF is too large for processing (${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB > 20MB limit). File: ${document.filename}. Please split into smaller files.]`;
           } else {
-            const uint8Array = new Uint8Array(pdfBytes);
+            console.log(`Processing ${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB PDF using page-by-page vision analysis...`);
             
-            // Use Deno's standard base64 encoding (handles large arrays properly)
-            const base64Pdf = base64Encode(uint8Array.buffer);
+            // Load PDF using pdf.js
+            const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
+            if (pdfjsLib?.GlobalWorkerOptions) {
+              pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.worker.min.mjs';
+            }
             
-            // Use vision model to analyze the PDF
-            console.log(`Calling vision AI for image-based PDF analysis (${(pdfBytes.byteLength / 1024).toFixed(0)}KB)...`);
-            const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                model: 'google/gemini-2.5-pro', // Multimodal model
-                messages: [
-                  {
-                    role: 'user',
-                    content: [
-                      {
-                        type: 'text',
-                        text: `You are an expert infrastructure and geospatial analyst. This document is "${document.filename}" which appears to be a map or visual document.
-
-ANALYZE THIS DOCUMENT AND EXTRACT:
-
-1. **INFRASTRUCTURE INFORMATION**:
-   - All road names, highway numbers, route designations
-   - Milepost (MP) markers and their values/ranges
-   - Pipeline routes, facilities, or infrastructure corridors
-   - Geographic reference points and landmarks
-
-2. **STRUCTURED DATA**:
-   - Create a structured summary of all roads/routes with their MP ranges
-   - List any facilities, access points, or infrastructure nodes
-   - Note any grid references, map sheet numbers (e.g., 094-G-15)
-
-3. **SPATIAL CONTEXT**:
-   - Geographic region or area covered
-   - Scale or extent of the map
-   - Any coordinate references visible
-
-4. **ENTITIES & ORGANIZATIONS**:
-   - Company names (e.g., PETRONAS, operators)
-   - Any referenced locations, towns, or landmarks
-
-Format your response as a detailed intelligence summary that can be searched and analyzed. Include ALL visible text and data from the map.`
-                      },
-                      {
-                        type: 'image_url',
-                        image_url: {
-                          url: `data:application/pdf;base64,${base64Pdf}`
-                        }
-                      }
-                    ]
-                  }
-                ],
-                max_tokens: 8000
-              }),
+            const loadingTask = pdfjsLib.getDocument({
+              data: new Uint8Array(pdfBytes),
+              disableWorker: true,
             });
+            
+            const pdf = await loadingTask.promise;
+            const totalPages = pdf.numPages || 1;
+            const pagesToProcess = Math.min(totalPages, 10); // Process up to 10 pages for maps
+            
+            console.log(`PDF has ${totalPages} pages, will process ${pagesToProcess} pages`);
+            
+            const pageAnalyses: string[] = [];
+            
+            for (let pageNum = 1; pageNum <= pagesToProcess; pageNum++) {
+              try {
+                const page = await pdf.getPage(pageNum);
+                
+                // Render page to canvas at a reasonable resolution
+                const scale = 2.0; // 2x scale for readability
+                const viewport = page.getViewport({ scale });
+                
+                // Create offscreen canvas using Deno canvas library
+                const { createCanvas } = await import('https://deno.land/x/canvas@v1.4.2/mod.ts');
+                const canvas = createCanvas(Math.min(viewport.width, 2000), Math.min(viewport.height, 2000));
+                const ctx = canvas.getContext('2d');
+                
+                // Render PDF page to canvas
+                const renderContext = {
+                  canvasContext: ctx,
+                  viewport: page.getViewport({ scale: Math.min(scale, 2000 / Math.max(viewport.width, viewport.height) * scale) }),
+                };
+                
+                await page.render(renderContext).promise;
+                
+                // Convert canvas to PNG base64
+                const pngBuffer: Uint8Array = canvas.toBuffer('image/png');
+                // Convert Uint8Array to ArrayBuffer for base64Encode
+                const pngArrayBuffer = pngBuffer.buffer.slice(pngBuffer.byteOffset, pngBuffer.byteOffset + pngBuffer.byteLength);
+                const base64Image = base64Encode(pngArrayBuffer as ArrayBuffer);
+                
+                console.log(`Page ${pageNum}: Rendered to ${(base64Image.length / 1024).toFixed(0)}KB image`);
+                
+                // Send page image to vision API
+                const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    model: 'google/gemini-2.5-flash', // Use flash for speed on multiple pages
+                    messages: [
+                      {
+                        role: 'user',
+                        content: [
+                          {
+                            type: 'text',
+                            text: `You are analyzing page ${pageNum} of ${totalPages} from "${document.filename}" - an infrastructure/pipeline map document.
 
-            if (visionResponse.ok) {
-              const visionData = await visionResponse.json();
-              const visionContent = visionData.choices?.[0]?.message?.content;
-              
-              if (visionContent && visionContent.length > 100) {
-                textContent = `[VISION ANALYSIS - Map/Image Document: ${document.filename}]\n\n${visionContent}`;
-                console.log(`Vision analysis successful: extracted ${textContent.length} characters`);
-              } else {
-                console.log('Vision analysis returned insufficient content');
-                textContent = `[This PDF is an image-based document (map/diagram). Vision analysis was attempted but could not extract detailed content. File: ${document.filename}]`;
+EXTRACT ALL VISIBLE INFORMATION:
+1. Road names, highway numbers, access routes
+2. Milepost (MP) markers and their values/ranges
+3. Pipeline corridors, facilities, infrastructure
+4. Grid references, map sheet numbers (e.g., 094-G-15)
+5. Geographic features, waterways, landmarks
+6. Company names, operators, ownership info
+7. Scale information, coordinates, compass directions
+8. Legend items, symbols, and their meanings
+
+Be thorough - include every piece of text and numeric data visible on this page. Format as structured notes.`
+                          },
+                          {
+                            type: 'image_url',
+                            image_url: {
+                              url: `data:image/png;base64,${base64Image}`
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    max_tokens: 4000
+                  }),
+                });
+                
+                if (visionResponse.ok) {
+                  const visionData = await visionResponse.json();
+                  const pageContent = visionData.choices?.[0]?.message?.content;
+                  if (pageContent && pageContent.length > 50) {
+                    pageAnalyses.push(`=== PAGE ${pageNum} ===\n${pageContent}`);
+                    console.log(`Page ${pageNum}: Extracted ${pageContent.length} characters`);
+                  }
+                } else {
+                  console.warn(`Page ${pageNum}: Vision API error ${visionResponse.status}`);
+                }
+                
+                // Small delay between pages to avoid rate limits
+                if (pageNum < pagesToProcess) {
+                  await new Promise(r => setTimeout(r, 500));
+                }
+              } catch (pageError) {
+                console.warn(`Page ${pageNum}: Rendering failed -`, pageError);
               }
+            }
+            
+            if (pageAnalyses.length > 0) {
+              textContent = `[VISION ANALYSIS - Map/Image Document: ${document.filename}]\n[Analyzed ${pageAnalyses.length}/${totalPages} pages]\n\n${pageAnalyses.join('\n\n')}`;
+              console.log(`Vision analysis complete: ${textContent.length} characters from ${pageAnalyses.length} pages`);
             } else {
-              const errText = await visionResponse.text();
-              console.error('Vision API error:', visionResponse.status, errText);
+              // Fallback: try sending PDF directly (smaller files only)
+              if (pdfBytes.byteLength <= 5 * 1024 * 1024) {
+                console.log('Page rendering failed, trying direct PDF analysis...');
+                const base64Pdf = base64Encode(new Uint8Array(pdfBytes).buffer);
+                
+                const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    model: 'google/gemini-2.5-pro',
+                    messages: [
+                      {
+                        role: 'user',
+                        content: [
+                          {
+                            type: 'text',
+                            text: `Analyze this map document "${document.filename}" and extract all infrastructure data, roads, mileposts, pipelines, and geographic information.`
+                          },
+                          {
+                            type: 'image_url',
+                            image_url: {
+                              url: `data:application/pdf;base64,${base64Pdf}`
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    max_tokens: 8000
+                  }),
+                });
+                
+                if (visionResponse.ok) {
+                  const visionData = await visionResponse.json();
+                  const visionContent = visionData.choices?.[0]?.message?.content;
+                  if (visionContent && visionContent.length > 100) {
+                    textContent = `[VISION ANALYSIS - Map/Image Document: ${document.filename}]\n\n${visionContent}`;
+                    console.log(`Direct PDF analysis successful: ${textContent.length} characters`);
+                  }
+                }
+              }
               
-              // Check for specific errors and provide helpful messages
-              if (errText.includes('no pages') || errText.includes('INVALID_ARGUMENT')) {
-                textContent = `[This PDF could not be parsed by vision AI. The file may be corrupted or in an unsupported format. File: ${document.filename}]`;
-              } else {
-                textContent = `[This PDF appears to be image-based/scanned. Vision analysis failed. File: ${document.filename}. Please provide a text export or description.]`;
+              if (!textContent || textContent.length < 100) {
+                textContent = `[Image-based PDF could not be fully analyzed. File: ${document.filename}. Size: ${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB]`;
               }
             }
           }
