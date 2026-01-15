@@ -91,9 +91,18 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const infrastructureMarkersRef = useRef<mapboxgl.Marker[]>([]);
   
-  const [mapboxToken] = useState<string | null>(
-    import.meta.env.VITE_MAPBOX_TOKEN || localStorage.getItem('mapbox_token')
-  );
+  const [mapboxToken] = useState<string | null>(() => {
+    const envToken = import.meta.env.VITE_MAPBOX_TOKEN;
+    const storedToken = localStorage.getItem('mapbox_token');
+    // Check if token is valid (not placeholder)
+    if (envToken && envToken !== 'your_mapbox_token_here' && envToken.startsWith('pk.')) {
+      return envToken;
+    }
+    if (storedToken && storedToken.startsWith('pk.')) {
+      return storedToken;
+    }
+    return null;
+  });
   
   // Track if map style is fully loaded to prevent "Style is not done loading" errors
   const [styleLoaded, setStyleLoaded] = useState(false);
@@ -913,13 +922,54 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
     }
   };
 
+  const [tokenInput, setTokenInput] = useState('');
+  
+  const handleSaveToken = () => {
+    if (tokenInput.startsWith('pk.')) {
+      localStorage.setItem('mapbox_token', tokenInput);
+      window.location.reload();
+    }
+  };
+
   if (!mapboxToken) {
     return (
       <Card className="border-orange-500/30 bg-orange-950/20">
-        <CardContent className="p-6 text-center">
-          <AlertTriangle className="h-12 w-12 mx-auto text-orange-500 mb-4" />
-          <p className="text-muted-foreground">Mapbox token required for wildfire mapping.</p>
-          <p className="text-sm text-muted-foreground mt-2">Set VITE_MAPBOX_TOKEN in your environment.</p>
+        <CardContent className="p-6">
+          <div className="text-center mb-6">
+            <AlertTriangle className="h-12 w-12 mx-auto text-orange-500 mb-4" />
+            <h3 className="text-lg font-semibold mb-2">Mapbox Token Required</h3>
+            <p className="text-muted-foreground">A Mapbox public token is needed to display the wildfire map.</p>
+          </div>
+          
+          <div className="max-w-md mx-auto space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="mapbox-token">Enter your Mapbox Public Token</Label>
+              <div className="flex gap-2">
+                <input
+                  id="mapbox-token"
+                  type="text"
+                  placeholder="pk.eyJ1IjoiLi4u"
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value)}
+                  className="flex-1 px-3 py-2 border rounded-md bg-background text-sm"
+                />
+                <Button onClick={handleSaveToken} disabled={!tokenInput.startsWith('pk.')}>
+                  Save
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Get a free token at{' '}
+                <a 
+                  href="https://account.mapbox.com/access-tokens/" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  mapbox.com/access-tokens
+                </a>
+              </p>
+            </div>
+          </div>
         </CardContent>
       </Card>
     );
