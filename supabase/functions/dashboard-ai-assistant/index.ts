@@ -7,6 +7,30 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Timeout for AI API calls (45 seconds - well under edge function limits)
+const AI_TIMEOUT_MS = 45000;
+
+// Helper to fetch with timeout
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`AI request timed out after ${timeoutMs / 1000} seconds. Please try again with a simpler request.`);
+    }
+    throw error;
+  }
+}
+
 // Enhanced system prompt for Phase 4/5: Intent Recognition, Contextual Understanding, and Autonomous Learning
 const ENHANCED_SYSTEM_PROMPT = `You are FORTRESS AI, an advanced security intelligence co-pilot. You have real capabilities through tools - USE THEM.
 
@@ -8784,8 +8808,8 @@ serve(async (req) => {
       })
     );
 
-    // First AI call with tools
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    // First AI call with tools (with timeout)
+    const response = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${LOVABLE_API_KEY}`,
@@ -9158,7 +9182,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
         tools,
         tool_choice: "auto",
       }),
-    });
+    }, AI_TIMEOUT_MS);
 
     if (!response.ok) {
       if (response.status === 429) {
@@ -9203,7 +9227,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
           },
         ];
 
-        const finalResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        const finalResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${LOVABLE_API_KEY}`,
@@ -9223,7 +9247,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
             ],
             stream: true,
           }),
-        });
+        }, AI_TIMEOUT_MS);
 
         if (!finalResponse.ok) {
           throw new Error("Failed to get final response from AI");
@@ -9248,7 +9272,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
           },
         ];
 
-        const finalResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        const finalResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${LOVABLE_API_KEY}`,
@@ -9268,7 +9292,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
             ],
             stream: true,
           }),
-        });
+        }, AI_TIMEOUT_MS);
 
         if (!finalResponse.ok) {
           throw new Error("Failed to get final response from AI");
@@ -9293,7 +9317,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
           },
         ];
 
-        const finalResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        const finalResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${LOVABLE_API_KEY}`,
@@ -9313,7 +9337,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
             ],
             stream: true,
           }),
-        });
+        }, AI_TIMEOUT_MS);
 
         if (!finalResponse.ok) {
           const errorText = await finalResponse.text();
@@ -9374,8 +9398,8 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
         })
       );
 
-      // Make second AI call with tool results - now with streaming
-      const finalResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      // Make second AI call with tool results - now with streaming (with timeout)
+      const finalResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${LOVABLE_API_KEY}`,
@@ -9394,7 +9418,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
           ],
           stream: true,
         }),
-      });
+      }, AI_TIMEOUT_MS);
 
       if (!finalResponse.ok) {
         throw new Error("Failed to get final response from AI");
@@ -9405,8 +9429,8 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
       });
     }
 
-    // No tools needed, stream the response directly
-    const streamResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    // No tools needed, stream the response directly (with timeout)
+    const streamResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${LOVABLE_API_KEY}`,
@@ -9423,7 +9447,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
         ],
         stream: true,
       }),
-    });
+    }, AI_TIMEOUT_MS);
 
     return new Response(streamResponse.body, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
