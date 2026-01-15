@@ -118,6 +118,7 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
   const [showTerrain, setShowTerrain] = useState(true);
   const [showSmoke, setShowSmoke] = useState(false);
   const [showInfrastructure, setShowInfrastructure] = useState(true);
+  const [showPetronasCanada, setShowPetronasCanada] = useState(true);
 
   // Fetch wildfire data
   const { data: wildfireData, isLoading, refetch, isRefetching } = useQuery({
@@ -1040,8 +1041,36 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
 
     if (!showInfrastructure) return;
 
+    // Filter infrastructure based on Petronas Canada toggle
+    const filteredInfra = infrastructureData.filter((infra) => {
+      const isPetronasCanada = infra.operator.includes('PETRONAS Canada') || 
+                               infra.operator.includes('Enbridge/PETRONAS') ||
+                               infra.operator.includes('Spectra/PETRONAS') ||
+                               infra.operator.includes('Third Party/PETRONAS');
+      
+      // If it's Petronas Canada, only show if that toggle is on
+      if (isPetronasCanada) {
+        return showPetronasCanada;
+      }
+      // Non-Canada assets always show (when infrastructure is on)
+      return true;
+    });
+
     // Icon configuration for different infrastructure types
-    const getInfraIcon = (type: string) => {
+    const getInfraIcon = (type: string, isPetronasCanada: boolean) => {
+      // Use distinct colors for Petronas Canada assets
+      if (isPetronasCanada) {
+        switch (type) {
+          case 'refinery': return { icon: '🏭', color: '#dc2626', size: 18 }; // Red for Canada refineries
+          case 'pipeline': return { icon: '🔗', color: '#ea580c', size: 14 }; // Orange for Canada pipelines
+          case 'terminal': return { icon: '⛽', color: '#16a34a', size: 16 }; // Green for Canada terminals
+          case 'platform': return { icon: '🛢️', color: '#ca8a04', size: 16 }; // Yellow for Canada platforms
+          case 'storage': return { icon: '🏗️', color: '#7c3aed', size: 14 }; // Purple for Canada storage
+          case 'road': return { icon: '🛣️', color: '#0891b2', size: 12 }; // Cyan for Canada roads
+          default: return { icon: '📍', color: '#dc2626', size: 14 };
+        }
+      }
+      
       switch (type) {
         case 'refinery': return { icon: '🏭', color: '#3b82f6', size: 18 };
         case 'pipeline': return { icon: '🔗', color: '#8b5cf6', size: 14 };
@@ -1053,16 +1082,20 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
       }
     };
 
-    infrastructureData.forEach((infra) => {
-      const iconConfig = getInfraIcon(infra.type);
+    filteredInfra.forEach((infra) => {
+      const isPetronasCanada = infra.operator.includes('PETRONAS Canada') || 
+                               infra.operator.includes('Enbridge/PETRONAS') ||
+                               infra.operator.includes('Spectra/PETRONAS') ||
+                               infra.operator.includes('Third Party/PETRONAS');
+      const iconConfig = getInfraIcon(infra.type, isPetronasCanada);
       
       const el = document.createElement('div');
-      el.className = 'infrastructure-marker';
+      el.className = `infrastructure-marker ${isPetronasCanada ? 'petronas-canada' : ''}`;
       el.style.cssText = `
         width: ${iconConfig.size + 8}px;
         height: ${iconConfig.size + 8}px;
         background: ${iconConfig.color};
-        border: 2px solid white;
+        border: 2px solid ${isPetronasCanada ? '#fbbf24' : 'white'};
         border-radius: 50%;
         display: flex;
         align-items: center;
@@ -1079,6 +1112,7 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
         <div style="font-family: system-ui; padding: 8px;">
           <h4 style="margin: 0 0 8px; color: ${iconConfig.color}; font-weight: 600;">
             ${iconConfig.icon} ${infra.name}
+            ${isPetronasCanada ? '<span style="background: #fbbf24; color: #000; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;">🇨🇦 Canada</span>' : ''}
           </h4>
           <div style="font-size: 12px; color: #666;">
             <p style="margin: 4px 0;"><strong>Type:</strong> ${infra.type.charAt(0).toUpperCase() + infra.type.slice(1)}</p>
@@ -1101,13 +1135,13 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
 
       infrastructureMarkersRef.current.push(marker);
     });
-  }, [infrastructureData, showInfrastructure]);
+  }, [infrastructureData, showInfrastructure, showPetronasCanada]);
 
   // Update infrastructure markers when data or visibility changes
   useEffect(() => {
     if (!styleLoaded) return;
     updateInfrastructureMarkers();
-  }, [updateInfrastructureMarkers, styleLoaded, showInfrastructure]);
+  }, [updateInfrastructureMarkers, styleLoaded, showInfrastructure, showPetronasCanada]);
 
   const getRiskColor = (level: string) => {
     switch (level) {
@@ -1349,7 +1383,19 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
                 onCheckedChange={setShowInfrastructure}
               />
               <Label htmlFor="infrastructure" className="text-sm flex items-center gap-1">
-                <Fuel className="h-3 w-3 text-blue-500" /> Petronas/Oil & Gas
+                <Fuel className="h-3 w-3 text-blue-500" /> All Infrastructure
+              </Label>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="petronas-canada"
+                checked={showPetronasCanada}
+                onCheckedChange={setShowPetronasCanada}
+                disabled={!showInfrastructure}
+              />
+              <Label htmlFor="petronas-canada" className={`text-sm flex items-center gap-1 ${!showInfrastructure ? 'opacity-50' : ''}`}>
+                <span className="text-xs">🇨🇦</span> Petronas Canada
               </Label>
             </div>
           </div>
