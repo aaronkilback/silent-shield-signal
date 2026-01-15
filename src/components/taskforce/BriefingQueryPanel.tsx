@@ -469,7 +469,12 @@ export function BriefingQueryPanel({ missionId, missionCreatorId }: BriefingQuer
                       variant="ghost"
                       size="sm"
                       className="h-7 text-xs"
-                      onClick={() => startFollowup(query.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startFollowup(query.id);
+                        // Scroll to input
+                        document.querySelector('textarea')?.focus();
+                      }}
                     >
                       <MessageCircle className="h-3 w-3 mr-1" />
                       Follow-up
@@ -583,12 +588,16 @@ export function BriefingQueryPanel({ missionId, missionCreatorId }: BriefingQuer
         {/* Query Input */}
         <div className="space-y-2">
           {followupQueryId && (
-            <div className="flex items-center justify-between p-2 bg-muted rounded text-sm">
-              <span className="flex items-center gap-2">
+            <div className="flex items-center justify-between p-2 bg-primary/10 border border-primary/20 rounded text-sm">
+              <span className="flex items-center gap-2 text-primary">
                 <MessageCircle className="h-4 w-4" />
-                Asking follow-up question
+                <span>
+                  Replying to: <em className="text-foreground">
+                    "{queries?.find(q => q.id === followupQueryId)?.question?.slice(0, 50)}..."
+                  </em>
+                </span>
               </span>
-              <Button variant="ghost" size="sm" onClick={cancelFollowup}>
+              <Button variant="ghost" size="sm" onClick={cancelFollowup} className="h-7">
                 Cancel
               </Button>
             </div>
