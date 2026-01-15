@@ -733,7 +733,7 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
                 client_id: clientId,
                 priority: 'p1',
                 status: 'open',
-                severity_level: 'critical',
+                severity_level: 'P1',
                 is_test: signal.is_test || false,
                 title: `🚨 CRITICAL: ${signal.normalized_text?.substring(0, 80)}`,
                 summary: `Fast-path critical signal detected. Rule: ${rulesResult.matchedRule || 'AI-classified'}. Keyword: ${rulesResult.matchedKeyword || 'N/A'}`,
