@@ -26,6 +26,7 @@ import {
   XCircle,
   AlertTriangle,
   MessageSquare,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -144,6 +145,25 @@ export function MissionView({ missionId, onBack }: MissionViewProps) {
     },
   });
 
+  const deleteMission = useMutation({
+    mutationFn: async () => {
+      // Delete related data first
+      await supabase.from("task_force_agents").delete().eq("mission_id", missionId);
+      await supabase.from("task_force_contributions").delete().eq("mission_id", missionId);
+      await supabase.from("briefing_queries").delete().eq("mission_id", missionId);
+      // Finally delete the mission
+      const { error } = await supabase.from("task_force_missions").delete().eq("id", missionId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success("Mission deleted");
+      onBack();
+    },
+    onError: (error: any) => {
+      toast.error(error.message || "Failed to delete mission");
+    },
+  });
+
   const handleRunMission = async () => {
     if (!hasLeader) {
       toast.error("No Task Force Leader assigned. Create a new mission and assign a leader.");
@@ -210,10 +230,29 @@ export function MissionView({ missionId, onBack }: MissionViewProps) {
           </div>
           <div className="flex items-center gap-2">
             {String(mission?.phase) === 'cancelled' && (
-              <Badge variant="destructive" className="flex items-center gap-1">
-                <AlertTriangle className="h-3 w-3" />
-                Aborted
-              </Badge>
+              <>
+                <Badge variant="destructive" className="flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3" />
+                  Aborted
+                </Badge>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => {
+                    if (confirm("Are you sure you want to permanently delete this mission?")) {
+                      deleteMission.mutate();
+                    }
+                  }}
+                  disabled={deleteMission.isPending}
+                >
+                  {deleteMission.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4 mr-2" />
+                  )}
+                  Delete Mission
+                </Button>
+              </>
             )}
             {!['completed', 'cancelled'].includes(String(mission?.phase)) && (
               <Button
