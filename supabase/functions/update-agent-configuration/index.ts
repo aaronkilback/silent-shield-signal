@@ -9,6 +9,7 @@ const corsHeaders = {
 interface AgentConfigUpdate {
   agent_id: string;
   updates: {
+    header_name?: string;
     codename?: string;
     call_sign?: string;
     persona?: string;
