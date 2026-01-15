@@ -78,9 +78,8 @@ export const SignalHistory = () => {
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
 
   useEffect(() => {
-    if (selectedClientId) {
-      loadSignals();
-    }
+    // Load signals regardless of client selection - show all if none selected
+    loadSignals();
     
     // Subscribe to real-time updates for selected client only
     const channel = supabase
