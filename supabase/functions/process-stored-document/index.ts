@@ -58,37 +58,62 @@ serve(async (req) => {
 
     console.log(`Found document: ${document.filename}`);
 
-    // Download file from storage (first 100KB for entity detection)
+    const storageBucket =
+      (document.metadata as any)?.storage_bucket && typeof (document.metadata as any)?.storage_bucket === 'string'
+        ? (document.metadata as any).storage_bucket
+        : 'archival-documents';
+
+    // Download file from storage
     const { data: fileData, error: downloadError } = await supabase.storage
-      .from('archival-documents')
+      .from(storageBucket)
       .download(document.storage_path);
 
     if (downloadError) {
-      console.error(`Storage download error for ${document.filename}:`, downloadError);
-      
-      // If file doesn't exist in storage, mark as processed to avoid retry loops
+      console.error(
+        `Storage download error for ${document.filename} (bucket=${storageBucket}, path=${document.storage_path}):`,
+        downloadError
+      );
+
+      // Surface HTTP status/body when storage-js wraps it as StorageUnknownError
+      const original = (downloadError as any)?.originalError;
+      if (original instanceof Response) {
+        try {
+          const bodyText = await original.text();
+          console.error('Storage HTTP error:', {
+            status: original.status,
+            statusText: original.statusText,
+            url: original.url,
+            bodyText,
+          });
+        } catch {
+          // ignore
+        }
+      }
+
+      // Mark record so agents/users don't see null content_text
+      await supabase
+        .from('archival_documents')
+        .update({
+          content_text:
+            document.content_text ??
+            `[Document processing failed: could not download the file from storage. bucket=${storageBucket}, path=${document.storage_path}]`,
+          metadata: {
+            ...(document.metadata ?? {}),
+            entities_processed: false,
+            processing_error: `Failed to download from storage (bucket=${storageBucket})`,
+            processed_at: new Date().toISOString(),
+          },
+        })
+        .eq('id', documentId);
+
+      // If file doesn't exist in storage, return a clear status
       if (downloadError.message?.includes('not found') || downloadError.message?.includes('does not exist')) {
-        await supabase
-          .from('archival_documents')
-          .update({
-            metadata: {
-              ...document.metadata,
-              entities_processed: true,
-              processing_error: 'File not found in storage',
-              processed_at: new Date().toISOString()
-            }
-          })
-          .eq('id', documentId);
-        
         return new Response(
-          JSON.stringify({ 
-            error: 'File not found in storage',
-            documentId 
-          }),
+          JSON.stringify({ error: 'File not found in storage', documentId }),
           { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      
+
       throw new Error(`Failed to download file: ${downloadError.message}`);
     }
 

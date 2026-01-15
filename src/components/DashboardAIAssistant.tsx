@@ -398,22 +398,24 @@ export const DashboardAIAssistant = () => {
         
         // Also create archival document record for AI analysis
         try {
-          const { data: archivalDoc, error: archivalError } = await supabase
-            .from('archival_documents')
-            .insert({
-              filename: file.name,
-              file_type: file.type || 'application/octet-stream',
-              file_size: file.size,
-              storage_path: storageData.path,
-              uploaded_by: user?.id,
-              tags: ['ai-chat-upload'],
-              metadata: { 
-                source: 'ai-chat',
-                original_name: file.name 
-              }
-            })
-            .select('id')
-            .single();
+            const { data: archivalDoc, error: archivalError } = await supabase
+              .from('archival_documents')
+              .insert({
+                filename: file.name,
+                file_type: file.type || 'application/octet-stream',
+                file_size: file.size,
+                storage_path: storageData.path,
+                uploaded_by: user?.id,
+                tags: ['ai-chat-upload'],
+                content_text: `Uploaded via AI chat attachment: ${file.name}`,
+                metadata: {
+                  source: 'ai-chat',
+                  original_name: file.name,
+                  storage_bucket: 'ai-chat-attachments',
+                },
+              })
+              .select('id')
+              .single();
           
           if (archivalError) {
             console.error("Failed to create archival record:", archivalError);
