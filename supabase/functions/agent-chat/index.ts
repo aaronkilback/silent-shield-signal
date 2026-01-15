@@ -72,14 +72,89 @@ serve(async (req) => {
     if (agent.input_sources.includes('entities')) {
       const { data: entities } = await supabase
         .from('entities')
-        .select('name, type, risk_level, threat_score')
+        .select('name, type, risk_level, threat_score, current_location, description')
         .order('threat_score', { ascending: false })
-        .limit(15);
+        .limit(20);
       
       if (entities?.length) {
-        contextData += `\n\nKey Entities (${entities.length}):\n`;
-        entities.forEach(e => {
-          contextData += `- [${e.type}] ${e.name} - Risk: ${e.risk_level || 'Unknown'}, Threat Score: ${e.threat_score || 'N/A'}\n`;
+        // Group entities by type for better context
+        const personEntities = entities.filter(e => e.type === 'person');
+        const orgEntities = entities.filter(e => e.type === 'organization');
+        const locationEntities = entities.filter(e => e.type === 'location');
+        const infraEntities = entities.filter(e => ['infrastructure', 'facility', 'pipeline', 'well', 'equipment'].includes(e.type));
+        const otherEntities = entities.filter(e => !['person', 'organization', 'location', 'infrastructure', 'facility', 'pipeline', 'well', 'equipment'].includes(e.type));
+        
+        contextData += `\n\n=== TRACKED ENTITIES (${entities.length}) ===\n`;
+        
+        if (personEntities.length) {
+          contextData += `\n📋 PERSONS OF INTEREST (${personEntities.length}):\n`;
+          personEntities.forEach(e => {
+            contextData += `- ${e.name} - Risk: ${e.risk_level || 'Unknown'}, Threat Score: ${e.threat_score || 'N/A'}\n`;
+            if (e.description) contextData += `  Description: ${e.description.substring(0, 150)}\n`;
+          });
+        }
+        
+        if (orgEntities.length) {
+          contextData += `\n🏢 ORGANIZATIONS (${orgEntities.length}):\n`;
+          orgEntities.forEach(e => {
+            contextData += `- ${e.name} - Risk: ${e.risk_level || 'Unknown'}, Threat Score: ${e.threat_score || 'N/A'}\n`;
+          });
+        }
+        
+        if (locationEntities.length) {
+          contextData += `\n📍 LOCATIONS (${locationEntities.length}):\n`;
+          locationEntities.forEach(e => {
+            contextData += `- ${e.name} - Risk: ${e.risk_level || 'Unknown'}${e.current_location ? `, Coords: ${e.current_location}` : ''}\n`;
+          });
+        }
+        
+        if (infraEntities.length) {
+          contextData += `\n🏭 INFRASTRUCTURE & FACILITIES (${infraEntities.length}):\n`;
+          infraEntities.forEach(e => {
+            contextData += `- [${e.type.toUpperCase()}] ${e.name} - Risk: ${e.risk_level || 'Unknown'}${e.current_location ? `, Location: ${e.current_location}` : ''}\n`;
+            if (e.description) contextData += `  Details: ${e.description.substring(0, 100)}\n`;
+          });
+        }
+        
+        if (otherEntities.length) {
+          contextData += `\n📎 OTHER ENTITIES (${otherEntities.length}):\n`;
+          otherEntities.forEach(e => {
+            contextData += `- [${e.type}] ${e.name} - Risk: ${e.risk_level || 'Unknown'}\n`;
+          });
+        }
+      }
+      
+      // Fetch entity relationships for infrastructure connectivity understanding
+      const { data: relationships } = await supabase
+        .from('entity_relationships')
+        .select('entity_a_id, entity_b_id, relationship_type, description, strength')
+        .order('strength', { ascending: false })
+        .limit(30);
+      
+      if (relationships?.length) {
+        // Get entity names for the relationships
+        const entityIds = new Set<string>();
+        relationships.forEach(r => {
+          entityIds.add(r.entity_a_id);
+          entityIds.add(r.entity_b_id);
+        });
+        
+        const { data: relatedEntities } = await supabase
+          .from('entities')
+          .select('id, name, type')
+          .in('id', Array.from(entityIds));
+        
+        const entityMap = new Map((relatedEntities || []).map(e => [e.id, e]));
+        
+        contextData += `\n\n=== ENTITY RELATIONSHIPS & CONNECTIONS (${relationships.length}) ===\n`;
+        relationships.forEach(r => {
+          const entityA = entityMap.get(r.entity_a_id);
+          const entityB = entityMap.get(r.entity_b_id);
+          if (entityA && entityB) {
+            contextData += `- ${entityA.name} [${entityA.type}] --${r.relationship_type}--> ${entityB.name} [${entityB.type}]`;
+            if (r.description) contextData += ` (${r.description.substring(0, 80)})`;
+            contextData += `\n`;
+          }
         });
       }
     }
@@ -116,25 +191,61 @@ serve(async (req) => {
     // Always include documents for reference (archival documents with extracted content)
     const { data: archivalDocs } = await supabase
       .from('archival_documents')
-      .select('id, filename, summary, content_text, keywords, tags, entity_mentions, date_of_document, created_at')
+      .select('id, filename, summary, content_text, keywords, tags, entity_mentions, date_of_document, created_at, metadata')
       .not('content_text', 'is', null)
       .order('created_at', { ascending: false })
-      .limit(20);
+      .limit(25);
     
     if (archivalDocs?.length) {
-      contextData += `\n\n=== ARCHIVAL DOCUMENTS (${archivalDocs.length}) ===\n`;
-      archivalDocs.forEach(doc => {
-        contextData += `\n--- Document: ${doc.filename} ---\n`;
-        if (doc.date_of_document) contextData += `Date: ${doc.date_of_document}\n`;
-        if (doc.summary) contextData += `Summary: ${doc.summary}\n`;
-        if (doc.keywords?.length) contextData += `Keywords: ${doc.keywords.join(', ')}\n`;
-        if (doc.entity_mentions?.length) contextData += `Entities Mentioned: ${doc.entity_mentions.join(', ')}\n`;
-        if (doc.content_text) {
-          // Include up to 2000 chars of content per document
-          const contentPreview = doc.content_text.substring(0, 2000);
-          contextData += `Content:\n${contentPreview}${doc.content_text.length > 2000 ? '...[truncated]' : ''}\n`;
-        }
-      });
+      // Separate map/infrastructure documents from others for special treatment
+      const mapDocs = archivalDocs.filter(doc => 
+        doc.filename?.toLowerCase().includes('map') ||
+        doc.filename?.toLowerCase().includes('pod') ||
+        doc.filename?.toLowerCase().includes('layout') ||
+        doc.filename?.toLowerCase().includes('site plan') ||
+        doc.tags?.some((t: string) => ['map', 'infrastructure', 'facility', 'layout'].includes(t.toLowerCase()))
+      );
+      
+      const otherDocs = archivalDocs.filter(doc => !mapDocs.includes(doc));
+      
+      if (mapDocs.length) {
+        contextData += `\n\n=== 🗺️ MAP & INFRASTRUCTURE DOCUMENTS (${mapDocs.length}) ===\n`;
+        contextData += `These documents contain geographic/infrastructure intelligence for spatial analysis:\n`;
+        mapDocs.forEach(doc => {
+          contextData += `\n--- ${doc.filename} ---\n`;
+          if (doc.date_of_document) contextData += `Date: ${doc.date_of_document}\n`;
+          if (doc.summary) contextData += `Summary: ${doc.summary}\n`;
+          if (doc.entity_mentions?.length) {
+            // Highlight infrastructure entities
+            contextData += `Infrastructure/Entities Found: ${doc.entity_mentions.join(', ')}\n`;
+          }
+          if (doc.keywords?.length) contextData += `Keywords: ${doc.keywords.join(', ')}\n`;
+          if (doc.content_text) {
+            const contentPreview = doc.content_text.substring(0, 2500);
+            contextData += `Extracted Content:\n${contentPreview}${doc.content_text.length > 2500 ? '...[truncated]' : ''}\n`;
+          }
+          // Include detected relationships from metadata if present
+          const metadata = doc.metadata as any;
+          if (metadata?.detected_relationships?.length) {
+            contextData += `Detected Relationships: ${JSON.stringify(metadata.detected_relationships.slice(0, 10))}\n`;
+          }
+        });
+      }
+      
+      if (otherDocs.length) {
+        contextData += `\n\n=== ARCHIVAL DOCUMENTS (${otherDocs.length}) ===\n`;
+        otherDocs.forEach(doc => {
+          contextData += `\n--- Document: ${doc.filename} ---\n`;
+          if (doc.date_of_document) contextData += `Date: ${doc.date_of_document}\n`;
+          if (doc.summary) contextData += `Summary: ${doc.summary}\n`;
+          if (doc.keywords?.length) contextData += `Keywords: ${doc.keywords.join(', ')}\n`;
+          if (doc.entity_mentions?.length) contextData += `Entities Mentioned: ${doc.entity_mentions.join(', ')}\n`;
+          if (doc.content_text) {
+            const contentPreview = doc.content_text.substring(0, 2000);
+            contextData += `Content:\n${contentPreview}${doc.content_text.length > 2000 ? '...[truncated]' : ''}\n`;
+          }
+        });
+      }
     }
 
     // Include ingested intelligence documents
