@@ -6,6 +6,39 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Interface for evidence source tracking
+interface EvidenceSource {
+  claim: string;
+  sourceType: string;
+  sourceId: string;
+  sourceTitle: string;
+  sourceUrl?: string;
+  internalUrl: string;
+  timestamp: string;
+  confidence?: number;
+}
+
+// Interface for action items with ownership
+interface ActionItem {
+  description: string;
+  ownerId?: string;
+  ownerName?: string;
+  ownerRole: string;
+  deadline: string;
+  firstUpdateDue: string;
+  priority: string;
+  relatedIncidentId?: string;
+  relatedSignalId?: string;
+}
+
+// Interface for impact ladder
+interface ImpactLadder {
+  issue: string;
+  worstConsequence: string;
+  earliestIndicator: string;
+  mitigation: string;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -34,7 +67,7 @@ serve(async (req) => {
 
     const { client_id, period_days = 7 } = await req.json();
     
-    console.log(`Generating executive report for client ${client_id}, ${period_days} days`);
+    console.log(`Generating enhanced executive report for client ${client_id}, ${period_days} days`);
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
@@ -54,7 +87,7 @@ serve(async (req) => {
 
     if (clientError) throw clientError;
 
-    // Fetch signals for this client
+    // Fetch signals with full details for traceability
     const { data: signals, error: signalsError } = await supabaseClient
       .from('signals')
       .select('*')
@@ -65,16 +98,59 @@ serve(async (req) => {
 
     if (signalsError) throw signalsError;
 
-    // Fetch incidents for this client
+    // Fetch incidents with classification rationale
     const { data: incidents, error: incidentsError } = await supabaseClient
       .from('incidents')
-      .select('*')
+      .select(`
+        *,
+        incident_classification_rationale (
+          classification,
+          system_of_origin,
+          rationale,
+          classified_at
+        )
+      `)
       .eq('client_id', client_id)
       .gte('opened_at', periodStart.toISOString())
       .lte('opened_at', periodEnd.toISOString())
       .order('opened_at', { ascending: false });
 
     if (incidentsError) throw incidentsError;
+
+    // Fetch tone transformation rules
+    const { data: toneRules } = await supabase
+      .from('executive_tone_rules')
+      .select('original_phrase, replacement_phrase')
+      .eq('is_active', true);
+
+    // Fetch team members for ownership suggestions
+    const { data: teamMembers } = await supabase
+      .from('profiles')
+      .select('id, name')
+      .limit(50);
+
+    // Fetch user roles for ownership matching
+    const { data: userRoles } = await supabase
+      .from('user_roles')
+      .select('user_id, role');
+
+    // Build team map with roles
+    const teamMap = new Map<string, { id: string; name: string; roles: string[] }>();
+    teamMembers?.forEach(member => {
+      const roles = userRoles?.filter(ur => ur.user_id === member.id).map(ur => ur.role) || [];
+      teamMap.set(member.id, { id: member.id, name: member.name, roles });
+    });
+
+    // Apply tone transformation function
+    function applyToneTransformation(text: string): string {
+      if (!text || !toneRules?.length) return text;
+      let result = text;
+      for (const rule of toneRules) {
+        const regex = new RegExp(rule.original_phrase, 'gi');
+        result = result.replace(regex, rule.replacement_phrase);
+      }
+      return result;
+    }
 
     // Group signals by category and severity
     const signalsByCategory = signals?.reduce((acc: any, s) => {
@@ -86,6 +162,8 @@ serve(async (req) => {
 
     const criticalSignals = signals?.filter(s => s.severity === 'critical') || [];
     const highSignals = signals?.filter(s => s.severity === 'high') || [];
+    const p1p2Incidents = incidents?.filter(i => i.priority === 'p1' || i.priority === 'p2') || [];
+    const unknownIncidents = p1p2Incidents.filter(i => !i.category || i.category === 'unknown');
 
     // Calculate risk ratings
     const surveillanceRisk = signals?.filter(s => 
@@ -105,7 +183,6 @@ serve(async (req) => {
       s.severity === 'critical'
     ).length || 0;
 
-    // Determine overall risk level
     function getRiskLevel(count: number): string {
       if (count >= 5) return 'HIGH';
       if (count >= 3) return 'ELEVATED';
@@ -117,7 +194,149 @@ serve(async (req) => {
       Math.max(surveillanceRisk, protestRisk, sabotageThreat, criticalSignals.length)
     );
 
-    // Generate AI-powered executive summary
+    // Build evidence sources array for traceability
+    const evidenceSources: EvidenceSource[] = [];
+    const appBaseUrl = Deno.env.get('SUPABASE_URL')?.replace('.supabase.co', '.lovable.app') || '';
+
+    // Add signal evidence
+    signals?.slice(0, 20).forEach(signal => {
+      evidenceSources.push({
+        claim: signal.normalized_text?.substring(0, 100) || 'Signal detected',
+        sourceType: 'signal',
+        sourceId: signal.id,
+        sourceTitle: `${signal.category || 'Signal'} - ${signal.severity}`,
+        sourceUrl: signal.source_url || undefined,
+        internalUrl: `/signals?id=${signal.id}`,
+        timestamp: signal.received_at,
+        confidence: signal.confidence_score
+      });
+    });
+
+    // Add incident evidence
+    incidents?.forEach(incident => {
+      const rationale = incident.incident_classification_rationale?.[0];
+      evidenceSources.push({
+        claim: `${incident.priority?.toUpperCase()} Incident: ${incident.category || 'Unknown'}`,
+        sourceType: rationale?.system_of_origin || 'incident',
+        sourceId: incident.id,
+        sourceTitle: `Incident ${incident.id.substring(0, 8)}`,
+        internalUrl: `/incidents?id=${incident.id}`,
+        timestamp: incident.opened_at,
+        confidence: undefined
+      });
+    });
+
+    // Generate 1-Line Executive Call-to-Action with AI
+    const flashPrompt = `You are a senior security advisor providing a flash briefing for C-level executives at ${client.name}.
+
+Based on the following intelligence:
+- ${criticalSignals.length} critical severity signals
+- ${highSignals.length} high severity signals
+- ${p1p2Incidents.length} P1/P2 priority incidents (${unknownIncidents.length} unknown/unclassified)
+- Overall risk level: ${overallRiskLevel}
+- Key categories: ${Object.keys(signalsByCategory).slice(0, 5).join(', ')}
+
+Top 3 signals:
+${criticalSignals.slice(0, 3).map((s, i) => `${i + 1}. [${s.category}] ${s.normalized_text?.substring(0, 150)}`).join('\n')}
+
+Provide a JSON response with exactly this structure:
+{
+  "mostPressingIssue": "One sentence describing the single most critical issue requiring attention",
+  "confidence": "High|Medium|Low",
+  "recommendedAction": "One specific, actionable recommendation",
+  "ownerSuggestion": "Security Operations|Physical Security|Cyber Security|Intelligence|Executive Team",
+  "deadlineUrgency": "Immediate|24 hours|48 hours|This week"
+}
+
+Be specific, cite data, and use executive-appropriate language.`;
+
+    console.log('Generating executive flash banner...');
+    const flashResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash',
+        messages: [
+          { role: 'system', content: 'You are a security intelligence advisor. Always respond with valid JSON only, no markdown.' },
+          { role: 'user', content: flashPrompt }
+        ],
+      }),
+    });
+
+    let executiveFlash = {
+      mostPressingIssue: 'Intelligence analysis in progress',
+      confidence: 'Medium',
+      recommendedAction: 'Review detailed findings below',
+      ownerSuggestion: 'Security Operations',
+      deadlineUrgency: '48 hours'
+    };
+
+    if (flashResponse.ok) {
+      try {
+        const flashData = await flashResponse.json();
+        const content = flashData.choices?.[0]?.message?.content || '';
+        // Extract JSON from response
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          executiveFlash = JSON.parse(jsonMatch[0]);
+        }
+      } catch (e) {
+        console.error('Error parsing flash response:', e);
+      }
+    }
+
+    // Generate Impact Ladders for top issues
+    const impactPrompt = `As a security strategist, create impact ladders for the top 3 threats facing ${client.name}.
+
+Current threat landscape:
+${criticalSignals.slice(0, 5).map((s, i) => `${i + 1}. ${s.category}: ${s.normalized_text?.substring(0, 200)}`).join('\n')}
+
+For each major threat, provide a JSON array with this structure:
+[
+  {
+    "issue": "Brief description of the threat",
+    "worstConsequence": "If true, worst credible consequence is...",
+    "earliestIndicator": "The earliest indicator would be...",
+    "mitigation": "Primary mitigation is..."
+  }
+]
+
+Provide exactly 3 impact ladders. Be specific and actionable. Use executive language.`;
+
+    console.log('Generating impact ladders...');
+    const impactResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash',
+        messages: [
+          { role: 'system', content: 'You are a strategic security advisor. Always respond with valid JSON only.' },
+          { role: 'user', content: impactPrompt }
+        ],
+      }),
+    });
+
+    let impactLadders: ImpactLadder[] = [];
+    if (impactResponse.ok) {
+      try {
+        const impactData = await impactResponse.json();
+        const content = impactData.choices?.[0]?.message?.content || '';
+        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          impactLadders = JSON.parse(jsonMatch[0]);
+        }
+      } catch (e) {
+        console.error('Error parsing impact response:', e);
+      }
+    }
+
+    // Generate executive summary with tone transformation
     const summaryPrompt = `You are a security intelligence analyst creating an executive summary for ${client.name}.
 
 Period: ${periodStart.toDateString()} to ${periodEnd.toDateString()}
@@ -132,8 +351,8 @@ Intelligence Summary:
 - Total signals collected: ${signals?.length || 0}
 - Critical severity signals: ${criticalSignals.length}
 - High severity signals: ${highSignals.length}
+- P1/P2 Incidents: ${p1p2Incidents.length} (${unknownIncidents.length} require classification)
 - Open incidents: ${incidents?.filter(i => i.status === 'open').length || 0}
-- Categories: ${Object.keys(signalsByCategory).join(', ')}
 
 Top 5 Signals:
 ${signals?.slice(0, 5).map((s, i) => `${i + 1}. [${s.severity}] ${s.category}: ${s.normalized_text?.substring(0, 200)}`).join('\n')}
@@ -142,11 +361,11 @@ Write a professional 2-3 paragraph executive summary that:
 1. Highlights the most significant threats or developments
 2. Explains potential operational or reputational risks
 3. Provides context about why these matters are important
-4. Uses professional security industry language
+4. Uses professional, executive-appropriate language (avoid operator jargon)
 
-Be specific, cite concrete examples from the signals, and focus on actionable intelligence.`;
+Be specific, cite concrete examples from the signals.`;
 
-    console.log('Generating executive summary with AI...');
+    console.log('Generating executive summary...');
     const summaryResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -156,14 +375,8 @@ Be specific, cite concrete examples from the signals, and focus on actionable in
       body: JSON.stringify({
         model: 'google/gemini-2.5-flash',
         messages: [
-          {
-            role: 'system',
-            content: 'You are a professional security intelligence analyst with expertise in threat assessment and executive briefings. Write clear, actionable intelligence reports.'
-          },
-          {
-            role: 'user',
-            content: summaryPrompt
-          }
+          { role: 'system', content: 'You are a professional security intelligence analyst writing for C-level executives. Use formal, business-appropriate language.' },
+          { role: 'user', content: summaryPrompt }
         ],
       }),
     });
@@ -171,11 +384,92 @@ Be specific, cite concrete examples from the signals, and focus on actionable in
     let executiveSummary = 'Analysis in progress...';
     if (summaryResponse.ok) {
       const summaryData = await summaryResponse.json();
-      executiveSummary = summaryData.choices?.[0]?.message?.content || executiveSummary;
+      executiveSummary = applyToneTransformation(summaryData.choices?.[0]?.message?.content || executiveSummary);
     }
 
-    // Generate deductions for top issues
-    const deductionsPrompt = `As a security analyst, provide strategic deductions about the top threats facing ${client.name}.
+    // Generate action items with ownership suggestions
+    const actionsPrompt = `As a security operations advisor, create 3-5 actionable recommendations for ${client.name}.
+
+Current situation:
+- ${criticalSignals.length} critical signals requiring attention
+- ${p1p2Incidents.length} P1/P2 incidents
+- Overall risk: ${overallRiskLevel}
+
+Available team roles: Security Operations, Physical Security Lead, Cyber Security Lead, Intelligence Analyst, Executive Team, Legal/Compliance
+
+For each recommendation, provide JSON:
+[
+  {
+    "description": "Specific action to take",
+    "ownerRole": "Most appropriate team role",
+    "priority": "critical|high|medium",
+    "deadlineDays": 1|3|7|14,
+    "firstUpdateDays": 1|2|3
+  }
+]
+
+Be specific and actionable. Max 5 items.`;
+
+    console.log('Generating action items...');
+    const actionsResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash',
+        messages: [
+          { role: 'system', content: 'You are a security operations advisor. Always respond with valid JSON only.' },
+          { role: 'user', content: actionsPrompt }
+        ],
+      }),
+    });
+
+    let actionItems: ActionItem[] = [];
+    if (actionsResponse.ok) {
+      try {
+        const actionsData = await actionsResponse.json();
+        const content = actionsData.choices?.[0]?.message?.content || '';
+        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          const rawActions = JSON.parse(jsonMatch[0]);
+          const now = new Date();
+          actionItems = rawActions.map((a: any) => {
+            const deadline = new Date(now);
+            deadline.setDate(deadline.getDate() + (a.deadlineDays || 7));
+            const firstUpdate = new Date(now);
+            firstUpdate.setDate(firstUpdate.getDate() + (a.firstUpdateDays || 2));
+            
+            // Try to find a matching team member
+            let ownerName = a.ownerRole;
+            let ownerId: string | undefined;
+            for (const [id, member] of teamMap) {
+              if (member.roles.some(r => a.ownerRole.toLowerCase().includes(r))) {
+                ownerId = id;
+                ownerName = member.name;
+                break;
+              }
+            }
+
+            return {
+              description: a.description,
+              ownerId,
+              ownerName,
+              ownerRole: a.ownerRole,
+              deadline: deadline.toISOString(),
+              firstUpdateDue: firstUpdate.toISOString(),
+              priority: a.priority || 'medium'
+            };
+          });
+        }
+      } catch (e) {
+        console.error('Error parsing actions response:', e);
+      }
+    }
+
+    // Generate deductions with tone transformation
+    const deductionsPrompt = `As a security analyst, provide strategic deductions about threats facing ${client.name}.
 
 Based on these critical/high signals:
 ${[...criticalSignals, ...highSignals].slice(0, 10).map((s, i) => 
@@ -183,12 +477,12 @@ ${[...criticalSignals, ...highSignals].slice(0, 10).map((s, i) =>
 ).join('\n')}
 
 Write 2-3 deduction paragraphs that:
-1. Explain the strategic implications of these developments
-2. Assess how they could impact operations, reputation, or stakeholder relationships
+1. Explain strategic implications
+2. Assess potential impact on operations, reputation, or stakeholder relationships
 3. Identify potential escalation scenarios
 4. Suggest monitoring priorities
 
-Use professional language with phrases like "poses potential reputational risks", "could trigger increased interest from", "perception could damage", etc.`;
+Use professional executive language.`;
 
     console.log('Generating strategic deductions...');
     const deductionsResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -200,14 +494,8 @@ Use professional language with phrases like "poses potential reputational risks"
       body: JSON.stringify({
         model: 'google/gemini-2.5-flash',
         messages: [
-          {
-            role: 'system',
-            content: 'You are a strategic security analyst providing executive-level threat assessment and risk analysis.'
-          },
-          {
-            role: 'user',
-            content: deductionsPrompt
-          }
+          { role: 'system', content: 'You are a strategic security analyst providing executive-level threat assessment.' },
+          { role: 'user', content: deductionsPrompt }
         ],
       }),
     });
@@ -215,27 +503,27 @@ Use professional language with phrases like "poses potential reputational risks"
     let deductions = 'Analysis in progress...';
     if (deductionsResponse.ok) {
       const deductionsData = await deductionsResponse.json();
-      deductions = deductionsData.choices?.[0]?.message?.content || deductions;
+      deductions = applyToneTransformation(deductionsData.choices?.[0]?.message?.content || deductions);
     }
 
-    // Generate detailed signal narratives for top issues
+    // Generate detailed narratives
     const narrativesPromises = Object.entries(signalsByCategory)
       .slice(0, 3)
       .map(async ([category, categorySignals]: [string, any]) => {
         const topSignals = categorySignals.slice(0, 5);
         
-        const narrativePrompt = `Write a professional intelligence narrative about ${category} related to ${client.name}.
+        const narrativePrompt = `Write a professional intelligence narrative about ${category} for ${client.name}.
 
 Signals to analyze:
 ${topSignals.map((s: any, i: number) => `${i + 1}. ${s.normalized_text} (${s.severity}, ${new Date(s.received_at).toLocaleDateString()})`).join('\n')}
 
 Write 2-3 paragraphs that:
-1. Summarize what's happening in this category
-2. Provide context and explain significance
-3. Include specific details from the signals (dates, sources, quotes if available)
-4. Explain potential risks or opportunities
+1. Summarize developments in this category
+2. Provide context and significance
+3. Include specific details (dates, sources)
+4. Explain potential risks
 
-Use professional intelligence report language.`;
+Use executive-appropriate language.`;
 
         const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
           method: 'POST',
@@ -246,14 +534,8 @@ Use professional intelligence report language.`;
           body: JSON.stringify({
             model: 'google/gemini-2.5-flash',
             messages: [
-              {
-                role: 'system',
-                content: 'You are an intelligence analyst writing detailed threat narratives for executive briefings.'
-              },
-              {
-                role: 'user',
-                content: narrativePrompt
-              }
+              { role: 'system', content: 'You are an intelligence analyst writing for executives.' },
+              { role: 'user', content: narrativePrompt }
             ],
           }),
         });
@@ -262,34 +544,29 @@ Use professional intelligence report language.`;
           const data = await response.json();
           return {
             category,
-            narrative: data.choices?.[0]?.message?.content || 'Analysis unavailable',
+            narrative: applyToneTransformation(data.choices?.[0]?.message?.content || 'Analysis unavailable'),
             signals: topSignals
           };
         }
-        return {
-          category,
-          narrative: 'Analysis unavailable',
-          signals: topSignals
-        };
+        return { category, narrative: 'Analysis unavailable', signals: topSignals };
       });
 
     console.log('Generating detailed narratives...');
     const narratives = await Promise.all(narrativesPromises);
 
-    // Generate HTML report in professional format
+    // Format dates
     const reportDate = new Date().toLocaleDateString('en-US', { 
-      year: 'numeric', 
-      month: 'short', 
-      day: 'numeric' 
+      year: 'numeric', month: 'short', day: 'numeric' 
     });
 
+    // Generate HTML report with all enhancements
     const html = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Security Awareness Report - ${client.name}</title>
+  <title>Executive Intelligence Brief - ${client.name}</title>
   <style>
     @page { margin: 0.75in; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -305,7 +582,7 @@ Use professional intelligence report language.`;
     .header {
       border-bottom: 3px solid #7c3aed;
       padding-bottom: 12pt;
-      margin-bottom: 24pt;
+      margin-bottom: 16pt;
     }
 
     .header-top {
@@ -324,28 +601,80 @@ Use professional intelligence report language.`;
       letter-spacing: 1px;
     }
 
-    .report-date {
-      font-size: 10pt;
-      color: #666;
+    .report-date { font-size: 10pt; color: #666; font-weight: 600; }
+    .logo-area { text-align: center; margin-bottom: 6pt; }
+    .company-name { font-size: 20pt; font-weight: 700; color: #7c3aed; margin-bottom: 4pt; }
+    .report-title { font-size: 14pt; color: #333; font-weight: 600; }
+
+    /* EXECUTIVE FLASH BANNER - New */
+    .executive-flash {
+      background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+      color: white;
+      padding: 20pt;
+      margin: 16pt 0;
+      border-radius: 6pt;
+      box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+    }
+
+    .flash-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12pt;
+      border-bottom: 1px solid rgba(255,255,255,0.3);
+      padding-bottom: 8pt;
+    }
+
+    .flash-title {
+      font-size: 11pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5pt;
+    }
+
+    .flash-confidence {
+      background: rgba(255,255,255,0.2);
+      padding: 4pt 10pt;
+      border-radius: 3pt;
+      font-size: 9pt;
       font-weight: 600;
     }
 
-    .logo-area {
-      text-align: center;
-      margin-bottom: 6pt;
+    .flash-issue {
+      font-size: 14pt;
+      font-weight: 700;
+      margin-bottom: 12pt;
+      line-height: 1.4;
     }
 
-    .company-name {
-      font-size: 20pt;
-      font-weight: 700;
-      color: #7c3aed;
+    .flash-action {
+      background: rgba(255,255,255,0.15);
+      padding: 12pt;
+      border-radius: 4pt;
+      margin-bottom: 10pt;
+    }
+
+    .flash-action-label {
+      font-size: 9pt;
+      text-transform: uppercase;
+      opacity: 0.8;
       margin-bottom: 4pt;
     }
 
-    .report-title {
-      font-size: 14pt;
-      color: #333;
+    .flash-action-text {
+      font-size: 12pt;
       font-weight: 600;
+    }
+
+    .flash-meta {
+      display: flex;
+      gap: 20pt;
+      font-size: 9pt;
+      opacity: 0.9;
+    }
+
+    .flash-meta-item strong {
+      font-weight: 700;
     }
 
     .meta-grid {
@@ -359,28 +688,11 @@ Use professional intelligence report language.`;
       border: 1px solid #e0e0e0;
     }
 
-    .meta-item {
-      font-size: 9pt;
-    }
+    .meta-item { font-size: 9pt; }
+    .meta-label { text-transform: uppercase; font-weight: 700; color: #666; letter-spacing: 0.5pt; margin-bottom: 2pt; }
+    .meta-value { color: #1a1a1a; font-weight: 600; }
 
-    .meta-label {
-      text-transform: uppercase;
-      font-weight: 700;
-      color: #666;
-      letter-spacing: 0.5pt;
-      margin-bottom: 2pt;
-    }
-
-    .meta-value {
-      color: #1a1a1a;
-      font-weight: 600;
-    }
-
-    .section {
-      margin-bottom: 28pt;
-      page-break-inside: avoid;
-    }
-
+    .section { margin-bottom: 28pt; page-break-inside: avoid; }
     .section-title {
       font-size: 14pt;
       font-weight: 700;
@@ -390,12 +702,7 @@ Use professional intelligence report language.`;
       border-bottom: 2px solid #7c3aed;
     }
 
-    .subsection-title {
-      font-size: 12pt;
-      font-weight: 700;
-      color: #7c3aed;
-      margin: 18pt 0 8pt 0;
-    }
+    .subsection-title { font-size: 12pt; font-weight: 700; color: #7c3aed; margin: 18pt 0 8pt 0; }
 
     .executive-summary {
       background: #f0f0f0;
@@ -404,6 +711,226 @@ Use professional intelligence report language.`;
       margin: 16pt 0;
       font-size: 10.5pt;
       line-height: 1.6;
+    }
+
+    /* IMPACT LADDER - New */
+    .impact-ladder {
+      background: #fef3c7;
+      border: 2pt solid #f59e0b;
+      border-radius: 6pt;
+      padding: 16pt;
+      margin: 16pt 0;
+    }
+
+    .impact-ladder-title {
+      font-weight: 700;
+      color: #b45309;
+      font-size: 11pt;
+      margin-bottom: 12pt;
+      display: flex;
+      align-items: center;
+      gap: 8pt;
+    }
+
+    .impact-item {
+      background: white;
+      border-radius: 4pt;
+      padding: 12pt;
+      margin-bottom: 10pt;
+      border-left: 4pt solid #f59e0b;
+    }
+
+    .impact-issue {
+      font-weight: 700;
+      color: #1a1a1a;
+      margin-bottom: 8pt;
+      font-size: 10.5pt;
+    }
+
+    .impact-row {
+      display: flex;
+      margin: 6pt 0;
+      font-size: 9.5pt;
+    }
+
+    .impact-label {
+      width: 140pt;
+      font-weight: 600;
+      color: #666;
+    }
+
+    .impact-value {
+      flex: 1;
+      color: #1a1a1a;
+    }
+
+    /* INCIDENT DETAIL TABLE - Enhanced */
+    .incident-detail-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16pt 0;
+      font-size: 9pt;
+    }
+
+    .incident-detail-table th {
+      background: #991b1b;
+      color: white;
+      padding: 8pt;
+      text-align: left;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 8pt;
+      letter-spacing: 0.5pt;
+    }
+
+    .incident-detail-table td {
+      padding: 8pt;
+      border-bottom: 1px solid #e0e0e0;
+      vertical-align: top;
+    }
+
+    .incident-detail-table tbody tr:nth-child(even) { background: #fef2f2; }
+
+    .incident-id-link {
+      color: #7c3aed;
+      font-family: monospace;
+      font-size: 8pt;
+    }
+
+    .system-badge {
+      display: inline-block;
+      padding: 2pt 6pt;
+      border-radius: 3pt;
+      font-size: 8pt;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .system-cyber { background: #dbeafe; color: #1e40af; }
+    .system-physical { background: #dcfce7; color: #166534; }
+    .system-intel { background: #f3e8ff; color: #7c3aed; }
+    .system-social { background: #fef3c7; color: #b45309; }
+
+    /* OWNERSHIP MATRIX - New */
+    .ownership-section {
+      background: #f0fdf4;
+      border: 2pt solid #22c55e;
+      border-radius: 6pt;
+      padding: 16pt;
+      margin: 16pt 0;
+    }
+
+    .ownership-title {
+      font-weight: 700;
+      color: #166534;
+      font-size: 11pt;
+      margin-bottom: 12pt;
+    }
+
+    .action-item {
+      background: white;
+      border-radius: 4pt;
+      padding: 12pt;
+      margin-bottom: 10pt;
+      border-left: 4pt solid #22c55e;
+    }
+
+    .action-description {
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 8pt;
+      font-size: 10pt;
+    }
+
+    .action-meta {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10pt;
+      font-size: 9pt;
+    }
+
+    .action-meta-item {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .action-meta-label {
+      font-weight: 700;
+      color: #666;
+      font-size: 8pt;
+      text-transform: uppercase;
+      margin-bottom: 2pt;
+    }
+
+    .action-meta-value {
+      color: #1a1a1a;
+    }
+
+    .priority-badge {
+      display: inline-block;
+      padding: 2pt 6pt;
+      border-radius: 3pt;
+      font-size: 8pt;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .priority-critical { background: #fee2e2; color: #dc2626; }
+    .priority-high { background: #fef3c7; color: #b45309; }
+    .priority-medium { background: #dbeafe; color: #2563eb; }
+
+    /* EVIDENCE CITATIONS - Enhanced */
+    .evidence-citation {
+      background: white;
+      border-left: 3pt solid #7c3aed;
+      padding: 10pt 12pt;
+      margin: 8pt 0;
+      font-size: 9.5pt;
+      color: #333;
+    }
+
+    .evidence-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 6pt;
+    }
+
+    .evidence-source {
+      font-size: 8pt;
+      color: #7c3aed;
+      font-weight: 600;
+    }
+
+    .evidence-timestamp {
+      font-size: 8pt;
+      color: #888;
+      font-family: monospace;
+    }
+
+    .evidence-text {
+      color: #1a1a1a;
+      line-height: 1.5;
+    }
+
+    .evidence-links {
+      display: flex;
+      gap: 12pt;
+      margin-top: 6pt;
+      font-size: 8pt;
+    }
+
+    .evidence-link {
+      color: #7c3aed;
+      text-decoration: none;
+    }
+
+    .evidence-link:hover { text-decoration: underline; }
+
+    .evidence-id {
+      color: #888;
+      font-family: monospace;
+      font-size: 7pt;
     }
 
     .risk-table {
@@ -429,9 +956,7 @@ Use professional intelligence report language.`;
       border-bottom: 1px solid #e0e0e0;
     }
 
-    .risk-table tbody tr:nth-child(even) {
-      background: #f8f9fa;
-    }
+    .risk-table tbody tr:nth-child(even) { background: #f8f9fa; }
 
     .risk-badge {
       display: inline-block;
@@ -463,21 +988,6 @@ Use professional intelligence report language.`;
       margin: 12pt 0;
     }
 
-    .signal-citation {
-      background: white;
-      border-left: 3pt solid #7c3aed;
-      padding: 8pt 12pt;
-      margin: 8pt 0;
-      font-size: 9.5pt;
-      color: #555;
-    }
-
-    .signal-meta {
-      font-size: 8.5pt;
-      color: #888;
-      margin-top: 4pt;
-    }
-
     .deduction-box {
       background: #fff8e1;
       border: 2pt solid #f59e0b;
@@ -502,21 +1012,16 @@ Use professional intelligence report language.`;
     }
 
     .footer {
-      position: fixed;
-      bottom: 0;
-      width: 100%;
       text-align: center;
       font-size: 8pt;
       color: #999;
       padding: 12pt 0;
       border-top: 1px solid #e0e0e0;
+      margin-top: 24pt;
     }
 
     .page-break { page-break-after: always; }
-
-    @media print {
-      .no-print { display: none; }
-    }
+    @media print { .no-print { display: none; } }
   </style>
 </head>
 <body>
@@ -527,7 +1032,25 @@ Use professional intelligence report language.`;
     </div>
     <div class="logo-area">
       <div class="company-name">Fortress AI</div>
-      <div class="report-title">${client.name} – Security Awareness Report</div>
+      <div class="report-title">${client.name} – Executive Intelligence Brief</div>
+    </div>
+  </div>
+
+  <!-- EXECUTIVE FLASH BANNER -->
+  <div class="executive-flash">
+    <div class="flash-header">
+      <div class="flash-title">⚡ Executive Flash</div>
+      <div class="flash-confidence">Confidence: ${executiveFlash.confidence}</div>
+    </div>
+    <div class="flash-issue">${executiveFlash.mostPressingIssue}</div>
+    <div class="flash-action">
+      <div class="flash-action-label">Recommended Action</div>
+      <div class="flash-action-text">${executiveFlash.recommendedAction}</div>
+    </div>
+    <div class="flash-meta">
+      <div class="flash-meta-item"><strong>Owner:</strong> ${executiveFlash.ownerSuggestion}</div>
+      <div class="flash-meta-item"><strong>Timeline:</strong> ${executiveFlash.deadlineUrgency}</div>
+      <div class="flash-meta-item"><strong>Risk Level:</strong> ${overallRiskLevel}</div>
     </div>
   </div>
 
@@ -553,8 +1076,8 @@ Use professional intelligence report language.`;
       <div class="meta-value">${signals?.length || 0}</div>
     </div>
     <div class="meta-item">
-      <div class="meta-label">Incidents Tracked</div>
-      <div class="meta-value">${incidents?.length || 0}</div>
+      <div class="meta-label">P1/P2 Incidents</div>
+      <div class="meta-value">${p1p2Incidents.length}</div>
     </div>
   </div>
 
@@ -565,10 +1088,66 @@ Use professional intelligence report language.`;
     </div>
   </div>
 
+  <!-- P1/P2 INCIDENT DETAIL TABLE -->
+  ${p1p2Incidents.length > 0 ? `
   <div class="section">
-    <h2 class="section-title">Risk Rating</h2>
+    <h2 class="section-title">P1/P2 Incident Detail</h2>
+    <p style="margin-bottom: 12pt; font-size: 10pt; color: #666;">
+      ${p1p2Incidents.length} priority incidents identified. ${unknownIncidents.length} require category classification.
+    </p>
+    <table class="incident-detail-table">
+      <thead>
+        <tr>
+          <th style="width: 80pt;">Incident ID</th>
+          <th style="width: 60pt;">Priority</th>
+          <th style="width: 80pt;">System Origin</th>
+          <th>Category / Classification Rationale</th>
+          <th style="width: 100pt;">Timestamp</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${p1p2Incidents.slice(0, 10).map(incident => {
+          const rationale = incident.incident_classification_rationale?.[0];
+          const systemOrigin = rationale?.system_of_origin || 'unknown';
+          const systemClass = systemOrigin.toLowerCase().includes('cyber') ? 'cyber' :
+                              systemOrigin.toLowerCase().includes('physical') ? 'physical' :
+                              systemOrigin.toLowerCase().includes('intel') ? 'intel' : 'social';
+          return `
+        <tr>
+          <td>
+            <a href="/incidents?id=${incident.id}" class="evidence-link">
+              <span class="incident-id-link">${incident.id.substring(0, 8).toUpperCase()}</span>
+            </a>
+          </td>
+          <td>
+            <span class="risk-badge ${incident.priority === 'p1' ? 'risk-high' : 'risk-elevated'}">
+              ${incident.priority?.toUpperCase()}
+            </span>
+          </td>
+          <td>
+            <span class="system-badge system-${systemClass}">${systemOrigin}</span>
+          </td>
+          <td>
+            <strong>${incident.category || 'Unknown'}</strong><br>
+            <span style="font-size: 8pt; color: #666;">
+              ${rationale?.rationale || 'Classification pending - requires analyst review'}
+            </span>
+          </td>
+          <td style="font-size: 9pt; font-family: monospace;">
+            ${new Date(incident.opened_at).toISOString().replace('T', ' ').substring(0, 19)}Z
+          </td>
+        </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  </div>
+  ` : ''}
+
+  <div class="section">
+    <h2 class="section-title">Risk Assessment</h2>
     <p style="margin-bottom: 12pt;">
-      The overall inherent risk rating for ${client.name} for ${reportDate} is 
+      Overall inherent risk rating for ${client.name}: 
       <strong><span class="risk-badge risk-${overallRiskLevel.toLowerCase()}">${overallRiskLevel}</span></strong>
     </p>
 
@@ -610,35 +1189,98 @@ Use professional intelligence report language.`;
     </table>
   </div>
 
-  ${narratives.length > 0 ? `
-    <div class="page-break"></div>
-    <div class="section">
-      <h2 class="section-title">Issues of Specific Concern</h2>
-      ${narratives.map(item => `
-        <div class="narrative-section">
-          <h3 class="subsection-title">${item.category}</h3>
-          <div class="narrative-text">
-            ${item.narrative.split('\n\n').map((p: string) => `<p style="margin-bottom: 10pt;">${p}</p>`).join('')}
-          </div>
-          
-          ${item.signals.slice(0, 3).map((signal: any) => `
-            <div class="signal-citation">
-              <strong>${signal.category || 'Signal'}:</strong> ${signal.normalized_text?.substring(0, 200) || 'No details available'}
-              <div class="signal-meta">
-                Severity: ${signal.severity?.toUpperCase()} | 
-                Received: ${new Date(signal.received_at).toLocaleString()} |
-                Location: ${signal.location || 'Unknown'}
-              </div>
-            </div>
-          `).join('')}
+  <!-- IMPACT LADDERS -->
+  ${impactLadders.length > 0 ? `
+  <div class="section">
+    <div class="impact-ladder">
+      <div class="impact-ladder-title">📊 Impact Analysis</div>
+      ${impactLadders.map(ladder => `
+      <div class="impact-item">
+        <div class="impact-issue">${ladder.issue}</div>
+        <div class="impact-row">
+          <div class="impact-label">Worst Consequence:</div>
+          <div class="impact-value">${ladder.worstConsequence}</div>
         </div>
+        <div class="impact-row">
+          <div class="impact-label">Earliest Indicator:</div>
+          <div class="impact-value">${ladder.earliestIndicator}</div>
+        </div>
+        <div class="impact-row">
+          <div class="impact-label">Mitigation:</div>
+          <div class="impact-value">${ladder.mitigation}</div>
+        </div>
+      </div>
       `).join('')}
     </div>
+  </div>
+  ` : ''}
+
+  <!-- OWNERSHIP + TIMELINE -->
+  ${actionItems.length > 0 ? `
+  <div class="section">
+    <div class="ownership-section">
+      <div class="ownership-title">📋 Action Items & Ownership</div>
+      ${actionItems.map(item => `
+      <div class="action-item">
+        <div class="action-description">${item.description}</div>
+        <div class="action-meta">
+          <div class="action-meta-item">
+            <div class="action-meta-label">Owner</div>
+            <div class="action-meta-value">${item.ownerName || item.ownerRole}</div>
+          </div>
+          <div class="action-meta-item">
+            <div class="action-meta-label">Deadline</div>
+            <div class="action-meta-value">${new Date(item.deadline).toLocaleDateString()}</div>
+          </div>
+          <div class="action-meta-item">
+            <div class="action-meta-label">First Update</div>
+            <div class="action-meta-value">${new Date(item.firstUpdateDue).toLocaleDateString()}</div>
+          </div>
+        </div>
+        <div style="margin-top: 8pt;">
+          <span class="priority-badge priority-${item.priority}">${item.priority}</span>
+        </div>
+      </div>
+      `).join('')}
+    </div>
+  </div>
+  ` : ''}
+
+  ${narratives.length > 0 ? `
+  <div class="page-break"></div>
+  <div class="section">
+    <h2 class="section-title">Issues of Specific Concern</h2>
+    ${narratives.map(item => `
+      <div class="narrative-section">
+        <h3 class="subsection-title">${item.category}</h3>
+        <div class="narrative-text">
+          ${item.narrative.split('\n\n').map((p: string) => `<p style="margin-bottom: 10pt;">${p}</p>`).join('')}
+        </div>
+        
+        ${item.signals.slice(0, 3).map((signal: any) => `
+          <div class="evidence-citation">
+            <div class="evidence-header">
+              <div class="evidence-source">Source: Fortress Intelligence Platform</div>
+              <div class="evidence-timestamp">${new Date(signal.received_at).toISOString()}</div>
+            </div>
+            <div class="evidence-text">
+              <strong>${signal.category || 'Signal'}:</strong> ${signal.normalized_text?.substring(0, 250) || 'No details available'}
+            </div>
+            <div class="evidence-links">
+              <a href="/signals?id=${signal.id}" class="evidence-link">🔗 View in Fortress</a>
+              ${signal.source_url ? `<a href="${signal.source_url}" class="evidence-link" target="_blank">🌐 Original Source</a>` : ''}
+              <span class="evidence-id">ID: ${signal.id.substring(0, 8).toUpperCase()}</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `).join('')}
+  </div>
   ` : ''}
 
   <div class="section">
     <div class="deduction-box">
-      <div class="deduction-label">Deductions</div>
+      <div class="deduction-label">Strategic Deductions</div>
       <div class="deduction-text">
         ${deductions.split('\n\n').map(p => `<p style="margin-bottom: 10pt;">${p}</p>`).join('')}
       </div>
@@ -647,12 +1289,12 @@ Use professional intelligence report language.`;
 
   <div class="footer">
     Client: ${client.name} | Effective Date: ${reportDate}<br>
-    Copyright © 2025. Fortress AI Security Intelligence Platform. All Rights Reserved.
+    Copyright © 2026. Fortress AI Security Intelligence Platform. All Rights Reserved.
   </div>
 </body>
 </html>`;
 
-    // Store report metadata
+    // Store report with enhanced metadata
     const { data: report, error: reportError } = await supabase
       .from('reports')
       .insert({
@@ -665,9 +1307,18 @@ Use professional intelligence report language.`;
           total_signals: signals?.length || 0,
           critical_signals: criticalSignals.length,
           high_signals: highSignals.length,
-          open_incidents: incidents?.filter(i => i.status === 'open').length || 0,
+          p1p2_incidents: p1p2Incidents.length,
+          unknown_incidents: unknownIncidents.length,
           overall_risk_level: overallRiskLevel,
           categories: Object.keys(signalsByCategory),
+          executive_flash: executiveFlash,
+          impact_ladders: impactLadders,
+          action_items: actionItems.map(a => ({
+            description: a.description,
+            owner: a.ownerName || a.ownerRole,
+            deadline: a.deadline,
+            priority: a.priority
+          })),
           executive_summary: executiveSummary,
           deductions,
           narratives: narratives.map(n => ({ category: n.category, narrative: n.narrative }))
@@ -678,6 +1329,41 @@ Use professional intelligence report language.`;
 
     if (reportError) throw reportError;
 
+    // Store evidence sources for traceability
+    if (report && evidenceSources.length > 0) {
+      await supabase.from('report_evidence_sources').insert(
+        evidenceSources.slice(0, 50).map(es => ({
+          report_id: report.id,
+          claim_text: es.claim,
+          source_type: es.sourceType,
+          source_id: es.sourceId,
+          source_title: es.sourceTitle,
+          source_url: es.sourceUrl,
+          internal_url: es.internalUrl,
+          timestamp: es.timestamp,
+          confidence_score: es.confidence
+        }))
+      );
+    }
+
+    // Store action items for tracking
+    if (report && actionItems.length > 0) {
+      await supabase.from('report_action_items').insert(
+        actionItems.map(a => ({
+          report_id: report.id,
+          action_description: a.description,
+          owner_id: a.ownerId,
+          owner_role: a.ownerRole,
+          deadline: a.deadline,
+          first_update_due: a.firstUpdateDue,
+          priority: a.priority,
+          status: 'pending'
+        }))
+      );
+    }
+
+    console.log('Enhanced executive report generated successfully');
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -687,7 +1373,10 @@ Use professional intelligence report language.`;
           client: client.name,
           period: `${periodStart.toLocaleDateString()} - ${periodEnd.toLocaleDateString()}`,
           signals_analyzed: signals?.length || 0,
+          p1p2_incidents: p1p2Incidents.length,
           risk_level: overallRiskLevel,
+          executive_flash: executiveFlash,
+          action_items_count: actionItems.length,
           categories: Object.keys(signalsByCategory)
         }
       }),

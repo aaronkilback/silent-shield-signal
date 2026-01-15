@@ -1601,6 +1601,47 @@ export type Database = {
         }
         Relationships: []
       }
+      executive_tone_rules: {
+        Row: {
+          category: string | null
+          created_at: string | null
+          created_by: string | null
+          id: string
+          is_active: boolean | null
+          original_phrase: string
+          replacement_phrase: string
+          updated_at: string | null
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          is_active?: boolean | null
+          original_phrase: string
+          replacement_phrase: string
+          updated_at?: string | null
+        }
+        Update: {
+          category?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          is_active?: boolean | null
+          original_phrase?: string
+          replacement_phrase?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "executive_tone_rules_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       feedback_events: {
         Row: {
           created_at: string | null
@@ -1683,6 +1724,47 @@ export type Database = {
             columns: ["owner_user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      incident_classification_rationale: {
+        Row: {
+          classification: string
+          classified_at: string | null
+          classified_by: string | null
+          created_at: string | null
+          id: string
+          incident_id: string | null
+          rationale: string
+          system_of_origin: string
+        }
+        Insert: {
+          classification: string
+          classified_at?: string | null
+          classified_by?: string | null
+          created_at?: string | null
+          id?: string
+          incident_id?: string | null
+          rationale: string
+          system_of_origin: string
+        }
+        Update: {
+          classification?: string
+          classified_at?: string | null
+          classified_by?: string | null
+          created_at?: string | null
+          id?: string
+          incident_id?: string | null
+          rationale?: string
+          system_of_origin?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "incident_classification_rationale_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: true
+            referencedRelation: "incidents"
             referencedColumns: ["id"]
           },
         ]
@@ -3016,6 +3098,133 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      report_action_items: {
+        Row: {
+          action_description: string
+          created_at: string | null
+          deadline: string | null
+          first_update_due: string | null
+          id: string
+          owner_id: string | null
+          owner_role: string | null
+          priority: string | null
+          related_incident_id: string | null
+          related_signal_id: string | null
+          report_id: string | null
+          status: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          action_description: string
+          created_at?: string | null
+          deadline?: string | null
+          first_update_due?: string | null
+          id?: string
+          owner_id?: string | null
+          owner_role?: string | null
+          priority?: string | null
+          related_incident_id?: string | null
+          related_signal_id?: string | null
+          report_id?: string | null
+          status?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          action_description?: string
+          created_at?: string | null
+          deadline?: string | null
+          first_update_due?: string | null
+          id?: string
+          owner_id?: string | null
+          owner_role?: string | null
+          priority?: string | null
+          related_incident_id?: string | null
+          related_signal_id?: string | null
+          report_id?: string | null
+          status?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "report_action_items_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_action_items_related_incident_id_fkey"
+            columns: ["related_incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_action_items_related_signal_id_fkey"
+            columns: ["related_signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_action_items_report_id_fkey"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "reports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      report_evidence_sources: {
+        Row: {
+          claim_text: string
+          confidence_score: number | null
+          created_at: string | null
+          id: string
+          internal_url: string | null
+          report_id: string | null
+          source_id: string | null
+          source_title: string | null
+          source_type: string
+          source_url: string | null
+          timestamp: string | null
+        }
+        Insert: {
+          claim_text: string
+          confidence_score?: number | null
+          created_at?: string | null
+          id?: string
+          internal_url?: string | null
+          report_id?: string | null
+          source_id?: string | null
+          source_title?: string | null
+          source_type: string
+          source_url?: string | null
+          timestamp?: string | null
+        }
+        Update: {
+          claim_text?: string
+          confidence_score?: number | null
+          created_at?: string | null
+          id?: string
+          internal_url?: string | null
+          report_id?: string | null
+          source_id?: string | null
+          source_title?: string | null
+          source_type?: string
+          source_url?: string | null
+          timestamp?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "report_evidence_sources_report_id_fkey"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "reports"
             referencedColumns: ["id"]
           },
         ]
