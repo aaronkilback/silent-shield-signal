@@ -46,7 +46,7 @@ interface WeatherAlert {
 
 interface InfrastructurePoint {
   name: string;
-  type: 'refinery' | 'pipeline' | 'terminal' | 'platform' | 'storage' | 'road';
+  type: 'refinery' | 'pipeline' | 'terminal' | 'platform' | 'storage' | 'road' | 'pod' | 'hub' | 'wellpad' | 'compressor' | 'gasplant';
   latitude: number;
   longitude: number;
   operator: string;
@@ -430,111 +430,119 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
       { name: 'Groundbirch Well Pad A', type: 'platform', latitude: 56.6000, longitude: -120.8000, operator: 'PETRONAS Canada', status: 'active' },
       { name: 'Groundbirch Well Pad B', type: 'platform', latitude: 56.5000, longitude: -120.9200, operator: 'PETRONAS Canada', status: 'active' },
       
-      // ===== PETRONAS CANADA - PRODUCTION PODS (NBU - Red boundary) =====
+      // ===== PETRONAS CANADA PRODUCTION PODS =====
+      // Coordinates calibrated using Fort St. John (56.25°N, 120.85°W) as anchor
+      // Map grid: Township/Range system - each township ~6 miles (~10km)
       
-      // GREER Pod - Northwest corner of NBU
-      { name: 'Greer Production Pod', type: 'platform', latitude: 57.35, longitude: -121.60, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Greer Well Pad A', type: 'platform', latitude: 57.38, longitude: -121.55, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Greer Well Pad B', type: 'platform', latitude: 57.32, longitude: -121.65, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Greer Compressor Station', type: 'terminal', latitude: 57.34, longitude: -121.58, operator: 'PETRONAS Canada', status: 'active' },
+      // ===== NBU (NORTH BUSINESS UNIT) - Red boundary =====
       
-      // TOMMY LAKE Pod - Northeast of Greer
-      { name: 'Tommy Lake Production Pod', type: 'platform', latitude: 57.30, longitude: -121.00, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Tommy Lake Well Pad A', type: 'platform', latitude: 57.32, longitude: -120.95, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Tommy Lake Well Pad B', type: 'platform', latitude: 57.28, longitude: -121.05, operator: 'PETRONAS Canada', status: 'active' },
+      // GREER Pod - Far northwest NBU (approx 35km NW of Fort St. John)
+      { name: 'GREER', type: 'pod', latitude: 56.72, longitude: -121.35, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Greer Well Pad A', type: 'wellpad', latitude: 56.74, longitude: -121.32, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Greer Well Pad B', type: 'wellpad', latitude: 56.70, longitude: -121.38, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Greer Compressor Station', type: 'compressor', latitude: 56.71, longitude: -121.34, operator: 'PETRONAS Canada', status: 'active' },
       
-      // CARIBOU NORTH Pod - West central NBU
-      { name: 'Caribou North Production Pod', type: 'platform', latitude: 57.10, longitude: -121.50, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Caribou North Well Pad A', type: 'platform', latitude: 57.12, longitude: -121.45, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Caribou North Well Pad B', type: 'platform', latitude: 57.08, longitude: -121.55, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Caribou North Compressor Station', type: 'terminal', latitude: 57.11, longitude: -121.48, operator: 'PETRONAS Canada', status: 'active' },
+      // TOMMY LAKE Pod - North-northeast of Greer
+      { name: 'TOMMY LAKE', type: 'pod', latitude: 56.68, longitude: -120.75, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Tommy Lake Well Pad A', type: 'wellpad', latitude: 56.70, longitude: -120.72, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Tommy Lake Well Pad B', type: 'wellpad', latitude: 56.66, longitude: -120.78, operator: 'PETRONAS Canada', status: 'active' },
+      
+      // CARIBOU NORTH Pod - West-central NBU
+      { name: 'CARIBOU NORTH', type: 'pod', latitude: 56.58, longitude: -121.28, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Caribou North Well Pad A', type: 'wellpad', latitude: 56.60, longitude: -121.25, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Caribou North Well Pad B', type: 'wellpad', latitude: 56.56, longitude: -121.31, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Caribou North Compressor', type: 'compressor', latitude: 56.57, longitude: -121.26, operator: 'PETRONAS Canada', status: 'active' },
       
       // CARIBOU EAST Pod - Central NBU
-      { name: 'Caribou East Production Pod', type: 'platform', latitude: 57.05, longitude: -121.10, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Caribou East Well Pad A', type: 'platform', latitude: 57.08, longitude: -121.05, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Caribou East Well Pad B', type: 'platform', latitude: 57.02, longitude: -121.15, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'CARIBOU EAST', type: 'pod', latitude: 56.52, longitude: -120.95, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Caribou East Well Pad A', type: 'wellpad', latitude: 56.54, longitude: -120.92, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Caribou East Well Pad B', type: 'wellpad', latitude: 56.50, longitude: -120.98, operator: 'PETRONAS Canada', status: 'active' },
       
       // CARIBOU SOUTH Pod - Southwest of Caribou East
-      { name: 'Caribou South Production Pod', type: 'platform', latitude: 56.90, longitude: -121.40, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Caribou South Well Pad A', type: 'platform', latitude: 56.92, longitude: -121.35, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Caribou South Well Pad B', type: 'platform', latitude: 56.88, longitude: -121.45, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Caribou South Compressor Station', type: 'terminal', latitude: 56.91, longitude: -121.38, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'CARIBOU SOUTH', type: 'pod', latitude: 56.45, longitude: -121.18, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Caribou South Well Pad A', type: 'wellpad', latitude: 56.47, longitude: -121.15, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Caribou South Well Pad B', type: 'wellpad', latitude: 56.43, longitude: -121.21, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Caribou South Compressor', type: 'compressor', latitude: 56.44, longitude: -121.16, operator: 'PETRONAS Canada', status: 'active' },
       
-      // NBU Hub - North Business Unit Central
-      { name: 'NBU - North Business Unit Hub', type: 'terminal', latitude: 56.75, longitude: -120.90, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'NBU Main Compressor Station', type: 'terminal', latitude: 56.78, longitude: -120.85, operator: 'PETRONAS Canada', status: 'active' },
+      // NBU Hub - North Business Unit Central Hub (between Caribou pods)
+      { name: 'NBU HUB', type: 'hub', latitude: 56.48, longitude: -120.72, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'NBU Main Compressor Station', type: 'compressor', latitude: 56.49, longitude: -120.70, operator: 'PETRONAS Canada', status: 'active' },
       
       // NRG EAST Pod - East of NBU Hub
-      { name: 'NRG East Production Pod', type: 'platform', latitude: 56.80, longitude: -120.50, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'NRG East Well Pad A', type: 'platform', latitude: 56.82, longitude: -120.45, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'NRG East Well Pad B', type: 'platform', latitude: 56.78, longitude: -120.55, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'NRG EAST', type: 'pod', latitude: 56.50, longitude: -120.48, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'NRG East Well Pad A', type: 'wellpad', latitude: 56.52, longitude: -120.45, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'NRG East Well Pad B', type: 'wellpad', latitude: 56.48, longitude: -120.51, operator: 'PETRONAS Canada', status: 'active' },
       
       // JEDNEY Pod - Eastern NBU with Gas Plant
-      { name: 'Jedney Production Pod', type: 'platform', latitude: 56.85, longitude: -120.15, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Jedney Gas Plant', type: 'refinery', latitude: 56.88, longitude: -120.10, operator: 'PETRONAS Canada', capacity: '200 mmscfd', status: 'active' },
-      { name: 'Jedney Well Pad A', type: 'platform', latitude: 56.90, longitude: -120.20, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Jedney Well Pad B', type: 'platform', latitude: 56.82, longitude: -120.08, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Jedney Well Pad C', type: 'platform', latitude: 56.87, longitude: -120.18, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'JEDNEY', type: 'pod', latitude: 56.55, longitude: -120.18, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Jedney Gas Plant', type: 'gasplant', latitude: 56.57, longitude: -120.15, operator: 'PETRONAS Canada', capacity: '200 mmscfd', status: 'active' },
+      { name: 'Jedney Well Pad A', type: 'wellpad', latitude: 56.58, longitude: -120.20, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Jedney Well Pad B', type: 'wellpad', latitude: 56.53, longitude: -120.12, operator: 'PETRONAS Canada', status: 'active' },
       
-      // LILY Pod - West-Southwest NBU boundary
-      { name: 'Lily Production Pod', type: 'platform', latitude: 56.65, longitude: -121.55, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Lily Well Pad A', type: 'platform', latitude: 56.68, longitude: -121.50, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Lily Well Pad B', type: 'platform', latitude: 56.62, longitude: -121.60, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Lily Compressor Station', type: 'terminal', latitude: 56.66, longitude: -121.52, operator: 'PETRONAS Canada', status: 'active' },
+      // LILY Pod - West-southwest NBU boundary
+      { name: 'LILY', type: 'pod', latitude: 56.38, longitude: -121.32, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Lily Well Pad A', type: 'wellpad', latitude: 56.40, longitude: -121.29, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Lily Well Pad B', type: 'wellpad', latitude: 56.36, longitude: -121.35, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Lily Compressor', type: 'compressor', latitude: 56.37, longitude: -121.30, operator: 'PETRONAS Canada', status: 'active' },
       
-      // JULIENNE Pod - Central area between NBU and SBU
-      { name: 'Julienne Production Pod', type: 'platform', latitude: 56.55, longitude: -121.10, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Julienne Well Pad A', type: 'platform', latitude: 56.58, longitude: -121.05, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Julienne Well Pad B', type: 'platform', latitude: 56.52, longitude: -121.15, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Julienne Compressor Station', type: 'terminal', latitude: 56.56, longitude: -121.08, operator: 'PETRONAS Canada', status: 'active' },
+      // JULIENNE Pod - Central, between NBU and SBU
+      { name: 'JULIENNE', type: 'pod', latitude: 56.32, longitude: -120.95, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Julienne Well Pad A', type: 'wellpad', latitude: 56.34, longitude: -120.92, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Julienne Well Pad B', type: 'wellpad', latitude: 56.30, longitude: -120.98, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Julienne Compressor', type: 'compressor', latitude: 56.31, longitude: -120.94, operator: 'PETRONAS Canada', status: 'active' },
       
-      // ===== PETRONAS CANADA - PRODUCTION PODS (SBU - Blue boundary) =====
+      // ===== SBU (SOUTH BUSINESS UNIT) - Blue boundary =====
       
-      // SBU Hub - South Business Unit Central  
-      { name: 'SBU - South Business Unit Hub', type: 'terminal', latitude: 56.35, longitude: -120.60, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'SBU Main Compressor Station', type: 'terminal', latitude: 56.38, longitude: -120.55, operator: 'PETRONAS Canada', status: 'active' },
+      // SBU Hub - South Business Unit Central Hub
+      { name: 'SBU HUB', type: 'hub', latitude: 56.22, longitude: -120.65, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'SBU Main Compressor Station', type: 'compressor', latitude: 56.23, longitude: -120.62, operator: 'PETRONAS Canada', status: 'active' },
       
-      // TOWN NORTH Pod - Northern SBU
-      { name: 'Town North Production Pod', type: 'platform', latitude: 56.45, longitude: -120.35, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Town North Well Pad A', type: 'platform', latitude: 56.48, longitude: -120.30, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Town North Well Pad B', type: 'platform', latitude: 56.42, longitude: -120.40, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Town North Compressor Station', type: 'terminal', latitude: 56.46, longitude: -120.33, operator: 'PETRONAS Canada', status: 'active' },
+      // TOWN NORTH Pod - Northern SBU, just south of NBU/SBU divide
+      { name: 'TOWN NORTH', type: 'pod', latitude: 56.28, longitude: -120.42, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Town North Well Pad A', type: 'wellpad', latitude: 56.30, longitude: -120.39, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Town North Well Pad B', type: 'wellpad', latitude: 56.26, longitude: -120.45, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Town North Compressor', type: 'compressor', latitude: 56.27, longitude: -120.40, operator: 'PETRONAS Canada', status: 'active' },
       
-      // TOWNY Pod - Central-East SBU
-      { name: 'Towny Production Pod', type: 'platform', latitude: 56.25, longitude: -120.10, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Towny Well Pad A', type: 'platform', latitude: 56.28, longitude: -120.05, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Towny Well Pad B', type: 'platform', latitude: 56.22, longitude: -120.15, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Towny Compressor Station', type: 'terminal', latitude: 56.26, longitude: -120.08, operator: 'PETRONAS Canada', status: 'active' },
+      // TOWNY Pod - East-central SBU (near Fort St. John)
+      { name: 'TOWNY', type: 'pod', latitude: 56.18, longitude: -120.22, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Towny Well Pad A', type: 'wellpad', latitude: 56.20, longitude: -120.19, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Towny Well Pad B', type: 'wellpad', latitude: 56.16, longitude: -120.25, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Towny Compressor', type: 'compressor', latitude: 56.17, longitude: -120.20, operator: 'PETRONAS Canada', status: 'active' },
       
-      // CAMERON Pod - Southwest SBU
-      { name: 'Cameron Production Pod', type: 'platform', latitude: 56.10, longitude: -120.80, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Cameron Well Pad A', type: 'platform', latitude: 56.13, longitude: -120.75, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Cameron Well Pad B', type: 'platform', latitude: 56.07, longitude: -120.85, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Cameron FSR Road Junction', type: 'road', latitude: 56.11, longitude: -120.78, operator: 'PETRONAS Canada', status: 'active' },
+      // CAMERON Pod - West SBU
+      { name: 'CAMERON', type: 'pod', latitude: 56.12, longitude: -121.05, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Cameron Well Pad A', type: 'wellpad', latitude: 56.14, longitude: -121.02, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Cameron Well Pad B', type: 'wellpad', latitude: 56.10, longitude: -121.08, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Cameron FSR Junction', type: 'road', latitude: 56.11, longitude: -121.04, operator: 'PETRONAS Canada', status: 'active' },
       
-      // KOBES Pod - Central-South SBU
-      { name: 'Kobes Production Pod', type: 'platform', latitude: 56.00, longitude: -120.20, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Kobes Well Pad A', type: 'platform', latitude: 56.03, longitude: -120.15, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Kobes Well Pad B', type: 'platform', latitude: 55.97, longitude: -120.25, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Kobes Compressor Station', type: 'terminal', latitude: 56.01, longitude: -120.18, operator: 'PETRONAS Canada', status: 'active' },
+      // KOBES Pod - South-central SBU
+      { name: 'KOBES', type: 'pod', latitude: 56.02, longitude: -120.35, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Kobes Well Pad A', type: 'wellpad', latitude: 56.04, longitude: -120.32, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Kobes Well Pad B', type: 'wellpad', latitude: 56.00, longitude: -120.38, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Kobes Compressor', type: 'compressor', latitude: 56.01, longitude: -120.34, operator: 'PETRONAS Canada', status: 'active' },
       
-      // BLUEBERRY Pod - Southeast SBU with Gas Plant
-      { name: 'Blueberry Production Pod', type: 'platform', latitude: 55.80, longitude: -119.85, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Blueberry Gas Plant', type: 'refinery', latitude: 55.85, longitude: -119.80, operator: 'PETRONAS Canada', capacity: '180 mmscfd', status: 'active' },
-      { name: 'Blueberry Well Pad A', type: 'platform', latitude: 55.88, longitude: -119.90, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Blueberry Well Pad B', type: 'platform', latitude: 55.77, longitude: -119.78, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Blueberry Well Pad C', type: 'platform', latitude: 55.82, longitude: -119.85, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Blueberry Compressor Station', type: 'terminal', latitude: 55.84, longitude: -119.82, operator: 'PETRONAS Canada', status: 'active' },
+      // BLUEBERRY Pod - Southeast SBU with Gas Plant (pink shaded area on map)
+      { name: 'BLUEBERRY', type: 'pod', latitude: 55.88, longitude: -120.05, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Blueberry Gas Plant', type: 'gasplant', latitude: 55.90, longitude: -120.02, operator: 'PETRONAS Canada', capacity: '180 mmscfd', status: 'active' },
+      { name: 'Blueberry Well Pad A', type: 'wellpad', latitude: 55.92, longitude: -120.08, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Blueberry Well Pad B', type: 'wellpad', latitude: 55.86, longitude: -120.00, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Blueberry Compressor', type: 'compressor', latitude: 55.89, longitude: -120.04, operator: 'PETRONAS Canada', status: 'active' },
       
       // ALTARES Pod - Southern SBU with main Gas Plant
-      { name: 'Altares Production Pod', type: 'platform', latitude: 55.55, longitude: -120.10, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Altares Gas Plant', type: 'refinery', latitude: 55.60, longitude: -120.05, operator: 'PETRONAS Canada', capacity: '350 mmscfd', status: 'active' },
-      { name: 'Altares Compressor Station 1', type: 'terminal', latitude: 55.52, longitude: -120.15, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Altares Compressor Station 2', type: 'terminal', latitude: 55.58, longitude: -120.00, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Altares Well Pad A', type: 'platform', latitude: 55.48, longitude: -120.08, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Altares Well Pad B', type: 'platform', latitude: 55.62, longitude: -120.12, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Altares Well Pad C', type: 'platform', latitude: 55.50, longitude: -119.95, operator: 'PETRONAS Canada', status: 'active' },
-      { name: 'Altares Well Pad D', type: 'platform', latitude: 55.45, longitude: -120.18, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'ALTARES', type: 'pod', latitude: 55.65, longitude: -120.28, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Altares Gas Plant', type: 'gasplant', latitude: 55.68, longitude: -120.25, operator: 'PETRONAS Canada', capacity: '350 mmscfd', status: 'active' },
+      { name: 'Altares Compressor 1', type: 'compressor', latitude: 55.63, longitude: -120.30, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Altares Compressor 2', type: 'compressor', latitude: 55.66, longitude: -120.22, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Altares Well Pad A', type: 'wellpad', latitude: 55.60, longitude: -120.26, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Altares Well Pad B', type: 'wellpad', latitude: 55.70, longitude: -120.30, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Altares Well Pad C', type: 'wellpad', latitude: 55.62, longitude: -120.18, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Altares Well Pad D', type: 'wellpad', latitude: 55.58, longitude: -120.32, operator: 'PETRONAS Canada', status: 'active' },
+      
+      // ===== GROUNDBIRCH AREA (West of main operations) =====
+      { name: 'GROUNDBIRCH', type: 'pod', latitude: 56.08, longitude: -121.38, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Groundbirch Gas Plant', type: 'gasplant', latitude: 56.10, longitude: -121.35, operator: 'PETRONAS Canada', capacity: '250 mmscfd', status: 'active' },
+      { name: 'Groundbirch Well Pad A', type: 'wellpad', latitude: 56.12, longitude: -121.40, operator: 'PETRONAS Canada', status: 'active' },
+      { name: 'Groundbirch Well Pad B', type: 'wellpad', latitude: 56.06, longitude: -121.32, operator: 'PETRONAS Canada', status: 'active' },
       
       // ===== PETRONAS CANADA - MAJOR PIPELINES =====
       { name: 'PCL Trunk Pipeline - Greer Section', type: 'pipeline', latitude: 57.30, longitude: -121.55, operator: 'PETRONAS Canada', status: 'active' },
@@ -1138,21 +1146,34 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
       return true;
     });
 
-    // Icon configuration for different infrastructure types
-    const getInfraIcon = (type: string, isPetronasCanada: boolean) => {
-      // Use distinct colors for Petronas Canada assets
+    // Icon configuration for different infrastructure types - distinct colors for better navigation
+    const getInfraIcon = (type: string, isPetronasCanada: boolean): { icon: string; color: string; size: number; label?: string } => {
+      // Petronas Canada assets with distinct colored markers
       if (isPetronasCanada) {
         switch (type) {
-          case 'refinery': return { icon: '🏭', color: '#dc2626', size: 18 }; // Red for Canada refineries
-          case 'pipeline': return { icon: '🔗', color: '#ea580c', size: 14 }; // Orange for Canada pipelines
-          case 'terminal': return { icon: '⛽', color: '#16a34a', size: 16 }; // Green for Canada terminals
-          case 'platform': return { icon: '🛢️', color: '#ca8a04', size: 16 }; // Yellow for Canada platforms
-          case 'storage': return { icon: '🏗️', color: '#7c3aed', size: 14 }; // Purple for Canada storage
-          case 'road': return { icon: '🛣️', color: '#0891b2', size: 12 }; // Cyan for Canada roads
+          // Production Pod Labels - Large prominent markers
+          case 'pod': return { icon: '📍', color: '#dc2626', size: 24, label: 'POD' }; // Red - Production Pods
+          case 'hub': return { icon: '🏢', color: '#7c3aed', size: 22, label: 'HUB' }; // Purple - Business Unit Hubs
+          
+          // Major Facilities - Distinct colors
+          case 'gasplant': return { icon: '🏭', color: '#059669', size: 20 }; // Emerald - Gas Plants
+          case 'refinery': return { icon: '🏭', color: '#059669', size: 20 }; // Emerald - Refineries
+          case 'compressor': return { icon: '⚙️', color: '#0284c7', size: 16 }; // Sky Blue - Compressors
+          
+          // Well Sites
+          case 'wellpad': return { icon: '⚫', color: '#374151', size: 10 }; // Gray - Well Pads (small dots)
+          case 'platform': return { icon: '🛢️', color: '#ca8a04', size: 14 }; // Yellow - Platforms
+          
+          // Infrastructure
+          case 'pipeline': return { icon: '━', color: '#ea580c', size: 12 }; // Orange - Pipelines
+          case 'terminal': return { icon: '⛽', color: '#16a34a', size: 16 }; // Green - Terminals
+          case 'storage': return { icon: '🏗️', color: '#6366f1', size: 14 }; // Indigo - Storage
+          case 'road': return { icon: '🛣️', color: '#64748b', size: 10 }; // Slate - Roads
           default: return { icon: '📍', color: '#dc2626', size: 14 };
         }
       }
       
+      // Non-Canada assets (other PETRONAS global)
       switch (type) {
         case 'refinery': return { icon: '🏭', color: '#3b82f6', size: 18 };
         case 'pipeline': return { icon: '🔗', color: '#8b5cf6', size: 14 };
@@ -1170,26 +1191,65 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
                                infra.operator.includes('Spectra/PETRONAS') ||
                                infra.operator.includes('Third Party/PETRONAS');
       const iconConfig = getInfraIcon(infra.type, isPetronasCanada);
+      const isPodOrHub = infra.type === 'pod' || infra.type === 'hub';
       
       const el = document.createElement('div');
-      el.className = `infrastructure-marker ${isPetronasCanada ? 'petronas-canada' : ''}`;
-      el.style.cssText = `
-        width: ${iconConfig.size + 8}px;
-        height: ${iconConfig.size + 8}px;
-        background: ${iconConfig.color};
-        border: 2px solid ${isPetronasCanada ? '#fbbf24' : 'white'};
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: ${iconConfig.size - 4}px;
-        cursor: pointer;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        transition: transform 0.2s;
-      `;
-      el.innerHTML = iconConfig.icon;
+      el.className = `infrastructure-marker ${isPetronasCanada ? 'petronas-canada' : ''} ${isPodOrHub ? 'pod-marker' : ''}`;
+      
+      // Pod/Hub markers get special label styling
+      if (isPodOrHub && isPetronasCanada) {
+        el.style.cssText = `
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          cursor: pointer;
+          z-index: 100;
+        `;
+        el.innerHTML = `
+          <div style="
+            background: ${iconConfig.color};
+            color: white;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            box-shadow: 0 3px 12px rgba(0,0,0,0.4);
+            border: 2px solid #fbbf24;
+            white-space: nowrap;
+          ">${infra.name}</div>
+          <div style="
+            width: 0;
+            height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-top: 8px solid ${iconConfig.color};
+            margin-top: -1px;
+          "></div>
+        `;
+      } else {
+        // Standard marker styling
+        el.style.cssText = `
+          width: ${iconConfig.size + 8}px;
+          height: ${iconConfig.size + 8}px;
+          background: ${iconConfig.color};
+          border: 2px solid ${isPetronasCanada ? '#fbbf24' : 'white'};
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: ${iconConfig.size - 4}px;
+          cursor: pointer;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+          transition: transform 0.2s;
+          ${infra.type === 'wellpad' ? 'opacity: 0.8;' : ''}
+        `;
+        el.innerHTML = iconConfig.icon;
+      }
       el.title = `${infra.name} (${infra.operator})`;
 
+      const typeLabel = infra.type.charAt(0).toUpperCase() + infra.type.slice(1).replace('gasplant', 'Gas Plant').replace('wellpad', 'Well Pad');
+      
       const popup = new mapboxgl.Popup({ offset: 25, maxWidth: '320px' }).setHTML(`
         <div style="font-family: system-ui; padding: 8px;">
           <h4 style="margin: 0 0 8px; color: ${iconConfig.color}; font-weight: 600;">
@@ -1197,7 +1257,7 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
             ${isPetronasCanada ? '<span style="background: #fbbf24; color: #000; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;">🇨🇦 Canada</span>' : ''}
           </h4>
           <div style="font-size: 12px; color: #666;">
-            <p style="margin: 4px 0;"><strong>Type:</strong> ${infra.type.charAt(0).toUpperCase() + infra.type.slice(1)}</p>
+            <p style="margin: 4px 0;"><strong>Type:</strong> ${typeLabel}</p>
             <p style="margin: 4px 0;"><strong>Operator:</strong> ${infra.operator}</p>
             ${infra.capacity ? `<p style="margin: 4px 0;"><strong>Capacity:</strong> ${infra.capacity}</p>` : ''}
             <p style="margin: 4px 0;"><strong>Status:</strong> 
@@ -1205,7 +1265,7 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
                 ${infra.status.charAt(0).toUpperCase() + infra.status.slice(1).replace('_', ' ')}
               </span>
             </p>
-            <p style="margin: 4px 0;"><strong>Coords:</strong> ${infra.latitude.toFixed(4)}, ${infra.longitude.toFixed(4)}</p>
+            <p style="margin: 4px 0;"><strong>Coords:</strong> ${infra.latitude.toFixed(4)}°N, ${Math.abs(infra.longitude).toFixed(4)}°W</p>
           </div>
         </div>
       `);
@@ -1547,6 +1607,7 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
         <CardContent className="p-4">
           <h4 className="font-medium mb-3">Map Legend</h4>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 text-sm">
+            {/* Fire Legends */}
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 rounded-full bg-gradient-to-r from-orange-500 to-red-500 animate-pulse" />
               <span>Active Fire</span>
@@ -1563,24 +1624,68 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
               <div className="w-4 h-4 bg-gradient-to-r from-yellow-300 via-orange-500 to-red-600 rounded" />
               <span>Fire Intensity</span>
             </div>
-            {/* Infrastructure Legend */}
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center text-[8px]">🏭</div>
-              <span>Refinery</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded-full bg-purple-500 flex items-center justify-center text-[8px]">🔗</div>
-              <span>Pipeline</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center text-[8px]">⛽</div>
-              <span>Terminal</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded-full bg-amber-500 flex items-center justify-center text-[8px]">🛢️</div>
-              <span>Platform</span>
-            </div>
           </div>
+          
+          {/* Petronas Canada Legend - only show when toggle is active */}
+          {showPetronasCanada && showInfrastructure && (
+            <div className="mt-4 pt-3 border-t">
+              <h5 className="font-medium mb-2 flex items-center gap-2">
+                <span>🇨🇦</span> Petronas Canada Infrastructure
+              </h5>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 text-sm">
+                <div className="flex items-center gap-2">
+                  <div className="px-2 py-0.5 rounded bg-red-600 text-white text-xs font-bold border-2 border-yellow-400">POD</div>
+                  <span>Production Pod</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="px-2 py-0.5 rounded bg-purple-600 text-white text-xs font-bold border-2 border-yellow-400">HUB</div>
+                  <span>Business Unit Hub</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center text-xs border-2 border-yellow-400">🏭</div>
+                  <span>Gas Plant</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded-full bg-sky-600 flex items-center justify-center text-[10px] border-2 border-yellow-400">⚙️</div>
+                  <span>Compressor</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-gray-600 border-2 border-yellow-400" />
+                  <span>Well Pad</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded-full bg-orange-600 flex items-center justify-center text-[10px] border-2 border-yellow-400">━</div>
+                  <span>Pipeline</span>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* Global Infrastructure Legend */}
+          {showInfrastructure && !showPetronasCanada && (
+            <div className="mt-4 pt-3 border-t">
+              <h5 className="font-medium mb-2">Global Infrastructure</h5>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 text-sm">
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center text-[8px]">🏭</div>
+                  <span>Refinery</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded-full bg-purple-500 flex items-center justify-center text-[8px]">🔗</div>
+                  <span>Pipeline</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center text-[8px]">⛽</div>
+                  <span>Terminal</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded-full bg-amber-500 flex items-center justify-center text-[8px]">🛢️</div>
+                  <span>Platform</span>
+                </div>
+              </div>
+            </div>
+          )}
+          
           <div className="mt-3 text-xs text-muted-foreground">
             Data sources: NASA FIRMS, NIFC Fire Perimeters, NOAA Weather Alerts, PETRONAS Infrastructure Database
           </div>
