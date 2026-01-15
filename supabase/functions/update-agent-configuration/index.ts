@@ -70,7 +70,7 @@ serve(async (req) => {
     const allowedFields = [
       'codename', 'call_sign', 'persona', 'specialty', 'mission_scope',
       'interaction_style', 'input_sources', 'output_types', 
-      'is_client_facing', 'is_active', 'avatar_color', 'system_prompt'
+      'is_client_facing', 'is_active', 'avatar_color', 'system_prompt', 'header_name'
     ];
 
     const sanitizedUpdates: Record<string, any> = {};
