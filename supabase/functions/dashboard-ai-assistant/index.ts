@@ -4653,6 +4653,19 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
           /\.(jpg|jpeg|png|gif|webp|bmp|tiff?)$/i.test(doc.filename);
 
         if (isPDF) {
+          // Check file size - base64 encoding increases size by ~33%
+          // Edge functions have memory limits, so we cap at 5MB for reliable processing
+          const maxSizeMB = 5;
+          if (fileSizeMB > maxSizeMB) {
+            return {
+              success: false,
+              error: `PDF file is too large for direct analysis (${fileSizeMB.toFixed(1)}MB > ${maxSizeMB}MB limit). Large map PDFs should be split into smaller sections or converted to individual images.`,
+              document_id: docId,
+              filename: doc.filename,
+              suggestion: "Consider: 1) Splitting the PDF into smaller files, 2) Converting pages to PNG/JPG images, or 3) Using a PDF compression tool to reduce file size.",
+            };
+          }
+
           // Use Gemini's native PDF support - send the PDF directly as base64
           // This avoids pdf.js which requires web workers not available in Deno
           const { encode: base64Encode } = await import('https://deno.land/std@0.168.0/encoding/base64.ts');
