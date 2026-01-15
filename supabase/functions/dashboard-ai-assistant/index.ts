@@ -4536,6 +4536,37 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
 
       const meta: any = doc.metadata ?? {};
 
+      // Early size guard: avoid downloading large binaries into memory.
+      // The platform can return non-standard errors (e.g., 546) when memory limits are exceeded.
+      const inferredIsPdf = doc.file_type === 'application/pdf' || doc.filename.toLowerCase().endsWith('.pdf');
+      const inferredSizeMb = (doc.file_size ?? 0) / (1024 * 1024);
+
+      // Hard cap for any visual analysis
+      if (inferredSizeMb > 20) {
+        return {
+          success: false,
+          error: `File too large (${inferredSizeMb.toFixed(1)}MB). Maximum is 20MB.`,
+          document_id: docId,
+          filename: doc.filename,
+        };
+      }
+
+      // PDF direct analysis requires base64, which increases memory pressure.
+      // We therefore refuse large PDFs before downloading them.
+      if (inferredIsPdf) {
+        const maxPdfMb = 5;
+        if (inferredSizeMb > maxPdfMb) {
+          return {
+            success: false,
+            error: `PDF file is too large for direct analysis (${inferredSizeMb.toFixed(1)}MB > ${maxPdfMb}MB limit). Large map PDFs should be split into smaller sections or converted to individual images.`,
+            document_id: docId,
+            filename: doc.filename,
+            suggestion:
+              "Consider: 1) Splitting the PDF into smaller files, 2) Converting pages to PNG/JPG images, or 3) Using a PDF compression tool to reduce file size.",
+          };
+        }
+      }
+
       const preferredBucket = typeof meta.storage_bucket === 'string' && meta.storage_bucket.trim().length
         ? meta.storage_bucket.trim()
         : undefined;
