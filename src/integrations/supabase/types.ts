@@ -596,6 +596,112 @@ export type Database = {
         }
         Relationships: []
       }
+      briefing_queries: {
+        Row: {
+          ai_confidence: number | null
+          ai_responded_at: string | null
+          ai_response: string | null
+          asked_by: string
+          created_at: string
+          escalated_at: string | null
+          escalated_to: string | null
+          escalation_status: string | null
+          human_responded_at: string | null
+          human_responded_by: string | null
+          human_response: string | null
+          id: string
+          mission_id: string
+          question: string
+          updated_at: string
+        }
+        Insert: {
+          ai_confidence?: number | null
+          ai_responded_at?: string | null
+          ai_response?: string | null
+          asked_by: string
+          created_at?: string
+          escalated_at?: string | null
+          escalated_to?: string | null
+          escalation_status?: string | null
+          human_responded_at?: string | null
+          human_responded_by?: string | null
+          human_response?: string | null
+          id?: string
+          mission_id: string
+          question: string
+          updated_at?: string
+        }
+        Update: {
+          ai_confidence?: number | null
+          ai_responded_at?: string | null
+          ai_response?: string | null
+          asked_by?: string
+          created_at?: string
+          escalated_at?: string | null
+          escalated_to?: string | null
+          escalation_status?: string | null
+          human_responded_at?: string | null
+          human_responded_by?: string | null
+          human_response?: string | null
+          id?: string
+          mission_id?: string
+          question?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "briefing_queries_mission_id_fkey"
+            columns: ["mission_id"]
+            isOneToOne: false
+            referencedRelation: "task_force_missions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      briefing_query_sources: {
+        Row: {
+          agent_attribution: string | null
+          created_at: string
+          id: string
+          query_id: string
+          relevance_score: number | null
+          source_excerpt: string | null
+          source_id: string
+          source_title: string | null
+          source_type: string
+        }
+        Insert: {
+          agent_attribution?: string | null
+          created_at?: string
+          id?: string
+          query_id: string
+          relevance_score?: number | null
+          source_excerpt?: string | null
+          source_id: string
+          source_title?: string | null
+          source_type: string
+        }
+        Update: {
+          agent_attribution?: string | null
+          created_at?: string
+          id?: string
+          query_id?: string
+          relevance_score?: number | null
+          source_excerpt?: string | null
+          source_id?: string
+          source_title?: string | null
+          source_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "briefing_query_sources_query_id_fkey"
+            columns: ["query_id"]
+            isOneToOne: false
+            referencedRelation: "briefing_queries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bug_reports: {
         Row: {
           approved_at: string | null

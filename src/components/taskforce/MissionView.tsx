@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ArrowLeft,
   Play,
@@ -24,12 +25,14 @@ import {
   ShieldAlert,
   XCircle,
   AlertTriangle,
+  MessageSquare,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import ReactMarkdown from "react-markdown";
 import { ValidationStatusPill } from "./ValidationStatusPill";
 import { LintResultsPanel } from "./LintResultsPanel";
+import { BriefingQueryPanel } from "./BriefingQueryPanel";
 
 interface MissionViewProps {
   missionId: string;
@@ -414,7 +417,7 @@ export function MissionView({ missionId, onBack }: MissionViewProps) {
             </Card>
           </div>
 
-          {/* Right Panel - Final Output */}
+          {/* Right Panel - Final Output & Query */}
           <div className="lg:col-span-4 space-y-4">
             {/* Validation Status */}
             {mission?.validation_status && (
@@ -456,38 +459,63 @@ export function MissionView({ missionId, onBack }: MissionViewProps) {
               </Card>
             )}
 
-            <Card className="h-[500px] flex flex-col">
-              <CardHeader className="pb-2 flex-shrink-0">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm">Final Output</CardTitle>
-                  <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="icon" onClick={copyFinalOutput}>
-                      <Copy className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon">
-                      <Download className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="flex-1 overflow-hidden p-0">
-                <ScrollArea className="h-full px-6">
-                  {mission?.final_output ? (
-                    <div className="prose prose-sm dark:prose-invert max-w-none py-4">
-                      <ReactMarkdown>{mission.final_output}</ReactMarkdown>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-center h-full text-muted-foreground">
-                      <div className="text-center">
-                        <FileText className="h-10 w-10 mx-auto mb-2 opacity-50" />
-                        <p>No final output yet</p>
-                        <p className="text-sm">Complete the mission to generate</p>
+            {/* Tabbed Output & Query Panel */}
+            <Tabs defaultValue="output" className="h-[500px] flex flex-col">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="output" className="flex items-center gap-1.5">
+                  <FileText className="h-4 w-4" />
+                  Final Output
+                </TabsTrigger>
+                <TabsTrigger value="query" className="flex items-center gap-1.5">
+                  <MessageSquare className="h-4 w-4" />
+                  Query Briefing
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="output" className="flex-1 mt-0">
+                <Card className="h-full flex flex-col border-t-0 rounded-t-none">
+                  <CardHeader className="pb-2 flex-shrink-0">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-sm">Final Output</CardTitle>
+                      <div className="flex items-center gap-1">
+                        <Button variant="ghost" size="icon" onClick={copyFinalOutput}>
+                          <Copy className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon">
+                          <Download className="h-4 w-4" />
+                        </Button>
                       </div>
                     </div>
-                  )}
-                </ScrollArea>
-              </CardContent>
-            </Card>
+                  </CardHeader>
+                  <CardContent className="flex-1 overflow-hidden p-0">
+                    <ScrollArea className="h-full px-6">
+                      {mission?.final_output ? (
+                        <div className="prose prose-sm dark:prose-invert max-w-none py-4">
+                          <ReactMarkdown>{mission.final_output}</ReactMarkdown>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center h-full text-muted-foreground">
+                          <div className="text-center">
+                            <FileText className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                            <p>No final output yet</p>
+                            <p className="text-sm">Complete the mission to generate</p>
+                          </div>
+                        </div>
+                      )}
+                    </ScrollArea>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="query" className="flex-1 mt-0">
+                <div className="h-full border-t-0 rounded-t-none">
+                  <BriefingQueryPanel 
+                    missionId={missionId} 
+                    missionCreatorId={mission?.created_by}
+                  />
+                </div>
+              </TabsContent>
+            </Tabs>
           </div>
         </div>
       </main>
