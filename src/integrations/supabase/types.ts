@@ -1728,6 +1728,39 @@ export type Database = {
           },
         ]
       }
+      incident_audit_log: {
+        Row: {
+          action: string
+          details: Json | null
+          id: string
+          incident_id: string
+          ip_address: string | null
+          performed_at: string
+          performed_by: string | null
+          user_agent: string | null
+        }
+        Insert: {
+          action: string
+          details?: Json | null
+          id?: string
+          incident_id: string
+          ip_address?: string | null
+          performed_at?: string
+          performed_by?: string | null
+          user_agent?: string | null
+        }
+        Update: {
+          action?: string
+          details?: Json | null
+          id?: string
+          incident_id?: string
+          ip_address?: string | null
+          performed_at?: string
+          performed_by?: string | null
+          user_agent?: string | null
+        }
+        Relationships: []
+      }
       incident_classification_rationale: {
         Row: {
           classification: string
@@ -1890,6 +1923,7 @@ export type Database = {
           client_id: string | null
           contained_at: string | null
           created_at: string
+          deleted_at: string | null
           id: string
           incident_type: string | null
           initial_agent_prompt: string | null
@@ -1917,6 +1951,7 @@ export type Database = {
           client_id?: string | null
           contained_at?: string | null
           created_at?: string
+          deleted_at?: string | null
           id?: string
           incident_type?: string | null
           initial_agent_prompt?: string | null
@@ -1944,6 +1979,7 @@ export type Database = {
           client_id?: string | null
           contained_at?: string | null
           created_at?: string
+          deleted_at?: string | null
           id?: string
           incident_type?: string | null
           initial_agent_prompt?: string | null

@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useUserRole } from "@/hooks/useUserRole";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Loader2, AlertTriangle, Search, Filter, ClipboardList, Trash2 } from "lucide-react";
 import { IncidentActionDialog } from "@/components/IncidentActionDialog";
@@ -37,6 +38,8 @@ interface Incident {
 
 const Incidents = () => {
   const { user, loading: authLoading } = useAuth();
+  const { isAdmin, isSuperAdmin, isLoading: rolesLoading } = useUserRole();
+  const canDelete = isAdmin || isSuperAdmin;
   const navigate = useNavigate();
   const { toast } = useToast();
   const { selectedClientId } = useClientSelection();
@@ -70,6 +73,7 @@ const Incidents = () => {
         let query = supabase
           .from("incidents")
           .select("*, clients(name)")
+          .is("deleted_at", null) // Filter out soft-deleted incidents
           .order("opened_at", { ascending: false });
 
         if (selectedClientId) {
@@ -297,16 +301,41 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
   };
 
   const handleBulkDelete = async () => {
-    if (selectedIds.size === 0) return;
+    if (selectedIds.size === 0 || !user) return;
 
     setBulkDeleting(true);
     try {
-      const { error } = await supabase
-        .from("incidents")
-        .delete()
-        .in("id", Array.from(selectedIds));
+      const now = new Date().toISOString();
+      const idsArray = Array.from(selectedIds);
 
-      if (error) throw error;
+      // Soft delete: set deleted_at timestamp
+      const { error: updateError } = await supabase
+        .from("incidents")
+        .update({ deleted_at: now })
+        .in("id", idsArray);
+
+      if (updateError) throw updateError;
+
+      // Log to audit trail
+      const auditEntries = idsArray.map((incidentId) => ({
+        incident_id: incidentId,
+        action: "bulk_deleted" as const,
+        performed_by: user.id,
+        performed_at: now,
+        details: {
+          deletion_type: "soft",
+          bulk_operation: true,
+          total_in_batch: idsArray.length,
+        },
+      }));
+
+      const { error: auditError } = await supabase
+        .from("incident_audit_log")
+        .insert(auditEntries);
+
+      if (auditError) {
+        console.error("Audit log error (non-fatal):", auditError);
+      }
 
       toast({
         title: "Incidents Deleted",
@@ -333,7 +362,7 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
   }
 
   return (
-    <PageLayout loading={authLoading || loading}>
+    <PageLayout loading={authLoading || loading || rolesLoading}>
       <DashboardClientSelector />
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -409,8 +438,8 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
               </Select>
             </div>
 
-            {/* Bulk Actions Bar */}
-            {selectedIds.size > 0 && (
+            {/* Bulk Actions Bar - Only for admins */}
+            {canDelete && selectedIds.size > 0 && (
               <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border">
                 <span className="text-sm font-medium">
                   {selectedIds.size} incident{selectedIds.size > 1 ? "s" : ""} selected
@@ -437,19 +466,21 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
               </div>
             ) : (
               <div className="space-y-3">
-                {/* Select All Header */}
-                <div className="flex items-center gap-3 px-4 py-2 border-b">
-                  <Checkbox
-                    checked={selectedIds.size === filteredIncidents.length && filteredIncidents.length > 0}
-                    onCheckedChange={toggleSelectAll}
-                    aria-label="Select all incidents"
-                  />
-                  <span className="text-sm text-muted-foreground">
-                    {selectedIds.size === filteredIncidents.length && filteredIncidents.length > 0
-                      ? "Deselect all"
-                      : "Select all"}
-                  </span>
-                </div>
+                {/* Select All Header - Only for admins */}
+                {canDelete && (
+                  <div className="flex items-center gap-3 px-4 py-2 border-b">
+                    <Checkbox
+                      checked={selectedIds.size === filteredIncidents.length && filteredIncidents.length > 0}
+                      onCheckedChange={toggleSelectAll}
+                      aria-label="Select all incidents"
+                    />
+                    <span className="text-sm text-muted-foreground">
+                      {selectedIds.size === filteredIncidents.length && filteredIncidents.length > 0
+                        ? "Deselect all"
+                        : "Select all"}
+                    </span>
+                  </div>
+                )}
                 
                 {filteredIncidents.map((incident) => (
                   <div
@@ -461,13 +492,15 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-start gap-3">
-                        <Checkbox
-                          checked={selectedIds.has(incident.id)}
-                          onCheckedChange={() => toggleSelectOne(incident.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          aria-label={`Select incident ${incident.id}`}
-                          className="mt-1"
-                        />
+                        {canDelete && (
+                          <Checkbox
+                            checked={selectedIds.has(incident.id)}
+                            onCheckedChange={() => toggleSelectOne(incident.id)}
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Select incident ${incident.id}`}
+                            className="mt-1"
+                          />
+                        )}
                         <div className="flex-1 space-y-2">
                           <div className="flex items-center gap-2">
                             <AlertTriangle className="w-4 h-4 text-destructive" />
@@ -515,17 +548,19 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
                         <Button variant="outline" size="sm">
                           View Details
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeleteIncident(incident);
-                          }}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        {canDelete && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteIncident(incident);
+                            }}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </div>
