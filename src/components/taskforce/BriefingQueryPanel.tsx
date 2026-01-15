@@ -73,18 +73,6 @@ interface BriefingQuery {
   target_agent_id: string | null;
   briefing_query_sources?: QuerySource[];
 }
-  escalated_to: string | null;
-  human_response: string | null;
-  human_responded_at: string | null;
-  created_at: string;
-  asked_by: string;
-  parent_query_id: string | null;
-  asking_agent_id: string | null;
-  target_agent_id: string | null;
-  briefing_query_sources?: QuerySource[];
-  asking_agent?: { codename: string; call_sign: string } | null;
-  target_agent?: { codename: string; call_sign: string } | null;
-}
 
 export function BriefingQueryPanel({ missionId, missionCreatorId }: BriefingQueryPanelProps) {
   const { user } = useAuth();
@@ -143,8 +131,6 @@ export function BriefingQueryPanel({ missionId, missionCreatorId }: BriefingQuer
 
       if (error) throw error;
       return data as unknown as BriefingQuery[];
-    },
-  });
     },
   });
 
