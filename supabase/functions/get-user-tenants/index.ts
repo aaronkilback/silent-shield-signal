@@ -64,13 +64,14 @@ serve(async (req) => {
       );
     }
 
-    // Transform the data - tenants is an object, not array
+    // Transform the data - tenants is an object (single record from join), cast through unknown
     const tenants = memberships?.map(m => {
-      const tenant = m.tenants as { id: string; name: string; status: string; settings: unknown } | null;
+      // deno-lint-ignore no-explicit-any
+      const tenant = m.tenants as any;
       return {
-        id: tenant?.id,
-        name: tenant?.name,
-        status: tenant?.status,
+        id: tenant?.id as string | undefined,
+        name: tenant?.name as string | undefined,
+        status: tenant?.status as string | undefined,
         settings: tenant?.settings,
         role: m.role,
         joined_at: m.created_at
