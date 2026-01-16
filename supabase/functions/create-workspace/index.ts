@@ -40,14 +40,14 @@ serve(async (req) => {
     }
 
     // 1) Verify the caller is an authenticated user
-    const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+    const authedClient = createClient(supabaseUrl, supabaseAnonKey, {
       global: { headers: { Authorization: authHeader } },
     });
 
     const {
       data: { user },
       error: authError,
-    } = await userClient.auth.getUser();
+    } = await authedClient.auth.getUser();
 
     if (authError || !user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -55,9 +55,6 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    // 2) Use service client for DB writes (bypasses RLS), but we still enforce access rules here
-    const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
 
     const body = (await req.json()) as CreateWorkspacePayload;
     const title = (body.title ?? "").trim() || "Investigation Workspace";
@@ -72,33 +69,37 @@ serve(async (req) => {
       );
     }
 
-    // Create workspace
-    const { data: workspace, error: workspaceError } = await serviceClient
+    // IMPORTANT: We intentionally do NOT use a service-role DB client here.
+    // Using the caller's JWT keeps auth.uid() set and makes the RLS checks pass.
+    // We also avoid `returning`/`select` on insert because SELECT policies may
+    // require membership that doesn't exist until we create workspace_members.
+    const workspaceId = crypto.randomUUID();
+
+    const { error: workspaceError } = await authedClient
       .from("investigation_workspaces")
       .insert({
+        id: workspaceId,
         title,
         description,
         incident_id: incidentId,
         investigation_id: investigationId,
         created_by_user_id: user.id,
         status: "active",
-      })
-      .select("id, title")
-      .single();
+      });
 
     if (workspaceError) throw workspaceError;
 
     // Add creator as owner
-    const { error: memberError } = await serviceClient.from("workspace_members").insert({
-      workspace_id: workspace.id,
+    const { error: memberError } = await authedClient.from("workspace_members").insert({
+      workspace_id: workspaceId,
       user_id: user.id,
       role: "owner",
     });
     if (memberError) throw memberError;
 
     // Initial system message
-    const { error: msgError } = await serviceClient.from("workspace_messages").insert({
-      workspace_id: workspace.id,
+    const { error: msgError } = await authedClient.from("workspace_messages").insert({
+      workspace_id: workspaceId,
       user_id: user.id,
       content: "Workspace created. Welcome to the collaborative investigation space!",
       message_type: "system_event",
@@ -106,15 +107,15 @@ serve(async (req) => {
     if (msgError) throw msgError;
 
     // Audit log
-    const { error: auditError } = await serviceClient.from("workspace_audit_log").insert({
-      workspace_id: workspace.id,
+    const { error: auditError } = await authedClient.from("workspace_audit_log").insert({
+      workspace_id: workspaceId,
       user_id: user.id,
       action: "WORKSPACE_CREATED",
-      details: { title: workspace.title, incident_id: incidentId, investigation_id: investigationId },
+      details: { title, incident_id: incidentId, investigation_id: investigationId },
     });
     if (auditError) throw auditError;
 
-    return new Response(JSON.stringify({ workspace }), {
+    return new Response(JSON.stringify({ workspace: { id: workspaceId, title } }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

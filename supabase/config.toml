@@ -179,3 +179,6 @@ verify_jwt = false
 
 [functions.incident-agent-orchestrator]
 verify_jwt = false
+
+[functions.create-workspace]
+verify_jwt = false
