@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Loader2, Bot, User, Trash2 } from "lucide-react";
+import { Send, Loader2, Bot, User, Trash2, Copy, Check } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
@@ -34,8 +34,36 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [copiedAll, setCopiedAll] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { user } = useAuth();
+
+  const copyMessage = async (content: string, index: number) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedIndex(index);
+      toast.success("Copied to clipboard");
+      setTimeout(() => setCopiedIndex(null), 2000);
+    } catch (error) {
+      toast.error("Failed to copy");
+    }
+  };
+
+  const copyEntireConversation = async () => {
+    const formatted = messages.map((m, i) => 
+      `${m.role === 'user' ? '👤 USER' : `🤖 ${agent.call_sign}`}:\n${m.content}`
+    ).join('\n\n---\n\n');
+    
+    try {
+      await navigator.clipboard.writeText(formatted);
+      setCopiedAll(true);
+      toast.success("Entire conversation copied");
+      setTimeout(() => setCopiedAll(false), 2000);
+    } catch (error) {
+      toast.error("Failed to copy conversation");
+    }
+  };
 
   // Load or create conversation when agent changes
   const loadConversation = useCallback(async () => {
@@ -210,15 +238,30 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
             <span className="text-sm font-normal text-muted-foreground">— Active Session</span>
           </CardTitle>
           {messages.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearConversation}
-              className="text-muted-foreground"
-            >
-              <Trash2 className="h-4 w-4 mr-1" />
-              Clear
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={copyEntireConversation}
+                className="text-muted-foreground"
+              >
+                {copiedAll ? (
+                  <Check className="h-4 w-4 mr-1 text-green-500" />
+                ) : (
+                  <Copy className="h-4 w-4 mr-1" />
+                )}
+                Copy All
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearConversation}
+                className="text-muted-foreground"
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                Clear
+              </Button>
+            </div>
           )}
         </div>
       </CardHeader>
@@ -269,18 +312,30 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
                   )}
                   <div
                     className={cn(
-                      "max-w-[80%] rounded-lg px-4 py-2.5 overflow-hidden",
+                      "max-w-[80%] rounded-lg px-4 py-2.5 overflow-hidden relative group",
                       message.role === "user"
                         ? "bg-primary text-primary-foreground"
                         : "bg-muted"
                     )}
                   >
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={() => copyMessage(message.content, index)}
+                    >
+                      {copiedIndex === index ? (
+                        <Check className="h-3 w-3 text-green-500" />
+                      ) : (
+                        <Copy className="h-3 w-3" />
+                      )}
+                    </Button>
                     {message.role === "assistant" ? (
-                      <div className="prose prose-sm dark:prose-invert max-w-none break-words overflow-wrap-anywhere [&>*]:max-w-full [&_pre]:overflow-x-auto [&_code]:break-all">
+                      <div className="prose prose-sm dark:prose-invert max-w-none break-words overflow-wrap-anywhere [&>*]:max-w-full [&_pre]:overflow-x-auto [&_code]:break-all pr-6">
                         <ReactMarkdown>{message.content}</ReactMarkdown>
                       </div>
                     ) : (
-                      <p className="text-sm whitespace-pre-wrap break-words">
+                      <p className="text-sm whitespace-pre-wrap break-words pr-6">
                         {message.content}
                       </p>
                     )}
