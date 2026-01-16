@@ -699,15 +699,15 @@ const Workspace = () => {
                             </div>
                             <div>
                               <label className="text-sm font-medium">Assign to</label>
-                              <Select value={newTaskAssignee} onValueChange={setNewTaskAssignee}>
+                              <Select value={newTaskAssignee || "unassigned"} onValueChange={(v) => setNewTaskAssignee(v === "unassigned" ? "" : v)}>
                                 <SelectTrigger>
                                   <SelectValue placeholder="Unassigned" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="">Unassigned</SelectItem>
+                                  <SelectItem value="unassigned">Unassigned</SelectItem>
                                   {members.map((m) => (
                                     <SelectItem key={m.user_id} value={m.user_id}>
-                                      {m.profiles?.name || 'Unknown'}
+                                      {m.profiles?.name || m.user_id.substring(0, 8)}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
