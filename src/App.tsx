@@ -34,7 +34,11 @@ import UnmatchedSignals from "./pages/UnmatchedSignals";
 import MatchingDashboard from "./pages/MatchingDashboard";
 import Workspace from "./pages/Workspace";
 import NotFound from "./pages/NotFound";
+import InviteRequired from "./pages/InviteRequired";
+import AcceptInvite from "./pages/AcceptInvite";
+import TenantAdmin from "./pages/TenantAdmin";
 import { EnsureDefaultRole } from "@/components/EnsureDefaultRole";
+import { TenantProvider } from "@/hooks/useTenant";
 
 const queryClient = new QueryClient();
 
@@ -45,41 +49,46 @@ const App = () => (
         <Toaster />
         <Sonner />
         <BrowserRouter>
-          <ClientSelectionProvider>
-            <RealtimeNotifications />
-            <EnsureDefaultRole />
-            <Routes>
-              <Route path="/" element={<Index />} />
-              <Route path="/auth" element={<Auth />} />
-              <Route path="/clients" element={<Clients />} />
-              <Route path="/client/:id" element={<ClientDetail />} />
-              <Route path="/incidents" element={<Incidents />} />
-              <Route path="/signals" element={<Signals />} />
-              <Route path="/sources" element={<Sources />} />
-              <Route path="/monitoring-sources" element={<MonitoringSources />} />
-              <Route path="/entities" element={<Entities />} />
-              <Route path="/reports" element={<Reports />} />
-              <Route path="/investigations" element={<Investigations />} />
-              <Route path="/investigation/:id" element={<InvestigationDetail />} />
-              <Route path="/travel" element={<Travel />} />
-              <Route path="/knowledge-base" element={<KnowledgeBase />} />
-              <Route path="/bug-reports" element={<BugReports />} />
-              <Route path="/rule-approvals" element={<RuleApprovals />} />
-              <Route path="/user-management" element={<UserManagement />} />
-              <Route path="/command-center" element={<CommandCenter />} />
-              <Route path="/task-force" element={<TaskForce />} />
-              <Route path="/task-forces" element={<TaskForces />} />
-              <Route path="/threat-radar" element={<ThreatRadar />} />
-              <Route path="/integrations" element={<Integrations />} />
-              <Route path="/benchmark" element={<Benchmark />} />
-              <Route path="/unmatched-signals" element={<UnmatchedSignals />} />
-              <Route path="/matching-dashboard" element={<MatchingDashboard />} />
-              <Route path="/workspace/:id" element={<Workspace />} />
-              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-            <SupportChatWidget />
-          </ClientSelectionProvider>
+          <TenantProvider>
+            <ClientSelectionProvider>
+              <RealtimeNotifications />
+              <EnsureDefaultRole />
+              <Routes>
+                <Route path="/" element={<Index />} />
+                <Route path="/auth" element={<Auth />} />
+                <Route path="/invite/accept" element={<AcceptInvite />} />
+                <Route path="/invite-required" element={<InviteRequired />} />
+                <Route path="/tenant-admin" element={<TenantAdmin />} />
+                <Route path="/clients" element={<Clients />} />
+                <Route path="/client/:id" element={<ClientDetail />} />
+                <Route path="/incidents" element={<Incidents />} />
+                <Route path="/signals" element={<Signals />} />
+                <Route path="/sources" element={<Sources />} />
+                <Route path="/monitoring-sources" element={<MonitoringSources />} />
+                <Route path="/entities" element={<Entities />} />
+                <Route path="/reports" element={<Reports />} />
+                <Route path="/investigations" element={<Investigations />} />
+                <Route path="/investigation/:id" element={<InvestigationDetail />} />
+                <Route path="/travel" element={<Travel />} />
+                <Route path="/knowledge-base" element={<KnowledgeBase />} />
+                <Route path="/bug-reports" element={<BugReports />} />
+                <Route path="/rule-approvals" element={<RuleApprovals />} />
+                <Route path="/user-management" element={<UserManagement />} />
+                <Route path="/command-center" element={<CommandCenter />} />
+                <Route path="/task-force" element={<TaskForce />} />
+                <Route path="/task-forces" element={<TaskForces />} />
+                <Route path="/threat-radar" element={<ThreatRadar />} />
+                <Route path="/integrations" element={<Integrations />} />
+                <Route path="/benchmark" element={<Benchmark />} />
+                <Route path="/unmatched-signals" element={<UnmatchedSignals />} />
+                <Route path="/matching-dashboard" element={<MatchingDashboard />} />
+                <Route path="/workspace/:id" element={<Workspace />} />
+                {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+              <SupportChatWidget />
+            </ClientSelectionProvider>
+          </TenantProvider>
         </BrowserRouter>
       </TooltipProvider>
     </QueryClientProvider>

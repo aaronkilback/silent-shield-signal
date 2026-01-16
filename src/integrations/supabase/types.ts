@@ -69,6 +69,66 @@ export type Database = {
           },
         ]
       }
+      agent_memory: {
+        Row: {
+          agent_id: string | null
+          content: string
+          context_tags: string[] | null
+          created_at: string
+          expires_at: string | null
+          id: string
+          importance_score: number | null
+          memory_type: string
+          scope: string
+          tenant_id: string | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          agent_id?: string | null
+          content: string
+          context_tags?: string[] | null
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          importance_score?: number | null
+          memory_type: string
+          scope: string
+          tenant_id?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          agent_id?: string | null
+          content?: string
+          context_tags?: string[] | null
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          importance_score?: number | null
+          memory_type?: string
+          scope?: string
+          tenant_id?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_memory_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_memory_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_messages: {
         Row: {
           content: string
@@ -553,6 +613,50 @@ export type Database = {
           storage_url?: string
         }
         Relationships: []
+      }
+      audit_events: {
+        Row: {
+          action: string
+          created_at: string
+          id: string
+          ip_address: string | null
+          metadata: Json | null
+          resource: string
+          resource_id: string | null
+          tenant_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          id?: string
+          ip_address?: string | null
+          metadata?: Json | null
+          resource: string
+          resource_id?: string | null
+          tenant_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          id?: string
+          ip_address?: string | null
+          metadata?: Json | null
+          resource?: string
+          resource_id?: string | null
+          tenant_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_events_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       automation_metrics: {
         Row: {
@@ -2227,6 +2331,83 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      global_chunks: {
+        Row: {
+          chunk_index: number
+          content: string
+          created_at: string
+          doc_id: string
+          embedding: string | null
+          id: string
+          metadata: Json | null
+        }
+        Insert: {
+          chunk_index: number
+          content: string
+          created_at?: string
+          doc_id: string
+          embedding?: string | null
+          id?: string
+          metadata?: Json | null
+        }
+        Update: {
+          chunk_index?: number
+          content?: string
+          created_at?: string
+          doc_id?: string
+          embedding?: string | null
+          id?: string
+          metadata?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "global_chunks_doc_id_fkey"
+            columns: ["doc_id"]
+            isOneToOne: false
+            referencedRelation: "global_docs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      global_docs: {
+        Row: {
+          content: string | null
+          content_hash: string | null
+          created_at: string
+          created_by: string | null
+          file_path: string | null
+          file_type: string | null
+          id: string
+          metadata: Json | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          content?: string | null
+          content_hash?: string | null
+          created_at?: string
+          created_by?: string | null
+          file_path?: string | null
+          file_type?: string | null
+          id?: string
+          metadata?: Json | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          content?: string | null
+          content_hash?: string | null
+          created_at?: string
+          created_by?: string | null
+          file_path?: string | null
+          file_type?: string | null
+          id?: string
+          metadata?: Json | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       improvements: {
         Row: {
@@ -4706,6 +4887,210 @@ export type Database = {
           },
         ]
       }
+      tenant_chunks: {
+        Row: {
+          chunk_index: number
+          content: string
+          created_at: string
+          doc_id: string
+          embedding: string | null
+          id: string
+          metadata: Json | null
+          tenant_id: string
+        }
+        Insert: {
+          chunk_index: number
+          content: string
+          created_at?: string
+          doc_id: string
+          embedding?: string | null
+          id?: string
+          metadata?: Json | null
+          tenant_id: string
+        }
+        Update: {
+          chunk_index?: number
+          content?: string
+          created_at?: string
+          doc_id?: string
+          embedding?: string | null
+          id?: string
+          metadata?: Json | null
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tenant_chunks_doc_id_fkey"
+            columns: ["doc_id"]
+            isOneToOne: false
+            referencedRelation: "tenant_docs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tenant_chunks_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tenant_docs: {
+        Row: {
+          content: string | null
+          content_hash: string | null
+          created_at: string
+          created_by: string | null
+          file_path: string | null
+          file_type: string | null
+          id: string
+          metadata: Json | null
+          tenant_id: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          content?: string | null
+          content_hash?: string | null
+          created_at?: string
+          created_by?: string | null
+          file_path?: string | null
+          file_type?: string | null
+          id?: string
+          metadata?: Json | null
+          tenant_id: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          content?: string | null
+          content_hash?: string | null
+          created_at?: string
+          created_by?: string | null
+          file_path?: string | null
+          file_type?: string | null
+          id?: string
+          metadata?: Json | null
+          tenant_id?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tenant_docs_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tenant_invites: {
+        Row: {
+          created_at: string
+          email: string
+          expires_at: string
+          id: string
+          invited_by: string | null
+          role: Database["public"]["Enums"]["tenant_role"]
+          tenant_id: string
+          token_hash: string
+          used_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          expires_at: string
+          id?: string
+          invited_by?: string | null
+          role?: Database["public"]["Enums"]["tenant_role"]
+          tenant_id: string
+          token_hash: string
+          used_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          expires_at?: string
+          id?: string
+          invited_by?: string | null
+          role?: Database["public"]["Enums"]["tenant_role"]
+          tenant_id?: string
+          token_hash?: string
+          used_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tenant_invites_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tenant_users: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["tenant_role"]
+          tenant_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["tenant_role"]
+          tenant_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["tenant_role"]
+          tenant_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tenant_users_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tenants: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          settings: Json | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          settings?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          settings?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       threat_precursor_indicators: {
         Row: {
           activity_trend: string | null
@@ -5581,6 +5966,7 @@ export type Database = {
         Args: { priority_level?: number; signal_id: string }
         Returns: string
       }
+      get_user_tenant_ids: { Args: { _user_id: string }; Returns: string[] }
       has_mcm_permission: {
         Args: {
           _required_roles: Database["public"]["Enums"]["workspace_mcm_role"][]
@@ -5596,7 +5982,23 @@ export type Database = {
         }
         Returns: boolean
       }
+      has_tenant_role: {
+        Args: {
+          _roles: Database["public"]["Enums"]["tenant_role"][]
+          _tenant_id: string
+          _user_id: string
+        }
+        Returns: boolean
+      }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
+      is_tenant_admin_or_owner: {
+        Args: { _tenant_id: string; _user_id: string }
+        Returns: boolean
+      }
+      is_tenant_member: {
+        Args: { _tenant_id: string; _user_id: string }
+        Returns: boolean
+      }
       is_workspace_contributor: {
         Args: { _user_id: string; _workspace_id: string }
         Returns: boolean
@@ -5698,6 +6100,7 @@ export type Database = {
         | "travel_security"
         | "communications"
         | "legal"
+      tenant_role: "owner" | "admin" | "analyst" | "viewer"
       validation_status: "PASS" | "WARN" | "FAIL" | "PENDING"
       vulnerability_severity:
         | "critical"
@@ -5922,6 +6325,7 @@ export const Constants = {
         "communications",
         "legal",
       ],
+      tenant_role: ["owner", "admin", "analyst", "viewer"],
       validation_status: ["PASS", "WARN", "FAIL", "PENDING"],
       vulnerability_severity: [
         "critical",
