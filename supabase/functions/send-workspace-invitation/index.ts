@@ -13,6 +13,7 @@ interface InvitationRequest {
   workspaceId: string;
   email: string;
   role: string;
+  systemRole?: string;
 }
 
 serve(async (req) => {
@@ -44,7 +45,7 @@ serve(async (req) => {
       });
     }
 
-    const { workspaceId, email, role }: InvitationRequest = await req.json();
+    const { workspaceId, email, role, systemRole }: InvitationRequest = await req.json();
 
     if (!workspaceId || !email) {
       return new Response(JSON.stringify({ error: "workspaceId and email are required" }), {
@@ -83,6 +84,7 @@ serve(async (req) => {
         workspace_id: workspaceId,
         email: email.toLowerCase().trim(),
         role: role || "contributor",
+        system_role: systemRole || "viewer",
         invited_by: user.id,
       })
       .select("id, token")

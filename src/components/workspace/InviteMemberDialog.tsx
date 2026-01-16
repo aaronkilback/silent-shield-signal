@@ -31,7 +31,8 @@ export const InviteMemberDialog = ({
   workspaceId,
 }: InviteMemberDialogProps) => {
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState("contributor");
+  const [workspaceRole, setWorkspaceRole] = useState("contributor");
+  const [systemRole, setSystemRole] = useState("viewer");
   const [sending, setSending] = useState(false);
 
   const handleInvite = async () => {
@@ -55,7 +56,8 @@ export const InviteMemberDialog = ({
           body: {
             workspaceId,
             email: email.trim(),
-            role,
+            role: workspaceRole,
+            systemRole,
           },
         }
       );
@@ -64,7 +66,8 @@ export const InviteMemberDialog = ({
 
       toast.success(`Invitation sent to ${email}`);
       setEmail("");
-      setRole("contributor");
+      setWorkspaceRole("contributor");
+      setSystemRole("viewer");
       onOpenChange(false);
     } catch (error: any) {
       console.error("Error sending invitation:", error);
@@ -94,24 +97,44 @@ export const InviteMemberDialog = ({
               onKeyDown={(e) => e.key === "Enter" && handleInvite()}
             />
           </div>
+          
           <div>
-            <label className="text-sm font-medium">Role</label>
-            <Select value={role} onValueChange={setRole}>
+            <label className="text-sm font-medium">Workspace Role</label>
+            <p className="text-xs text-muted-foreground mb-1">
+              Access level within this workspace
+            </p>
+            <Select value={workspaceRole} onValueChange={setWorkspaceRole}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="viewer">Viewer (read-only)</SelectItem>
-                <SelectItem value="contributor">
-                  Contributor (can edit)
-                </SelectItem>
+                <SelectItem value="contributor">Contributor (can edit)</SelectItem>
                 <SelectItem value="owner">Owner (full control)</SelectItem>
               </SelectContent>
             </Select>
           </div>
-          <p className="text-xs text-muted-foreground">
-            They'll receive an email with a link to sign up and automatically
-            join this workspace.
+
+          <div>
+            <label className="text-sm font-medium">System Access</label>
+            <p className="text-xs text-muted-foreground mb-1">
+              App-wide permissions for agents, reports, etc.
+            </p>
+            <Select value={systemRole} onValueChange={setSystemRole}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="viewer">Viewer — Read-only access to data</SelectItem>
+                <SelectItem value="analyst">Analyst — Create & manage incidents, signals</SelectItem>
+                <SelectItem value="admin">Admin — Full system access</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <p className="text-xs text-muted-foreground bg-muted p-2 rounded">
+            They'll only see data related to the linked incident/investigation, 
+            and can interact with agents within their system role permissions.
           </p>
         </div>
         <DialogFooter>
