@@ -598,7 +598,8 @@ export const entityRelationshipsTests = {
           'associated_with', 'works_for', 'reports_to', 'owns', 'located_at',
           'communicates_with', 'transacts_with', 'related_to', 'member_of',
           'connected_to', 'supplier_of', 'customer_of', 'competitor_of',
-          'partner_with', 'sibling_of', 'parent_of', 'child_of'
+          'partner_with', 'sibling_of', 'parent_of', 'child_of', 'criticizes',
+          'supports', 'opposes', 'monitors', 'targets', 'allies_with'
         ];
         
         const { data: relationships, error } = await supabase

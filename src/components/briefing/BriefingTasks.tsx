@@ -121,7 +121,7 @@ export function BriefingTasks({ workspaceId, briefingId }: BriefingTasksProps) {
           workspace_id: workspaceId,
           title: data.title,
           description: data.description || null,
-          assigned_to_user_id: data.assigned_to || null,
+          assigned_to_user_id: data.assigned_to && data.assigned_to !== "__unassigned__" ? data.assigned_to : null,
           created_by_user_id: user?.id,
           status: 'pending'
         });
@@ -348,7 +348,7 @@ export function BriefingTasks({ workspaceId, briefingId }: BriefingTasksProps) {
                       <SelectValue placeholder="Select team member" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Unassigned</SelectItem>
+                      <SelectItem value="__unassigned__">Unassigned</SelectItem>
                       {members.map((member) => (
                         <SelectItem key={member.user_id} value={member.user_id}>
                           {member.name}
