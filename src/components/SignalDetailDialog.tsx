@@ -36,18 +36,50 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
   const [correlationData, setCorrelationData] = useState<any>(null);
   const [correlatedSignals, setCorrelatedSignals] = useState<any[]>([]);
   const [copied, setCopied] = useState(false);
+  const [linkedIncident, setLinkedIncident] = useState<any>(null);
   
   if (!signal) return null;
 
   const decodedText = signal.normalized_text ? decodeHtmlEntities(signal.normalized_text) : signal.normalized_text;
 
-  // Fetch correlation data when dialog opens
+  // Fetch correlation data and linked incident when dialog opens
   useEffect(() => {
-    const fetchCorrelationData = async () => {
-      if (!signal?.correlation_group_id || !open) return;
+    const fetchData = async () => {
+      if (!open || !signal?.id) return;
+
+      // Check for linked incident
+      try {
+        // Direct link via signal_id
+        const { data: directIncident } = await supabase
+          .from('incidents')
+          .select('id, status, title, priority, created_at')
+          .eq('signal_id', signal.id)
+          .maybeSingle();
+        
+        if (directIncident) {
+          setLinkedIncident(directIncident);
+        } else {
+          // Check junction table
+          const { data: linkedData } = await supabase
+            .from('incident_signals')
+            .select('incident_id, incidents(id, status, title, priority, created_at)')
+            .eq('signal_id', signal.id)
+            .limit(1);
+          
+          if (linkedData && linkedData.length > 0) {
+            setLinkedIncident(linkedData[0].incidents);
+          } else {
+            setLinkedIncident(null);
+          }
+        }
+      } catch (error) {
+        console.error('Error checking linked incident:', error);
+      }
+
+      // Fetch correlation group
+      if (!signal?.correlation_group_id) return;
 
       try {
-        // Get correlation group
         const { data: group } = await supabase
           .from('signal_correlation_groups')
           .select('*')
@@ -57,7 +89,6 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
         if (group) {
           setCorrelationData(group);
 
-          // Get all signals in this group (excluding current signal)
           const { data: signals } = await supabase
             .from('signals')
             .select('id, normalized_text, category, severity, confidence, created_at, sources(name)')
@@ -74,8 +105,8 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
       }
     };
 
-    fetchCorrelationData();
-  }, [signal?.correlation_group_id, open]);
+    fetchData();
+  }, [signal?.id, signal?.correlation_group_id, open]);
 
   const handleRunAIAnalysis = async () => {
     setIsAnalyzing(true);
@@ -453,12 +484,55 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                         </div>
                       )}
                       <div>
-                        <p className="text-sm text-muted-foreground">Incident Created</p>
+                        <p className="text-sm text-muted-foreground">Incident Recommended</p>
                         <p className="font-medium mt-1">
                           {aiDecision.should_create_incident ? '✓ Yes' : '✗ No'}
                         </p>
                       </div>
                     </div>
+
+                    {/* Linked Incident Status */}
+                    {linkedIncident ? (
+                      <div className="bg-green-50 dark:bg-green-950/20 p-4 rounded-lg border border-green-200 dark:border-green-900">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-medium text-green-800 dark:text-green-200">
+                              ✓ Incident Auto-Created
+                            </p>
+                            <p className="text-xs text-green-600 dark:text-green-400 mt-1">
+                              {linkedIncident.title} ({linkedIncident.status})
+                            </p>
+                          </div>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => navigate(`/incidents?highlight=${linkedIncident.id}`)}
+                          >
+                            View Incident
+                          </Button>
+                        </div>
+                      </div>
+                    ) : aiDecision.should_create_incident ? (
+                      <div className="bg-amber-50 dark:bg-amber-950/20 p-4 rounded-lg border border-amber-200 dark:border-amber-900">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                              ⚠️ AI Recommended Incident Creation
+                            </p>
+                            <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                              No incident was auto-created. You can create one manually.
+                            </p>
+                          </div>
+                          <Button 
+                            variant="default" 
+                            size="sm"
+                            onClick={() => setCreateIncidentOpen(true)}
+                          >
+                            Create Now
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
 
                     {aiDecision.reasoning && (
                       <div>
