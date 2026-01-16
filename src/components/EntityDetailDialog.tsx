@@ -449,11 +449,23 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
       if (error) throw error;
 
       const contentAdded = data?.content_created || 0;
+      const duplicatesSkipped = data?.duplicates_skipped || 0;
+      const totalContent = data?.total_content || 0;
       const signalsCreated = data?.signals_created || 0;
+      
+      let description = '';
+      if (contentAdded > 0) {
+        description = `Added ${contentAdded} new items`;
+        if (signalsCreated > 0) description += ` and created ${signalsCreated} security signals`;
+      } else if (duplicatesSkipped > 0) {
+        description = `${duplicatesSkipped} items already existed. Total: ${totalContent} items for ${entity?.name}`;
+      } else {
+        description = `No new content found. Total: ${totalContent} existing items for ${entity?.name}`;
+      }
       
       toast({ 
         title: "Web Search Complete", 
-        description: `Found ${contentAdded} relevant items and created ${signalsCreated} security signals for ${entity?.name}`
+        description
       });
       
       queryClient.invalidateQueries({ queryKey: ['entity-content', entityId] });
