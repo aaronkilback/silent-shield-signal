@@ -182,3 +182,6 @@ verify_jwt = false
 
 [functions.create-workspace]
 verify_jwt = false
+
+[functions.send-workspace-invitation]
+verify_jwt = false
