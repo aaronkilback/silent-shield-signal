@@ -1,5 +1,8 @@
 project_id = "udbjjeppbgwjlqmaeftn"
 
+[functions.fortress-document-converter]
+verify_jwt = false
+
 [functions.ingest-intelligence]
 verify_jwt = true
 
