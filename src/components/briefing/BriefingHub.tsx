@@ -433,7 +433,13 @@ export function BriefingHub({ workspaceId, briefingId, incidentId, investigation
         </TabsContent>
 
         <TabsContent value="chat" className="mt-4">
-          <BriefingChat briefingId={briefing.id} workspaceId={workspaceId} />
+          <BriefingChat 
+            briefingId={briefing.id} 
+            workspaceId={workspaceId}
+            incidentId={selectedScope.type === 'incident' ? selectedScope.id : undefined}
+            investigationId={selectedScope.type === 'investigation' ? selectedScope.id : undefined}
+            scopeTitle={selectedScope.title}
+          />
         </TabsContent>
 
         <TabsContent value="agenda" className="mt-4">

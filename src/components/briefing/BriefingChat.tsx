@@ -22,6 +22,9 @@ import { formatDistanceToNow } from "date-fns";
 interface BriefingChatProps {
   briefingId: string;
   workspaceId: string;
+  incidentId?: string;
+  investigationId?: string;
+  scopeTitle?: string;
 }
 
 interface ChatMessage {
@@ -47,7 +50,7 @@ interface Agent {
   specialty: string;
 }
 
-export function BriefingChat({ briefingId, workspaceId }: BriefingChatProps) {
+export function BriefingChat({ briefingId, workspaceId, incidentId, investigationId, scopeTitle }: BriefingChatProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
@@ -176,7 +179,13 @@ export function BriefingChat({ briefingId, workspaceId }: BriefingChatProps) {
                 agent_id: agentId,
                 user_message: message,
                 parent_message_id: userMessage.id,
-                is_group_question: isGroupQuestion
+                is_group_question: isGroupQuestion,
+                // Scope enforcement context
+                scope: {
+                  incident_id: incidentId || null,
+                  investigation_id: investigationId || null,
+                  scope_title: scopeTitle || null
+                }
               }
             });
 
