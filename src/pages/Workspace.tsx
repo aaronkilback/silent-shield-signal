@@ -14,14 +14,17 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 import { 
   Loader2, Send, Users, MessageSquare, CheckSquare, Clock, 
-  ArrowLeft, Plus, UserPlus, AlertTriangle, Mail, Shield
+  ArrowLeft, Plus, UserPlus, AlertTriangle, Mail, Shield, CalendarIcon
 } from "lucide-react";
 import { InviteMemberDialog } from "@/components/workspace/InviteMemberDialog";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
 import { getMCMRoleInfo, MCM_ROLE_ORDER, MCM_ROLES, canManageAssignments, canSubmitFindings, type MCMRole } from "@/lib/mcmRoles";
+import { cn } from "@/lib/utils";
 
 interface WorkspaceMessage {
   id: string;
@@ -75,7 +78,7 @@ const Workspace = () => {
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskDescription, setNewTaskDescription] = useState("");
   const [newTaskAssignee, setNewTaskAssignee] = useState<string>("");
-  const [newTaskDiaryDate, setNewTaskDiaryDate] = useState<string>("");
+  const [newTaskDiaryDate, setNewTaskDiaryDate] = useState<Date | undefined>(undefined);
   
   // Fetch workspace details
   const { data: workspace, isLoading: workspaceLoading } = useQuery({
@@ -347,7 +350,7 @@ const Workspace = () => {
           title: newTaskTitle.trim(),
           description: newTaskDescription.trim() || null,
           assigned_to_user_id: newTaskAssignee || null,
-          diary_date: newTaskDiaryDate || null,
+          diary_date: newTaskDiaryDate ? format(newTaskDiaryDate, 'yyyy-MM-dd') : null,
           created_by_user_id: user.id,
           status: 'pending'
         } as any);
@@ -374,7 +377,7 @@ const Workspace = () => {
       setNewTaskTitle("");
       setNewTaskDescription("");
       setNewTaskAssignee("");
-      setNewTaskDiaryDate("");
+      setNewTaskDiaryDate(undefined);
       setShowCreateTask(false);
       toast.success("Task created");
     } catch (error: any) {
@@ -719,11 +722,29 @@ const Workspace = () => {
                             </div>
                             <div>
                               <label className="text-sm font-medium">Diary Date</label>
-                              <Input
-                                type="date"
-                                value={newTaskDiaryDate}
-                                onChange={(e) => setNewTaskDiaryDate(e.target.value)}
-                              />
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    className={cn(
+                                      "w-full justify-start text-left font-normal",
+                                      !newTaskDiaryDate && "text-muted-foreground"
+                                    )}
+                                  >
+                                    <CalendarIcon className="mr-2 h-4 w-4" />
+                                    {newTaskDiaryDate ? format(newTaskDiaryDate, "PPP") : <span>Pick a date</span>}
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start">
+                                  <Calendar
+                                    mode="single"
+                                    selected={newTaskDiaryDate}
+                                    onSelect={setNewTaskDiaryDate}
+                                    initialFocus
+                                    className="pointer-events-auto"
+                                  />
+                                </PopoverContent>
+                              </Popover>
                               <p className="text-xs text-muted-foreground mt-1">
                                 Date for progress review/follow-up
                               </p>
