@@ -602,57 +602,139 @@ COMMUNICATION GUIDELINES:
           });
           
         } else if (funcName === 'get_document_content') {
-          // Try to retrieve already-extracted content from database
-          let query = supabase.from('archival_documents').select('id, filename, content_text, file_type, storage_path');
-          
+          const isPlaceholder = (t?: string | null) => !t || t.startsWith('Uploaded via');
+          const knownBuckets = [
+            'ai-chat-attachments',
+            'archival-documents',
+            'investigation-files',
+            'travel-documents',
+            'bug-screenshots',
+            'entity-photos',
+            'agent-avatars',
+          ];
+
+          const resolveFullPath = async (storagePath: string | null): Promise<string | null> => {
+            if (!storagePath) return null;
+            if (knownBuckets.some((b) => storagePath.startsWith(`${b}/`))) return storagePath;
+
+            const { data: obj } = await supabase
+              .from('storage.objects')
+              .select('bucket_id, name')
+              .eq('name', storagePath)
+              .maybeSingle();
+
+            if (obj?.bucket_id && obj?.name) return `${obj.bucket_id}/${obj.name}`;
+            return storagePath;
+          };
+
+          const pickBest = (rows: any[]) => rows.find((r) => !isPlaceholder(r.content_text)) || rows[0];
+
+          let rows: any[] = [];
+
           if (args.document_id) {
-            query = query.eq('id', args.document_id);
+            const { data: docA } = await supabase
+              .from('archival_documents')
+              .select('id, filename, content_text, file_type, storage_path, updated_at')
+              .eq('id', args.document_id)
+              .maybeSingle();
+            if (docA) rows = [docA];
+
+            if (!rows.length) {
+              const { data: docB } = await supabase
+                .from('ingested_documents')
+                .select('id, filename, content_text, file_type, storage_path, updated_at')
+                .eq('id', args.document_id)
+                .maybeSingle();
+              if (docB) rows = [docB];
+            }
           } else if (args.filename) {
-            query = query.ilike('filename', `%${args.filename}%`);
+            const { data: docsA } = await supabase
+              .from('archival_documents')
+              .select('id, filename, content_text, file_type, storage_path, updated_at')
+              .ilike('filename', `%${args.filename}%`)
+              .order('updated_at', { ascending: false })
+              .limit(5);
+
+            rows = docsA || [];
+
+            if (!rows.length) {
+              const { data: docsB } = await supabase
+                .from('ingested_documents')
+                .select('id, filename, content_text, file_type, storage_path, updated_at')
+                .ilike('filename', `%${args.filename}%`)
+                .order('updated_at', { ascending: false })
+                .limit(5);
+              rows = docsB || [];
+            }
           } else {
             throw new Error('Either document_id or filename is required');
           }
-          
-          const { data: docs, error } = await query.limit(1).single();
-          
-          if (error || !docs) {
-            toolResults.push({ 
-              tool: 'get_document_content', 
-              result: { 
-                success: false, 
+
+          const best = pickBest(rows);
+
+          if (!best) {
+            toolResults.push({
+              tool: 'get_document_content',
+              result: {
+                success: false,
                 error: 'Document not found',
-                suggestion: 'Use process_document with the file_path to extract content'
-              } 
+                suggestion: 'Use process_document with the full file_path (including bucket) to extract content.'
+              }
             });
-          } else if (!docs.content_text || docs.content_text.startsWith('Uploaded via')) {
-            // Content not yet extracted
-            toolResults.push({ 
-              tool: 'get_document_content', 
-              result: { 
-                success: false, 
-                document_id: docs.id,
-                filename: docs.filename,
-                storage_path: docs.storage_path,
+          } else if (isPlaceholder(best.content_text)) {
+            const fullPath = await resolveFullPath(best.storage_path);
+            toolResults.push({
+              tool: 'get_document_content',
+              result: {
+                success: false,
+                document_id: best.id,
+                filename: best.filename,
+                storage_path: best.storage_path,
+                file_path: fullPath,
                 error: 'Document content not yet extracted',
-                suggestion: `Call process_document with file_path="${docs.storage_path}" and document_id="${docs.id}" to extract text`
-              } 
+                suggestion: `Call process_document with file_path=\"${fullPath || best.storage_path}\" and document_id=\"${best.id}\" to extract text`
+              }
             });
           } else {
-            toolResults.push({ 
-              tool: 'get_document_content', 
-              result: { 
-                success: true, 
-                document_id: docs.id,
-                filename: docs.filename,
-                content_text: docs.content_text,
-                text_length: docs.content_text.length
-              } 
+            toolResults.push({
+              tool: 'get_document_content',
+              result: {
+                success: true,
+                document_id: best.id,
+                filename: best.filename,
+                content_text: best.content_text,
+                text_length: best.content_text.length
+              }
             });
           }
-          
+
         } else if (funcName === 'process_document') {
+          const knownBuckets = [
+            'ai-chat-attachments',
+            'archival-documents',
+            'investigation-files',
+            'travel-documents',
+            'bug-screenshots',
+            'entity-photos',
+            'agent-avatars',
+          ];
+
+          // Ensure file_path includes bucket; if not, try to resolve via storage.objects
+          let filePath = args.file_path;
+          if (filePath && !knownBuckets.some((b) => filePath.startsWith(`${b}/`))) {
+            const { data: obj } = await supabase
+              .from('storage.objects')
+              .select('bucket_id, name')
+              .eq('name', filePath)
+              .maybeSingle();
+
+            if (obj?.bucket_id && obj?.name) {
+              filePath = `${obj.bucket_id}/${obj.name}`;
+            }
+          }
+
           // Infer MIME type from extension if not provided
-          const ext = args.file_path?.split('.').pop()?.toLowerCase() || '';
+          const ext = filePath?.split('.').pop()?.toLowerCase() || '';
           const mimeMap: Record<string, string> = {
             'pdf': 'application/pdf',
             'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -669,23 +751,20 @@ COMMUNICATION GUIDELINES:
           };
           const mimeType = args.mime_type || mimeMap[ext] || 'application/octet-stream';
           
-          // Determine target table based on file path
-          const targetTable = args.file_path?.includes('archival') ? 'archival_documents' : 'archival_documents';
-          
           const { data: docResult, error } = await supabase.functions.invoke('fortress-document-converter', {
             body: {
               documentId: args.document_id || crypto.randomUUID(),
-              filePath: args.file_path,
+              filePath: filePath,
               mimeType: mimeType,
               extractText: args.extract_text !== false,
               updateDatabase: args.update_database !== false,
-              targetTable: targetTable
+              targetTable: 'archival_documents'
             }
           });
           
           if (error) throw error;
           if (!docResult?.success) throw new Error(docResult?.error || 'Document processing failed');
-          
+
           toolResults.push({ 
             tool: 'process_document', 
             result: { 
