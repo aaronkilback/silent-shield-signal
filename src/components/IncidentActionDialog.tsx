@@ -13,12 +13,13 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, CheckCircle, Shield, XCircle, Brain, History, Link2, Users, Swords } from "lucide-react";
+import { Loader2, CheckCircle, Shield, XCircle, Brain, History, Link2, Users, Swords, Target } from "lucide-react";
 import { IncidentLocationMap } from "./IncidentLocationMap";
 import { IncidentOutcomeDialog } from "./IncidentOutcomeDialog";
 import IncidentFeedbackDialog from "./IncidentFeedbackDialog";
 import { AIAnalysisTimeline } from "./incidents/AIAnalysisTimeline";
 import { WorkspaceButton } from "./workspace";
+import { useNavigate } from "react-router-dom";
 
 interface Incident {
   id: string;
@@ -57,6 +58,7 @@ export const IncidentActionDialog = ({
   onSuccess,
 }: IncidentActionDialogProps) => {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState("");
   const [signalLocation, setSignalLocation] = useState<string | null>(null);
@@ -64,6 +66,7 @@ export const IncidentActionDialog = ({
   const [showOutcomeDialog, setShowOutcomeDialog] = useState(false);
   const [fullIncident, setFullIncident] = useState<Incident>(incident);
   const [activeTab, setActiveTab] = useState("overview");
+  const [startingBriefing, setStartingBriefing] = useState(false);
 
   const fetchFullIncident = useCallback(async () => {
     if (!incident.id) return;
@@ -433,11 +436,80 @@ export const IncidentActionDialog = ({
                   
                   <div>
                     <h3 className="text-sm font-semibold mb-2">Collaboration</h3>
-                    <WorkspaceButton 
-                      incidentId={fullIncident.id}
-                      defaultTitle={fullIncident.title || `Incident ${fullIncident.id.substring(0, 8)}`}
-                      className="w-full"
-                    />
+                    <div className="space-y-2">
+                      <WorkspaceButton 
+                        incidentId={fullIncident.id}
+                        defaultTitle={fullIncident.title || `Incident ${fullIncident.id.substring(0, 8)}`}
+                        className="w-full"
+                      />
+                      <Button
+                        variant="outline"
+                        className="w-full gap-2"
+                        disabled={startingBriefing}
+                        onClick={async () => {
+                          setStartingBriefing(true);
+                          try {
+                            // Check if workspace exists, if not create one
+                            const { data: existingWorkspace } = await supabase
+                              .from('investigation_workspaces')
+                              .select('id')
+                              .eq('incident_id', fullIncident.id)
+                              .maybeSingle();
+                            
+                            let workspaceId = existingWorkspace?.id;
+                            
+                            if (!workspaceId) {
+                              // Get current user
+                              const { data: { user } } = await supabase.auth.getUser();
+                              if (!user) throw new Error('Not authenticated');
+                              
+                              // Create workspace for this incident
+                              const workspaceData = {
+                                incident_id: fullIncident.id,
+                                title: `Briefing: ${fullIncident.title || fullIncident.id.substring(0, 8)}`,
+                                status: 'active',
+                                created_by_user_id: user.id
+                              };
+                              const { data: newWorkspace, error } = await supabase
+                                .from('investigation_workspaces')
+                                .insert(workspaceData as any)
+                                .select('id')
+                                .single();
+                              
+                              if (error) throw error;
+                              workspaceId = newWorkspace.id;
+                              
+                              // Add creator as member
+                              await supabase.from('workspace_members').insert({
+                                workspace_id: workspaceId,
+                                user_id: user.id,
+                                role: 'owner'
+                              } as any);
+                            }
+                            
+                            // Navigate to workspace with incident pre-selected
+                            onClose();
+                            navigate(`/workspace/${workspaceId}?tab=briefing&incident=${fullIncident.id}`);
+                          } catch (error: any) {
+                            console.error('Error starting briefing:', error);
+                            toast({
+                              title: 'Error',
+                              description: error.message || 'Failed to start briefing',
+                              variant: 'destructive'
+                            });
+                          } finally {
+                            setStartingBriefing(false);
+                          }
+                        }}
+                      >
+                        {startingBriefing ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Target className="w-4 h-4" />
+                        )}
+                        Start Fortress Briefing
+                      </Button>
+                    </div>
                   </div>
                 </div>
               ) : (

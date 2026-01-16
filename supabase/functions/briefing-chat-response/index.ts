@@ -12,8 +12,8 @@ serve(async (req) => {
   }
 
   try {
-    const { briefing_id, agent_id, user_message, parent_message_id, is_group_question } = await req.json();
-    console.log('Briefing chat response request:', { briefing_id, agent_id, is_group_question });
+    const { briefing_id, agent_id, user_message, parent_message_id, is_group_question, scope } = await req.json();
+    console.log('Briefing chat response request:', { briefing_id, agent_id, is_group_question, scope });
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
@@ -35,12 +35,113 @@ serve(async (req) => {
       throw new Error('Agent not found');
     }
 
-    // Fetch briefing context
+    // Fetch briefing context with scope
     const { data: briefing } = await supabase
       .from('briefing_sessions')
       .select('*, investigation_workspaces(name, case_number)')
       .eq('id', briefing_id)
       .single();
+
+    // Build scope context data
+    let scopeContextData = '';
+    let scopeDescription = '';
+    
+    // Fetch incident-specific context if scoped to an incident
+    if (scope?.incident_id) {
+      const { data: incident } = await supabase
+        .from('incidents')
+        .select('*, clients(name), signals(normalized_text, category, severity, location)')
+        .eq('id', scope.incident_id)
+        .single();
+      
+      if (incident) {
+        scopeDescription = `Incident: ${incident.title || incident.summary || scope.incident_id}`;
+        scopeContextData += `\n\n=== INCIDENT SCOPE ===`;
+        scopeContextData += `\nIncident ID: ${incident.id}`;
+        scopeContextData += `\nTitle: ${incident.title || 'N/A'}`;
+        scopeContextData += `\nSummary: ${incident.summary || 'N/A'}`;
+        scopeContextData += `\nPriority: ${incident.priority}`;
+        scopeContextData += `\nStatus: ${incident.status}`;
+        scopeContextData += `\nClient: ${incident.clients?.name || 'Unknown'}`;
+        if (incident.signals) {
+          scopeContextData += `\nOriginating Signal: ${incident.signals.normalized_text?.substring(0, 300) || 'N/A'}`;
+          scopeContextData += `\nSignal Category: ${incident.signals.category || 'N/A'}`;
+          scopeContextData += `\nSignal Severity: ${incident.signals.severity || 'N/A'}`;
+          scopeContextData += `\nLocation: ${incident.signals.location || 'N/A'}`;
+        }
+        if (incident.timeline_json?.length) {
+          scopeContextData += `\n\nTimeline Events:`;
+          incident.timeline_json.slice(-5).forEach((event: any) => {
+            scopeContextData += `\n- [${event.timestamp}] ${event.event || event.action}: ${event.details?.substring(0, 150) || ''}`;
+          });
+        }
+        
+        // Fetch related entities for this incident
+        const { data: entityMentions } = await supabase
+          .from('entity_mentions')
+          .select('entities(name, type, description)')
+          .eq('incident_id', scope.incident_id)
+          .limit(10);
+        
+        if (entityMentions?.length) {
+          scopeContextData += `\n\nRelated Entities:`;
+          entityMentions.forEach((em: any) => {
+            if (em.entities) {
+              scopeContextData += `\n- ${em.entities.name} (${em.entities.type})`;
+            }
+          });
+        }
+      }
+    }
+    
+    // Fetch investigation-specific context if scoped to an investigation
+    if (scope?.investigation_id) {
+      const { data: investigation } = await supabase
+        .from('investigations')
+        .select('*, clients(name)')
+        .eq('id', scope.investigation_id)
+        .single();
+      
+      if (investigation) {
+        scopeDescription = `Investigation: ${investigation.file_number}`;
+        scopeContextData += `\n\n=== INVESTIGATION SCOPE ===`;
+        scopeContextData += `\nFile Number: ${investigation.file_number}`;
+        scopeContextData += `\nStatus: ${investigation.file_status}`;
+        scopeContextData += `\nClient: ${investigation.clients?.name || 'Unknown'}`;
+        scopeContextData += `\nSynopsis: ${investigation.synopsis?.substring(0, 500) || 'N/A'}`;
+        if (investigation.information) {
+          scopeContextData += `\n\nInformation:\n${investigation.information.substring(0, 1000)}`;
+        }
+        
+        // Fetch investigation entries
+        const { data: entries } = await supabase
+          .from('investigation_entries')
+          .select('entry_text, entry_timestamp, created_by_name')
+          .eq('investigation_id', scope.investigation_id)
+          .order('entry_timestamp', { ascending: false })
+          .limit(5);
+        
+        if (entries?.length) {
+          scopeContextData += `\n\nRecent Investigation Entries:`;
+          entries.forEach((e: any) => {
+            scopeContextData += `\n- [${e.entry_timestamp}] ${e.entry_text?.substring(0, 200)}`;
+          });
+        }
+        
+        // Fetch related investigation persons
+        const { data: persons } = await supabase
+          .from('investigation_persons')
+          .select('name, status, position, company')
+          .eq('investigation_id', scope.investigation_id);
+        
+        if (persons?.length) {
+          scopeContextData += `\n\nPersons of Interest:`;
+          persons.forEach((p: any) => {
+            scopeContextData += `\n- ${p.name} (${p.status}) - ${p.position || ''} ${p.company ? 'at ' + p.company : ''}`;
+          });
+        }
+      }
+    }
 
     // Fetch recent chat history for context
     const { data: recentMessages } = await supabase
@@ -70,10 +171,10 @@ serve(async (req) => {
       .limit(5);
 
     // Build context
-    let contextData = '';
+    let contextData = scopeContextData;
     
     if (briefing) {
-      contextData += `\n\nBRIEFING CONTEXT:`;
+      contextData += `\n\nBRIEFING SESSION CONTEXT:`;
       contextData += `\nTitle: ${briefing.title}`;
       contextData += `\nStatus: ${briefing.status}`;
       if (briefing.description) contextData += `\nDescription: ${briefing.description}`;
@@ -109,12 +210,33 @@ serve(async (req) => {
       });
     }
 
-    // Build system prompt
+    // Build system prompt with scope enforcement
+    const scopeEnforcementInstructions = scopeDescription ? `
+CRITICAL SCOPE ENFORCEMENT:
+This briefing is STRICTLY SCOPED to: ${scopeDescription}
+
+SCOPE RULES:
+1. All your responses must be directly relevant to ${scopeDescription}
+2. If the user's question seems to fall outside this scope, you MUST:
+   - First, acknowledge the question
+   - Provide a soft warning: "⚠️ This query may fall outside the current briefing scope (${scopeDescription}). I'll provide what I can, but please confirm if you'd like to expand the search scope."
+   - Then provide limited, cautious information if you can relate it to the current scope
+3. Always prioritize information from the scope context provided above
+4. If asked about unrelated incidents, clients, or investigations, politely redirect to the current scope
+5. Reference the specific incident/investigation details when answering
+
+This scoping ensures focused decision-making and prevents information overload.
+` : '';
+
     const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}
 
 Your Mission: ${agent.mission_scope}
 
-You are participating in an investigative briefing session. ${is_group_question ? 'Multiple agents are being asked this question - provide your unique perspective based on your specialty.' : 'You have been specifically tagged to respond.'}
+You are participating in a FORTRESS BRIEFING HUB session - an incident-centric command environment designed for Major Case Management (MCM).
+
+${scopeEnforcementInstructions}
+
+${is_group_question ? 'Multiple agents are being asked this question - provide your unique perspective based on your specialty.' : 'You have been specifically tagged to respond.'}
 
 ${contextData}
 
@@ -122,10 +244,11 @@ RESPONSE GUIDELINES:
 - Be concise but insightful (aim for 2-4 paragraphs maximum)
 - Focus on your area of expertise: ${agent.specialty}
 - Provide actionable intelligence or recommendations when possible
-- Reference evidence or notes when relevant
+- Reference evidence, notes, or scope-specific data when relevant
 - If this is a group question, acknowledge other perspectives but focus on your specialty
 - Maintain your persona as ${agent.codename}
-- Be collaborative and supportive of the investigation team`;
+- Be collaborative and supportive of the investigation team
+- ALWAYS stay within the defined scope - warn if queries drift outside`;
 
     // Call AI Gateway
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -135,7 +258,7 @@ RESPONSE GUIDELINES:
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'google/gemini-3-flash-preview',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: user_message }
@@ -179,7 +302,8 @@ RESPONSE GUIDELINES:
         content: agentResponse,
         message_type: 'agent_response',
         parent_message_id,
-        is_group_question
+        is_group_question,
+        metadata: { scope: scope || null }
       });
 
     if (insertError) {
