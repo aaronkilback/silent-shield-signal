@@ -596,6 +596,221 @@ export type Database = {
         }
         Relationships: []
       }
+      briefing_agenda_items: {
+        Row: {
+          briefing_id: string
+          completed_at: string | null
+          created_at: string
+          description: string | null
+          duration_minutes: number | null
+          id: string
+          presenter_user_id: string | null
+          sort_order: number
+          started_at: string | null
+          status: string | null
+          title: string
+        }
+        Insert: {
+          briefing_id: string
+          completed_at?: string | null
+          created_at?: string
+          description?: string | null
+          duration_minutes?: number | null
+          id?: string
+          presenter_user_id?: string | null
+          sort_order?: number
+          started_at?: string | null
+          status?: string | null
+          title: string
+        }
+        Update: {
+          briefing_id?: string
+          completed_at?: string | null
+          created_at?: string
+          description?: string | null
+          duration_minutes?: number | null
+          id?: string
+          presenter_user_id?: string | null
+          sort_order?: number
+          started_at?: string | null
+          status?: string | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "briefing_agenda_items_briefing_id_fkey"
+            columns: ["briefing_id"]
+            isOneToOne: false
+            referencedRelation: "briefing_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      briefing_decisions: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          briefing_id: string
+          category: string | null
+          created_at: string
+          decision_maker_agent_id: string | null
+          decision_maker_user_id: string | null
+          decision_text: string
+          id: string
+          priority: string | null
+          rationale: string | null
+          status: string | null
+          updated_at: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          briefing_id: string
+          category?: string | null
+          created_at?: string
+          decision_maker_agent_id?: string | null
+          decision_maker_user_id?: string | null
+          decision_text: string
+          id?: string
+          priority?: string | null
+          rationale?: string | null
+          status?: string | null
+          updated_at?: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          briefing_id?: string
+          category?: string | null
+          created_at?: string
+          decision_maker_agent_id?: string | null
+          decision_maker_user_id?: string | null
+          decision_text?: string
+          id?: string
+          priority?: string | null
+          rationale?: string | null
+          status?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "briefing_decisions_briefing_id_fkey"
+            columns: ["briefing_id"]
+            isOneToOne: false
+            referencedRelation: "briefing_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "briefing_decisions_decision_maker_agent_id_fkey"
+            columns: ["decision_maker_agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      briefing_notes: {
+        Row: {
+          author_agent_id: string | null
+          author_user_id: string | null
+          briefing_id: string
+          content: string
+          created_at: string
+          id: string
+          is_highlighted: boolean | null
+          note_type: string
+          topic: string | null
+          updated_at: string
+        }
+        Insert: {
+          author_agent_id?: string | null
+          author_user_id?: string | null
+          briefing_id: string
+          content: string
+          created_at?: string
+          id?: string
+          is_highlighted?: boolean | null
+          note_type?: string
+          topic?: string | null
+          updated_at?: string
+        }
+        Update: {
+          author_agent_id?: string | null
+          author_user_id?: string | null
+          briefing_id?: string
+          content?: string
+          created_at?: string
+          id?: string
+          is_highlighted?: boolean | null
+          note_type?: string
+          topic?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "briefing_notes_author_agent_id_fkey"
+            columns: ["author_agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "briefing_notes_briefing_id_fkey"
+            columns: ["briefing_id"]
+            isOneToOne: false
+            referencedRelation: "briefing_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      briefing_participants: {
+        Row: {
+          agent_id: string | null
+          briefing_id: string
+          id: string
+          is_active: boolean | null
+          joined_at: string
+          left_at: string | null
+          role: string | null
+          user_id: string | null
+        }
+        Insert: {
+          agent_id?: string | null
+          briefing_id: string
+          id?: string
+          is_active?: boolean | null
+          joined_at?: string
+          left_at?: string | null
+          role?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          agent_id?: string | null
+          briefing_id?: string
+          id?: string
+          is_active?: boolean | null
+          joined_at?: string
+          left_at?: string | null
+          role?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "briefing_participants_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "briefing_participants_briefing_id_fkey"
+            columns: ["briefing_id"]
+            isOneToOne: false
+            referencedRelation: "briefing_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       briefing_queries: {
         Row: {
           ai_confidence: number | null
@@ -728,6 +943,62 @@ export type Database = {
             columns: ["query_id"]
             isOneToOne: false
             referencedRelation: "briefing_queries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      briefing_sessions: {
+        Row: {
+          actual_end: string | null
+          actual_start: string | null
+          created_at: string
+          created_by: string
+          description: string | null
+          facilitator_user_id: string | null
+          id: string
+          meeting_mode: string | null
+          scheduled_start: string | null
+          status: string
+          title: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          actual_end?: string | null
+          actual_start?: string | null
+          created_at?: string
+          created_by: string
+          description?: string | null
+          facilitator_user_id?: string | null
+          id?: string
+          meeting_mode?: string | null
+          scheduled_start?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          actual_end?: string | null
+          actual_start?: string | null
+          created_at?: string
+          created_by?: string
+          description?: string | null
+          facilitator_user_id?: string | null
+          id?: string
+          meeting_mode?: string | null
+          scheduled_start?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "briefing_sessions_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "investigation_workspaces"
             referencedColumns: ["id"]
           },
         ]
@@ -919,6 +1190,199 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cop_entity_links: {
+        Row: {
+          created_at: string
+          description: string | null
+          discovered_by_agent_id: string | null
+          discovered_by_user_id: string | null
+          entity_a_id: string
+          entity_b_id: string
+          evidence_ids: string[] | null
+          id: string
+          relationship_type: string
+          strength: number | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          discovered_by_agent_id?: string | null
+          discovered_by_user_id?: string | null
+          entity_a_id: string
+          entity_b_id: string
+          evidence_ids?: string[] | null
+          id?: string
+          relationship_type: string
+          strength?: number | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          discovered_by_agent_id?: string | null
+          discovered_by_user_id?: string | null
+          entity_a_id?: string
+          entity_b_id?: string
+          evidence_ids?: string[] | null
+          id?: string
+          relationship_type?: string
+          strength?: number | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cop_entity_links_discovered_by_agent_id_fkey"
+            columns: ["discovered_by_agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cop_entity_links_entity_a_id_fkey"
+            columns: ["entity_a_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cop_entity_links_entity_b_id_fkey"
+            columns: ["entity_b_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cop_entity_links_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "investigation_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cop_timeline_events: {
+        Row: {
+          added_by_agent_id: string | null
+          added_by_user_id: string | null
+          created_at: string
+          description: string | null
+          event_time: string
+          event_type: string | null
+          id: string
+          metadata: Json | null
+          severity: string | null
+          source_id: string | null
+          source_type: string | null
+          title: string
+          workspace_id: string
+        }
+        Insert: {
+          added_by_agent_id?: string | null
+          added_by_user_id?: string | null
+          created_at?: string
+          description?: string | null
+          event_time: string
+          event_type?: string | null
+          id?: string
+          metadata?: Json | null
+          severity?: string | null
+          source_id?: string | null
+          source_type?: string | null
+          title: string
+          workspace_id: string
+        }
+        Update: {
+          added_by_agent_id?: string | null
+          added_by_user_id?: string | null
+          created_at?: string
+          description?: string | null
+          event_time?: string
+          event_type?: string | null
+          id?: string
+          metadata?: Json | null
+          severity?: string | null
+          source_id?: string | null
+          source_type?: string | null
+          title?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cop_timeline_events_added_by_agent_id_fkey"
+            columns: ["added_by_agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cop_timeline_events_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "investigation_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cop_widgets: {
+        Row: {
+          config: Json | null
+          created_at: string
+          created_by: string
+          height: number | null
+          id: string
+          is_visible: boolean | null
+          position_x: number | null
+          position_y: number | null
+          title: string
+          updated_at: string
+          widget_type: string
+          width: number | null
+          workspace_id: string
+        }
+        Insert: {
+          config?: Json | null
+          created_at?: string
+          created_by: string
+          height?: number | null
+          id?: string
+          is_visible?: boolean | null
+          position_x?: number | null
+          position_y?: number | null
+          title: string
+          updated_at?: string
+          widget_type: string
+          width?: number | null
+          workspace_id: string
+        }
+        Update: {
+          config?: Json | null
+          created_at?: string
+          created_by?: string
+          height?: number | null
+          id?: string
+          is_visible?: boolean | null
+          position_x?: number | null
+          position_y?: number | null
+          title?: string
+          updated_at?: string
+          widget_type?: string
+          width?: number | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cop_widgets_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "investigation_workspaces"
             referencedColumns: ["id"]
           },
         ]
@@ -4753,6 +5217,68 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "workspace_audit_log_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "investigation_workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workspace_evidence: {
+        Row: {
+          chain_of_custody: Json | null
+          created_at: string
+          description: string | null
+          file_name: string
+          file_size: number | null
+          file_type: string | null
+          id: string
+          linked_entity_ids: string[] | null
+          linked_timeline_event_ids: string[] | null
+          metadata: Json | null
+          storage_path: string
+          tags: string[] | null
+          updated_at: string
+          uploaded_by: string
+          workspace_id: string
+        }
+        Insert: {
+          chain_of_custody?: Json | null
+          created_at?: string
+          description?: string | null
+          file_name: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          linked_entity_ids?: string[] | null
+          linked_timeline_event_ids?: string[] | null
+          metadata?: Json | null
+          storage_path: string
+          tags?: string[] | null
+          updated_at?: string
+          uploaded_by: string
+          workspace_id: string
+        }
+        Update: {
+          chain_of_custody?: Json | null
+          created_at?: string
+          description?: string | null
+          file_name?: string
+          file_size?: number | null
+          file_type?: string | null
+          id?: string
+          linked_entity_ids?: string[] | null
+          linked_timeline_event_ids?: string[] | null
+          metadata?: Json | null
+          storage_path?: string
+          tags?: string[] | null
+          updated_at?: string
+          uploaded_by?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspace_evidence_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "investigation_workspaces"
