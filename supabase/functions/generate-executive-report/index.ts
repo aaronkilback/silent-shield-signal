@@ -74,9 +74,22 @@ serve(async (req) => {
       throw new Error('LOVABLE_API_KEY not configured');
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CRITICAL DATE CONTEXT - Used throughout report generation
+    // ═══════════════════════════════════════════════════════════════════════════
+    const reportGeneratedAt = new Date();
+    const currentDateISO = reportGeneratedAt.toISOString().split('T')[0];
+    const currentDateTimeISO = reportGeneratedAt.toISOString();
+    
     const periodStart = new Date();
     periodStart.setDate(periodStart.getDate() - period_days);
     const periodEnd = new Date();
+    
+    // Define stale threshold: incidents older than 7 days are considered stale
+    const staleThresholdMs = 7 * 24 * 60 * 60 * 1000;
+    const last24hThreshold = new Date(reportGeneratedAt.getTime() - 24 * 60 * 60 * 1000);
+    
+    console.log(`CRITICAL DATE CONTEXT: Report generated at ${currentDateTimeISO}, period ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
 
     // Fetch client details
     const { data: client, error: clientError } = await supabaseClient
@@ -163,7 +176,47 @@ serve(async (req) => {
     const criticalSignals = signals?.filter(s => s.severity === 'critical') || [];
     const highSignals = signals?.filter(s => s.severity === 'high') || [];
     const p1p2Incidents = incidents?.filter(i => i.priority === 'p1' || i.priority === 'p2') || [];
-    const unknownIncidents = p1p2Incidents.filter(i => !i.category || i.category === 'unknown');
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FIX: Unknown incident classification using REAL fields (not non-existent category column)
+    // An incident is "unknown/unclassified" if:
+    // 1. incident_type is null/empty/unknown, OR
+    // 2. No linked signal (signal_id is null), OR
+    // 3. Title contains generic "unknown"/"unidentified" patterns
+    // ═══════════════════════════════════════════════════════════════════════════
+    const unknownTitlePatterns = /unknown|unidentified|unclassified|anomal|unusual activity/i;
+    const unknownIncidents = p1p2Incidents.filter(i => {
+      const hasUnknownType = !i.incident_type || i.incident_type.toLowerCase() === 'unknown';
+      const hasNoSignal = !i.signal_id;
+      const hasUnknownTitle = unknownTitlePatterns.test(i.title || '');
+      return hasUnknownType || hasNoSignal || hasUnknownTitle;
+    });
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FIX: Separate NEW vs STALE incidents to prevent misleading "cluster" claims
+    // ═══════════════════════════════════════════════════════════════════════════
+    const newIncidentsLast24h = p1p2Incidents.filter(i => {
+      const openedAt = new Date(i.opened_at || i.created_at);
+      return openedAt >= last24hThreshold;
+    });
+    
+    const staleOpenIncidents = p1p2Incidents.filter(i => {
+      const openedAt = new Date(i.opened_at || i.created_at);
+      const ageMs = reportGeneratedAt.getTime() - openedAt.getTime();
+      return ageMs > staleThresholdMs;
+    });
+    
+    // Calculate age metadata for each incident
+    const incidentsWithAge = p1p2Incidents.map(i => {
+      const openedAt = new Date(i.opened_at || i.created_at);
+      const ageMs = reportGeneratedAt.getTime() - openedAt.getTime();
+      const ageDays = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+      const isStale = ageMs > staleThresholdMs;
+      const isNew = openedAt >= last24hThreshold;
+      return { ...i, ageDays, isStale, isNew, openedAtFormatted: openedAt.toISOString().split('T')[0] };
+    });
+    
+    console.log(`Incident breakdown: ${p1p2Incidents.length} total P1/P2, ${newIncidentsLast24h.length} new (last 24h), ${staleOpenIncidents.length} stale (>7 days), ${unknownIncidents.length} unknown/unclassified`);
 
     // Calculate risk ratings
     const surveillanceRisk = signals?.filter(s => 
@@ -227,14 +280,40 @@ serve(async (req) => {
     });
 
     // Generate 1-Line Executive Call-to-Action with AI
-    const flashPrompt = `You are a senior security advisor providing a flash briefing for C-level executives at ${client.name}.
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CRITICAL DATE CONTEXT injected into AI prompts to prevent hallucination
+    // ═══════════════════════════════════════════════════════════════════════════
+    const criticalDateContext = `
+═══════════════════════════════════════════════════════════════════════════════
+CRITICAL DATE CONTEXT (MANDATORY - DO NOT DEVIATE):
+- Report Generated: ${currentDateTimeISO}
+- Today's Date: ${currentDateISO}
+- Reporting Period: ${periodStart.toDateString()} to ${periodEnd.toDateString()}
 
-Based on the following intelligence:
+ABSOLUTE DATE ACCURACY RULES:
+1. NEVER claim incidents "appeared" or "emerged" on dates other than their actual opened_at dates
+2. NEVER fabricate clusters or groups that don't exist in the data
+3. Report EXACT counts from data - do not round, estimate, or hallucinate numbers
+4. Distinguish clearly between NEW incidents (opened in last 24h) and STALE incidents (>7 days old)
+5. If an incident opened in November 2025, report it as from November 2025, NOT as a new threat
+═══════════════════════════════════════════════════════════════════════════════`;
+
+    const flashPrompt = `You are a senior security advisor providing a flash briefing for C-level executives at ${client.name}.
+${criticalDateContext}
+
+VERIFIED INTELLIGENCE DATA (use ONLY these numbers):
 - ${criticalSignals.length} critical severity signals
 - ${highSignals.length} high severity signals
-- ${p1p2Incidents.length} P1/P2 priority incidents (${unknownIncidents.length} unknown/unclassified)
+- ${p1p2Incidents.length} TOTAL P1/P2 priority incidents
+- ${newIncidentsLast24h.length} NEW incidents (opened in last 24 hours)
+- ${staleOpenIncidents.length} STALE open incidents (opened >7 days ago, still open)
+- ${unknownIncidents.length} unknown/unclassified incidents (need triage)
 - Overall risk level: ${overallRiskLevel}
 - Key categories: ${Object.keys(signalsByCategory).slice(0, 5).join(', ')}
+
+${newIncidentsLast24h.length > 0 ? `NEW INCIDENTS (last 24h):\n${newIncidentsLast24h.map((i, idx) => `${idx + 1}. [${i.priority?.toUpperCase()}] ${i.title} - Opened: ${new Date(i.opened_at).toISOString().split('T')[0]}`).join('\n')}` : 'NO new incidents in the last 24 hours.'}
+
+${staleOpenIncidents.length > 0 ? `STALE OPEN INCIDENTS (>7 days old, require review):\n${staleOpenIncidents.slice(0, 3).map((i, idx) => `${idx + 1}. [${i.priority?.toUpperCase()}] ${i.title} - Opened: ${new Date(i.opened_at).toISOString().split('T')[0]}`).join('\n')}` : ''}
 
 Top 3 signals:
 ${criticalSignals.slice(0, 3).map((s, i) => `${i + 1}. [${s.category}] ${s.normalized_text?.substring(0, 150)}`).join('\n')}
@@ -248,7 +327,7 @@ Provide a JSON response with exactly this structure:
   "deadlineUrgency": "Immediate|24 hours|48 hours|This week"
 }
 
-Be specific, cite data, and use executive-appropriate language.`;
+Be specific, cite EXACT data from above, and use executive-appropriate language. DO NOT claim clusters or groups that don't exist in the data.`;
 
     console.log('Generating executive flash banner...');
     const flashResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -338,8 +417,7 @@ Provide exactly 3 impact ladders. Be specific and actionable. Use executive lang
 
     // Generate executive summary with tone transformation
     const summaryPrompt = `You are a security intelligence analyst creating an executive summary for ${client.name}.
-
-Period: ${periodStart.toDateString()} to ${periodEnd.toDateString()}
+${criticalDateContext}
 
 Client Context:
 - Organization: ${client.organization || client.name}
@@ -347,23 +425,31 @@ Client Context:
 - Locations: ${client.locations?.join(', ') || 'N/A'}
 - High-Value Assets: ${client.high_value_assets?.join(', ') || 'N/A'}
 
-Intelligence Summary:
+VERIFIED INTELLIGENCE DATA (use ONLY these numbers):
 - Total signals collected: ${signals?.length || 0}
 - Critical severity signals: ${criticalSignals.length}
 - High severity signals: ${highSignals.length}
-- P1/P2 Incidents: ${p1p2Incidents.length} (${unknownIncidents.length} require classification)
-- Open incidents: ${incidents?.filter(i => i.status === 'open').length || 0}
+- TOTAL P1/P2 Incidents: ${p1p2Incidents.length}
+- NEW incidents (last 24h): ${newIncidentsLast24h.length}
+- STALE open incidents (>7 days old): ${staleOpenIncidents.length}
+- Unknown/unclassified incidents: ${unknownIncidents.length}
+- Open incidents total: ${incidents?.filter(i => i.status === 'open').length || 0}
+
+${newIncidentsLast24h.length > 0 ? `NEW INCIDENTS (last 24h) - THESE ARE THE CURRENT THREATS:\n${newIncidentsLast24h.map((i, idx) => `${idx + 1}. [${i.priority?.toUpperCase()}] ${i.title} - Opened: ${new Date(i.opened_at).toISOString().split('T')[0]}`).join('\n')}` : 'NO new P1/P2 incidents in the last 24 hours. Focus on signal intelligence and stale incident review.'}
+
+${staleOpenIncidents.length > 0 ? `STALE OPEN INCIDENTS (opened >7 days ago, still unresolved):\n${staleOpenIncidents.map((i, idx) => `${idx + 1}. [${i.priority?.toUpperCase()}] ${i.title} - Opened: ${new Date(i.opened_at).toISOString().split('T')[0]} (${Math.floor((reportGeneratedAt.getTime() - new Date(i.opened_at).getTime()) / (24*60*60*1000))} days old)`).join('\n')}` : ''}
 
 Top 5 Signals:
 ${signals?.slice(0, 5).map((s, i) => `${i + 1}. [${s.severity}] ${s.category}: ${s.normalized_text?.substring(0, 200)}`).join('\n')}
 
 Write a professional 2-3 paragraph executive summary that:
-1. Highlights the most significant threats or developments
-2. Explains potential operational or reputational risks
-3. Provides context about why these matters are important
-4. Uses professional, executive-appropriate language (avoid operator jargon)
+1. Highlights the most significant threats or developments FROM THE VERIFIED DATA ABOVE
+2. CLEARLY DISTINGUISHES between new threats (last 24h) and stale open incidents
+3. Reports EXACT counts - do not round or estimate
+4. If there are stale incidents, note they require review/closure, not that they are new threats
+5. Uses professional, executive-appropriate language
 
-Be specific, cite concrete examples from the signals.`;
+CRITICAL: Do NOT claim incidents "appeared" or "emerged" on dates other than their actual opened_at dates. Do NOT fabricate clusters or groups.`;
 
     console.log('Generating executive summary...');
     const summaryResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -1065,7 +1151,7 @@ Use executive-appropriate language.`;
     </div>
     <div class="meta-item">
       <div class="meta-label">Report Generated</div>
-      <div class="meta-value">${new Date().toLocaleString()}</div>
+      <div class="meta-value">${reportGeneratedAt.toLocaleString()}</div>
     </div>
     <div class="meta-item">
       <div class="meta-label">Industry</div>
@@ -1077,7 +1163,7 @@ Use executive-appropriate language.`;
     </div>
     <div class="meta-item">
       <div class="meta-label">P1/P2 Incidents</div>
-      <div class="meta-value">${p1p2Incidents.length}</div>
+      <div class="meta-value">${p1p2Incidents.length} total (${newIncidentsLast24h.length} new, ${staleOpenIncidents.length} stale)</div>
     </div>
   </div>
 
@@ -1093,25 +1179,31 @@ Use executive-appropriate language.`;
   <div class="section">
     <h2 class="section-title">P1/P2 Incident Detail</h2>
     <p style="margin-bottom: 12pt; font-size: 10pt; color: #666;">
-      ${p1p2Incidents.length} priority incidents identified. ${unknownIncidents.length} require category classification.
+      <strong>${p1p2Incidents.length}</strong> priority incidents total: 
+      <strong style="color: #22c55e;">${newIncidentsLast24h.length}</strong> new (last 24h), 
+      <strong style="color: #f97316;">${staleOpenIncidents.length}</strong> stale (&gt;7 days old), 
+      <strong>${unknownIncidents.length}</strong> require classification.
     </p>
     <table class="incident-detail-table">
       <thead>
         <tr>
           <th style="width: 80pt;">Incident ID</th>
           <th style="width: 60pt;">Priority</th>
+          <th style="width: 60pt;">Age</th>
           <th style="width: 80pt;">System Origin</th>
-          <th>Category / Classification Rationale</th>
-          <th style="width: 100pt;">Timestamp</th>
+          <th>Type / Classification Rationale</th>
+          <th style="width: 100pt;">Opened At</th>
         </tr>
       </thead>
       <tbody>
-        ${p1p2Incidents.slice(0, 10).map(incident => {
+        ${incidentsWithAge.slice(0, 10).map(incident => {
           const rationale = incident.incident_classification_rationale?.[0];
           const systemOrigin = rationale?.system_of_origin || 'unknown';
           const systemClass = systemOrigin.toLowerCase().includes('cyber') ? 'cyber' :
                               systemOrigin.toLowerCase().includes('physical') ? 'physical' :
                               systemOrigin.toLowerCase().includes('intel') ? 'intel' : 'social';
+          const ageLabel = incident.isNew ? '🆕 NEW' : (incident.isStale ? '⚠️ STALE' : `${incident.ageDays}d`);
+          const ageColor = incident.isNew ? '#22c55e' : (incident.isStale ? '#f97316' : '#6b7280');
           return `
         <tr>
           <td>
@@ -1124,17 +1216,20 @@ Use executive-appropriate language.`;
               ${incident.priority?.toUpperCase()}
             </span>
           </td>
+          <td style="font-size: 9pt; color: ${ageColor}; font-weight: bold;">
+            ${ageLabel}
+          </td>
           <td>
             <span class="system-badge system-${systemClass}">${systemOrigin}</span>
           </td>
           <td>
-            <strong>${incident.category || 'Unknown'}</strong><br>
+            <strong>${incident.incident_type || 'Unknown'}</strong><br>
             <span style="font-size: 8pt; color: #666;">
               ${rationale?.rationale || 'Classification pending - requires analyst review'}
             </span>
           </td>
           <td style="font-size: 9pt; font-family: monospace;">
-            ${new Date(incident.opened_at).toISOString().replace('T', ' ').substring(0, 19)}Z
+            ${incident.openedAtFormatted}
           </td>
         </tr>
           `;
@@ -1304,10 +1399,13 @@ Use executive-appropriate language.`;
         meta_json: {
           client_id,
           client_name: client.name,
+          report_generated_at: currentDateTimeISO,
           total_signals: signals?.length || 0,
           critical_signals: criticalSignals.length,
           high_signals: highSignals.length,
           p1p2_incidents: p1p2Incidents.length,
+          new_incidents_last_24h: newIncidentsLast24h.length,
+          stale_open_incidents: staleOpenIncidents.length,
           unknown_incidents: unknownIncidents.length,
           overall_risk_level: overallRiskLevel,
           categories: Object.keys(signalsByCategory),
