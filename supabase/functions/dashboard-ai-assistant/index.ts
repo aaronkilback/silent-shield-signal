@@ -4955,18 +4955,17 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
         };
       }
 
-      // PDF direct analysis requires base64, which increases memory pressure.
-      // We therefore refuse large PDFs before downloading them.
+      // PDFs up to 100MB can now be processed via signed URLs (Gemini API supports this)
+      // We use signed URLs instead of base64 to avoid memory pressure
       if (inferredIsPdf) {
-        const maxPdfMb = 5;
+        const maxPdfMb = 100; // Gemini API now supports up to 100MB via URLs
         if (inferredSizeMb > maxPdfMb) {
           return {
             success: false,
-            error: `PDF file is too large for direct analysis (${inferredSizeMb.toFixed(1)}MB > ${maxPdfMb}MB limit). Large map PDFs should be split into smaller sections or converted to individual images.`,
+            error: `PDF file is too large for analysis (${inferredSizeMb.toFixed(1)}MB > ${maxPdfMb}MB limit).`,
             document_id: docId,
             filename: doc.filename,
-            suggestion:
-              "Consider: 1) Splitting the PDF into smaller files, 2) Converting pages to PNG/JPG images, or 3) Using a PDF compression tool to reduce file size.",
+            suggestion: "Consider splitting the PDF into smaller files or compressing it.",
           };
         }
       }
@@ -5009,12 +5008,33 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
         }
       }
 
+      // For PDFs, prefer signed URLs to avoid memory pressure with large files
+      // Gemini API now supports signed URLs directly (up to 100MB)
+      let signedPdfUrl: string | null = null;
+      
+      if (inferredIsPdf) {
+        for (const bucket of candidateBuckets) {
+          const { data: signedData, error: signedError } = await supabaseClient.storage
+            .from(bucket)
+            .createSignedUrl(doc.storage_path, 60 * 10);
+
+          if (!signedError && signedData?.signedUrl) {
+            signedPdfUrl = signedData.signedUrl;
+            resolvedBucket = bucket;
+            console.log(`Created signed URL for PDF from bucket: ${bucket}`);
+            break;
+          }
+
+          bucketErrors[bucket] = signedError?.message ?? 'Unknown error';
+        }
+      }
+
       // Download the file from storage only when necessary:
-      // - PDFs (we currently analyze via direct bytes)
+      // - PDFs when signed URL creation failed
       // - Images when we couldn't create a signed URL
       let fileBytes: ArrayBuffer | null = null;
 
-      if (inferredIsPdf || !signedFileUrl) {
+      if ((inferredIsPdf && !signedPdfUrl) || (!inferredIsPdf && !signedFileUrl)) {
         let fileData: Blob | null = null;
 
         for (const bucket of candidateBuckets) {
@@ -5110,120 +5130,130 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
           /\.(jpg|jpeg|png|gif|webp|bmp|tiff?)$/i.test(doc.filename);
 
         if (isPDF) {
-          // Check file size - base64 encoding increases size by ~33%
-          // Edge functions have memory limits, so we cap at 5MB for reliable processing
-          const maxSizeMB = 5;
-          if (fileSizeMB > maxSizeMB) {
-            return {
-              success: false,
-              error: `PDF file is too large for direct analysis (${fileSizeMB.toFixed(1)}MB > ${maxSizeMB}MB limit). Large map PDFs should be split into smaller sections or converted to individual images.`,
-              document_id: docId,
-              filename: doc.filename,
-              suggestion: "Consider: 1) Splitting the PDF into smaller files, 2) Converting pages to PNG/JPG images, or 3) Using a PDF compression tool to reduce file size.",
-            };
-          }
-
-          // Use Gemini's native PDF support - send the PDF directly as base64
-          // This avoids pdf.js which requires web workers not available in Deno
-          const { encode: base64Encode } = await import('https://deno.land/std@0.168.0/encoding/base64.ts');
-          if (!fileBytes) {
-            throw new Error('Failed to load PDF bytes for analysis');
-          }
-          const base64PDF = base64Encode(fileBytes);
-
-          console.log(`Sending PDF directly to Gemini for analysis (${(base64PDF.length / 1024 / 1024).toFixed(2)}MB base64)`);
-
-          // Gemini 2.5 models support PDF files directly via the file API format
-          const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: 'google/gemini-2.5-flash',
-              messages: [{
-                role: 'user',
-                content: [
-                  {
-                    type: 'text',
-                    text: `You are analyzing the document "${doc.filename}" which is a PDF file.
+          // Use signed URL for PDFs when available (supports up to 100MB)
+          // This avoids memory pressure from base64 encoding large files
+          if (signedPdfUrl) {
+            console.log(`Using signed URL for PDF analysis (${fileSizeMB.toFixed(1)}MB)`);
+            
+            const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'google/gemini-2.5-flash',
+                messages: [{
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'text',
+                      text: `You are analyzing the document "${doc.filename}" which is a PDF file.
 
 ${analysisPrompt}
 
 IMPORTANT: This document may contain maps, diagrams, tables, or image-based content. 
 Analyze ALL pages thoroughly and extract every piece of visible text, data, labels, legends, and geographic/infrastructure information.
 Be comprehensive - list all road names, milepost markers, facility names, pipeline routes, and any other relevant details.`
-                  },
-                  {
-                    type: 'image_url',
-                    image_url: { 
-                      url: `data:application/pdf;base64,${base64PDF}` 
+                    },
+                    {
+                      type: 'image_url',
+                      image_url: { 
+                        url: signedPdfUrl 
+                      }
                     }
-                  }
-                ]
-              }],
-              max_tokens: 8000
-            }),
-          });
+                  ]
+                }],
+                max_tokens: 16000
+              }),
+            });
 
-          if (visionResponse.ok) {
-            const visionData = await visionResponse.json();
-            const content = visionData.choices?.[0]?.message?.content;
-            if (content && content.length > 50) {
-              analysisResults.push(content);
-              console.log(`PDF analysis: Extracted ${content.length} chars`);
+            if (visionResponse.ok) {
+              const visionData = await visionResponse.json();
+              const content = visionData.choices?.[0]?.message?.content;
+              if (content && content.length > 50) {
+                analysisResults.push(content);
+                console.log(`PDF analysis via signed URL: Extracted ${content.length} chars`);
+              } else {
+                console.warn('PDF analysis returned minimal content');
+              }
             } else {
-              console.warn('PDF analysis returned minimal content');
+              const errText = await visionResponse.text();
+              console.error(`Vision API error ${visionResponse.status}: ${errText}`);
             }
-          } else {
-            const errText = await visionResponse.text();
-            console.error(`Vision API error ${visionResponse.status}: ${errText}`);
-            
-            // Fallback: Try as generic binary if PDF mime type not supported
-            if (visionResponse.status === 400 || visionResponse.status === 415) {
-              console.log('Retrying with octet-stream mime type...');
-              const fallbackResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  model: 'google/gemini-2.5-pro',
-                  messages: [{
-                    role: 'user',
-                    content: [
-                      {
-                        type: 'text',
-                        text: `Analyze this PDF document named "${doc.filename}".
+          } else if (fileBytes) {
+            // Fallback to base64 for smaller PDFs when signed URL not available
+            const maxSizeMB = 10;
+            if (fileSizeMB > maxSizeMB) {
+              return {
+                success: false,
+                error: `PDF file is too large for base64 analysis (${fileSizeMB.toFixed(1)}MB > ${maxSizeMB}MB limit) and signed URL creation failed.`,
+                document_id: docId,
+                filename: doc.filename,
+                bucket_errors: bucketErrors,
+                suggestion: "Ensure the file exists in storage and the bucket permissions allow signed URL creation.",
+              };
+            }
+
+            const { encode: base64Encode } = await import('https://deno.land/std@0.168.0/encoding/base64.ts');
+            const base64PDF = base64Encode(fileBytes);
+
+            console.log(`Sending PDF as base64 for analysis (${(base64PDF.length / 1024 / 1024).toFixed(2)}MB)`);
+
+            const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'google/gemini-2.5-flash',
+                messages: [{
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'text',
+                      text: `You are analyzing the document "${doc.filename}" which is a PDF file.
 
 ${analysisPrompt}
 
-Extract ALL visible content including text, tables, map features, labels, and annotations.`
-                      },
-                      {
-                        type: 'file',
-                        file: {
-                          filename: doc.filename,
-                          data: base64PDF,
-                        }
+IMPORTANT: This document may contain maps, diagrams, tables, or image-based content. 
+Analyze ALL pages thoroughly and extract every piece of visible text, data, labels, legends, and geographic/infrastructure information.
+Be comprehensive - list all road names, milepost markers, facility names, pipeline routes, and any other relevant details.`
+                    },
+                    {
+                      type: 'image_url',
+                      image_url: { 
+                        url: `data:application/pdf;base64,${base64PDF}` 
                       }
-                    ]
-                  }],
-                  max_tokens: 8000
-                }),
-              });
+                    }
+                  ]
+                }],
+                max_tokens: 16000
+              }),
+            });
 
-              if (fallbackResponse.ok) {
-                const fallbackData = await fallbackResponse.json();
-                const fallbackContent = fallbackData.choices?.[0]?.message?.content;
-                if (fallbackContent) {
-                  analysisResults.push(fallbackContent);
-                  console.log(`PDF fallback analysis: Extracted ${fallbackContent.length} chars`);
-                }
+            if (visionResponse.ok) {
+              const visionData = await visionResponse.json();
+              const content = visionData.choices?.[0]?.message?.content;
+              if (content && content.length > 50) {
+                analysisResults.push(content);
+                console.log(`PDF analysis via base64: Extracted ${content.length} chars`);
+              } else {
+                console.warn('PDF analysis returned minimal content');
               }
+            } else {
+              const errText = await visionResponse.text();
+              console.error(`Vision API error ${visionResponse.status}: ${errText}`);
             }
+          } else {
+            return {
+              success: false,
+              error: 'Could not access PDF file - no signed URL or file bytes available',
+              document_id: docId,
+              filename: doc.filename,
+              bucket_errors: bucketErrors,
+            };
           }
         } else if (isImage) {
           // Direct image analysis
