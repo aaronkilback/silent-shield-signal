@@ -44,6 +44,8 @@ interface MonitoringHistoryItem {
 export function MonitoringDiagnostics() {
   const queryClient = useQueryClient();
   const [runningMonitor, setRunningMonitor] = useState<string | null>(null);
+  const [runningDiagnostics, setRunningDiagnostics] = useState(false);
+  const [liveResults, setLiveResults] = useState<Record<string, { success: boolean; error?: string; status_code?: number }>>({});
 
   // Fetch source health
   const { data: sources = [], isLoading: sourcesLoading } = useQuery({
@@ -160,22 +162,73 @@ export function MonitoringDiagnostics() {
             <Activity className="w-5 h-5" />
             Monitoring Diagnostics
           </CardTitle>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={async () => {
-              toast.info("Refreshing diagnostics...");
-              await Promise.all([
-                queryClient.refetchQueries({ queryKey: ["monitoring-sources-health"] }),
-                queryClient.refetchQueries({ queryKey: ["monitoring-history-recent"] }),
-                queryClient.refetchQueries({ queryKey: ["signal-stats-diagnostic"] }),
-              ]);
-              toast.success("Diagnostics refreshed");
-            }}
-          >
-            <RefreshCw className="w-4 h-4 mr-1" />
-            Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={runningDiagnostics}
+              onClick={async () => {
+                setRunningDiagnostics(true);
+                setLiveResults({});
+                toast.info("Running connectivity tests on all sources...");
+                
+                const results: Record<string, { success: boolean; error?: string; status_code?: number }> = {};
+                
+                for (const source of sources) {
+                  try {
+                    const { data, error } = await supabase.functions.invoke("test-osint-source-connectivity", {
+                      body: { source_id: source.id },
+                    });
+                    
+                    if (error) {
+                      results[source.id] = { success: false, error: error.message };
+                    } else {
+                      results[source.id] = {
+                        success: data?.success ?? false,
+                        error: data?.error,
+                        status_code: data?.status_code,
+                      };
+                    }
+                  } catch (err) {
+                    results[source.id] = { success: false, error: err instanceof Error ? err.message : "Unknown error" };
+                  }
+                  setLiveResults({ ...results });
+                }
+                
+                setRunningDiagnostics(false);
+                
+                const successCount = Object.values(results).filter(r => r.success).length;
+                const failCount = Object.values(results).filter(r => !r.success).length;
+                toast.success(`Connectivity check complete: ${successCount} OK, ${failCount} issues`);
+                
+                await Promise.all([
+                  queryClient.refetchQueries({ queryKey: ["monitoring-sources-health"] }),
+                  queryClient.refetchQueries({ queryKey: ["monitoring-history-recent"] }),
+                ]);
+              }}
+            >
+              {runningDiagnostics ? (
+                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+              ) : (
+                <Activity className="w-4 h-4 mr-1" />
+              )}
+              {runningDiagnostics ? "Testing..." : "Run Diagnostics"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={async () => {
+                await Promise.all([
+                  queryClient.refetchQueries({ queryKey: ["monitoring-sources-health"] }),
+                  queryClient.refetchQueries({ queryKey: ["monitoring-history-recent"] }),
+                  queryClient.refetchQueries({ queryKey: ["signal-stats-diagnostic"] }),
+                ]);
+                toast.success("Data refreshed");
+              }}
+            >
+              <RefreshCw className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
       </CardHeader>
 
@@ -217,41 +270,62 @@ export function MonitoringDiagnostics() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {sources.map((source) => (
-                    <div
-                      key={source.id}
-                      className="flex items-center justify-between p-2 rounded-lg bg-muted/30 text-sm"
-                    >
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
-                        {source.errorMessage ? (
-                          <XCircle className="w-4 h-4 text-destructive shrink-0" />
-                        ) : !source.hasValidUrl ? (
-                          <WifiOff className="w-4 h-4 text-amber-500 shrink-0" />
-                        ) : source.lastIngested ? (
-                          <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
-                        ) : (
-                          <Clock className="w-4 h-4 text-muted-foreground shrink-0" />
-                        )}
-                        <span className="truncate font-medium">{source.name}</span>
-                        <Badge variant="outline" className="text-[10px] shrink-0">
-                          {source.type}
-                        </Badge>
+                  {sources.map((source) => {
+                    const liveResult = liveResults[source.id];
+                    return (
+                      <div
+                        key={source.id}
+                        className="flex items-center justify-between p-2 rounded-lg bg-muted/30 text-sm"
+                      >
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          {runningDiagnostics && !liveResult ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-blue-500 shrink-0" />
+                          ) : liveResult ? (
+                            liveResult.success ? (
+                              <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+                            ) : (
+                              <XCircle className="w-4 h-4 text-destructive shrink-0" />
+                            )
+                          ) : source.errorMessage ? (
+                            <XCircle className="w-4 h-4 text-destructive shrink-0" />
+                          ) : !source.hasValidUrl ? (
+                            <WifiOff className="w-4 h-4 text-amber-500 shrink-0" />
+                          ) : source.lastIngested ? (
+                            <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+                          ) : (
+                            <Clock className="w-4 h-4 text-muted-foreground shrink-0" />
+                          )}
+                          <span className="truncate font-medium">{source.name}</span>
+                          <Badge variant="outline" className="text-[10px] shrink-0">
+                            {source.type}
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground shrink-0 ml-2">
+                          {liveResult ? (
+                            liveResult.success ? (
+                              <span className="text-green-500">
+                                OK {liveResult.status_code ? `(${liveResult.status_code})` : ""}
+                              </span>
+                            ) : (
+                              <span className="text-destructive truncate max-w-[150px] block">
+                                {liveResult.error?.substring(0, 30) || "Failed"}
+                              </span>
+                            )
+                          ) : source.errorMessage ? (
+                            <span className="text-destructive truncate max-w-[150px] block">
+                              {source.errorMessage.substring(0, 30)}...
+                            </span>
+                          ) : !source.hasValidUrl ? (
+                            <span className="text-amber-500">Invalid URL</span>
+                          ) : source.lastIngested ? (
+                            formatDistanceToNow(new Date(source.lastIngested), { addSuffix: true })
+                          ) : (
+                            "Never"
+                          )}
+                        </div>
                       </div>
-                      <div className="text-xs text-muted-foreground shrink-0 ml-2">
-                        {source.errorMessage ? (
-                          <span className="text-destructive truncate max-w-[150px] block">
-                            {source.errorMessage.substring(0, 30)}...
-                          </span>
-                        ) : !source.hasValidUrl ? (
-                          <span className="text-amber-500">Invalid URL</span>
-                        ) : source.lastIngested ? (
-                          formatDistanceToNow(new Date(source.lastIngested), { addSuffix: true })
-                        ) : (
-                          "Never"
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </ScrollArea>
