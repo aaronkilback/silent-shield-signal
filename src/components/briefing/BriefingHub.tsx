@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { 
   Loader2, Play, Pause, Square, Users, Clock, Target,
-  FileText, ListChecks, MessageSquare, LayoutDashboard
+  FileText, ListChecks, MessageSquare, LayoutDashboard, MessagesSquare
 } from "lucide-react";
 import { toast } from "sonner";
 import { COPCanvas } from "./COPCanvas";
@@ -18,6 +18,7 @@ import { BriefingDecisions } from "./BriefingDecisions";
 import { BriefingNotes } from "./BriefingNotes";
 import { EvidenceLocker } from "./EvidenceLocker";
 import { BriefingTasks } from "./BriefingTasks";
+import { BriefingChat } from "./BriefingChat";
 import { format, formatDistanceToNow } from "date-fns";
 
 interface BriefingHubProps {
@@ -297,10 +298,14 @@ export function BriefingHub({ workspaceId, briefingId, onClose }: BriefingHubPro
 
       {/* Main Briefing Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="cop" className="gap-2">
             <LayoutDashboard className="w-4 h-4" />
             <span className="hidden sm:inline">COP</span>
+          </TabsTrigger>
+          <TabsTrigger value="chat" className="gap-2">
+            <MessagesSquare className="w-4 h-4" />
+            <span className="hidden sm:inline">Chat</span>
           </TabsTrigger>
           <TabsTrigger value="agenda" className="gap-2">
             <ListChecks className="w-4 h-4" />
@@ -326,6 +331,10 @@ export function BriefingHub({ workspaceId, briefingId, onClose }: BriefingHubPro
 
         <TabsContent value="cop" className="mt-4">
           <COPCanvas workspaceId={workspaceId} briefingId={briefing.id} />
+        </TabsContent>
+
+        <TabsContent value="chat" className="mt-4">
+          <BriefingChat briefingId={briefing.id} workspaceId={workspaceId} />
         </TabsContent>
 
         <TabsContent value="agenda" className="mt-4">
