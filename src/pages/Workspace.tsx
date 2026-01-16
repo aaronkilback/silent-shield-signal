@@ -16,8 +16,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Loader2, Send, Users, MessageSquare, CheckSquare, Clock, 
-  ArrowLeft, Plus, UserPlus, AlertTriangle 
+  ArrowLeft, Plus, UserPlus, AlertTriangle, Mail 
 } from "lucide-react";
+import { InviteMemberDialog } from "@/components/workspace/InviteMemberDialog";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
 
@@ -64,6 +65,7 @@ const Workspace = () => {
   const [newMessage, setNewMessage] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
+  const [showInviteMember, setShowInviteMember] = useState(false);
   const [newMemberEmail, setNewMemberEmail] = useState("");
   const [newMemberRole, setNewMemberRole] = useState<string>("contributor");
   const [showCreateTask, setShowCreateTask] = useState(false);
@@ -458,48 +460,63 @@ const Workspace = () => {
               {workspace.status}
             </Badge>
             {isOwner && (
-              <Dialog open={showAddMember} onOpenChange={setShowAddMember}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <UserPlus className="w-4 h-4 mr-2" />
-                    Add Member
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Add Workspace Member</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div>
-                      <label className="text-sm font-medium">User Name</label>
-                      <Input
-                        placeholder="Enter user's display name"
-                        value={newMemberEmail}
-                        onChange={(e) => setNewMemberEmail(e.target.value)}
-                      />
+              <>
+                <Button variant="outline" size="sm" onClick={() => setShowInviteMember(true)}>
+                  <Mail className="w-4 h-4 mr-2" />
+                  Invite by Email
+                </Button>
+                <Dialog open={showAddMember} onOpenChange={setShowAddMember}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <UserPlus className="w-4 h-4 mr-2" />
+                      Add Existing User
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Add Workspace Member</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div>
+                        <label className="text-sm font-medium">User Name</label>
+                        <Input
+                          placeholder="Enter user's display name"
+                          value={newMemberEmail}
+                          onChange={(e) => setNewMemberEmail(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium">Role</label>
+                        <Select value={newMemberRole} onValueChange={setNewMemberRole}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="viewer">Viewer (read-only)</SelectItem>
+                            <SelectItem value="contributor">Contributor (can edit)</SelectItem>
+                            <SelectItem value="owner">Owner (full control)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
-                    <div>
-                      <label className="text-sm font-medium">Role</label>
-                      <Select value={newMemberRole} onValueChange={setNewMemberRole}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="viewer">Viewer (read-only)</SelectItem>
-                          <SelectItem value="contributor">Contributor (can edit)</SelectItem>
-                          <SelectItem value="owner">Owner (full control)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setShowAddMember(false)}>Cancel</Button>
-                    <Button onClick={handleAddMember}>Add Member</Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setShowAddMember(false)}>Cancel</Button>
+                      <Button onClick={handleAddMember}>Add Member</Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </>
             )}
           </div>
+          
+          {/* Invite Member Dialog */}
+          {id && (
+            <InviteMemberDialog
+              open={showInviteMember}
+              onOpenChange={setShowInviteMember}
+              workspaceId={id}
+            />
+          )}
         </div>
 
         {/* Main Content */}
