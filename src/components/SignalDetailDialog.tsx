@@ -3,13 +3,15 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
-import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon, Copy, Check } from "lucide-react";
+import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon, Copy, Check, FileWarning } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState, useEffect } from "react";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
 import { SignalFeedback } from "@/components/SignalFeedback";
+import { CreateIncidentFromSignalDialog } from "@/components/signals/CreateIncidentFromSignalDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 
 interface SignalDetailDialogProps {
   signal: any;
@@ -25,7 +27,9 @@ const decodeHtmlEntities = (text: string): string => {
 };
 
 export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated }: SignalDetailDialogProps) => {
+  const navigate = useNavigate();
   const [createEntityOpen, setCreateEntityOpen] = useState(false);
+  const [createIncidentOpen, setCreateIncidentOpen] = useState(false);
   const [selectedText, setSelectedText] = useState("");
   const [selectionContext, setSelectionContext] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -199,7 +203,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
               <Brain className="w-5 h-5" />
               Strategic Intelligence Analysis
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {!aiDecision && (
                 <Button
                   variant="default"
@@ -211,6 +215,14 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                   {isAnalyzing ? 'Analyzing...' : 'Run AI Analysis'}
                 </Button>
               )}
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setCreateIncidentOpen(true)}
+              >
+                <FileWarning className="w-4 h-4 mr-2" />
+                Create Incident
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -534,6 +546,16 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
         prefilledName={selectedText}
         signalId={signal.id}
         context={selectionContext}
+      />
+      <CreateIncidentFromSignalDialog
+        open={createIncidentOpen}
+        onOpenChange={setCreateIncidentOpen}
+        signal={signal}
+        onIncidentCreated={(incidentId) => {
+          onSignalUpdated?.();
+          onOpenChange(false);
+          navigate(`/incidents?highlight=${incidentId}`);
+        }}
       />
     </Dialog>
   );
