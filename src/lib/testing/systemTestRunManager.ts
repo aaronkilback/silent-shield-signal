@@ -79,11 +79,11 @@ export const systemTestRunManager = {
     return state;
   },
 
-  subscribe(listener: Listener) {
+  subscribe(listener: Listener): () => void {
     listeners.add(listener);
     // push current immediately
     listener(state);
-    return () => {
+    return (): void => {
       listeners.delete(listener);
     };
   },
