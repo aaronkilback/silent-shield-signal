@@ -163,9 +163,14 @@ export function MonitoringDiagnostics() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
-              queryClient.invalidateQueries({ queryKey: ["monitoring-sources-health"] });
-              queryClient.invalidateQueries({ queryKey: ["monitoring-history-recent"] });
+            onClick={async () => {
+              toast.info("Refreshing diagnostics...");
+              await Promise.all([
+                queryClient.refetchQueries({ queryKey: ["monitoring-sources-health"] }),
+                queryClient.refetchQueries({ queryKey: ["monitoring-history-recent"] }),
+                queryClient.refetchQueries({ queryKey: ["signal-stats-diagnostic"] }),
+              ]);
+              toast.success("Diagnostics refreshed");
             }}
           >
             <RefreshCw className="w-4 h-4 mr-1" />
