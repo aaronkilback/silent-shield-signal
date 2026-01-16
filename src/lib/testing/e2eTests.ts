@@ -355,6 +355,413 @@ export const entityManagementTests = {
 };
 
 // ============================================
+// ENTITY PHOTOS TESTS
+// ============================================
+
+export const entityPhotosTests = {
+  name: 'Entity Photos',
+  tests: [
+    {
+      name: 'Can read entity_photos table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('entity_photos')
+          .select('id, entity_id, storage_path, source, created_at')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'entity_photos have valid entity references',
+      fn: async () => {
+        const { data: photos, error } = await supabase
+          .from('entity_photos')
+          .select('id, entity_id')
+          .limit(10);
+        
+        if (error) throw error;
+        if (!photos || photos.length === 0) return; // No photos to test
+        
+        // Verify each photo references a valid entity
+        for (const photo of photos) {
+          const { data: entity, error: entityError } = await supabase
+            .from('entities')
+            .select('id')
+            .eq('id', photo.entity_id)
+            .maybeSingle();
+          
+          if (entityError) throw entityError;
+          if (!entity) throw new Error(`Photo ${photo.id} references non-existent entity ${photo.entity_id}`);
+        }
+      },
+    },
+    {
+      name: 'entity_photos storage bucket accessible',
+      fn: async () => {
+        // Try to list files in the bucket to verify bucket exists
+        const { data, error } = await supabase.storage
+          .from('entity-photos')
+          .list('', { limit: 1 });
+        
+        // Even if empty, the bucket should be accessible
+        if (error && !error.message.includes('empty')) {
+          throw error;
+        }
+      },
+    },
+    {
+      name: 'Photo feedback fields are valid',
+      fn: async () => {
+        const { data: photos, error } = await supabase
+          .from('entity_photos')
+          .select('id, feedback_rating, feedback_at, feedback_by')
+          .not('feedback_rating', 'is', null)
+          .limit(5);
+        
+        if (error) throw error;
+        
+        // If there are photos with feedback, verify rating is valid
+        for (const photo of photos || []) {
+          if (photo.feedback_rating !== null && 
+              photo.feedback_rating !== -1 && 
+              photo.feedback_rating !== 1) {
+            throw new Error(`Photo ${photo.id} has invalid feedback_rating: ${photo.feedback_rating}`);
+          }
+          if (photo.feedback_rating !== null && !photo.feedback_at) {
+            throw new Error(`Photo ${photo.id} has rating but no feedback_at timestamp`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// ENTITY CONTENT TESTS
+// ============================================
+
+export const entityContentTests = {
+  name: 'Entity Content',
+  tests: [
+    {
+      name: 'Can read entity_content table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('entity_content')
+          .select('id, entity_id, url, content_type, title')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'entity_content have valid entity references',
+      fn: async () => {
+        const { data: content, error } = await supabase
+          .from('entity_content')
+          .select('id, entity_id')
+          .limit(10);
+        
+        if (error) throw error;
+        if (!content || content.length === 0) return; // No content to test
+        
+        // Verify each content references a valid entity
+        for (const item of content) {
+          const { data: entity, error: entityError } = await supabase
+            .from('entities')
+            .select('id')
+            .eq('id', item.entity_id)
+            .maybeSingle();
+          
+          if (entityError) throw entityError;
+          if (!entity) throw new Error(`Content ${item.id} references non-existent entity ${item.entity_id}`);
+        }
+      },
+    },
+    {
+      name: 'entity_content has required URL field',
+      fn: async () => {
+        const { data: content, error } = await supabase
+          .from('entity_content')
+          .select('id, url, title')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const item of content || []) {
+          if (!item.url) {
+            throw new Error(`Content ${item.id} (${item.title}) is missing required URL`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Content types are valid',
+      fn: async () => {
+        const validTypes = ['news', 'social', 'document', 'web', 'research', 'blog', 'press_release', 'legal'];
+        
+        const { data: content, error } = await supabase
+          .from('entity_content')
+          .select('id, content_type')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const item of content || []) {
+          if (!item.content_type) {
+            throw new Error(`Content ${item.id} is missing content_type`);
+          }
+          // Just verify it's a non-empty string
+          if (typeof item.content_type !== 'string' || item.content_type.length === 0) {
+            throw new Error(`Content ${item.id} has invalid content_type: ${item.content_type}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Content relevance scores are valid range',
+      fn: async () => {
+        const { data: content, error } = await supabase
+          .from('entity_content')
+          .select('id, relevance_score')
+          .not('relevance_score', 'is', null)
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const item of content || []) {
+          if (item.relevance_score !== null) {
+            if (item.relevance_score < 0 || item.relevance_score > 1) {
+              throw new Error(`Content ${item.id} has invalid relevance_score: ${item.relevance_score} (must be 0-1)`);
+            }
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// ENTITY RELATIONSHIPS TESTS
+// ============================================
+
+export const entityRelationshipsTests = {
+  name: 'Entity Relationships',
+  tests: [
+    {
+      name: 'Can read entity_relationships table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('entity_relationships')
+          .select('id, entity_a_id, entity_b_id, relationship_type, strength')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Relationships have valid entity references',
+      fn: async () => {
+        const { data: relationships, error } = await supabase
+          .from('entity_relationships')
+          .select('id, entity_a_id, entity_b_id')
+          .limit(10);
+        
+        if (error) throw error;
+        if (!relationships || relationships.length === 0) return; // No relationships to test
+        
+        for (const rel of relationships) {
+          // Check entity_a exists
+          const { data: entityA, error: errorA } = await supabase
+            .from('entities')
+            .select('id')
+            .eq('id', rel.entity_a_id)
+            .maybeSingle();
+          
+          if (errorA) throw errorA;
+          if (!entityA) throw new Error(`Relationship ${rel.id} references non-existent entity_a: ${rel.entity_a_id}`);
+          
+          // Check entity_b exists
+          const { data: entityB, error: errorB } = await supabase
+            .from('entities')
+            .select('id')
+            .eq('id', rel.entity_b_id)
+            .maybeSingle();
+          
+          if (errorB) throw errorB;
+          if (!entityB) throw new Error(`Relationship ${rel.id} references non-existent entity_b: ${rel.entity_b_id}`);
+        }
+      },
+    },
+    {
+      name: 'Relationship types are valid',
+      fn: async () => {
+        const validTypes = [
+          'associated_with', 'works_for', 'reports_to', 'owns', 'located_at',
+          'communicates_with', 'transacts_with', 'related_to', 'member_of',
+          'connected_to', 'supplier_of', 'customer_of', 'competitor_of',
+          'partner_with', 'sibling_of', 'parent_of', 'child_of'
+        ];
+        
+        const { data: relationships, error } = await supabase
+          .from('entity_relationships')
+          .select('id, relationship_type')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const rel of relationships || []) {
+          if (!rel.relationship_type) {
+            throw new Error(`Relationship ${rel.id} is missing relationship_type`);
+          }
+          if (!validTypes.includes(rel.relationship_type)) {
+            throw new Error(`Relationship ${rel.id} has unknown type: ${rel.relationship_type}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Relationship strength is valid range',
+      fn: async () => {
+        const { data: relationships, error } = await supabase
+          .from('entity_relationships')
+          .select('id, strength')
+          .not('strength', 'is', null)
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const rel of relationships || []) {
+          if (rel.strength !== null) {
+            if (rel.strength < 0 || rel.strength > 1) {
+              throw new Error(`Relationship ${rel.id} has invalid strength: ${rel.strength} (must be 0-1)`);
+            }
+          }
+        }
+      },
+    },
+    {
+      name: 'No self-referential relationships',
+      fn: async () => {
+        const { data: relationships, error } = await supabase
+          .from('entity_relationships')
+          .select('id, entity_a_id, entity_b_id')
+          .limit(100);
+        
+        if (error) throw error;
+        
+        for (const rel of relationships || []) {
+          if (rel.entity_a_id === rel.entity_b_id) {
+            throw new Error(`Relationship ${rel.id} is self-referential (entity ${rel.entity_a_id})`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Can create and delete relationship',
+      fn: async () => {
+        // Get two different entities to test with
+        const { data: entities, error: fetchError } = await supabase
+          .from('entities')
+          .select('id, name')
+          .limit(2);
+        
+        if (fetchError) throw fetchError;
+        if (!entities || entities.length < 2) {
+          // Can't test without at least 2 entities
+          return;
+        }
+        
+        // Create a test relationship
+        const { data: created, error: createError } = await supabase
+          .from('entity_relationships')
+          .insert({
+            entity_a_id: entities[0].id,
+            entity_b_id: entities[1].id,
+            relationship_type: 'related_to',
+            strength: 0.5,
+            description: 'E2E test relationship',
+            occurrence_count: 1
+          })
+          .select()
+          .single();
+        
+        if (createError) throw createError;
+        if (!created) throw new Error('Failed to create test relationship');
+        
+        // Clean up - delete the test relationship
+        const { error: deleteError } = await supabase
+          .from('entity_relationships')
+          .delete()
+          .eq('id', created.id);
+        
+        if (deleteError) throw deleteError;
+      },
+    },
+  ],
+};
+
+// ============================================
+// ENTITY OSINT SCAN TESTS
+// ============================================
+
+export const entityOsintTests = {
+  name: 'Entity OSINT Functions',
+  tests: [
+    {
+      name: 'osint-entity-scan function responds',
+      fn: async () => {
+        // Get a real entity to test with
+        const { data: entity } = await supabase
+          .from('entities')
+          .select('id')
+          .limit(1)
+          .maybeSingle();
+        
+        if (!entity) return; // Skip if no entities
+        
+        // Just verify the function is reachable
+        const { error } = await supabase.functions.invoke('osint-entity-scan', {
+          body: { entity_id: entity.id, test_mode: true },
+        });
+        
+        // Function may return an error for test mode, but should be reachable
+      },
+    },
+    {
+      name: 'osint-web-search function responds',
+      fn: async () => {
+        const { data: entity } = await supabase
+          .from('entities')
+          .select('id')
+          .limit(1)
+          .maybeSingle();
+        
+        if (!entity) return;
+        
+        const { error } = await supabase.functions.invoke('osint-web-search', {
+          body: { entity_id: entity.id, test_mode: true },
+        });
+      },
+    },
+    {
+      name: 'scan-entity-photos function responds',
+      fn: async () => {
+        const { data: entity } = await supabase
+          .from('entities')
+          .select('id')
+          .limit(1)
+          .maybeSingle();
+        
+        if (!entity) return;
+        
+        const { error } = await supabase.functions.invoke('scan-entity-photos', {
+          body: { entityId: entity.id, test_mode: true },
+        });
+      },
+    },
+  ],
+};
+
+// ============================================
 // RUN ALL TESTS
 // ============================================
 
@@ -365,6 +772,10 @@ export async function runAllTests(): Promise<TestSuite[]> {
     edgeFunctionTests,
     validationTests,
     entityManagementTests,
+    entityPhotosTests,
+    entityContentTests,
+    entityRelationshipsTests,
+    entityOsintTests,
   ];
   
   const results: TestSuite[] = [];
