@@ -2,16 +2,18 @@ import { Header } from "@/components/Header";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { Loader2, Bug, Filter } from "lucide-react";
+import { Loader2, Bug, Filter, Activity, TestTube } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useUserRole } from "@/hooks/useUserRole";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
+import { ErrorMonitoringDashboard, SystemTestRunner } from "@/components/monitoring";
 
 type FixProposal = {
   root_cause: string;
@@ -34,6 +36,7 @@ const BugReports = () => {
   const navigate = useNavigate();
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [severityFilter, setSeverityFilter] = useState<string>("all");
+  const [activeTab, setActiveTab] = useState<string>("reports");
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -138,15 +141,37 @@ const BugReports = () => {
           <div>
             <h1 className="text-3xl font-bold flex items-center gap-2">
               <Bug className="w-8 h-8" />
-              Bug Reports
+              System Stability
             </h1>
             <p className="text-muted-foreground mt-2">
-              {canManage ? "View and manage all bug reports" : "Track your submitted bug reports"}
+              Monitor errors, run tests, and track bug reports
             </p>
           </div>
         </div>
 
-        <div className="flex gap-4 items-center">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList>
+            <TabsTrigger value="reports" className="gap-2">
+              <Bug className="h-4 w-4" /> Bug Reports
+            </TabsTrigger>
+            <TabsTrigger value="monitoring" className="gap-2">
+              <Activity className="h-4 w-4" /> Error Monitoring
+            </TabsTrigger>
+            <TabsTrigger value="tests" className="gap-2">
+              <TestTube className="h-4 w-4" /> System Tests
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="monitoring" className="mt-6">
+            <ErrorMonitoringDashboard />
+          </TabsContent>
+
+          <TabsContent value="tests" className="mt-6">
+            <SystemTestRunner />
+          </TabsContent>
+
+          <TabsContent value="reports" className="mt-6">
+            <div className="flex gap-4 items-center mb-4">
           <Filter className="w-5 h-5 text-muted-foreground" />
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="w-[180px]">
@@ -174,9 +199,9 @@ const BugReports = () => {
               <SelectItem value="low">Low</SelectItem>
             </SelectContent>
           </Select>
-        </div>
+            </div>
 
-        <div className="space-y-4">
+            <div className="space-y-4">
           {bugReports && bugReports.length > 0 ? (
             bugReports.map((report) => (
               <Card key={report.id}>
@@ -352,7 +377,9 @@ const BugReports = () => {
               No bug reports found. Adjust your filters or submit a new report.
             </div>
           )}
-        </div>
+            </div>
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );
