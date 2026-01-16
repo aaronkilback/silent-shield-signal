@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { encode as base64Encode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
+import * as pdfjsLib from "https://esm.sh/pdfjs-dist@4.10.38/legacy/build/pdf.mjs";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -115,6 +116,54 @@ async function getFileFromStorage(
 // Extract text from plain text files
 async function extractTextFromPlainText(content: Blob): Promise<string> {
   return await content.text();
+}
+
+// Extract text from PDFs using pdf.js (no vision; works for large PDFs with embedded text)
+async function extractTextFromPdf(content: Blob): Promise<{ text: string; error?: string }> {
+  try {
+    const arrayBuffer = await content.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+
+    // pdf.js in an edge runtime: disable workers and parse in-process
+    const pdf = await (pdfjsLib as any).getDocument({ data: uint8, disableWorker: true }).promise;
+    const totalPages = Number(pdf?.numPages || 0);
+
+    // Safety cap to avoid very long runs; adjust if needed.
+    const maxPages = Math.min(totalPages, 200);
+
+    const out: string[] = [];
+
+    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+
+      const pageText = (textContent?.items ?? [])
+        .map((it: any) => (typeof it?.str === 'string' ? it.str : ''))
+        .filter((s: string) => s.trim().length > 0)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (pageText) out.push(pageText);
+      if (pageNum < maxPages) out.push('--- Page Break ---');
+    }
+
+    const text = out.join('\n');
+
+    if (text.trim().length < 50) {
+      return {
+        text: '',
+        error: 'No extractable text found in this PDF (it may be scanned/image-only).',
+      };
+    }
+
+    console.log(`PDF.js extracted ${text.length} characters from ${maxPages}/${totalPages} pages`);
+    return { text };
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error('PDF extraction (pdf.js) error:', err);
+    return { text: '', error: `PDF extraction failed: ${errorMessage}` };
+  }
 }
 
 // Resize image using Lovable AI image generation model
@@ -436,9 +485,10 @@ async function convertDocument(
       return { text: await extractTextFromPlainText(content) };
     
     case 'pdf':
+      return await extractTextFromPdf(content);
+
     case 'image':
       return await extractTextWithVisionAI(content, mimeType, filename);
-    
     case 'docx':
     case 'doc':
       return await extractTextFromDocx(content);
