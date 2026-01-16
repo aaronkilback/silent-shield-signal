@@ -42,6 +42,37 @@ function getEnhancedSystemPrompt(): string {
   return `You are FORTRESS AI, an advanced security intelligence co-pilot. You have real capabilities through tools - USE THEM.
 
 ═══════════════════════════════════════════════════════════════════════════════
+                     🔄 SIGNAL-TO-INCIDENT WORKFLOW AWARENESS
+═══════════════════════════════════════════════════════════════════════════════
+
+CRITICAL SYSTEM ARCHITECTURE - YOU MUST UNDERSTAND THIS:
+
+1. SIGNAL PROCESSING FLOW:
+   - Signals are ingested via document upload, OSINT monitoring, or manual creation
+   - The AI Decision Engine (ai-decision-engine) processes high-priority signals
+   - When it recommends should_create_incident=true, it AUTOMATICALLY creates the incident
+   - The incident is created with AI agents auto-assigned
+
+2. BEFORE SUGGESTING INCIDENT CREATION:
+   - ALWAYS use get_signal_incident_status tool to check if an incident already exists
+   - If the signal's AI analysis shows should_create_incident=true, an incident likely already exists
+   - Check incidents table for signal_id matching the signal
+   - Check incident_signals table for linked incidents
+
+3. WHAT THE DECISION ENGINE ALREADY DOES:
+   - Applies categorization rules (deterministic)
+   - Runs AI analysis on critical/high severity signals
+   - Creates incidents automatically when warranted
+   - Assigns AI agents to new incidents
+   - Updates signal status to 'triaged'
+
+4. YOUR ROLE AS DASHBOARD AI:
+   - Answer user questions about system data
+   - Query and report on existing signals, incidents, entities
+   - Create incidents ONLY when user explicitly requests it AND no incident exists
+   - Never claim an incident "should" be created if the Decision Engine already created one
+
+═══════════════════════════════════════════════════════════════════════════════
                          🔴 CRITICAL DATE AWARENESS 🔴
 ═══════════════════════════════════════════════════════════════════════════════
 CURRENT DATE: ${currentDate}
@@ -220,6 +251,33 @@ ${FORTRESS_AGENT_CAPABILITIES}`;
 
 // Tool definitions for querying the database
 const tools = [
+  {
+    type: "function",
+    function: {
+      name: "get_signal_incident_status",
+      description: `CRITICAL: Check if a signal already has an incident created for it. USE THIS BEFORE suggesting incident creation!
+      
+The AI Decision Engine automatically creates incidents for high-severity signals when should_create_incident=true.
+This tool tells you if that already happened.
+
+Returns:
+- has_incident: boolean - whether an incident exists
+- incident_id: string - the incident ID if one exists
+- incident_status: string - current status of the incident
+- auto_created: boolean - if the incident was auto-created by the Decision Engine
+- ai_recommendation: object - what the AI analysis recommended`,
+      parameters: {
+        type: "object",
+        properties: {
+          signal_id: {
+            type: "string",
+            description: "UUID of the signal to check"
+          }
+        },
+        required: ["signal_id"]
+      }
+    }
+  },
   {
     type: "function",
     function: {
@@ -2813,6 +2871,63 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
 
   try {
     switch (toolName) {
+    case "get_signal_incident_status": {
+      // Check if a signal already has an incident created
+      const signalId = args.signal_id;
+      
+      // Get the signal with its raw_json to check AI recommendation
+      const { data: signal, error: signalError } = await supabaseClient
+        .from("signals")
+        .select("id, normalized_text, severity, raw_json, status")
+        .eq("id", signalId)
+        .single();
+        
+      if (signalError || !signal) {
+        return { error: `Signal not found: ${signalId}` };
+      }
+      
+      // Check for incident linked directly via signal_id
+      const { data: directIncident } = await supabaseClient
+        .from("incidents")
+        .select("id, status, created_at, priority, title")
+        .eq("signal_id", signalId)
+        .maybeSingle();
+        
+      // Also check incident_signals junction table
+      const { data: linkedIncidents } = await supabaseClient
+        .from("incident_signals")
+        .select("incident_id, incidents(id, status, created_at, priority, title)")
+        .eq("signal_id", signalId);
+      
+      const hasIncident = !!directIncident || (linkedIncidents && linkedIncidents.length > 0);
+      const incident = directIncident || linkedIncidents?.[0]?.incidents;
+      
+      // Extract AI recommendation from raw_json
+      const aiDecision = signal.raw_json?.ai_decision;
+      const shouldCreateIncident = aiDecision?.should_create_incident;
+      
+      return {
+        signal_id: signalId,
+        has_incident: hasIncident,
+        incident_id: incident?.id || null,
+        incident_status: incident?.status || null,
+        incident_title: incident?.title || null,
+        auto_created: hasIncident && shouldCreateIncident === true,
+        ai_recommendation: {
+          should_create_incident: shouldCreateIncident,
+          threat_level: aiDecision?.threat_level,
+          incident_priority: aiDecision?.incident_priority,
+          reasoning: aiDecision?.reasoning
+        },
+        signal_status: signal.status,
+        message: hasIncident 
+          ? `Incident ${incident?.id} already exists for this signal (status: ${incident?.status})`
+          : shouldCreateIncident 
+            ? "AI recommended incident creation but no incident was created - this may indicate an error"
+            : "No incident exists and AI did not recommend creating one"
+      };
+    }
+
     case "get_recent_signals": {
       let query = supabaseClient
         .from("signals")
