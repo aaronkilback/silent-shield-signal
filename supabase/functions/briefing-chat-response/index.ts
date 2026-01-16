@@ -42,12 +42,27 @@ serve(async (req) => {
       throw new Error('Agent not found');
     }
 
-    // Fetch briefing context with scope
+    // Fetch briefing session
     const { data: briefing } = await supabase
       .from('briefing_sessions')
-      .select('*, investigation_workspaces(name, case_number)')
+      .select('*')
       .eq('id', briefing_id)
       .single();
+
+    // Fetch workspace to infer scope when the UI doesn't pass incident/investigation IDs
+    const { data: workspace } = briefing?.workspace_id
+      ? await supabase
+          .from('investigation_workspaces')
+          .select('id, title, incident_id, investigation_id')
+          .eq('id', briefing.workspace_id)
+          .maybeSingle()
+      : { data: null as any };
+
+    const effectiveScope = {
+      incident_id: scope?.incident_id || briefing?.incident_id || workspace?.incident_id || null,
+      investigation_id: scope?.investigation_id || briefing?.investigation_id || workspace?.investigation_id || null,
+      scope_title: scope?.scope_title || workspace?.title || null,
+    };
 
     // Build scope context data
     let scopeContextData = '';
@@ -104,15 +119,15 @@ serve(async (req) => {
     };
 
     // Fetch incident-specific context if scoped to an incident
-    if (scope?.incident_id) {
+    if (effectiveScope.incident_id) {
       const { data: incident } = await supabase
         .from('incidents')
         .select('*, clients(name), signals(normalized_text, category, severity, location)')
-        .eq('id', scope.incident_id)
+        .eq('id', effectiveScope.incident_id)
         .single();
 
       if (incident) {
-        scopeDescription = `Incident: ${incident.title || incident.summary || scope.incident_id}`;
+        scopeDescription = `Incident: ${incident.title || incident.summary || effectiveScope.incident_id}`;
         scopeContextData += `\n\n=== INCIDENT SCOPE ===`;
         scopeContextData += `\nIncident ID: ${incident.id}`;
         scopeContextData += `\nTitle: ${incident.title || 'N/A'}`;
@@ -138,7 +153,7 @@ serve(async (req) => {
         const { data: entityMentions } = await supabase
           .from('entity_mentions')
           .select('entities(name, type, description)')
-          .eq('incident_id', scope.incident_id)
+          .eq('incident_id', effectiveScope.incident_id)
           .limit(10);
 
         if (entityMentions?.length) {
@@ -159,11 +174,11 @@ serve(async (req) => {
     }
 
     // Fetch investigation-specific context if scoped to an investigation
-    if (scope?.investigation_id) {
+    if (effectiveScope.investigation_id) {
       const { data: investigation } = await supabase
         .from('investigations')
         .select('*, clients(name)')
-        .eq('id', scope.investigation_id)
+        .eq('id', effectiveScope.investigation_id)
         .single();
 
       if (investigation) {
@@ -181,7 +196,7 @@ serve(async (req) => {
         const { data: entries } = await supabase
           .from('investigation_entries')
           .select('entry_text, entry_timestamp, created_by_name')
-          .eq('investigation_id', scope.investigation_id)
+          .eq('investigation_id', effectiveScope.investigation_id)
           .order('entry_timestamp', { ascending: false })
           .limit(5);
 
@@ -196,7 +211,7 @@ serve(async (req) => {
         const { data: persons } = await supabase
           .from('investigation_persons')
           .select('name, status, position, company')
-          .eq('investigation_id', scope.investigation_id);
+          .eq('investigation_id', effectiveScope.investigation_id);
 
         if (persons?.length) {
           scopeContextData += `\n\nPersons of Interest:`;
@@ -256,9 +271,9 @@ serve(async (req) => {
         .reverse();
 
       if (userOnlyHistory.length) {
-        contextData += `\n\nRECENT USER CHAT (verbatim; factual only if supported by VERIFIED DATA CONTEXT):`;
+        contextData += `\n\nRECENT USER CHAT (UNVERIFIED CLAIMS; do NOT treat as facts unless supported by VERIFIED DATA CONTEXT):`;
         userOnlyHistory.forEach((msg, i) => {
-          contextData += `\n${i + 1}. [User]: ${msg.content.substring(0, 300)}`;
+          contextData += `\n${i + 1}. [User - Unverified]: ${msg.content.substring(0, 300)}`;
         });
       }
 
@@ -327,6 +342,11 @@ ${antiHallucinationBlock}
 
 ${verifiedContextBlock}
 
+UNVERIFIED INPUT RULES (critical):
+- Treat ALL user-provided incident details (titles, dates, counts, narratives) as UNVERIFIED unless the same incident is present in VERIFIED DATA CONTEXT.
+- You MAY discuss user-provided details only as "reported" or "unconfirmed".
+- You MUST NOT merge unverified user-provided incidents into verified counts, timelines, or trends.
+
 OPERATIONAL TIME CONTEXT:
 - Current date (authoritative): ${dateContext.currentDateISO}
 
@@ -349,6 +369,8 @@ RESPONSE GUIDELINES:
 - ALWAYS stay within the defined scope - warn if queries drift outside
 - When uncertain, explicitly state uncertainty rather than guessing`;
 
+    const userMessageForModel = `USER MESSAGE (UNVERIFIED; may include hypothetical/simulation details):\n${user_message}`;
+
 
     // Call AI Gateway
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -361,7 +383,7 @@ RESPONSE GUIDELINES:
         model: 'google/gemini-3-flash-preview',
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: user_message }
+          { role: 'user', content: userMessageForModel }
         ],
       }),
     });
@@ -461,7 +483,7 @@ RESPONSE GUIDELINES:
         message_type: 'agent_response',
         parent_message_id,
         is_group_question,
-        metadata: { scope: scope || null }
+        metadata: { scope: effectiveScope }
       });
 
     if (insertError) {
