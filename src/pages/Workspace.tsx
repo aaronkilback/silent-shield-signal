@@ -18,9 +18,10 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { 
   Loader2, Send, Users, MessageSquare, CheckSquare, Clock, 
-  ArrowLeft, Plus, UserPlus, AlertTriangle, Mail, Shield, CalendarIcon
+  ArrowLeft, Plus, UserPlus, AlertTriangle, Mail, Shield, CalendarIcon, Bot
 } from "lucide-react";
 import { InviteMemberDialog } from "@/components/workspace/InviteMemberDialog";
+import { AgentInteraction } from "@/components/agents/AgentInteraction";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
 import { getMCMRoleInfo, MCM_ROLE_ORDER, MCM_ROLES, canManageAssignments, canSubmitFindings, type MCMRole } from "@/lib/mcmRoles";
@@ -79,6 +80,23 @@ const Workspace = () => {
   const [newTaskDescription, setNewTaskDescription] = useState("");
   const [newTaskAssignee, setNewTaskAssignee] = useState<string>("");
   const [newTaskDiaryDate, setNewTaskDiaryDate] = useState<Date | undefined>(undefined);
+  const [selectedAgent, setSelectedAgent] = useState<any>(null);
+  
+  // Fetch AI agents for workspace
+  const { data: agents = [], isLoading: agentsLoading } = useQuery({
+    queryKey: ['workspace-agents'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('ai_agents')
+        .select('*')
+        .eq('is_active', true)
+        .order('codename');
+      
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user
+  });
   
   // Fetch workspace details
   const { data: workspace, isLoading: workspaceLoading } = useQuery({
@@ -602,6 +620,10 @@ const Workspace = () => {
                     <CheckSquare className="w-4 h-4" />
                     Tasks ({tasks.length})
                   </TabsTrigger>
+                  <TabsTrigger value="agents" className="gap-2">
+                    <Bot className="w-4 h-4" />
+                    Agents ({agents.length})
+                  </TabsTrigger>
                 </TabsList>
               </CardHeader>
               <CardContent className="pt-4">
@@ -827,6 +849,48 @@ const Workspace = () => {
                       </div>
                     )}
                   </ScrollArea>
+                </TabsContent>
+
+                {/* Agents Tab */}
+                <TabsContent value="agents" className="mt-0">
+                  {agentsLoading ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : agents.length === 0 ? (
+                    <div className="text-center text-muted-foreground py-12">
+                      <Bot className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <p>No AI agents available yet.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {/* Agent selector */}
+                      <div className="flex flex-wrap gap-2">
+                        {agents.map((agent: any) => (
+                          <Button
+                            key={agent.id}
+                            variant={selectedAgent?.id === agent.id ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setSelectedAgent(agent)}
+                            className="gap-2"
+                          >
+                            <Bot className="w-4 h-4" style={{ color: selectedAgent?.id === agent.id ? undefined : agent.avatar_color }} />
+                            {agent.header_name || agent.codename}
+                          </Button>
+                        ))}
+                      </div>
+
+                      {/* Agent interaction */}
+                      {selectedAgent ? (
+                        <AgentInteraction agent={selectedAgent} />
+                      ) : (
+                        <div className="text-center text-muted-foreground py-8 border border-dashed rounded-lg">
+                          <Bot className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                          <p>Select an agent above to start a conversation</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </TabsContent>
               </CardContent>
             </Tabs>
