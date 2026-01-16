@@ -463,6 +463,15 @@ Think like 3Si Security: provide intelligence that explains WHY this matters and
         const initialAgent = selectInitialAgent(signal, decision);
         console.log(`Selected initial agent: ${initialAgent.agentCallSign} for incident investigation`);
 
+        // Map threat_level to valid severity_level (P1-P4)
+        const mapThreatLevelToSeverity = (level: string): string => {
+          const normalized = (level || '').toLowerCase();
+          if (normalized === 'critical' || normalized === 'p1') return 'P1';
+          if (normalized === 'high' || normalized === 'p2') return 'P2';
+          if (normalized === 'medium' || normalized === 'p3') return 'P3';
+          return 'P4'; // low or default
+        };
+
         // Automatically create incident with AI Agent Task Force assignment
         const { data: incident, error: incidentError } = await supabase
           .from('incidents')
@@ -474,7 +483,7 @@ Think like 3Si Security: provide intelligence that explains WHY this matters and
             is_test: signal.is_test || false,
             title: `${signal.category || 'Security'} Incident - ${signal.clients?.name || 'Unknown Client'}`,
             summary: decision.reasoning,
-            severity_level: decision.threat_level,
+            severity_level: mapThreatLevelToSeverity(decision.threat_level),
             investigation_status: 'pending',
             assigned_agent_ids: [initialAgent.agentId],
             initial_agent_prompt: initialAgent.prompt,
