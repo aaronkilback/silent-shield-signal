@@ -33,7 +33,32 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
 }
 
 // Enhanced system prompt for Phase 4/5: Intent Recognition, Contextual Understanding, and Autonomous Learning
-const ENHANCED_SYSTEM_PROMPT = `You are FORTRESS AI, an advanced security intelligence co-pilot. You have real capabilities through tools - USE THEM.
+// Dynamic system prompt that includes current date
+function getEnhancedSystemPrompt(): string {
+  const now = new Date();
+  const currentDate = now.toISOString().split('T')[0];
+  const currentDateTime = now.toISOString();
+  
+  return `You are FORTRESS AI, an advanced security intelligence co-pilot. You have real capabilities through tools - USE THEM.
+
+═══════════════════════════════════════════════════════════════════════════════
+                         🔴 CRITICAL DATE AWARENESS 🔴
+═══════════════════════════════════════════════════════════════════════════════
+CURRENT DATE: ${currentDate}
+CURRENT TIME: ${currentDateTime}
+
+ABSOLUTE DATE ACCURACY RULES (VIOLATIONS ARE UNACCEPTABLE):
+1. NEVER claim an incident "appeared" or "emerged" on a date different from its actual opened_at date
+2. NEVER fabricate or hallucinate dates - use ONLY dates from database records
+3. When reporting incidents, ALWAYS include the actual opened_at/created_at dates from the data
+4. If an incident is from November 2025, report it as from November 2025, NOT as if it just appeared today
+5. For executive briefings: Distinguish between "new incidents (last 24h)" vs "stale open incidents"
+6. ALWAYS report incident counts accurately - do not exaggerate or round up
+
+INCIDENT REPORTING ACCURACY:
+- Old incidents still marked "open" are STALE, not new threats
+- Use get_active_incidents with hours_back=24 to find truly recent incidents for briefings
+- Clearly distinguish: "4 open incidents total, 0 new in last 24 hours, 4 stale from November 2025"
 
 ═══════════════════════════════════════════════════════════════════════════════
                          🔴 CRITICAL EXECUTION RULE 🔴
@@ -190,6 +215,7 @@ Remember: You have REAL tools. USE THEM. Never say "I cannot" when you have a to
 ${FORTRESS_DATA_INFRASTRUCTURE}
 
 ${FORTRESS_AGENT_CAPABILITIES}`;
+}
 
 
 // Tool definitions for querying the database
@@ -310,13 +336,29 @@ Inform user of successful creation and instruct to refresh if needed
     type: "function",
     function: {
       name: "get_active_incidents",
-      description: "Get currently active security incidents. Use this when users ask about ongoing incidents or incident status.",
+      description: "Get currently active security incidents. Use this when users ask about ongoing incidents or incident status. IMPORTANT: Always include opened_at and updated_at dates in your response. For executive briefings, only include incidents from the last 24-72 hours unless specifically asked for older incidents.",
       parameters: {
         type: "object",
         properties: {
           limit: {
             type: "number",
             description: "Number of incidents to return (default 10)",
+          },
+          client_id: {
+            type: "string",
+            description: "Filter by client ID",
+          },
+          priority: {
+            type: "string",
+            description: "Filter by priority (p1, p2, p3, p4)",
+          },
+          hours_back: {
+            type: "number",
+            description: "Only include incidents opened or updated within this many hours (default: no time filter, use 24 for recent briefings, 72 for comprehensive view)",
+          },
+          include_stale: {
+            type: "boolean",
+            description: "Include older incidents that haven't been updated recently (default: true). Set to false for executive briefings focusing on recent activity.",
           },
         },
       },
@@ -2822,15 +2864,80 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
     }
 
     case "get_active_incidents": {
-      const { data, error } = await supabaseClient
+      const now = new Date();
+      const currentDateISO = now.toISOString();
+      
+      let query = supabaseClient
         .from("incidents")
-        .select("id, title, status, priority, severity_level, opened_at, client_id, clients(name)")
+        .select("id, title, summary, status, priority, severity_level, opened_at, updated_at, client_id, clients(name)")
         .in("status", ["open", "acknowledged", "contained"])
-        .order("opened_at", { ascending: false })
-        .limit(args.limit || 10);
+        .order("updated_at", { ascending: false });
+      
+      // Apply time-based filtering if specified
+      if (args.hours_back) {
+        const cutoffTime = new Date(now.getTime() - (args.hours_back * 60 * 60 * 1000));
+        const cutoffISO = cutoffTime.toISOString();
+        
+        if (args.include_stale === false) {
+          // Strict mode: only incidents opened OR updated within the time window
+          query = query.or(`opened_at.gte.${cutoffISO},updated_at.gte.${cutoffISO}`);
+        } else {
+          // Default: include any active incident updated within window
+          query = query.gte("updated_at", cutoffISO);
+        }
+      }
+      
+      // Apply priority filter
+      if (args.priority) {
+        query = query.eq("priority", args.priority);
+      }
+      
+      // Apply client filter
+      if (args.client_id) {
+        query = query.eq("client_id", args.client_id);
+      }
+      
+      const { data, error } = await query.limit(args.limit || 10);
 
       if (error) throw error;
-      return data;
+      
+      // Calculate age for each incident and add date context
+      const incidentsWithAge = (data || []).map((incident: any) => {
+        const openedAt = new Date(incident.opened_at);
+        const updatedAt = new Date(incident.updated_at);
+        const ageMs = now.getTime() - openedAt.getTime();
+        const ageHours = Math.round(ageMs / (1000 * 60 * 60));
+        const ageDays = Math.round(ageMs / (1000 * 60 * 60 * 24));
+        const staleDays = Math.round((now.getTime() - updatedAt.getTime()) / (1000 * 60 * 60 * 24));
+        
+        return {
+          ...incident,
+          age_hours: ageHours,
+          age_days: ageDays,
+          age_display: ageDays > 1 ? `${ageDays} days ago` : ageHours > 1 ? `${ageHours} hours ago` : 'Recent',
+          stale_days: staleDays,
+          is_stale: staleDays > 7, // Flag incidents not updated in 7+ days
+          opened_date_formatted: openedAt.toISOString().split('T')[0],
+          updated_date_formatted: updatedAt.toISOString().split('T')[0],
+        };
+      });
+      
+      return {
+        current_date: currentDateISO.split('T')[0],
+        current_datetime: currentDateISO,
+        total_found: incidentsWithAge.length,
+        time_filter_applied: args.hours_back ? `Last ${args.hours_back} hours` : 'None',
+        incidents: incidentsWithAge,
+        summary: {
+          p1_count: incidentsWithAge.filter((i: any) => i.priority === 'p1').length,
+          p2_count: incidentsWithAge.filter((i: any) => i.priority === 'p2').length,
+          stale_count: incidentsWithAge.filter((i: any) => i.is_stale).length,
+          recent_24h_count: incidentsWithAge.filter((i: any) => i.age_hours <= 24).length,
+        },
+        note: incidentsWithAge.some((i: any) => i.is_stale) 
+          ? "⚠️ Some incidents are stale (not updated in 7+ days). Consider reviewing or closing them." 
+          : null
+      };
     }
 
     case "search_investigations": {

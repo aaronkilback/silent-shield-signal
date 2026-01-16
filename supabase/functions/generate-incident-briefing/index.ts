@@ -97,9 +97,20 @@ serve(async (req) => {
       : null;
     const ageMinutes = Math.round((now.getTime() - openedAt.getTime()) / (1000 * 60));
 
+    // Current date for context
+    const currentDate = now.toISOString().split('T')[0];
+    const incidentOpenedDate = openedAt.toISOString().split('T')[0];
+    const ageDays = Math.round(ageMinutes / (60 * 24));
+    const isStale = ageDays > 7;
+
     // Construct briefing prompt based on format
     const briefingPrompt = format === "executive" 
       ? `Generate an EXECUTIVE BRIEFING for this security incident. Target audience: C-level executives and senior management who need high-level understanding and business impact focus.
+
+CRITICAL DATE CONTEXT:
+- Today's Date: ${currentDate}
+- Incident Opened: ${incidentOpenedDate} (${ageDays > 0 ? `${ageDays} days ago` : 'today'})
+${isStale ? `- ⚠️ STALE INCIDENT: This incident is ${ageDays} days old. It may require review for closure or escalation.` : ''}
 
 INCIDENT OVERVIEW:
 - Incident ID: ${incident.id.substring(0, 8)}
@@ -108,8 +119,8 @@ INCIDENT OVERVIEW:
 - Status: ${incident.status}
 - Client: ${incident.clients?.name || 'Unknown'}
 - Industry: ${incident.clients?.industry || 'Unknown'}
-- Opened: ${incident.opened_at}
-- Age: ${ageMinutes < 60 ? `${ageMinutes} minutes` : `${Math.round(ageMinutes / 60)} hours`}
+- Opened: ${incidentOpenedDate}
+- Age: ${ageDays > 0 ? `${ageDays} days` : ageMinutes < 60 ? `${ageMinutes} minutes` : `${Math.round(ageMinutes / 60)} hours`}
 
 INCIDENT DETAILS:
 - Type: ${incident.incident_type || 'Not specified'}
