@@ -336,7 +336,55 @@ COMMUNICATION GUIDELINES:
 - NEVER claim events occurred on dates not in the data
 - If asked about something outside your specialty, acknowledge it and suggest the appropriate resource
 - You understand the full Fortress data infrastructure and can explain how data flows through the system
-- When uncertain, explicitly acknowledge it rather than guessing`;
+- When uncertain, explicitly acknowledge it rather than guessing
+
+TOOL USAGE:
+- When user provides intelligence (emails, reports, articles), ALWAYS use tools to:
+  1. Create signals from actionable intelligence using create_signal tool
+  2. Suggest entities (persons, organizations, locations) using suggest_entity tool
+- Be proactive about extracting and storing intelligence
+- After using tools, summarize what was created for the user`;
+
+    // Define tools for signal creation and entity suggestion
+    const tools = [
+      {
+        type: "function",
+        function: {
+          name: "create_signal",
+          description: "Create a new intelligence signal from provided information. Use this when user shares intel that should be tracked.",
+          parameters: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "Brief title for the signal (max 100 chars)" },
+              normalized_text: { type: "string", description: "Full text content of the intelligence" },
+              source: { type: "string", description: "Source of the intelligence (e.g., 'Email', 'HUMINT', 'OSINT')" },
+              severity: { type: "string", enum: ["critical", "high", "medium", "low", "info"], description: "Severity level" },
+              rule_category: { type: "string", description: "Category (e.g., 'Threat Intel', 'Activist Activity', 'Cyber Threat')" },
+            },
+            required: ["title", "normalized_text", "source", "severity"],
+            additionalProperties: false
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "suggest_entity",
+          description: "Suggest a new entity to be added to the database. Use for persons, organizations, or locations mentioned in intel.",
+          parameters: {
+            type: "object",
+            properties: {
+              suggested_name: { type: "string", description: "Name of the entity" },
+              suggested_type: { type: "string", enum: ["person", "organization", "location", "vehicle", "infrastructure", "group"], description: "Type of entity" },
+              context: { type: "string", description: "Context explaining why this entity is relevant" },
+              suggested_aliases: { type: "array", items: { type: "string" }, description: "Alternative names or aliases" },
+            },
+            required: ["suggested_name", "suggested_type", "context"],
+            additionalProperties: false
+          }
+        }
+      }
+    ];
 
     // Build messages array
     const messages = [
@@ -348,7 +396,7 @@ COMMUNICATION GUIDELINES:
       { role: 'user', content: message }
     ];
 
-    // Call AI Gateway
+    // Call AI Gateway with tools
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -358,6 +406,7 @@ COMMUNICATION GUIDELINES:
       body: JSON.stringify({
         model: 'google/gemini-2.5-flash',
         messages,
+        tools,
       }),
     });
 
@@ -380,16 +429,98 @@ COMMUNICATION GUIDELINES:
     }
 
     const data = await response.json();
-    const agentResponse = data.choices?.[0]?.message?.content;
+    const choice = data.choices?.[0];
+    
+    // Process tool calls if present
+    const toolCalls = choice?.message?.tool_calls || [];
+    const toolResults: { tool: string; result: any }[] = [];
+    
+    for (const toolCall of toolCalls) {
+      const funcName = toolCall.function?.name;
+      let args: any;
+      try {
+        args = JSON.parse(toolCall.function?.arguments || '{}');
+      } catch {
+        args = {};
+      }
+      
+      console.log(`Executing tool: ${funcName}`, args);
+      
+      if (funcName === 'create_signal') {
+        const { data: signal, error } = await supabase
+          .from('signals')
+          .insert({
+            title: args.title?.substring(0, 100) || 'Untitled Signal',
+            normalized_text: args.normalized_text || '',
+            source: args.source || 'Agent Chat',
+            severity: args.severity || 'medium',
+            rule_category: args.rule_category || 'Uncategorized',
+            status: 'new',
+          })
+          .select('id, title')
+          .single();
+        
+        if (error) {
+          console.error('Error creating signal:', error);
+          toolResults.push({ tool: 'create_signal', result: { success: false, error: error.message } });
+        } else {
+          toolResults.push({ tool: 'create_signal', result: { success: true, signal_id: signal?.id, title: signal?.title } });
+        }
+      } else if (funcName === 'suggest_entity') {
+        const { data: suggestion, error } = await supabase
+          .from('entity_suggestions')
+          .insert({
+            suggested_name: args.suggested_name || 'Unknown Entity',
+            suggested_type: args.suggested_type || 'person',
+            context: args.context || '',
+            suggested_aliases: args.suggested_aliases || [],
+            source_type: 'agent_chat',
+            source_id: agent_id,
+            confidence: 0.75,
+            status: 'pending',
+          })
+          .select('id, suggested_name')
+          .single();
+        
+        if (error) {
+          console.error('Error suggesting entity:', error);
+          toolResults.push({ tool: 'suggest_entity', result: { success: false, error: error.message } });
+        } else {
+          toolResults.push({ tool: 'suggest_entity', result: { success: true, suggestion_id: suggestion?.id, name: suggestion?.suggested_name } });
+        }
+      }
+    }
+    
+    // Get text response
+    let agentResponse = choice?.message?.content || '';
+    
+    // If tools were called, append summary
+    if (toolResults.length > 0) {
+      const signalsCreated = toolResults.filter(t => t.tool === 'create_signal' && t.result.success);
+      const entitiesSuggested = toolResults.filter(t => t.tool === 'suggest_entity' && t.result.success);
+      
+      let actionSummary = '\n\n---\n**Actions Taken:**\n';
+      if (signalsCreated.length > 0) {
+        actionSummary += `✅ Created ${signalsCreated.length} signal(s): ${signalsCreated.map(s => s.result.title).join(', ')}\n`;
+      }
+      if (entitiesSuggested.length > 0) {
+        actionSummary += `✅ Suggested ${entitiesSuggested.length} entity/entities: ${entitiesSuggested.map(e => e.result.name).join(', ')}\n`;
+      }
+      
+      agentResponse += actionSummary;
+    }
 
-    if (!agentResponse) {
+    if (!agentResponse && toolResults.length === 0) {
       throw new Error('No response from AI');
     }
 
-    console.log('Agent response generated successfully');
+    console.log('Agent response generated successfully', { toolsExecuted: toolResults.length });
 
     return new Response(
-      JSON.stringify({ response: agentResponse }),
+      JSON.stringify({ 
+        response: agentResponse || 'I processed the intelligence and took the actions listed above.',
+        tools_executed: toolResults 
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
