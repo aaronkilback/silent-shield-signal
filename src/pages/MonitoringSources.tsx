@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MonitoringDiagnostics } from "@/components/MonitoringDiagnostics";
 
 export default function MonitoringSources() {
   const [newSource, setNewSource] = useState({
@@ -165,6 +166,7 @@ export default function MonitoringSources() {
 
         <Tabs defaultValue="regional" className="space-y-4">
           <TabsList>
+            <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
             <TabsTrigger value="regional">
               <Globe className="w-4 h-4 mr-2" />
               Regional APAC
@@ -172,6 +174,10 @@ export default function MonitoringSources() {
             <TabsTrigger value="canadian">Canadian Media</TabsTrigger>
             <TabsTrigger value="custom">Custom Sources</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="diagnostics">
+            <MonitoringDiagnostics />
+          </TabsContent>
 
           {/* APAC Regional Sources Tab */}
           <TabsContent value="regional" className="space-y-4">

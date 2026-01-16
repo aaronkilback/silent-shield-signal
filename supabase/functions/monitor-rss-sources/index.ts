@@ -64,11 +64,11 @@ serve(async (req) => {
   try {
     console.log('Starting RSS sources monitoring scan');
 
-    // Fetch all active RSS sources
+    // Fetch all active RSS sources (both 'rss' and 'url_feed' types)
     const { data: rssSources, error: sourcesError } = await supabaseClient
       .from('sources')
       .select('*')
-      .eq('type', 'url_feed')
+      .in('type', ['rss', 'url_feed'])
       .eq('status', 'active');
 
     if (sourcesError) {
