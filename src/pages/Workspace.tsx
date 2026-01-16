@@ -18,10 +18,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar";
 import { 
   Loader2, Send, Users, MessageSquare, CheckSquare, Clock, 
-  ArrowLeft, Plus, UserPlus, AlertTriangle, Mail, Shield, CalendarIcon, Bot
+  ArrowLeft, Plus, UserPlus, AlertTriangle, Mail, Shield, CalendarIcon, Bot, Target
 } from "lucide-react";
 import { InviteMemberDialog } from "@/components/workspace/InviteMemberDialog";
 import { AgentInteraction } from "@/components/agents/AgentInteraction";
+import { BriefingHub } from "@/components/briefing";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
 import { getMCMRoleInfo, MCM_ROLE_ORDER, MCM_ROLES, canManageAssignments, canSubmitFindings, type MCMRole } from "@/lib/mcmRoles";
@@ -616,6 +617,10 @@ const Workspace = () => {
                     <MessageSquare className="w-4 h-4" />
                     Chat
                   </TabsTrigger>
+                  <TabsTrigger value="briefing" className="gap-2">
+                    <Target className="w-4 h-4" />
+                    Briefing
+                  </TabsTrigger>
                   <TabsTrigger value="tasks" className="gap-2">
                     <CheckSquare className="w-4 h-4" />
                     Tasks ({tasks.length})
@@ -692,6 +697,11 @@ const Workspace = () => {
                       </Button>
                     </div>
                   )}
+                </TabsContent>
+
+                {/* Briefing Hub Tab */}
+                <TabsContent value="briefing" className="mt-0">
+                  <BriefingHub workspaceId={id!} />
                 </TabsContent>
 
                 {/* Tasks Tab */}
