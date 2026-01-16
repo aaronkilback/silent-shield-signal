@@ -4723,7 +4723,8 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
         if (knownBuckets.some((b) => storagePath.startsWith(`${b}/`))) return storagePath;
 
         const { data: obj } = await supabaseClient
-          .from('storage.objects')
+          .schema('storage')
+          .from('objects')
           .select('bucket_id, name')
           .eq('name', storagePath)
           .maybeSingle();
@@ -4850,7 +4851,8 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
       // 2) Ensure file_path includes bucket
       if (filePath && !knownBuckets.some((b) => filePath.startsWith(`${b}/`))) {
         const { data: obj } = await supabaseClient
-          .from('storage.objects')
+          .schema('storage')
+          .from('objects')
           .select('bucket_id, name')
           .eq('name', filePath)
           .maybeSingle();
