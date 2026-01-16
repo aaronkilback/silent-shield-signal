@@ -312,7 +312,7 @@ export function BriefingChat({ briefingId, workspaceId }: BriefingChatProps) {
                         </span>
                       </div>
                       <div
-                        className={`rounded-lg px-3 py-2 text-sm ${
+                        className={`rounded-lg px-3 py-2 text-sm overflow-hidden ${
                           isCurrentUser
                             ? 'bg-primary text-primary-foreground'
                             : isAgent
@@ -320,7 +320,7 @@ export function BriefingChat({ briefingId, workspaceId }: BriefingChatProps) {
                             : 'bg-muted'
                         }`}
                       >
-                        <p className="whitespace-pre-wrap">{msg.content}</p>
+                        <p className="whitespace-pre-wrap break-words overflow-wrap-anywhere">{msg.content}</p>
                       </div>
                     </div>
                   </div>
