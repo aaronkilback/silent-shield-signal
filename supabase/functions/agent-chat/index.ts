@@ -336,6 +336,39 @@ COMMUNICATION GUIDELINES:
           }
         }
       },
+      {
+        type: "function",
+        function: {
+          name: "process_document",
+          description: "Extract text content from a document (PDF, DOCX, images) stored in Fortress. Use this when you need to read or analyze a document's contents.",
+          parameters: {
+            type: "object",
+            properties: {
+              file_path: { type: "string", description: "Storage path to the document (e.g., 'archival-documents/report.pdf')" },
+              mime_type: { type: "string", description: "MIME type of the file (e.g., 'application/pdf', 'image/jpeg'). If not provided, will be inferred from extension." },
+              extract_text: { type: "boolean", description: "Whether to extract text via OCR (default: true)" },
+            },
+            required: ["file_path"],
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "resize_image",
+          description: "Resize a large image file to a smaller size. Use this when an image is too large to process or display.",
+          parameters: {
+            type: "object",
+            properties: {
+              file_path: { type: "string", description: "Storage path to the image (e.g., 'archival-documents/photo.jpg')" },
+              target_size_mb: { type: "number", description: "Target file size in MB (default: 2)" },
+              max_width_px: { type: "number", description: "Maximum width in pixels" },
+              max_height_px: { type: "number", description: "Maximum height in pixels" },
+            },
+            required: ["file_path"],
+          }
+        }
+      },
     ];
 
     // Build messages array
@@ -552,6 +585,89 @@ COMMUNICATION GUIDELINES:
             } 
           });
           
+        } else if (funcName === 'process_document') {
+          // Infer MIME type from extension if not provided
+          const ext = args.file_path?.split('.').pop()?.toLowerCase() || '';
+          const mimeMap: Record<string, string> = {
+            'pdf': 'application/pdf',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'doc': 'application/msword',
+            'txt': 'text/plain',
+            'md': 'text/markdown',
+            'csv': 'text/csv',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'webp': 'image/webp',
+            'tiff': 'image/tiff',
+            'tif': 'image/tiff'
+          };
+          const mimeType = args.mime_type || mimeMap[ext] || 'application/octet-stream';
+          
+          const { data: docResult, error } = await supabase.functions.invoke('fortress-document-converter', {
+            body: {
+              documentId: crypto.randomUUID(),
+              filePath: args.file_path,
+              mimeType: mimeType,
+              extractText: args.extract_text !== false,
+              updateDatabase: false
+            }
+          });
+          
+          if (error) throw error;
+          if (!docResult?.success) throw new Error(docResult?.error || 'Document processing failed');
+          
+          toolResults.push({ 
+            tool: 'process_document', 
+            result: { 
+              success: true, 
+              extracted_text: docResult.extractedText,
+              text_length: docResult.extractedTextLength,
+              file_path: args.file_path
+            } 
+          });
+          
+        } else if (funcName === 'resize_image') {
+          // Infer MIME type from extension
+          const ext = args.file_path?.split('.').pop()?.toLowerCase() || '';
+          const mimeMap: Record<string, string> = {
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'webp': 'image/webp',
+            'tiff': 'image/tiff',
+            'tif': 'image/tiff'
+          };
+          const mimeType = mimeMap[ext] || 'image/jpeg';
+          
+          const { data: resizeResult, error } = await supabase.functions.invoke('fortress-document-converter', {
+            body: {
+              documentId: crypto.randomUUID(),
+              filePath: args.file_path,
+              mimeType: mimeType,
+              resizeIfLarge: true,
+              targetSizeMB: args.target_size_mb || 2,
+              maxWidthPx: args.max_width_px,
+              maxHeightPx: args.max_height_px,
+              extractText: false,
+              updateDatabase: false
+            }
+          });
+          
+          if (error) throw error;
+          if (!resizeResult?.success) throw new Error(resizeResult?.error || 'Image resize failed');
+          
+          toolResults.push({ 
+            tool: 'resize_image', 
+            result: { 
+              success: true, 
+              original_size_mb: resizeResult.originalSizeMB,
+              resized_size_mb: resizeResult.resizedSizeMB,
+              resized_image: resizeResult.resizedImage ? '(base64 image data available)' : null,
+              file_path: args.file_path
+            } 
+          });
+          
         } else {
           toolResults.push({ tool: funcName, result: { success: false, error: `Unknown tool: ${funcName}` } });
         }
@@ -588,6 +704,10 @@ COMMUNICATION GUIDELINES:
           actionSummary += `✅ OSINT scan triggered\n`;
         } else if (result.tool === 'analyze_threat_radar') {
           actionSummary += `✅ Threat radar analysis complete\n`;
+        } else if (result.tool === 'process_document') {
+          actionSummary += `✅ Document processed: ${result.result.text_length || 0} characters extracted from "${result.result.file_path}"\n`;
+        } else if (result.tool === 'resize_image') {
+          actionSummary += `✅ Image resized: ${result.result.original_size_mb?.toFixed(2) || '?'}MB → ${result.result.resized_size_mb?.toFixed(2) || '?'}MB\n`;
         } else {
           actionSummary += `✅ ${result.tool}: completed\n`;
         }
