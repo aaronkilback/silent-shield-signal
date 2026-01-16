@@ -40,9 +40,9 @@ function buildFailuresMarkdown(results: TestSuite[]) {
 }
 
 async function createBugReportFromFailures(results: TestSuite[]) {
-  const { data: userData, error: userErr } = await supabase.auth.getUser();
-  if (userErr) throw userErr;
-  if (!userData.user) throw new Error("You must be logged in to create bug reports");
+  // Get user if logged in (optional)
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData?.user?.id ?? null;
 
   const summary = getTestSummary(results);
   const failedCount = summary.failed;
@@ -66,6 +66,7 @@ async function createBugReportFromFailures(results: TestSuite[]) {
     description,
     severity,
     status: "open",
+    user_id: userId,
     page_url: typeof window !== "undefined" ? window.location.href : null,
     browser_info: typeof navigator !== "undefined" ? navigator.userAgent : null,
   });
