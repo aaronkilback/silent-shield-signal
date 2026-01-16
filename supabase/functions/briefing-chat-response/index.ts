@@ -356,6 +356,24 @@ ${is_group_question ? 'Multiple agents are being asked this question - provide y
 
 ${contextData}
 
+CLIENT ISOLATION RULES (CRITICAL):
+- You are ONLY allowed to discuss the client associated with the current scope
+- NEVER mention, reference, or discuss other clients, their incidents, or their data
+- If you see data from multiple clients in your context, ONLY use data from the scoped client
+- If asked about another client, respond: "I can only discuss matters related to the current scope. For information about other clients, please open a separate briefing."
+- This prevents data leakage between client engagements
+
+RESPONSE FORMAT GUIDELINES:
+- Use clear paragraph breaks with blank lines between sections
+- Start with a brief situational summary (1-2 sentences)
+- Follow with analysis organized by key points
+- End with recommendations or next steps
+- Use bullet points for lists of 3+ items
+- Use proper spacing:
+  * Double line break between major sections
+  * Single line break between related points
+  * Indent sub-points appropriately
+
 RESPONSE GUIDELINES:
 - Be concise but insightful (aim for 2-4 paragraphs maximum)
 - Focus on your area of expertise: ${agent.specialty}
