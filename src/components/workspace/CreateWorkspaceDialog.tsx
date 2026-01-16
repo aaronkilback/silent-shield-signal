@@ -43,61 +43,35 @@ export const CreateWorkspaceDialog = ({
 
     setCreating(true);
     try {
-      // Ensure we have a valid session (prevents RLS failures when token is missing/expired)
+      // Ensure we have a valid session (prevents calling backend without auth)
       const {
         data: { session },
       } = await supabase.auth.getSession();
 
-      const creatorId = session?.user?.id;
-      if (!creatorId) {
+      if (!session?.user?.id) {
         toast.error("Your session has expired. Please sign in again.");
         return;
       }
 
-      // Create workspace
-      const { data: workspace, error: workspaceError } = await supabase
-        .from("investigation_workspaces")
-        .insert({
+      const { data, error } = await supabase.functions.invoke("create-workspace", {
+        body: {
           title: title.trim() || defaultTitle || "Investigation Workspace",
           description: description.trim() || null,
-          incident_id: incidentId || null,
-          investigation_id: investigationId || null,
-          created_by_user_id: creatorId,
-          status: "active",
-        })
-        .select()
-        .single();
-
-      if (workspaceError) throw workspaceError;
-
-      // Add creator as owner
-      const { error: memberError } = await supabase.from("workspace_members").insert({
-        workspace_id: workspace.id,
-        user_id: creatorId,
-        role: "owner",
+          incidentId: incidentId || null,
+          investigationId: investigationId || null,
+        },
       });
 
-      if (memberError) throw memberError;
+      if (error) throw error;
 
-      // Add initial system message
-      await supabase.from("workspace_messages").insert({
-        workspace_id: workspace.id,
-        user_id: creatorId,
-        content: "Workspace created. Welcome to the collaborative investigation space!",
-        message_type: "system_event",
-      });
-
-      // Audit log
-      await supabase.from("workspace_audit_log").insert({
-        workspace_id: workspace.id,
-        user_id: creatorId,
-        action: "WORKSPACE_CREATED",
-        details: { title: workspace.title, incident_id: incidentId, investigation_id: investigationId },
-      });
+      const workspaceId: string | undefined = data?.workspace?.id;
+      if (!workspaceId) {
+        throw new Error("Workspace creation succeeded but no ID was returned");
+      }
 
       toast.success("Workspace created successfully!");
       onOpenChange(false);
-      navigate(`/workspace/${workspace.id}`);
+      navigate(`/workspace/${workspaceId}`);
     } catch (error: any) {
       console.error("Error creating workspace:", error);
       toast.error(error?.message || "Failed to create workspace");
