@@ -18,6 +18,7 @@ import { IncidentLocationMap } from "./IncidentLocationMap";
 import { IncidentOutcomeDialog } from "./IncidentOutcomeDialog";
 import IncidentFeedbackDialog from "./IncidentFeedbackDialog";
 import { AIAnalysisTimeline } from "./incidents/AIAnalysisTimeline";
+import { WorkspaceButton } from "./workspace";
 
 interface Incident {
   id: string;
@@ -427,6 +428,17 @@ export const IncidentActionDialog = ({
                       </Button>
                     }
                   />
+                  
+                  <Separator />
+                  
+                  <div>
+                    <h3 className="text-sm font-semibold mb-2">Collaboration</h3>
+                    <WorkspaceButton 
+                      incidentId={fullIncident.id}
+                      defaultTitle={fullIncident.title || `Incident ${fullIncident.id.substring(0, 8)}`}
+                      className="w-full"
+                    />
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4">
