@@ -4768,6 +4768,7 @@ export type Database = {
           expires_at: string
           id: string
           invited_by: string
+          mcm_role: Database["public"]["Enums"]["workspace_mcm_role"] | null
           role: string
           status: string
           system_role: Database["public"]["Enums"]["app_role"]
@@ -4781,6 +4782,7 @@ export type Database = {
           expires_at?: string
           id?: string
           invited_by: string
+          mcm_role?: Database["public"]["Enums"]["workspace_mcm_role"] | null
           role?: string
           status?: string
           system_role?: Database["public"]["Enums"]["app_role"]
@@ -4794,6 +4796,7 @@ export type Database = {
           expires_at?: string
           id?: string
           invited_by?: string
+          mcm_role?: Database["public"]["Enums"]["workspace_mcm_role"] | null
           role?: string
           status?: string
           system_role?: Database["public"]["Enums"]["app_role"]
@@ -4813,18 +4816,21 @@ export type Database = {
       workspace_members: {
         Row: {
           joined_at: string
+          mcm_role: Database["public"]["Enums"]["workspace_mcm_role"] | null
           role: string
           user_id: string
           workspace_id: string
         }
         Insert: {
           joined_at?: string
+          mcm_role?: Database["public"]["Enums"]["workspace_mcm_role"] | null
           role?: string
           user_id: string
           workspace_id: string
         }
         Update: {
           joined_at?: string
+          mcm_role?: Database["public"]["Enums"]["workspace_mcm_role"] | null
           role?: string
           user_id?: string
           workspace_id?: string
@@ -4937,10 +4943,38 @@ export type Database = {
     }
     Functions: {
       calculate_signal_hash: { Args: { text_content: string }; Returns: string }
+      can_add_analysis: {
+        Args: { _user_id: string; _workspace_id: string }
+        Returns: boolean
+      }
+      can_approve_actions: {
+        Args: { _user_id: string; _workspace_id: string }
+        Returns: boolean
+      }
+      can_manage_assignments: {
+        Args: { _user_id: string; _workspace_id: string }
+        Returns: boolean
+      }
+      can_manage_evidence: {
+        Args: { _user_id: string; _workspace_id: string }
+        Returns: boolean
+      }
+      can_submit_findings: {
+        Args: { _user_id: string; _workspace_id: string }
+        Returns: boolean
+      }
       cleanup_processing_queue: { Args: never; Returns: number }
       enqueue_signal_processing: {
         Args: { priority_level?: number; signal_id: string }
         Returns: string
+      }
+      has_mcm_permission: {
+        Args: {
+          _required_roles: Database["public"]["Enums"]["workspace_mcm_role"][]
+          _user_id: string
+          _workspace_id: string
+        }
+        Returns: boolean
       }
       has_role: {
         Args: {
@@ -5058,6 +5092,13 @@ export type Database = {
         | "medium"
         | "low"
         | "informational"
+      workspace_mcm_role:
+        | "team_commander"
+        | "primary_investigator"
+        | "file_coordinator"
+        | "investigator"
+        | "analyst"
+        | "viewer"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -5275,6 +5316,14 @@ export const Constants = {
         "medium",
         "low",
         "informational",
+      ],
+      workspace_mcm_role: [
+        "team_commander",
+        "primary_investigator",
+        "file_coordinator",
+        "investigator",
+        "analyst",
+        "viewer",
       ],
     },
   },
