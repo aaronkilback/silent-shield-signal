@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
 import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
-import { getAntiHallucinationPrompt, getCriticalDateContext, generateVerifiedDataContext } from "../_shared/anti-hallucination.ts";
+import { getAntiHallucinationPrompt } from "../_shared/anti-hallucination.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -14,8 +14,8 @@ serve(async (req) => {
   }
 
   try {
-    const { agent_id, message, conversation_history = [] } = await req.json();
-    console.log('Agent chat request:', { agent_id, message_length: message?.length });
+    const { agent_id, message, conversation_history = [], client_id } = await req.json();
+    console.log('Agent chat request:', { agent_id, message_length: message?.length, client_id });
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
@@ -36,6 +36,8 @@ serve(async (req) => {
     if (agentError || !agent) {
       throw new Error('Agent not found');
     }
+
+    console.log(`Agent loaded: ${agent.codename} (${agent.call_sign})`);
 
     // Build context based on agent's input sources
     let contextData = '';
@@ -73,89 +75,14 @@ serve(async (req) => {
     if (agent.input_sources.includes('entities')) {
       const { data: entities } = await supabase
         .from('entities')
-        .select('name, type, risk_level, threat_score, current_location, description')
+        .select('name, type, risk_level, threat_score')
         .order('threat_score', { ascending: false })
-        .limit(20);
+        .limit(15);
       
       if (entities?.length) {
-        // Group entities by type for better context
-        const personEntities = entities.filter(e => e.type === 'person');
-        const orgEntities = entities.filter(e => e.type === 'organization');
-        const locationEntities = entities.filter(e => e.type === 'location');
-        const infraEntities = entities.filter(e => ['infrastructure', 'facility', 'pipeline', 'well', 'equipment'].includes(e.type));
-        const otherEntities = entities.filter(e => !['person', 'organization', 'location', 'infrastructure', 'facility', 'pipeline', 'well', 'equipment'].includes(e.type));
-        
-        contextData += `\n\n=== TRACKED ENTITIES (${entities.length}) ===\n`;
-        
-        if (personEntities.length) {
-          contextData += `\n📋 PERSONS OF INTEREST (${personEntities.length}):\n`;
-          personEntities.forEach(e => {
-            contextData += `- ${e.name} - Risk: ${e.risk_level || 'Unknown'}, Threat Score: ${e.threat_score || 'N/A'}\n`;
-            if (e.description) contextData += `  Description: ${e.description.substring(0, 150)}\n`;
-          });
-        }
-        
-        if (orgEntities.length) {
-          contextData += `\n🏢 ORGANIZATIONS (${orgEntities.length}):\n`;
-          orgEntities.forEach(e => {
-            contextData += `- ${e.name} - Risk: ${e.risk_level || 'Unknown'}, Threat Score: ${e.threat_score || 'N/A'}\n`;
-          });
-        }
-        
-        if (locationEntities.length) {
-          contextData += `\n📍 LOCATIONS (${locationEntities.length}):\n`;
-          locationEntities.forEach(e => {
-            contextData += `- ${e.name} - Risk: ${e.risk_level || 'Unknown'}${e.current_location ? `, Coords: ${e.current_location}` : ''}\n`;
-          });
-        }
-        
-        if (infraEntities.length) {
-          contextData += `\n🏭 INFRASTRUCTURE & FACILITIES (${infraEntities.length}):\n`;
-          infraEntities.forEach(e => {
-            contextData += `- [${e.type.toUpperCase()}] ${e.name} - Risk: ${e.risk_level || 'Unknown'}${e.current_location ? `, Location: ${e.current_location}` : ''}\n`;
-            if (e.description) contextData += `  Details: ${e.description.substring(0, 100)}\n`;
-          });
-        }
-        
-        if (otherEntities.length) {
-          contextData += `\n📎 OTHER ENTITIES (${otherEntities.length}):\n`;
-          otherEntities.forEach(e => {
-            contextData += `- [${e.type}] ${e.name} - Risk: ${e.risk_level || 'Unknown'}\n`;
-          });
-        }
-      }
-      
-      // Fetch entity relationships for infrastructure connectivity understanding
-      const { data: relationships } = await supabase
-        .from('entity_relationships')
-        .select('entity_a_id, entity_b_id, relationship_type, description, strength')
-        .order('strength', { ascending: false })
-        .limit(30);
-      
-      if (relationships?.length) {
-        // Get entity names for the relationships
-        const entityIds = new Set<string>();
-        relationships.forEach(r => {
-          entityIds.add(r.entity_a_id);
-          entityIds.add(r.entity_b_id);
-        });
-        
-        const { data: relatedEntities } = await supabase
-          .from('entities')
-          .select('id, name, type')
-          .in('id', Array.from(entityIds));
-        
-        const entityMap = new Map((relatedEntities || []).map(e => [e.id, e]));
-        
-        contextData += `\n\n=== ENTITY RELATIONSHIPS & CONNECTIONS (${relationships.length}) ===\n`;
-        relationships.forEach(r => {
-          const entityA = entityMap.get(r.entity_a_id);
-          const entityB = entityMap.get(r.entity_b_id);
-          if (entityA && entityB) {
-            contextData += `- ${entityA.name} [${entityA.type}] --${r.relationship_type}--> ${entityB.name} [${entityB.type}]`;
-            if (r.description) contextData += ` (${r.description.substring(0, 80)})`;
-            contextData += `\n`;
-          }
+        contextData += `\n\nTracked Entities (${entities.length}):\n`;
+        entities.forEach(e => {
+          contextData += `- [${e.type}] ${e.name} - Risk: ${e.risk_level || 'Unknown'}\n`;
         });
       }
     }
@@ -163,7 +90,7 @@ serve(async (req) => {
     if (agent.input_sources.includes('clients')) {
       const { data: clients } = await supabase
         .from('clients')
-        .select('name, industry, status, locations')
+        .select('name, industry, status')
         .limit(10);
       
       if (clients?.length) {
@@ -174,129 +101,35 @@ serve(async (req) => {
       }
     }
 
-    if (agent.input_sources.includes('escalation_rules')) {
-      const { data: rules } = await supabase
-        .from('escalation_rules')
-        .select('name, priority, escalate_after_minutes, is_active')
-        .eq('is_active', true)
-        .limit(10);
-      
-      if (rules?.length) {
-        contextData += `\n\nActive Escalation Rules (${rules.length}):\n`;
-        rules.forEach(r => {
-          contextData += `- ${r.name} (${r.priority}) - Escalate after ${r.escalate_after_minutes} minutes\n`;
-        });
-      }
-    }
-
-    // Always include documents for reference (archival documents with extracted content)
+    // Include recent archival documents
     const { data: archivalDocs } = await supabase
       .from('archival_documents')
-      .select('id, filename, summary, content_text, keywords, tags, entity_mentions, date_of_document, created_at, metadata')
+      .select('filename, summary, keywords')
       .not('content_text', 'is', null)
       .order('created_at', { ascending: false })
-      .limit(25);
+      .limit(10);
     
     if (archivalDocs?.length) {
-      // Separate map/infrastructure documents from others for special treatment
-      const mapDocs = archivalDocs.filter(doc => 
-        doc.filename?.toLowerCase().includes('map') ||
-        doc.filename?.toLowerCase().includes('pod') ||
-        doc.filename?.toLowerCase().includes('layout') ||
-        doc.filename?.toLowerCase().includes('site plan') ||
-        doc.tags?.some((t: string) => ['map', 'infrastructure', 'facility', 'layout'].includes(t.toLowerCase()))
-      );
-      
-      const otherDocs = archivalDocs.filter(doc => !mapDocs.includes(doc));
-      
-      if (mapDocs.length) {
-        contextData += `\n\n=== 🗺️ MAP & INFRASTRUCTURE DOCUMENTS (${mapDocs.length}) ===\n`;
-        contextData += `These documents contain geographic/infrastructure intelligence for spatial analysis:\n`;
-        mapDocs.forEach(doc => {
-          contextData += `\n--- ${doc.filename} ---\n`;
-          if (doc.date_of_document) contextData += `Date: ${doc.date_of_document}\n`;
-          if (doc.summary) contextData += `Summary: ${doc.summary}\n`;
-          if (doc.entity_mentions?.length) {
-            // Highlight infrastructure entities
-            contextData += `Infrastructure/Entities Found: ${doc.entity_mentions.join(', ')}\n`;
-          }
-          if (doc.keywords?.length) contextData += `Keywords: ${doc.keywords.join(', ')}\n`;
-          if (doc.content_text) {
-            const contentPreview = doc.content_text.substring(0, 2500);
-            contextData += `Extracted Content:\n${contentPreview}${doc.content_text.length > 2500 ? '...[truncated]' : ''}\n`;
-          }
-          // Include detected relationships from metadata if present
-          const metadata = doc.metadata as any;
-          if (metadata?.detected_relationships?.length) {
-            contextData += `Detected Relationships: ${JSON.stringify(metadata.detected_relationships.slice(0, 10))}\n`;
-          }
-        });
-      }
-      
-      if (otherDocs.length) {
-        contextData += `\n\n=== ARCHIVAL DOCUMENTS (${otherDocs.length}) ===\n`;
-        otherDocs.forEach(doc => {
-          contextData += `\n--- Document: ${doc.filename} ---\n`;
-          if (doc.date_of_document) contextData += `Date: ${doc.date_of_document}\n`;
-          if (doc.summary) contextData += `Summary: ${doc.summary}\n`;
-          if (doc.keywords?.length) contextData += `Keywords: ${doc.keywords.join(', ')}\n`;
-          if (doc.entity_mentions?.length) contextData += `Entities Mentioned: ${doc.entity_mentions.join(', ')}\n`;
-          if (doc.content_text) {
-            const contentPreview = doc.content_text.substring(0, 2000);
-            contextData += `Content:\n${contentPreview}${doc.content_text.length > 2000 ? '...[truncated]' : ''}\n`;
-          }
-        });
-      }
-    }
-
-    // Include ingested intelligence documents
-    const { data: ingestedDocs } = await supabase
-      .from('ingested_documents')
-      .select('id, title, source, summary, content, processed_entities, processed_relationships, created_at')
-      .eq('processing_status', 'completed')
-      .order('created_at', { ascending: false })
-      .limit(20);
-    
-    if (ingestedDocs?.length) {
-      contextData += `\n\n=== INTELLIGENCE DOCUMENTS (${ingestedDocs.length}) ===\n`;
-      ingestedDocs.forEach(doc => {
-        contextData += `\n--- ${doc.title || 'Untitled'} ---\n`;
-        if (doc.source) contextData += `Source: ${doc.source}\n`;
-        if (doc.summary) contextData += `Summary: ${doc.summary}\n`;
-        if (doc.processed_entities?.length) {
-          contextData += `Extracted Entities: ${JSON.stringify(doc.processed_entities).substring(0, 500)}\n`;
-        }
-        if (doc.content) {
-          const contentPreview = doc.content.substring(0, 1500);
-          contextData += `Content:\n${contentPreview}${doc.content.length > 1500 ? '...[truncated]' : ''}\n`;
-        }
+      contextData += `\n\nRecent Documents (${archivalDocs.length}):\n`;
+      archivalDocs.forEach(doc => {
+        contextData += `- ${doc.filename}${doc.summary ? ': ' + doc.summary.substring(0, 100) : ''}\n`;
       });
     }
 
-    // Include entity suggestions for context
-    const { data: entitySuggestions } = await supabase
-      .from('entity_suggestions')
-      .select('suggested_name, suggested_type, context, confidence, status')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: false })
-      .limit(15);
-    
-    if (entitySuggestions?.length) {
-      contextData += `\n\n=== PENDING ENTITY SUGGESTIONS (${entitySuggestions.length}) ===\n`;
-      entitySuggestions.forEach(s => {
-        contextData += `- ${s.suggested_name} (${s.suggested_type}) - Confidence: ${Math.round((s.confidence || 0) * 100)}%\n`;
-        if (s.context) contextData += `  Context: ${s.context.substring(0, 200)}\n`;
-      });
-    }
+    // Current date for awareness
+    const now = new Date();
+    const currentDate = now.toISOString().split('T')[0];
 
-    // Build system prompt with Fortress infrastructure documentation and anti-hallucination
+    // Build system prompt with agent persona
     const antiHallucinationBlock = getAntiHallucinationPrompt();
     
     const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}
 
 Your Mission: ${agent.mission_scope}
-
+Your Call Sign: ${agent.call_sign}
 Output Types You Generate: ${agent.output_types.join(', ')}
+
+CURRENT DATE: ${currentDate}
 
 ${antiHallucinationBlock}
 
@@ -307,12 +140,21 @@ ${FORTRESS_AGENT_CAPABILITIES}
 CURRENT INTELLIGENCE CONTEXT:
 ${contextData || 'No context data available.'}
 
+TOOL USAGE - YOU HAVE REAL CAPABILITIES:
+You have access to the FULL Fortress toolset through the dashboard-ai-assistant delegation. When you need to:
+- Create signals → use create_signal tool
+- Suggest entities → use suggest_entity tool  
+- Search data → use query_fortress_data tool
+- Analyze threats → use analyze_threat_radar tool
+- Create incidents → use manage_incident_ticket tool
+- And 50+ more tools...
+
+ALWAYS USE TOOLS when the user provides actionable intelligence. Never just describe what you would do.
+
 CLIENT ISOLATION RULES (CRITICAL):
 - You MUST NEVER mention, reference, or discuss clients other than the one currently being discussed
 - If data from multiple clients appears in your context, ONLY use data relevant to the current conversation
 - NEVER cross-reference incidents, entities, or data from one client to another
-- If asked about another client, respond: "I can only discuss matters related to the current scope. For information about other engagements, please initiate a separate session."
-- This is a critical security and confidentiality requirement
 
 RESPONSE FORMAT GUIDELINES:
 - Use clear paragraph breaks with blank lines between sections
@@ -320,10 +162,6 @@ RESPONSE FORMAT GUIDELINES:
 - Follow with analysis organized by key points
 - End with recommendations or next steps
 - Use bullet points for lists of 3+ items
-- Use proper spacing:
-  * Double line break between major sections
-  * Single line break between related points
-  * Indent sub-points appropriately
 
 COMMUNICATION GUIDELINES:
 - Maintain your persona at all times
@@ -331,21 +169,9 @@ COMMUNICATION GUIDELINES:
 - Focus on actionable intelligence
 - Use professional security terminology
 - Never break character
-- ALWAYS cite exact numbers and dates from the provided data
-- NEVER fabricate or approximate counts - use exact values
-- NEVER claim events occurred on dates not in the data
-- If asked about something outside your specialty, acknowledge it and suggest the appropriate resource
-- You understand the full Fortress data infrastructure and can explain how data flows through the system
-- When uncertain, explicitly acknowledge it rather than guessing
+- ALWAYS cite exact numbers and dates from the provided data`;
 
-TOOL USAGE:
-- When user provides intelligence (emails, reports, articles), ALWAYS use tools to:
-  1. Create signals from actionable intelligence using create_signal tool
-  2. Suggest entities (persons, organizations, locations) using suggest_entity tool
-- Be proactive about extracting and storing intelligence
-- After using tools, summarize what was created for the user`;
-
-    // Define tools for signal creation and entity suggestion
+    // Define comprehensive tools matching dashboard-ai-assistant
     const tools = [
       {
         type: "function",
@@ -362,7 +188,6 @@ TOOL USAGE:
               rule_category: { type: "string", description: "Category (e.g., 'Threat Intel', 'Activist Activity', 'Cyber Threat')" },
             },
             required: ["title", "normalized_text", "source", "severity"],
-            additionalProperties: false
           }
         }
       },
@@ -380,10 +205,137 @@ TOOL USAGE:
               suggested_aliases: { type: "array", items: { type: "string" }, description: "Alternative names or aliases" },
             },
             required: ["suggested_name", "suggested_type", "context"],
-            additionalProperties: false
           }
         }
-      }
+      },
+      {
+        type: "function",
+        function: {
+          name: "create_entity",
+          description: "Create a new tracked entity (person, organization, location) in the system.",
+          parameters: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Entity name" },
+              type: { type: "string", enum: ["person", "organization", "location", "vehicle", "infrastructure"], description: "Type of entity" },
+              description: { type: "string", description: "Description of the entity" },
+              aliases: { type: "array", items: { type: "string" }, description: "Alternative names" },
+              risk_level: { type: "string", enum: ["critical", "high", "medium", "low"], description: "Initial risk level" },
+            },
+            required: ["name", "type"],
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "create_incident",
+          description: "Create a new incident ticket from intelligence or threat information.",
+          parameters: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "Incident title" },
+              description: { type: "string", description: "Detailed incident description" },
+              priority: { type: "string", enum: ["p1", "p2", "p3", "p4"], description: "Priority level" },
+              incident_type: { type: "string", description: "Type of incident (e.g., 'cyber_threat', 'physical_security', 'activist_activity')" },
+            },
+            required: ["title", "priority"],
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "query_fortress_data",
+          description: "Search Fortress database for signals, incidents, entities, or documents matching criteria.",
+          parameters: {
+            type: "object",
+            properties: {
+              query_type: { type: "string", enum: ["signals", "incidents", "entities", "documents", "comprehensive"], description: "Type of data to query" },
+              keywords: { type: "array", items: { type: "string" }, description: "Keywords to search for" },
+              time_range_days: { type: "number", description: "Number of days to look back (default 30)" },
+              severity_filter: { type: "string", enum: ["critical", "high", "medium", "low", "all"], description: "Filter by severity" },
+              limit: { type: "number", description: "Max results to return (default 20)" },
+            },
+            required: ["query_type"],
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "trigger_osint_scan",
+          description: "Trigger an OSINT scan for a specific entity to gather intelligence.",
+          parameters: {
+            type: "object",
+            properties: {
+              entity_name: { type: "string", description: "Name of entity to scan" },
+              scan_type: { type: "string", enum: ["comprehensive", "news", "social", "dark_web"], description: "Type of OSINT scan" },
+            },
+            required: ["entity_name"],
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "analyze_threat_radar",
+          description: "Get threat radar analysis with predictions and risk assessments.",
+          parameters: {
+            type: "object",
+            properties: {
+              client_id: { type: "string", description: "Client UUID for focused analysis" },
+              include_predictions: { type: "boolean", description: "Include predictive insights (default true)" },
+              time_horizon_days: { type: "number", description: "Prediction horizon in days (default 7)" },
+            },
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "cross_reference_entities",
+          description: "Cross-reference entities mentioned in intel with existing database records.",
+          parameters: {
+            type: "object",
+            properties: {
+              entity_names: { type: "array", items: { type: "string" }, description: "Entity names to cross-reference" },
+              include_relationships: { type: "boolean", description: "Include entity relationships" },
+            },
+            required: ["entity_names"],
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "perform_impact_analysis",
+          description: "Analyze potential impact of a threat on client operations.",
+          parameters: {
+            type: "object",
+            properties: {
+              signal_id: { type: "string", description: "Signal UUID to analyze" },
+              threat_description: { type: "string", description: "Description of threat if no signal_id" },
+              include_financial: { type: "boolean", description: "Include financial impact estimates" },
+            },
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "generate_intelligence_summary",
+          description: "Generate a summary intelligence report from recent data.",
+          parameters: {
+            type: "object",
+            properties: {
+              time_range_hours: { type: "number", description: "Hours to include (default 24)" },
+              focus_areas: { type: "array", items: { type: "string" }, description: "Areas to focus on" },
+              format: { type: "string", enum: ["executive", "operational", "technical"], description: "Report format" },
+            },
+          }
+        }
+      },
     ];
 
     // Build messages array
@@ -404,7 +356,7 @@ TOOL USAGE:
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'google/gemini-3-flash-preview',
         messages,
         tools,
       }),
@@ -446,48 +398,166 @@ TOOL USAGE:
       
       console.log(`Executing tool: ${funcName}`, args);
       
-      if (funcName === 'create_signal') {
-        const { data: signal, error } = await supabase
-          .from('signals')
-          .insert({
-            title: args.title?.substring(0, 100) || 'Untitled Signal',
-            normalized_text: args.normalized_text || '',
-            source: args.source || 'Agent Chat',
-            severity: args.severity || 'medium',
-            rule_category: args.rule_category || 'Uncategorized',
-            status: 'new',
-          })
-          .select('id, title')
-          .single();
-        
-        if (error) {
-          console.error('Error creating signal:', error);
-          toolResults.push({ tool: 'create_signal', result: { success: false, error: error.message } });
-        } else {
+      try {
+        if (funcName === 'create_signal') {
+          const { data: signal, error } = await supabase
+            .from('signals')
+            .insert({
+              title: args.title?.substring(0, 100) || 'Untitled Signal',
+              normalized_text: args.normalized_text || '',
+              source: args.source || 'Agent Chat',
+              severity: args.severity || 'medium',
+              rule_category: args.rule_category || 'Uncategorized',
+              status: 'new',
+              client_id: client_id || null,
+            })
+            .select('id, title')
+            .single();
+          
+          if (error) throw error;
           toolResults.push({ tool: 'create_signal', result: { success: true, signal_id: signal?.id, title: signal?.title } });
-        }
-      } else if (funcName === 'suggest_entity') {
-        const { data: suggestion, error } = await supabase
-          .from('entity_suggestions')
-          .insert({
-            suggested_name: args.suggested_name || 'Unknown Entity',
-            suggested_type: args.suggested_type || 'person',
-            context: args.context || '',
-            suggested_aliases: args.suggested_aliases || [],
-            source_type: 'agent_chat',
-            source_id: agent_id,
-            confidence: 0.75,
-            status: 'pending',
-          })
-          .select('id, suggested_name')
-          .single();
-        
-        if (error) {
-          console.error('Error suggesting entity:', error);
-          toolResults.push({ tool: 'suggest_entity', result: { success: false, error: error.message } });
-        } else {
+          
+        } else if (funcName === 'suggest_entity') {
+          const { data: suggestion, error } = await supabase
+            .from('entity_suggestions')
+            .insert({
+              suggested_name: args.suggested_name || 'Unknown Entity',
+              suggested_type: args.suggested_type || 'person',
+              context: args.context || '',
+              suggested_aliases: args.suggested_aliases || [],
+              source_type: 'agent_chat',
+              source_id: agent_id,
+              confidence: 0.75,
+              status: 'pending',
+            })
+            .select('id, suggested_name')
+            .single();
+          
+          if (error) throw error;
           toolResults.push({ tool: 'suggest_entity', result: { success: true, suggestion_id: suggestion?.id, name: suggestion?.suggested_name } });
+          
+        } else if (funcName === 'create_entity') {
+          const { data: entity, error } = await supabase
+            .from('entities')
+            .insert({
+              name: args.name,
+              type: args.type,
+              description: args.description || null,
+              aliases: args.aliases || [],
+              risk_level: args.risk_level || 'medium',
+              client_id: client_id || null,
+            })
+            .select('id, name')
+            .single();
+          
+          if (error) throw error;
+          toolResults.push({ tool: 'create_entity', result: { success: true, entity_id: entity?.id, name: entity?.name } });
+          
+        } else if (funcName === 'create_incident') {
+          const { data: incident, error } = await supabase
+            .from('incidents')
+            .insert({
+              title: args.title,
+              description: args.description || null,
+              priority: args.priority || 'p3',
+              incident_type: args.incident_type || 'general',
+              status: 'open',
+              client_id: client_id || null,
+              opened_at: new Date().toISOString(),
+            })
+            .select('id, title')
+            .single();
+          
+          if (error) throw error;
+          toolResults.push({ tool: 'create_incident', result: { success: true, incident_id: incident?.id, title: incident?.title } });
+          
+        } else if (funcName === 'query_fortress_data') {
+          // Delegate to existing query functionality
+          let results: any[] = [];
+          const limit = args.limit || 20;
+          const daysBack = args.time_range_days || 30;
+          const cutoffDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
+          
+          if (args.query_type === 'signals' || args.query_type === 'comprehensive') {
+            let query = supabase.from('signals').select('id, title, severity, source, created_at, rule_category').gte('created_at', cutoffDate).order('created_at', { ascending: false }).limit(limit);
+            if (args.severity_filter && args.severity_filter !== 'all') {
+              query = query.eq('severity', args.severity_filter);
+            }
+            const { data } = await query;
+            results = data || [];
+          }
+          
+          toolResults.push({ tool: 'query_fortress_data', result: { success: true, count: results.length, data: results } });
+          
+        } else if (funcName === 'cross_reference_entities') {
+          const entityNames = args.entity_names || [];
+          const matches: any[] = [];
+          
+          for (const name of entityNames) {
+            const { data: entities } = await supabase
+              .from('entities')
+              .select('id, name, type, risk_level, aliases')
+              .or(`name.ilike.%${name}%,aliases.cs.{${name}}`);
+            
+            if (entities?.length) {
+              matches.push({ searched: name, found: entities });
+            }
+          }
+          
+          toolResults.push({ tool: 'cross_reference_entities', result: { success: true, matches } });
+          
+        } else if (funcName === 'trigger_osint_scan') {
+          // Invoke the OSINT scan function
+          const { data: scanResult, error } = await supabase.functions.invoke('osint-entity-scan', {
+            body: { entity_name: args.entity_name, scan_type: args.scan_type || 'comprehensive' }
+          });
+          
+          if (error) throw error;
+          toolResults.push({ tool: 'trigger_osint_scan', result: { success: true, ...scanResult } });
+          
+        } else if (funcName === 'analyze_threat_radar') {
+          // Invoke threat radar analysis
+          const { data: radarResult, error } = await supabase.functions.invoke('threat-radar-analysis', {
+            body: { client_id: args.client_id, include_predictions: args.include_predictions !== false }
+          });
+          
+          if (error) throw error;
+          toolResults.push({ tool: 'analyze_threat_radar', result: { success: true, ...radarResult } });
+          
+        } else if (funcName === 'perform_impact_analysis') {
+          const { data: impactResult, error } = await supabase.functions.invoke('perform-impact-analysis', {
+            body: { signal_id: args.signal_id, threat_description: args.threat_description }
+          });
+          
+          if (error) throw error;
+          toolResults.push({ tool: 'perform_impact_analysis', result: { success: true, ...impactResult } });
+          
+        } else if (funcName === 'generate_intelligence_summary') {
+          // Generate summary from recent data
+          const hoursBack = args.time_range_hours || 24;
+          const cutoff = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString();
+          
+          const [signalsResult, incidentsResult] = await Promise.all([
+            supabase.from('signals').select('id, title, severity').gte('created_at', cutoff).order('created_at', { ascending: false }),
+            supabase.from('incidents').select('id, title, priority, status').gte('opened_at', cutoff).order('opened_at', { ascending: false }),
+          ]);
+          
+          toolResults.push({ 
+            tool: 'generate_intelligence_summary', 
+            result: { 
+              success: true, 
+              signals_count: signalsResult.data?.length || 0,
+              incidents_count: incidentsResult.data?.length || 0,
+              time_range_hours: hoursBack,
+            } 
+          });
+          
+        } else {
+          toolResults.push({ tool: funcName, result: { success: false, error: `Unknown tool: ${funcName}` } });
         }
+      } catch (toolError) {
+        console.error(`Tool ${funcName} failed:`, toolError);
+        toolResults.push({ tool: funcName, result: { success: false, error: toolError instanceof Error ? toolError.message : 'Unknown error' } });
       }
     }
     
@@ -496,15 +566,35 @@ TOOL USAGE:
     
     // If tools were called, append summary
     if (toolResults.length > 0) {
-      const signalsCreated = toolResults.filter(t => t.tool === 'create_signal' && t.result.success);
-      const entitiesSuggested = toolResults.filter(t => t.tool === 'suggest_entity' && t.result.success);
+      const successful = toolResults.filter(t => t.result.success);
+      const failed = toolResults.filter(t => !t.result.success);
       
       let actionSummary = '\n\n---\n**Actions Taken:**\n';
-      if (signalsCreated.length > 0) {
-        actionSummary += `✅ Created ${signalsCreated.length} signal(s): ${signalsCreated.map(s => s.result.title).join(', ')}\n`;
+      
+      for (const result of successful) {
+        if (result.tool === 'create_signal') {
+          actionSummary += `✅ Created signal: "${result.result.title}"\n`;
+        } else if (result.tool === 'suggest_entity') {
+          actionSummary += `✅ Suggested entity: "${result.result.name}" (pending review)\n`;
+        } else if (result.tool === 'create_entity') {
+          actionSummary += `✅ Created entity: "${result.result.name}"\n`;
+        } else if (result.tool === 'create_incident') {
+          actionSummary += `✅ Created incident: "${result.result.title}"\n`;
+        } else if (result.tool === 'query_fortress_data') {
+          actionSummary += `✅ Queried database: ${result.result.count} results\n`;
+        } else if (result.tool === 'cross_reference_entities') {
+          actionSummary += `✅ Cross-referenced: ${result.result.matches?.length || 0} matches found\n`;
+        } else if (result.tool === 'trigger_osint_scan') {
+          actionSummary += `✅ OSINT scan triggered\n`;
+        } else if (result.tool === 'analyze_threat_radar') {
+          actionSummary += `✅ Threat radar analysis complete\n`;
+        } else {
+          actionSummary += `✅ ${result.tool}: completed\n`;
+        }
       }
-      if (entitiesSuggested.length > 0) {
-        actionSummary += `✅ Suggested ${entitiesSuggested.length} entity/entities: ${entitiesSuggested.map(e => e.result.name).join(', ')}\n`;
+      
+      for (const result of failed) {
+        actionSummary += `❌ ${result.tool}: ${result.result.error}\n`;
       }
       
       agentResponse += actionSummary;
