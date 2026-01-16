@@ -530,8 +530,9 @@ export const entityContentTests = {
         
         for (const item of content || []) {
           if (item.relevance_score !== null) {
-            if (item.relevance_score < 0 || item.relevance_score > 1) {
-              throw new Error(`Content ${item.id} has invalid relevance_score: ${item.relevance_score} (must be 0-1)`);
+            // relevance_score is stored as integer 0-100 in entity_content table
+            if (item.relevance_score < 0 || item.relevance_score > 100) {
+              throw new Error(`Content ${item.id} has invalid relevance_score: ${item.relevance_score} (must be 0-100)`);
             }
           }
         }
@@ -763,6 +764,135 @@ export const entityOsintTests = {
 };
 
 // ============================================
+// DATABASE DATA TYPE VALIDATION TESTS
+// ============================================
+
+export const dataTypeValidationTests = {
+  name: 'Data Type Validation',
+  tests: [
+    {
+      name: 'entity_content.relevance_score is integer 0-100',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('entity_content')
+          .select('id, relevance_score')
+          .not('relevance_score', 'is', null)
+          .limit(50);
+        
+        if (error) throw error;
+        
+        for (const item of data || []) {
+          // Check it's an integer (no decimal)
+          if (!Number.isInteger(item.relevance_score)) {
+            throw new Error(`entity_content ${item.id} has non-integer relevance_score: ${item.relevance_score}`);
+          }
+          // Check range
+          if (item.relevance_score < 0 || item.relevance_score > 100) {
+            throw new Error(`entity_content ${item.id} has out-of-range relevance_score: ${item.relevance_score} (expected 0-100)`);
+          }
+        }
+      },
+    },
+    {
+      name: 'signals.severity_score is integer 0-100',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('signals')
+          .select('id, severity_score')
+          .not('severity_score', 'is', null)
+          .limit(50);
+        
+        if (error) throw error;
+        
+        for (const item of data || []) {
+          // Check it's an integer (no decimal)
+          if (!Number.isInteger(item.severity_score)) {
+            throw new Error(`signal ${item.id} has non-integer severity_score: ${item.severity_score}`);
+          }
+          // Check range
+          if (item.severity_score < 0 || item.severity_score > 100) {
+            throw new Error(`signal ${item.id} has out-of-range severity_score: ${item.severity_score} (expected 0-100)`);
+          }
+        }
+      },
+    },
+    {
+      name: 'signals.relevance_score is numeric 0-1',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('signals')
+          .select('id, relevance_score')
+          .not('relevance_score', 'is', null)
+          .limit(50);
+        
+        if (error) throw error;
+        
+        for (const item of data || []) {
+          // Check range (0-1 for signals.relevance_score which is numeric type)
+          if (item.relevance_score < 0 || item.relevance_score > 1) {
+            throw new Error(`signal ${item.id} has out-of-range relevance_score: ${item.relevance_score} (expected 0-1)`);
+          }
+        }
+      },
+    },
+    {
+      name: 'entity_relationships.strength is numeric 0-1',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('entity_relationships')
+          .select('id, strength')
+          .not('strength', 'is', null)
+          .limit(50);
+        
+        if (error) throw error;
+        
+        for (const item of data || []) {
+          if (item.strength < 0 || item.strength > 1) {
+            throw new Error(`entity_relationship ${item.id} has out-of-range strength: ${item.strength} (expected 0-1)`);
+          }
+        }
+      },
+    },
+    {
+      name: 'entity_mentions.confidence is numeric 0-1',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('entity_mentions')
+          .select('id, confidence')
+          .not('confidence', 'is', null)
+          .limit(50);
+        
+        if (error) throw error;
+        
+        for (const item of data || []) {
+          if (item.confidence < 0 || item.confidence > 1) {
+            throw new Error(`entity_mention ${item.id} has out-of-range confidence: ${item.confidence} (expected 0-1)`);
+          }
+        }
+      },
+    },
+    {
+      name: 'entity_suggestions.confidence is numeric 0-1',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('entity_suggestions')
+          .select('id, confidence')
+          .not('confidence', 'is', null)
+          .limit(50);
+        
+        if (error) throw error;
+        
+        for (const item of data || []) {
+          if (item.confidence < 0 || item.confidence > 1) {
+            throw new Error(`entity_suggestion ${item.id} has out-of-range confidence: ${item.confidence} (expected 0-1)`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
 // RUN ALL TESTS
 // ============================================
 
@@ -777,6 +907,7 @@ export async function runAllTests(): Promise<TestSuite[]> {
     entityContentTests,
     entityRelationshipsTests,
     entityOsintTests,
+    dataTypeValidationTests,
   ];
   
   const results: TestSuite[] = [];
