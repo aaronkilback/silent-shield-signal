@@ -269,18 +269,18 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
                   )}
                   <div
                     className={cn(
-                      "max-w-[80%] rounded-lg px-4 py-2.5",
+                      "max-w-[80%] rounded-lg px-4 py-2.5 overflow-hidden",
                       message.role === "user"
                         ? "bg-primary text-primary-foreground"
                         : "bg-muted"
                     )}
                   >
                     {message.role === "assistant" ? (
-                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                      <div className="prose prose-sm dark:prose-invert max-w-none break-words overflow-wrap-anywhere [&>*]:max-w-full [&_pre]:overflow-x-auto [&_code]:break-all">
                         <ReactMarkdown>{message.content}</ReactMarkdown>
                       </div>
                     ) : (
-                      <p className="text-sm whitespace-pre-wrap">
+                      <p className="text-sm whitespace-pre-wrap break-words">
                         {message.content}
                       </p>
                     )}

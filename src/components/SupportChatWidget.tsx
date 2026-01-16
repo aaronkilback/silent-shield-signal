@@ -212,13 +212,13 @@ export default function SupportChatWidget() {
                     }`}
                   >
                     <div
-                      className={`max-w-[85%] rounded-lg px-4 py-2 ${
+                      className={`max-w-[85%] rounded-lg px-4 py-2 overflow-hidden ${
                         message.role === 'user'
                           ? 'bg-primary text-primary-foreground'
                           : 'bg-muted'
                       }`}
                     >
-                      <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                      <p className="text-sm whitespace-pre-wrap break-words overflow-wrap-anywhere">{message.content}</p>
                     </div>
                   </div>
                 ))}
