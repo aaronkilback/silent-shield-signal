@@ -41,6 +41,7 @@ interface WorkspaceTask {
   assigned_to_user_id: string | null;
   status: string;
   due_date: string | null;
+  diary_date: string | null;
   created_at: string;
   created_by_user_id: string;
   completed_at: string | null;
@@ -74,6 +75,7 @@ const Workspace = () => {
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskDescription, setNewTaskDescription] = useState("");
   const [newTaskAssignee, setNewTaskAssignee] = useState<string>("");
+  const [newTaskDiaryDate, setNewTaskDiaryDate] = useState<string>("");
   
   // Fetch workspace details
   const { data: workspace, isLoading: workspaceLoading } = useQuery({
@@ -345,9 +347,10 @@ const Workspace = () => {
           title: newTaskTitle.trim(),
           description: newTaskDescription.trim() || null,
           assigned_to_user_id: newTaskAssignee || null,
+          diary_date: newTaskDiaryDate || null,
           created_by_user_id: user.id,
           status: 'pending'
-        });
+        } as any);
 
       if (error) throw error;
 
@@ -371,6 +374,7 @@ const Workspace = () => {
       setNewTaskTitle("");
       setNewTaskDescription("");
       setNewTaskAssignee("");
+      setNewTaskDiaryDate("");
       setShowCreateTask(false);
       toast.success("Task created");
     } catch (error: any) {
@@ -707,11 +711,22 @@ const Workspace = () => {
                                   <SelectItem value="unassigned">Unassigned</SelectItem>
                                   {members.map((m) => (
                                     <SelectItem key={m.user_id} value={m.user_id}>
-                                      {m.profiles?.name || m.user_id.substring(0, 8)}
+                                      {m.profiles?.name || 'Unnamed User'}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium">Diary Date</label>
+                              <Input
+                                type="date"
+                                value={newTaskDiaryDate}
+                                onChange={(e) => setNewTaskDiaryDate(e.target.value)}
+                              />
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Date for progress review/follow-up
+                              </p>
                             </div>
                           </div>
                           <DialogFooter>
@@ -741,12 +756,21 @@ const Workspace = () => {
                                 {task.description && (
                                   <p className="text-sm text-muted-foreground mt-1">{task.description}</p>
                                 )}
-                                <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+                                <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-muted-foreground">
                                   <span>Created by {task.profiles?.name || 'Unknown'}</span>
-                                  {task.assignee?.name && (
+                                  {task.assigned_to_user_id && (
                                     <>
                                       <span>•</span>
-                                      <span>Assigned to {task.assignee.name}</span>
+                                      <span>Assigned to {task.assignee?.name || 'Unnamed User'}</span>
+                                    </>
+                                  )}
+                                  {(task as any).diary_date && (
+                                    <>
+                                      <span>•</span>
+                                      <Badge variant="outline" className="text-xs font-normal">
+                                        <Clock className="w-3 h-3 mr-1" />
+                                        Diary: {format(new Date((task as any).diary_date), 'MMM d, yyyy')}
+                                      </Badge>
                                     </>
                                   )}
                                 </div>
