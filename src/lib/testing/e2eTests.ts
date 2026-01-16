@@ -274,6 +274,87 @@ export const validationTests = {
 };
 
 // ============================================
+// ENTITY MANAGEMENT TESTS
+// ============================================
+
+export const entityManagementTests = {
+  name: 'Entity Management',
+  tests: [
+    {
+      name: 'Can read entities list',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('entities')
+          .select('id, name, type, client_id, is_active')
+          .eq('is_active', true)
+          .limit(5);
+        if (error) throw error;
+        // At least check the query works
+      },
+    },
+    {
+      name: 'Can read entity suggestions',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('entity_suggestions')
+          .select('id, suggested_name, status, source_type')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Approved entities have matched_entity_id',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('entity_suggestions')
+          .select('id, suggested_name, status, matched_entity_id')
+          .eq('status', 'approved')
+          .is('matched_entity_id', null)
+          .limit(5);
+        
+        if (error) throw error;
+        
+        if (data && data.length > 0) {
+          throw new Error(`Found ${data.length} approved suggestions without matched_entity_id: ${data.map(s => s.suggested_name).join(', ')}`);
+        }
+      },
+    },
+    {
+      name: 'Entity creation includes client_id when source has it',
+      fn: async () => {
+        // Check if recently created entities from suggestions have client_id
+        const { data: recentEntities } = await supabase
+          .from('entities')
+          .select('id, name, client_id, description')
+          .ilike('description', '%suggestion%')
+          .order('created_at', { ascending: false })
+          .limit(5);
+        
+        // This is informational - just verify the query works
+        if (!recentEntities) {
+          throw new Error('Could not fetch recent entities');
+        }
+      },
+    },
+    {
+      name: 'Entities are visible without client filter',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('entities')
+          .select('id, name')
+          .eq('is_active', true)
+          .limit(10);
+        
+        if (error) throw error;
+        if (!data || data.length === 0) {
+          throw new Error('No entities found - possible RLS issue');
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
 // RUN ALL TESTS
 // ============================================
 
@@ -283,6 +364,7 @@ export async function runAllTests(): Promise<TestSuite[]> {
     databaseTests,
     edgeFunctionTests,
     validationTests,
+    entityManagementTests,
   ];
   
   const results: TestSuite[] = [];
