@@ -6,3 +6,5 @@ export { BriefingNotes } from "./BriefingNotes";
 export { EvidenceLocker } from "./EvidenceLocker";
 export { BriefingTasks } from "./BriefingTasks";
 export { BriefingChat } from "./BriefingChat";
+export { IncidentScopeGate } from "./IncidentScopeGate";
+export { BriefingScopeIndicator } from "./BriefingScopeIndicator";

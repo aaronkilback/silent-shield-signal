@@ -19,12 +19,22 @@ import { BriefingNotes } from "./BriefingNotes";
 import { EvidenceLocker } from "./EvidenceLocker";
 import { BriefingTasks } from "./BriefingTasks";
 import { BriefingChat } from "./BriefingChat";
+import { IncidentScopeGate } from "./IncidentScopeGate";
+import { BriefingScopeIndicator } from "./BriefingScopeIndicator";
 import { format, formatDistanceToNow } from "date-fns";
 
 interface BriefingHubProps {
   workspaceId: string;
   briefingId?: string;
+  incidentId?: string;
+  investigationId?: string;
   onClose?: () => void;
+}
+
+interface BriefingScope {
+  type: 'incident' | 'investigation';
+  id: string;
+  title: string;
 }
 
 interface BriefingSession {
@@ -40,17 +50,57 @@ interface BriefingSession {
   meeting_mode: string;
   created_by: string;
   created_at: string;
+  incident_id: string | null;
+  investigation_id: string | null;
 }
 
-export function BriefingHub({ workspaceId, briefingId, onClose }: BriefingHubProps) {
+export function BriefingHub({ workspaceId, briefingId, incidentId, investigationId, onClose }: BriefingHubProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("cop");
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [selectedScope, setSelectedScope] = useState<BriefingScope | null>(null);
+
+  // Initialize scope from props
+  useEffect(() => {
+    if (incidentId) {
+      // Fetch incident title
+      supabase
+        .from('incidents')
+        .select('title, summary')
+        .eq('id', incidentId)
+        .single()
+        .then(({ data }) => {
+          if (data) {
+            setSelectedScope({
+              type: 'incident',
+              id: incidentId,
+              title: data.title || data.summary || `Incident ${incidentId.slice(0, 8)}`
+            });
+          }
+        });
+    } else if (investigationId) {
+      // Fetch investigation file number
+      supabase
+        .from('investigations')
+        .select('file_number')
+        .eq('id', investigationId)
+        .single()
+        .then(({ data }) => {
+          if (data) {
+            setSelectedScope({
+              type: 'investigation',
+              id: investigationId,
+              title: data.file_number || `Investigation ${investigationId.slice(0, 8)}`
+            });
+          }
+        });
+    }
+  }, [incidentId, investigationId]);
 
   // Fetch current or create new briefing session
   const { data: briefing, isLoading: briefingLoading } = useQuery({
-    queryKey: ['briefing-session', workspaceId, briefingId],
+    queryKey: ['briefing-session', workspaceId, briefingId, selectedScope?.id],
     queryFn: async () => {
       if (briefingId) {
         const { data, error } = await supabase
@@ -61,19 +111,28 @@ export function BriefingHub({ workspaceId, briefingId, onClose }: BriefingHubPro
         if (error) throw error;
         return data as BriefingSession;
       }
-      // Get active or most recent briefing
-      const { data, error } = await supabase
+      
+      // Get active briefing for this scope
+      let query = supabase
         .from('briefing_sessions')
         .select('*')
         .eq('workspace_id', workspaceId)
-        .in('status', ['scheduled', 'in_progress'])
+        .in('status', ['scheduled', 'in_progress']);
+      
+      if (selectedScope?.type === 'incident') {
+        query = query.eq('incident_id', selectedScope.id);
+      } else if (selectedScope?.type === 'investigation') {
+        query = query.eq('investigation_id', selectedScope.id);
+      }
+      
+      const { data, error } = await query
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
       if (error) throw error;
       return data as BriefingSession | null;
     },
-    enabled: !!workspaceId && !!user
+    enabled: !!workspaceId && !!user && !!selectedScope
   });
 
   // Fetch participants
@@ -129,14 +188,22 @@ export function BriefingHub({ workspaceId, briefingId, onClose }: BriefingHubPro
   // Create briefing mutation
   const createBriefing = useMutation({
     mutationFn: async () => {
+      if (!selectedScope) throw new Error("No scope selected");
+      
+      const scopeTitle = selectedScope.type === 'incident' 
+        ? `Incident Briefing: ${selectedScope.title}`
+        : `Investigation Briefing: ${selectedScope.title}`;
+      
       const { data, error } = await supabase
         .from('briefing_sessions')
         .insert({
           workspace_id: workspaceId,
-          title: `Briefing ${format(new Date(), 'MMM d, yyyy HH:mm')}`,
+          title: scopeTitle,
           status: 'scheduled',
           created_by: user?.id,
-          scheduled_start: new Date().toISOString()
+          scheduled_start: new Date().toISOString(),
+          incident_id: selectedScope.type === 'incident' ? selectedScope.id : null,
+          investigation_id: selectedScope.type === 'investigation' ? selectedScope.id : null
         })
         .select()
         .single();
@@ -153,7 +220,7 @@ export function BriefingHub({ workspaceId, briefingId, onClose }: BriefingHubPro
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['briefing-session', workspaceId] });
-      toast.success("Briefing session created");
+      toast.success("Fortress Briefing session created");
     },
     onError: () => toast.error("Failed to create briefing")
   });
@@ -203,7 +270,7 @@ export function BriefingHub({ workspaceId, briefingId, onClose }: BriefingHubPro
     return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  if (briefingLoading) {
+  if (briefingLoading && selectedScope) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
@@ -211,34 +278,58 @@ export function BriefingHub({ workspaceId, briefingId, onClose }: BriefingHubPro
     );
   }
 
-  // No active briefing - show creation UI
+  // No scope selected - show the scope gate
+  if (!selectedScope) {
+    return (
+      <IncidentScopeGate
+        workspaceId={workspaceId}
+        onScopeSelected={setSelectedScope}
+        preSelectedIncidentId={incidentId}
+        preSelectedInvestigationId={investigationId}
+      />
+    );
+  }
+
+  // No active briefing for this scope - show creation UI
   if (!briefing) {
     return (
-      <Card className="border-dashed">
-        <CardContent className="flex flex-col items-center justify-center py-12 gap-4">
-          <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
-            <Target className="w-8 h-8 text-primary" />
-          </div>
-          <div className="text-center">
-            <h3 className="text-lg font-semibold mb-1">Start an Investigative Briefing</h3>
-            <p className="text-sm text-muted-foreground max-w-md">
-              Create a collaborative briefing session with a Common Operating Picture, 
-              evidence management, structured tasking, and decision logging.
-            </p>
-          </div>
-          <Button 
-            onClick={() => createBriefing.mutate()}
-            disabled={createBriefing.isPending}
-          >
-            {createBriefing.isPending ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <Play className="w-4 h-4 mr-2" />
-            )}
-            Create Briefing Session
-          </Button>
-        </CardContent>
-      </Card>
+      <div className="space-y-4">
+        {/* Scope indicator */}
+        <div className="flex items-center justify-between">
+          <BriefingScopeIndicator
+            scopeType={selectedScope.type}
+            scopeTitle={selectedScope.title}
+            onClearScope={() => setSelectedScope(null)}
+          />
+        </div>
+        
+        <Card className="border-dashed border-primary/30">
+          <CardContent className="flex flex-col items-center justify-center py-12 gap-4">
+            <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+              <Target className="w-8 h-8 text-primary" />
+            </div>
+            <div className="text-center">
+              <h3 className="text-lg font-semibold mb-1">Start Fortress Briefing</h3>
+              <p className="text-sm text-muted-foreground max-w-md">
+                Create a scoped briefing session for <strong>{selectedScope.title}</strong>. 
+                All data, AI interactions, and tasks will be strictly confined to this {selectedScope.type}.
+              </p>
+            </div>
+            <Button 
+              onClick={() => createBriefing.mutate()}
+              disabled={createBriefing.isPending}
+              className="gap-2"
+            >
+              {createBriefing.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Play className="w-4 h-4" />
+              )}
+              Create Fortress Briefing
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
@@ -246,6 +337,14 @@ export function BriefingHub({ workspaceId, briefingId, onClose }: BriefingHubPro
 
   return (
     <div className="space-y-4">
+      {/* Scope Indicator */}
+      <div className="flex items-center justify-between">
+        <BriefingScopeIndicator
+          scopeType={selectedScope.type}
+          scopeTitle={selectedScope.title}
+        />
+      </div>
+
       {/* Briefing Header */}
       <Card>
         <CardHeader className="pb-3">
