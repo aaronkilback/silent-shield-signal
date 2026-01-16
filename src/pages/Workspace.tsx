@@ -16,11 +16,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Loader2, Send, Users, MessageSquare, CheckSquare, Clock, 
-  ArrowLeft, Plus, UserPlus, AlertTriangle, Mail 
+  ArrowLeft, Plus, UserPlus, AlertTriangle, Mail, Shield
 } from "lucide-react";
 import { InviteMemberDialog } from "@/components/workspace/InviteMemberDialog";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
+import { getMCMRoleInfo, MCM_ROLE_ORDER, MCM_ROLES, canManageAssignments, canSubmitFindings, type MCMRole } from "@/lib/mcmRoles";
 
 interface WorkspaceMessage {
   id: string;
@@ -51,6 +52,7 @@ interface WorkspaceMember {
   workspace_id: string;
   user_id: string;
   role: string;
+  mcm_role?: string;
   joined_at: string;
   profiles?: { name: string | null };
 }
@@ -67,7 +69,7 @@ const Workspace = () => {
   const [showAddMember, setShowAddMember] = useState(false);
   const [showInviteMember, setShowInviteMember] = useState(false);
   const [newMemberEmail, setNewMemberEmail] = useState("");
-  const [newMemberRole, setNewMemberRole] = useState<string>("contributor");
+  const [newMemberMcmRole, setNewMemberMcmRole] = useState<MCMRole>("investigator");
   const [showCreateTask, setShowCreateTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskDescription, setNewTaskDescription] = useState("");
@@ -184,10 +186,15 @@ const Workspace = () => {
     enabled: !!id && !!user
   });
 
-  // Current user's role
+  // Current user's MCM role and permissions
   const currentMember = members.find(m => m.user_id === user?.id);
-  const isOwner = currentMember?.role === 'owner';
-  const canEdit = currentMember?.role === 'owner' || currentMember?.role === 'contributor';
+  const currentMcmRole = (currentMember?.mcm_role || 'viewer') as MCMRole;
+  const isTeamCommander = currentMcmRole === 'team_commander';
+  const canManage = canManageAssignments(currentMcmRole);
+  const canSubmit = canSubmitFindings(currentMcmRole);
+  // Legacy compatibility
+  const isOwner = currentMember?.role === 'owner' || isTeamCommander;
+  const canEdit = canSubmit;
 
   // Real-time subscription for messages
   useEffect(() => {
@@ -285,13 +292,18 @@ const Workspace = () => {
         return;
       }
 
+      const mcmRoleInfo = getMCMRoleInfo(newMemberMcmRole);
+      
+      const memberData = {
+        workspace_id: id,
+        user_id: profile.id,
+        role: 'contributor', // Legacy role
+        mcm_role: newMemberMcmRole,
+      };
+      
       const { error } = await supabase
         .from('workspace_members')
-        .insert({
-          workspace_id: id,
-          user_id: profile.id,
-          role: newMemberRole
-        });
+        .insert(memberData as any);
 
       if (error) throw error;
 
@@ -299,7 +311,7 @@ const Workspace = () => {
       await supabase.from('workspace_messages').insert({
         workspace_id: id,
         user_id: user.id,
-        content: `Added a new ${newMemberRole} to the workspace`,
+        content: `Added a new ${mcmRoleInfo.label} to the workspace`,
         message_type: 'system_event'
       });
 
@@ -308,11 +320,12 @@ const Workspace = () => {
         workspace_id: id,
         user_id: user.id,
         action: 'MEMBER_ADDED',
-        details: { added_user_id: profile.id, role: newMemberRole }
+        details: { added_user_id: profile.id, mcm_role: newMemberMcmRole }
       });
 
       queryClient.invalidateQueries({ queryKey: ['workspace-members', id] });
       setNewMemberEmail("");
+      setNewMemberMcmRole("investigator");
       setShowAddMember(false);
       toast.success("Member added successfully");
     } catch (error: any) {
@@ -486,17 +499,33 @@ const Workspace = () => {
                         />
                       </div>
                       <div>
-                        <label className="text-sm font-medium">Role</label>
-                        <Select value={newMemberRole} onValueChange={setNewMemberRole}>
+                        <label className="text-sm font-medium flex items-center gap-2">
+                          <Shield className="w-4 h-4" />
+                          Investigation Role (MCM)
+                        </label>
+                        <Select value={newMemberMcmRole} onValueChange={(v) => setNewMemberMcmRole(v as MCMRole)}>
                           <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="viewer">Viewer (read-only)</SelectItem>
-                            <SelectItem value="contributor">Contributor (can edit)</SelectItem>
-                            <SelectItem value="owner">Owner (full control)</SelectItem>
+                            {MCM_ROLE_ORDER.map((role) => {
+                              const info = MCM_ROLES[role];
+                              return (
+                                <SelectItem key={role} value={role}>
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant={info.badgeVariant} className="text-xs px-1.5 py-0">
+                                      {info.shortLabel}
+                                    </Badge>
+                                    <span>{info.label}</span>
+                                  </div>
+                                </SelectItem>
+                              );
+                            })}
                           </SelectContent>
                         </Select>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {getMCMRoleInfo(newMemberMcmRole).description}
+                        </p>
                       </div>
                     </div>
                     <DialogFooter>
@@ -529,22 +558,27 @@ const Workspace = () => {
                 Members ({members.length})
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
-              {members.map((member) => (
-                <div key={member.user_id} className="flex items-center gap-2">
-                  <Avatar className="w-8 h-8">
-                    <AvatarFallback className="text-xs">
-                      {member.profiles?.name?.substring(0, 2).toUpperCase() || '??'}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">
-                      {member.profiles?.name || 'Unknown'}
-                    </p>
-                    <Badge variant="outline" className="text-xs">{member.role}</Badge>
+            <CardContent className="space-y-3">
+              {members.map((member) => {
+                const roleInfo = getMCMRoleInfo(member.mcm_role);
+                return (
+                  <div key={member.user_id} className="flex items-center gap-2">
+                    <Avatar className="w-8 h-8">
+                      <AvatarFallback className="text-xs">
+                        {member.profiles?.name?.substring(0, 2).toUpperCase() || '??'}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {member.profiles?.name || 'Unknown'}
+                      </p>
+                      <Badge variant={roleInfo.badgeVariant} className="text-xs">
+                        {roleInfo.shortLabel} - {roleInfo.label}
+                      </Badge>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </CardContent>
           </Card>
 

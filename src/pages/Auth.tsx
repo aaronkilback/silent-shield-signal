@@ -8,12 +8,14 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Shield, Loader2, Mail } from "lucide-react";
+import { getMCMRoleInfo, type MCMRole } from "@/lib/mcmRoles";
 
 interface InvitationInfo {
   id: string;
   workspace_id: string;
   email: string;
   role: string;
+  mcm_role?: string;
   system_role?: string;
   workspace_title?: string;
 }
@@ -38,13 +40,13 @@ const Auth = () => {
       
       setLoadingInvite(true);
       try {
-        const { data, error } = await supabase
-          .from("workspace_invitations")
-          .select("id, workspace_id, email, role, system_role")
+        const { data, error } = await (supabase
+          .from("workspace_invitations" as any)
+          .select("id, workspace_id, email, role, mcm_role, system_role")
           .eq("token", inviteToken)
           .eq("status", "pending")
           .gt("expires_at", new Date().toISOString())
-          .single();
+          .single() as any);
 
         if (error || !data) {
           toast.error("This invitation is invalid or has expired");
@@ -105,12 +107,14 @@ const Auth = () => {
     if (!invitation) return;
 
     try {
-      // Add user to workspace
-      await supabase.from("workspace_members").insert({
+      // Add user to workspace with MCM role
+      const memberData = {
         workspace_id: invitation.workspace_id,
         user_id: userId,
         role: invitation.role,
-      });
+        mcm_role: invitation.mcm_role || 'investigator',
+      };
+      await supabase.from("workspace_members").insert(memberData as any);
 
       // Update user's system role if specified in invitation
       // (replaces the default 'analyst' role assigned by trigger)
@@ -130,13 +134,13 @@ const Auth = () => {
       }
 
       // Mark invitation as accepted
-      await supabase
-        .from("workspace_invitations")
+      await (supabase
+        .from("workspace_invitations" as any)
         .update({ 
           status: "accepted", 
           accepted_at: new Date().toISOString() 
         })
-        .eq("id", invitation.id);
+        .eq("id", invitation.id) as any);
 
       toast.success(`Welcome to ${invitation.workspace_title || "the workspace"}!`);
     } catch (error: any) {
@@ -221,7 +225,14 @@ const Auth = () => {
               You've been invited to join:
             </p>
             <p className="font-semibold">{invitation.workspace_title || "Investigation Workspace"}</p>
-            <Badge variant="secondary" className="mt-2">{invitation.role}</Badge>
+            <div className="flex gap-2 mt-2">
+              <Badge variant={getMCMRoleInfo(invitation.mcm_role).badgeVariant}>
+                {getMCMRoleInfo(invitation.mcm_role).label}
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              {getMCMRoleInfo(invitation.mcm_role).description}
+            </p>
           </div>
         )}
 

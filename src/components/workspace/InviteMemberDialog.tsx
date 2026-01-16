@@ -16,8 +16,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Mail } from "lucide-react";
+import { Loader2, Mail, Shield } from "lucide-react";
 import { toast } from "sonner";
+import { MCM_ROLE_ORDER, MCM_ROLES, type MCMRole } from "@/lib/mcmRoles";
+import { Badge } from "@/components/ui/badge";
 
 interface InviteMemberDialogProps {
   open: boolean;
@@ -31,7 +33,7 @@ export const InviteMemberDialog = ({
   workspaceId,
 }: InviteMemberDialogProps) => {
   const [email, setEmail] = useState("");
-  const [workspaceRole, setWorkspaceRole] = useState("contributor");
+  const [mcmRole, setMcmRole] = useState<MCMRole>("investigator");
   const [systemRole, setSystemRole] = useState("viewer");
   const [sending, setSending] = useState(false);
 
@@ -56,7 +58,7 @@ export const InviteMemberDialog = ({
           body: {
             workspaceId,
             email: email.trim(),
-            role: workspaceRole,
+            mcmRole,
             systemRole,
           },
         }
@@ -66,7 +68,7 @@ export const InviteMemberDialog = ({
 
       toast.success(`Invitation sent to ${email}`);
       setEmail("");
-      setWorkspaceRole("contributor");
+      setMcmRole("investigator");
       setSystemRole("viewer");
       onOpenChange(false);
     } catch (error: any) {
@@ -77,13 +79,15 @@ export const InviteMemberDialog = ({
     }
   };
 
+  const selectedRoleInfo = MCM_ROLES[mcmRole];
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Mail className="w-5 h-5" />
-            Invite by Email
+            Invite Team Member
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-4">
@@ -99,20 +103,38 @@ export const InviteMemberDialog = ({
           </div>
           
           <div>
-            <label className="text-sm font-medium">Workspace Role</label>
-            <p className="text-xs text-muted-foreground mb-1">
-              Access level within this workspace
+            <label className="text-sm font-medium flex items-center gap-2">
+              <Shield className="w-4 h-4" />
+              Investigation Role (MCM)
+            </label>
+            <p className="text-xs text-muted-foreground mb-2">
+              Major Case Management role within this investigation
             </p>
-            <Select value={workspaceRole} onValueChange={setWorkspaceRole}>
+            <Select value={mcmRole} onValueChange={(v) => setMcmRole(v as MCMRole)}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="viewer">Viewer (read-only)</SelectItem>
-                <SelectItem value="contributor">Contributor (can edit)</SelectItem>
-                <SelectItem value="owner">Owner (full control)</SelectItem>
+                {MCM_ROLE_ORDER.map((role) => {
+                  const info = MCM_ROLES[role];
+                  return (
+                    <SelectItem key={role} value={role}>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={info.badgeVariant} className="text-xs px-1.5 py-0">
+                          {info.shortLabel}
+                        </Badge>
+                        <span>{info.label}</span>
+                      </div>
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
+            {selectedRoleInfo && (
+              <p className="text-xs text-muted-foreground mt-1.5 bg-muted/50 p-2 rounded">
+                {selectedRoleInfo.description}
+              </p>
+            )}
           </div>
 
           <div>
@@ -132,10 +154,14 @@ export const InviteMemberDialog = ({
             </Select>
           </div>
 
-          <p className="text-xs text-muted-foreground bg-muted p-2 rounded">
-            They'll only see data related to the linked incident/investigation, 
-            and can interact with agents within their system role permissions.
-          </p>
+          <div className="text-xs text-muted-foreground bg-muted p-3 rounded space-y-1">
+            <p className="font-medium">Permission Summary:</p>
+            <ul className="list-disc list-inside space-y-0.5">
+              {selectedRoleInfo?.permissions.map((perm) => (
+                <li key={perm}>{perm.replace(/_/g, ' ')}</li>
+              ))}
+            </ul>
+          </div>
         </div>
         <DialogFooter>
           <Button

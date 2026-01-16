@@ -12,8 +12,10 @@ const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
 interface InvitationRequest {
   workspaceId: string;
   email: string;
-  role: string;
+  mcmRole?: string;  // MCM role (team_commander, primary_investigator, etc.)
   systemRole?: string;
+  // Legacy support
+  role?: string;
 }
 
 serve(async (req) => {
@@ -45,7 +47,7 @@ serve(async (req) => {
       });
     }
 
-    const { workspaceId, email, role, systemRole }: InvitationRequest = await req.json();
+    const { workspaceId, email, mcmRole, systemRole, role }: InvitationRequest = await req.json();
 
     if (!workspaceId || !email) {
       return new Response(JSON.stringify({ error: "workspaceId and email are required" }), {
@@ -77,13 +79,27 @@ serve(async (req) => {
 
     const inviterName = inviterProfile?.name || "A team member";
 
+    // MCM role labels for display
+    const mcmRoleLabels: Record<string, string> = {
+      team_commander: "Team Commander",
+      primary_investigator: "Primary Investigator",
+      file_coordinator: "File Coordinator",
+      investigator: "Investigator",
+      analyst: "Analyst",
+      viewer: "Viewer",
+    };
+
+    const effectiveMcmRole = mcmRole || "investigator";
+    const effectiveRole = role || "contributor"; // Legacy role
+
     // Create invitation record
     const { data: invitation, error: invitationError } = await supabase
       .from("workspace_invitations")
       .insert({
         workspace_id: workspaceId,
         email: email.toLowerCase().trim(),
-        role: role || "contributor",
+        role: effectiveRole,
+        mcm_role: effectiveMcmRole,
         system_role: systemRole || "viewer",
         invited_by: user.id,
       })
@@ -97,6 +113,8 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    const mcmRoleLabel = mcmRoleLabels[effectiveMcmRole] || effectiveMcmRole;
 
     // Build signup URL with invitation token
     const appUrl = Deno.env.get("APP_URL") || "https://silent-shield-signal.lovable.app";
@@ -128,7 +146,7 @@ serve(async (req) => {
             
             <div style="background: #f4f4f5; border-radius: 8px; padding: 16px; margin-bottom: 24px;">
               <p style="color: #18181b; font-weight: 600; margin: 0;">${workspace.title}</p>
-              <p style="color: #71717a; font-size: 14px; margin: 4px 0 0 0;">Role: ${role || "Contributor"}</p>
+              <p style="color: #71717a; font-size: 14px; margin: 4px 0 0 0;">Role: ${mcmRoleLabel}</p>
             </div>
             
             <p style="color: #52525b; line-height: 1.6; margin-bottom: 24px;">
