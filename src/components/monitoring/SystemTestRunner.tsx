@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -11,7 +11,8 @@ import {
   ChevronDown,
   Clock,
   RefreshCw,
-  AlertTriangle
+  AlertTriangle,
+  Trash2
 } from 'lucide-react';
 import { 
   runAllTests, 
@@ -20,10 +21,46 @@ import {
   TestResult 
 } from '@/lib/testing/e2eTests';
 
+const STORAGE_KEY = 'system-test-results';
+
+interface StoredTestData {
+  results: TestSuite[];
+  lastRun: string;
+}
+
 export function SystemTestRunner() {
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState<TestSuite[] | null>(null);
   const [lastRun, setLastRun] = useState<Date | null>(null);
+
+  // Load persisted results on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const data: StoredTestData = JSON.parse(stored);
+        setResults(data.results);
+        setLastRun(new Date(data.lastRun));
+      }
+    } catch (e) {
+      console.error('Failed to load stored test results:', e);
+    }
+  }, []);
+
+  // Persist results when they change
+  useEffect(() => {
+    if (results && lastRun) {
+      try {
+        const data: StoredTestData = {
+          results,
+          lastRun: lastRun.toISOString(),
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      } catch (e) {
+        console.error('Failed to persist test results:', e);
+      }
+    }
+  }, [results, lastRun]);
 
   const handleRunTests = async () => {
     setIsRunning(true);
@@ -36,12 +73,18 @@ export function SystemTestRunner() {
     }
   };
 
+  const handleClearResults = () => {
+    setResults(null);
+    setLastRun(null);
+    localStorage.removeItem(STORAGE_KEY);
+  };
+
   const summary = results ? getTestSummary(results) : null;
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold">System Tests</h2>
           <p className="text-muted-foreground">Run automated tests to verify system health</p>
@@ -49,8 +92,19 @@ export function SystemTestRunner() {
         <div className="flex items-center gap-4">
           {lastRun && (
             <span className="text-sm text-muted-foreground">
-              Last run: {lastRun.toLocaleTimeString()}
+              Last run: {lastRun.toLocaleString()}
             </span>
+          )}
+          {results && (
+            <Button 
+              variant="outline"
+              size="sm"
+              onClick={handleClearResults}
+              className="gap-2"
+            >
+              <Trash2 className="h-4 w-4" />
+              Clear
+            </Button>
           )}
           <Button 
             onClick={handleRunTests} 
