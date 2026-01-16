@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
+import { getAntiHallucinationPrompt, getCriticalDateContext, categorizeIncidentsByAge } from "../_shared/anti-hallucination.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -222,7 +223,17 @@ serve(async (req) => {
     let predictions: any = null;
 
     if (include_predictions) {
+      const dateContext = getCriticalDateContext();
+      const antiHallucinationBlock = getAntiHallucinationPrompt();
+      
+      // Categorize incidents by age for accurate reporting
+      const categorizedIncidents = categorizeIncidentsByAge(incidents as any);
+      
       const analysisPrompt = `Analyze this threat intelligence data and provide predictive insights:
+
+${antiHallucinationBlock}
+
+=== VERIFIED DATA CONTEXT (as of ${dateContext.currentDateTimeISO}) ===
 
 THREAT LANDSCAPE SUMMARY:
 - Overall Threat Score: ${overallThreatScore}/100 (${overallThreatLevel})
@@ -231,36 +242,44 @@ THREAT LANDSCAPE SUMMARY:
 - Precursor Activity Score: ${precursorActivityScore}/100
 - Infrastructure Risk Score: ${infrastructureRiskScore}/100
 
-SIGNAL INTELLIGENCE (${signals.length} total signals in ${timeframe_hours} hours):
+SIGNAL INTELLIGENCE (EXACT COUNT: ${signals.length} signals in ${timeframe_hours} hours):
 - Dark web signals: ${darkWebSignals.length}
 - Social media signals: ${socialSignals.length}
 - Radical/extremist signals: ${radicalSignals.length}
 - Infrastructure-related signals: ${infrastructureSignals.length}
 - Critical/high priority: ${(signalsBySeverity['critical']?.length || 0) + (signalsBySeverity['high']?.length || 0)}
 
-HIGH-THREAT ENTITIES: ${highThreatEntities.length}
+HIGH-THREAT ENTITIES (EXACT COUNT: ${highThreatEntities.length}):
 ${highThreatEntities.slice(0, 5).map((e: any) => `- ${e.name} (${e.type}): threat_score ${e.threat_score}, indicators: ${e.threat_indicators?.join(', ')}`).join('\n')}
 
-ACTIVE PRECURSOR INDICATORS: ${existingPrecursors.length}
+ACTIVE PRECURSOR INDICATORS (EXACT COUNT: ${existingPrecursors.length}):
 ${existingPrecursors.slice(0, 5).map((p: any) => `- ${p.indicator_name}: ${p.threat_category} targeting ${p.target_type} (${p.severity_level})`).join('\n')}
 
-CRITICAL INFRASTRUCTURE AT RISK: ${criticalAssets.length} assets
+CRITICAL INFRASTRUCTURE AT RISK (EXACT COUNT: ${criticalAssets.length} assets):
 ${criticalAssets.slice(0, 5).map((a: any) => `- ${a.asset_name} (${a.asset_type}): ${a.business_criticality} criticality`).join('\n')}
 
-RECENT INCIDENTS: ${incidents.length}
-${incidents.filter((i: any) => i.priority === 'P1' || i.priority === 'P2').slice(0, 5).map((i: any) => `- ${i.title}: ${i.status} (${i.priority})`).join('\n')}
+INCIDENTS BREAKDOWN:
+- ${categorizedIncidents.summary}
+- New (last 24h): ${categorizedIncidents.newLast24h.length}
+- Stale (>7 days): ${categorizedIncidents.stale.length + categorizedIncidents.veryStale.length}
+P1/P2 Incidents:
+${incidents.filter((i: any) => i.priority === 'P1' || i.priority === 'P2').slice(0, 5).map((i: any) => `- ${i.title}: ${i.status} (${i.priority}) - opened ${i.created_at}`).join('\n')}
 
 ${client ? `CLIENT CONTEXT: ${client.name} (${client.industry})\nHigh-value assets: ${client.high_value_assets?.join(', ')}\nLocations: ${client.locations?.join(', ')}` : ''}
 
+=== END VERIFIED DATA ===
+
+CRITICAL: Use ONLY the exact counts and dates provided above. Never approximate or guess.
+
 Provide:
-1. THREAT FORECAST: What threats are most likely to materialize in the next 24-72 hours?
-2. ATTACK VECTOR PREDICTION: Most probable attack methods based on current indicators
-3. TARGET PREDICTION: Which assets/locations are at highest risk?
-4. ESCALATION PROBABILITY: % chance of threat escalation (0-100) with timeline
+1. THREAT FORECAST: What threats are most likely to materialize in the next 24-72 hours? (cite data)
+2. ATTACK VECTOR PREDICTION: Most probable attack methods based on current indicators (cite specific indicators)
+3. TARGET PREDICTION: Which assets/locations are at highest risk? (cite threat scores)
+4. ESCALATION PROBABILITY: % chance of threat escalation (0-100) with timeline and reasoning
 5. RECOMMENDED PREEMPTIVE ACTIONS: Top 5 specific actions to take NOW
 6. KEY INDICATORS TO MONITOR: What should analysts watch for?
 
-Be specific, actionable, and prioritize by impact and urgency.`;
+Be specific, actionable, and ALWAYS cite the data source for each claim.`;
 
       try {
         const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -274,7 +293,17 @@ Be specific, actionable, and prioritize by impact and urgency.`;
             messages: [
               { 
                 role: 'system', 
-                content: 'You are an elite threat intelligence analyst specializing in predictive threat analysis for critical infrastructure protection. Provide concise, actionable intelligence assessments focused on proactive threat neutralization.' 
+                content: `You are an elite threat intelligence analyst specializing in predictive threat analysis for critical infrastructure protection. 
+
+CRITICAL ACCURACY RULES:
+1. ONLY use exact numbers provided in the data - NEVER approximate or round
+2. ONLY reference dates that appear in the data - NEVER fabricate dates
+3. Distinguish between NEW incidents (last 24h) and STALE incidents (>7 days old)
+4. Cite your data source for every claim (e.g., "Based on the 4 active precursor indicators...")
+5. If information is missing, explicitly state "Data not available" rather than guessing
+6. Use hedged language for predictions: "Based on current indicators, there is a [X]% probability..."
+
+Provide concise, actionable intelligence assessments focused on proactive threat neutralization.` 
               },
               { role: 'user', content: analysisPrompt }
             ],
