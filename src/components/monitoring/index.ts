@@ -1,2 +1,2 @@
 export { ErrorMonitoringDashboard } from './ErrorMonitoringDashboard';
-export { SystemTestRunner } from './SystemTestRunner';
+export { SystemTestRunner } from './PersistentSystemTestRunner';
