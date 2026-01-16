@@ -76,7 +76,7 @@ export function ApiKeysManager() {
         body: {
           name: data.name,
           description: data.description || null,
-          client_id: data.client_id || null,
+          client_id: data.client_id && data.client_id !== "__all__" ? data.client_id : null,
           permissions: data.permissions,
           rate_limit_per_minute: data.rate_limit_per_minute,
           expires_at: data.expires_in_days 
@@ -216,7 +216,7 @@ export function ApiKeysManager() {
                         <SelectValue placeholder="All clients (no restriction)" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">All clients</SelectItem>
+                        <SelectItem value="__all__">All clients</SelectItem>
                         {clients?.map(client => (
                           <SelectItem key={client.id} value={client.id}>
                             {client.name}
