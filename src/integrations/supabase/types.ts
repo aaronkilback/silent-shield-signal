@@ -4897,6 +4897,7 @@ export type Database = {
           created_at: string
           created_by_user_id: string
           description: string | null
+          diary_date: string | null
           due_date: string | null
           id: string
           status: string
@@ -4909,6 +4910,7 @@ export type Database = {
           created_at?: string
           created_by_user_id: string
           description?: string | null
+          diary_date?: string | null
           due_date?: string | null
           id?: string
           status?: string
@@ -4921,6 +4923,7 @@ export type Database = {
           created_at?: string
           created_by_user_id?: string
           description?: string | null
+          diary_date?: string | null
           due_date?: string | null
           id?: string
           status?: string
