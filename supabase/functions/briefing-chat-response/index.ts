@@ -1,6 +1,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
-import { getAntiHallucinationPrompt, getCriticalDateContext, generateVerifiedDataContext, categorizeIncidentsByAge } from "../_shared/anti-hallucination.ts";
+import {
+  getAntiHallucinationPrompt,
+  getCriticalDateContext,
+  generateVerifiedDataContext,
+  categorizeIncidentsByAge,
+  validateAIOutput,
+} from "../_shared/anti-hallucination.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -46,7 +52,57 @@ serve(async (req) => {
     // Build scope context data
     let scopeContextData = '';
     let scopeDescription = '';
-    
+
+    // Verified context used to hard-anchor dates/counts and prevent persistent hallucinations
+    let verifiedP1P2Incidents: any[] = [];
+    let verifiedContextBlock = '';
+    let knownOpenedDates: string[] = [];
+    let jan14_2026_p1p2_count = 0;
+
+    const normalizeOpenedAt = (row: any): string | null => {
+      const v = row?.opened_at || row?.created_at;
+      return typeof v === 'string' ? v : null;
+    };
+
+    const buildVerifiedBlock = () => {
+      const normalized = (verifiedP1P2Incidents || [])
+        .map((i) => ({ ...i, opened_at: normalizeOpenedAt(i) }))
+        .filter((i) => !!i.opened_at);
+
+      knownOpenedDates = normalized.map((i) => (i.opened_at as string).slice(0, 10));
+      jan14_2026_p1p2_count = knownOpenedDates.filter((d) => d === '2026-01-14').length;
+
+      const categorized = categorizeIncidentsByAge(normalized);
+
+      verifiedContextBlock = [
+        generateVerifiedDataContext({ incidents: normalized, label: 'P1/P2 incidents (scope)' }),
+        `\n=== VERIFIED CONSTRAINTS (P1/P2 incidents for this scope) ===`,
+        `Count: ${normalized.length}`,
+        `Opened on 2026-01-14: ${jan14_2026_p1p2_count}`,
+        `Age summary: ${categorized.summary}`,
+        `RULE: You MUST NOT mention incidents opened on 2026-01-14 unless "Opened on 2026-01-14" is > 0.`,
+        `RULE: You MUST NOT claim "seven" (or any other number) of P1/P2 incidents unless it matches Count exactly.`,
+        `=== END VERIFIED CONSTRAINTS ===`,
+      ].join('\n');
+    };
+
+    const loadClientP1P2Incidents = async (clientId: string) => {
+      const { data, error } = await supabase
+        .from('incidents')
+        .select('id, title, summary, priority, status, opened_at, created_at, client_id')
+        .eq('client_id', clientId)
+        .in('priority', ['P1', 'P2'])
+        .limit(50);
+
+      if (error) {
+        console.warn('Failed to load client P1/P2 incidents:', error);
+        verifiedP1P2Incidents = [];
+        return;
+      }
+
+      verifiedP1P2Incidents = data || [];
+    };
+
     // Fetch incident-specific context if scoped to an incident
     if (scope?.incident_id) {
       const { data: incident } = await supabase
@@ -54,7 +110,7 @@ serve(async (req) => {
         .select('*, clients(name), signals(normalized_text, category, severity, location)')
         .eq('id', scope.incident_id)
         .single();
-      
+
       if (incident) {
         scopeDescription = `Incident: ${incident.title || incident.summary || scope.incident_id}`;
         scopeContextData += `\n\n=== INCIDENT SCOPE ===`;
@@ -63,6 +119,7 @@ serve(async (req) => {
         scopeContextData += `\nSummary: ${incident.summary || 'N/A'}`;
         scopeContextData += `\nPriority: ${incident.priority}`;
         scopeContextData += `\nStatus: ${incident.status}`;
+        scopeContextData += `\nOpened At: ${normalizeOpenedAt(incident) || 'N/A'}`;
         scopeContextData += `\nClient: ${incident.clients?.name || 'Unknown'}`;
         if (incident.signals) {
           scopeContextData += `\nOriginating Signal: ${incident.signals.normalized_text?.substring(0, 300) || 'N/A'}`;
@@ -76,14 +133,14 @@ serve(async (req) => {
             scopeContextData += `\n- [${event.timestamp}] ${event.event || event.action}: ${event.details?.substring(0, 150) || ''}`;
           });
         }
-        
+
         // Fetch related entities for this incident
         const { data: entityMentions } = await supabase
           .from('entity_mentions')
           .select('entities(name, type, description)')
           .eq('incident_id', scope.incident_id)
           .limit(10);
-        
+
         if (entityMentions?.length) {
           scopeContextData += `\n\nRelated Entities:`;
           entityMentions.forEach((em: any) => {
@@ -92,9 +149,15 @@ serve(async (req) => {
             }
           });
         }
+
+        // Load verified P1/P2 incident set for this incident's client (prevents "phantom clusters")
+        if (incident.client_id) {
+          await loadClientP1P2Incidents(incident.client_id);
+          buildVerifiedBlock();
+        }
       }
     }
-    
+
     // Fetch investigation-specific context if scoped to an investigation
     if (scope?.investigation_id) {
       const { data: investigation } = await supabase
@@ -102,7 +165,7 @@ serve(async (req) => {
         .select('*, clients(name)')
         .eq('id', scope.investigation_id)
         .single();
-      
+
       if (investigation) {
         scopeDescription = `Investigation: ${investigation.file_number}`;
         scopeContextData += `\n\n=== INVESTIGATION SCOPE ===`;
@@ -113,7 +176,7 @@ serve(async (req) => {
         if (investigation.information) {
           scopeContextData += `\n\nInformation:\n${investigation.information.substring(0, 1000)}`;
         }
-        
+
         // Fetch investigation entries
         const { data: entries } = await supabase
           .from('investigation_entries')
@@ -121,25 +184,31 @@ serve(async (req) => {
           .eq('investigation_id', scope.investigation_id)
           .order('entry_timestamp', { ascending: false })
           .limit(5);
-        
+
         if (entries?.length) {
           scopeContextData += `\n\nRecent Investigation Entries:`;
           entries.forEach((e: any) => {
             scopeContextData += `\n- [${e.entry_timestamp}] ${e.entry_text?.substring(0, 200)}`;
           });
         }
-        
+
         // Fetch related investigation persons
         const { data: persons } = await supabase
           .from('investigation_persons')
           .select('name, status, position, company')
           .eq('investigation_id', scope.investigation_id);
-        
+
         if (persons?.length) {
           scopeContextData += `\n\nPersons of Interest:`;
           persons.forEach((p: any) => {
             scopeContextData += `\n- ${p.name} (${p.status}) - ${p.position || ''} ${p.company ? 'at ' + p.company : ''}`;
           });
+        }
+
+        // Load verified P1/P2 incident set for this investigation's client (prevents "phantom clusters")
+        if (investigation.client_id) {
+          await loadClientP1P2Incidents(investigation.client_id);
+          buildVerifiedBlock();
         }
       }
     }
@@ -171,9 +240,9 @@ serve(async (req) => {
       .eq('briefing_id', briefing_id)
       .limit(5);
 
-    // Build context
+    // Build context (IMPORTANT: do not feed prior agent messages as facts)
     let contextData = scopeContextData;
-    
+
     if (briefing) {
       contextData += `\n\nBRIEFING SESSION CONTEXT:`;
       contextData += `\nTitle: ${briefing.title}`;
@@ -182,39 +251,55 @@ serve(async (req) => {
     }
 
     if (recentMessages?.length) {
-      contextData += `\n\nRECENT CHAT HISTORY:`;
-      recentMessages.reverse().forEach((msg, i) => {
-        const role = msg.author_agent_id ? 'Agent' : 'User';
-        contextData += `\n${i + 1}. [${role}]: ${msg.content.substring(0, 300)}`;
-      });
+      const userOnlyHistory = recentMessages
+        .filter((m) => !m.author_agent_id)
+        .reverse();
+
+      if (userOnlyHistory.length) {
+        contextData += `\n\nRECENT USER CHAT (verbatim; factual only if supported by VERIFIED DATA CONTEXT):`;
+        userOnlyHistory.forEach((msg, i) => {
+          contextData += `\n${i + 1}. [User]: ${msg.content.substring(0, 300)}`;
+        });
+      }
+
+      contextData += `\n\nNOTE: Prior agent outputs are intentionally excluded from context to prevent feedback-loop hallucinations.`;
     }
 
     if (evidence?.length) {
       contextData += `\n\nAVAILABLE EVIDENCE:`;
-      evidence.forEach(e => {
+      evidence.forEach((e) => {
         contextData += `\n- ${e.filename} (${e.evidence_type}): ${e.description || 'No description'}`;
       });
     }
 
     if (notes?.length) {
       contextData += `\n\nBRIEFING NOTES:`;
-      notes.forEach(n => {
+      notes.forEach((n) => {
         contextData += `\n- [${n.note_type}${n.topic ? '/' + n.topic : ''}]: ${n.content.substring(0, 200)}`;
       });
     }
 
     if (decisions?.length) {
       contextData += `\n\nKEY DECISIONS:`;
-      decisions.forEach(d => {
+      decisions.forEach((d) => {
         contextData += `\n- [${d.status}] ${d.decision_text}`;
         if (d.rationale) contextData += ` (Rationale: ${d.rationale.substring(0, 100)})`;
       });
     }
 
+    if (!verifiedContextBlock) {
+      verifiedContextBlock = [
+        `\n=== VERIFIED CONSTRAINTS ===`,
+        `No P1/P2 incident set was loaded for this scope (client_id missing).`,
+        `RULE: You MUST NOT invent incident counts, dates, or clusters. Ask for the scope/client if needed.`,
+        `=== END VERIFIED CONSTRAINTS ===`,
+      ].join('\n');
+    }
+
     // Build system prompt with scope enforcement and anti-hallucination
     const dateContext = getCriticalDateContext();
     const antiHallucinationBlock = getAntiHallucinationPrompt();
-    
+
     const scopeEnforcementInstructions = scopeDescription ? `
 CRITICAL SCOPE ENFORCEMENT:
 This briefing is STRICTLY SCOPED to: ${scopeDescription}
@@ -240,6 +325,11 @@ You are participating in a FORTRESS BRIEFING HUB session - an incident-centric c
 
 ${antiHallucinationBlock}
 
+${verifiedContextBlock}
+
+OPERATIONAL TIME CONTEXT:
+- Current date (authoritative): ${dateContext.currentDateISO}
+
 ${scopeEnforcementInstructions}
 
 ${is_group_question ? 'Multiple agents are being asked this question - provide your unique perspective based on your specialty.' : 'You have been specifically tagged to respond.'}
@@ -258,6 +348,7 @@ RESPONSE GUIDELINES:
 - Be collaborative and supportive of the investigation team
 - ALWAYS stay within the defined scope - warn if queries drift outside
 - When uncertain, explicitly state uncertainty rather than guessing`;
+
 
     // Call AI Gateway
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -296,10 +387,68 @@ RESPONSE GUIDELINES:
     }
 
     const data = await response.json();
-    const agentResponse = data.choices?.[0]?.message?.content;
+    let agentResponse = data.choices?.[0]?.message?.content;
 
     if (!agentResponse) {
       throw new Error('No response from AI');
+    }
+
+    // Post-validate to catch persistent hallucinations (e.g., phantom Jan 14 clusters)
+    const normalizedCount = (verifiedP1P2Incidents || [])
+      .map((i) => ({ ...i, opened_at: normalizeOpenedAt(i) }))
+      .filter((i) => !!i.opened_at).length;
+
+    const validation = validateAIOutput(agentResponse, {
+      incidentCount: verifiedP1P2Incidents.length ? normalizedCount : undefined,
+      knownDates: knownOpenedDates.length ? knownOpenedDates : undefined,
+    });
+
+    const mentionsJan14 = /(?:\b2026-01-14\b|January\s+14,?\s*2026)/i.test(agentResponse);
+    const violatesJan14 = mentionsJan14 && jan14_2026_p1p2_count === 0;
+
+    if (violatesJan14 || validation.warnings.length > 0) {
+      const correctionUserMessage = [
+        'CORRECTION REQUIRED.',
+        'Rewrite the response to strictly comply with VERIFIED DATA CONTEXT and VERIFIED CONSTRAINTS.',
+        'Remove any incident counts/dates/clusters that are not explicitly supported by the verified context.',
+        '',
+        `Verified P1/P2 incident count for this scope: ${normalizedCount}`,
+        `Verified P1/P2 incidents opened on 2026-01-14: ${jan14_2026_p1p2_count}`,
+        '',
+        'Issues detected:',
+        ...(validation.warnings.length ? validation.warnings : [
+          'Detected mention of incidents on 2026-01-14 even though verified count is 0.',
+        ]),
+        '',
+        'Draft to rewrite:',
+        agentResponse,
+        '',
+        'Return ONLY the corrected answer (no preface).',
+      ].join('\n');
+
+      const correctionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-3-flash-preview',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: correctionUserMessage },
+          ],
+        }),
+      });
+
+      if (correctionResponse.ok) {
+        const correctionData = await correctionResponse.json();
+        const corrected = correctionData.choices?.[0]?.message?.content;
+        if (corrected) agentResponse = corrected;
+      } else {
+        const errorText = await correctionResponse.text();
+        console.error('AI Gateway correction error:', correctionResponse.status, errorText);
+      }
     }
 
     // Store the agent's response in the chat
