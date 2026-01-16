@@ -31,20 +31,39 @@ export const CreateWorkspaceDialog = ({
   const [creating, setCreating] = useState(false);
 
   const handleCreate = async () => {
-    if (!user || (!incidentId && !investigationId)) return;
+    if (!incidentId && !investigationId) {
+      toast.error("This workspace must be linked to an incident or investigation.");
+      return;
+    }
+
+    if (!user) {
+      toast.error("Please sign in to create a workspace.");
+      return;
+    }
 
     setCreating(true);
     try {
+      // Ensure we have a valid session (prevents RLS failures when token is missing/expired)
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      const creatorId = session?.user?.id;
+      if (!creatorId) {
+        toast.error("Your session has expired. Please sign in again.");
+        return;
+      }
+
       // Create workspace
       const { data: workspace, error: workspaceError } = await supabase
-        .from('investigation_workspaces')
+        .from("investigation_workspaces")
         .insert({
-          title: title.trim() || defaultTitle || 'Investigation Workspace',
+          title: title.trim() || defaultTitle || "Investigation Workspace",
           description: description.trim() || null,
           incident_id: incidentId || null,
           investigation_id: investigationId || null,
-          created_by_user_id: user.id,
-          status: 'active'
+          created_by_user_id: creatorId,
+          status: "active",
         })
         .select()
         .single();
@@ -52,38 +71,36 @@ export const CreateWorkspaceDialog = ({
       if (workspaceError) throw workspaceError;
 
       // Add creator as owner
-      const { error: memberError } = await supabase
-        .from('workspace_members')
-        .insert({
-          workspace_id: workspace.id,
-          user_id: user.id,
-          role: 'owner'
-        });
+      const { error: memberError } = await supabase.from("workspace_members").insert({
+        workspace_id: workspace.id,
+        user_id: creatorId,
+        role: "owner",
+      });
 
       if (memberError) throw memberError;
 
       // Add initial system message
-      await supabase.from('workspace_messages').insert({
+      await supabase.from("workspace_messages").insert({
         workspace_id: workspace.id,
-        user_id: user.id,
-        content: 'Workspace created. Welcome to the collaborative investigation space!',
-        message_type: 'system_event'
+        user_id: creatorId,
+        content: "Workspace created. Welcome to the collaborative investigation space!",
+        message_type: "system_event",
       });
 
       // Audit log
-      await supabase.from('workspace_audit_log').insert({
+      await supabase.from("workspace_audit_log").insert({
         workspace_id: workspace.id,
-        user_id: user.id,
-        action: 'WORKSPACE_CREATED',
-        details: { title: workspace.title, incident_id: incidentId, investigation_id: investigationId }
+        user_id: creatorId,
+        action: "WORKSPACE_CREATED",
+        details: { title: workspace.title, incident_id: incidentId, investigation_id: investigationId },
       });
 
       toast.success("Workspace created successfully!");
       onOpenChange(false);
       navigate(`/workspace/${workspace.id}`);
     } catch (error: any) {
-      console.error('Error creating workspace:', error);
-      toast.error(error.message || "Failed to create workspace");
+      console.error("Error creating workspace:", error);
+      toast.error(error?.message || "Failed to create workspace");
     } finally {
       setCreating(false);
     }
