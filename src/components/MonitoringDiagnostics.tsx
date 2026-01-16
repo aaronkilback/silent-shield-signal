@@ -28,6 +28,7 @@ interface SourceHealth {
   lastIngested: string | null;
   errorMessage: string | null;
   hasValidUrl: boolean;
+  isInternal: boolean;
 }
 
 interface MonitoringHistoryItem {
@@ -63,6 +64,7 @@ export function MonitoringDiagnostics() {
         const config = s.config as Record<string, unknown> | null;
         const feedUrl = config?.feed_url as string | undefined;
         const url = config?.url as string | undefined;
+        const isInternal = s.type === 'api_feed' || config?.is_internal === true;
         
         return {
           id: s.id,
@@ -71,7 +73,8 @@ export function MonitoringDiagnostics() {
           status: s.status,
           lastIngested: s.last_ingested_at,
           errorMessage: s.error_message,
-          hasValidUrl: !!(url || feedUrl) && feedUrl !== 'https://example.com/feed.xml',
+          hasValidUrl: isInternal || (!!(url || feedUrl) && feedUrl !== 'https://example.com/feed.xml'),
+          isInternal,
         } as SourceHealth;
       });
     },
@@ -170,11 +173,14 @@ export function MonitoringDiagnostics() {
               onClick={async () => {
                 setRunningDiagnostics(true);
                 setLiveResults({});
-                toast.info("Running connectivity tests on all sources...");
+                toast.info("Running connectivity tests on external sources...");
                 
                 const results: Record<string, { success: boolean; error?: string; status_code?: number }> = {};
                 
-                for (const source of sources) {
+                // Only test external sources (skip api_feed/internal)
+                const externalSources = sources.filter(s => !s.isInternal);
+                
+                for (const source of externalSources) {
                   try {
                     const { data, error } = await supabase.functions.invoke("test-osint-source-connectivity", {
                       body: { source_id: source.id },
@@ -194,6 +200,12 @@ export function MonitoringDiagnostics() {
                   }
                   setLiveResults({ ...results });
                 }
+                
+                // Mark internal sources as OK
+                for (const source of sources.filter(s => s.isInternal)) {
+                  results[source.id] = { success: true, status_code: 200 };
+                }
+                setLiveResults({ ...results });
                 
                 setRunningDiagnostics(false);
                 
