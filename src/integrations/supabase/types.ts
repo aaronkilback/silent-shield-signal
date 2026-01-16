@@ -4770,6 +4770,7 @@ export type Database = {
           invited_by: string
           role: string
           status: string
+          system_role: Database["public"]["Enums"]["app_role"]
           token: string
           workspace_id: string
         }
@@ -4782,6 +4783,7 @@ export type Database = {
           invited_by: string
           role?: string
           status?: string
+          system_role?: Database["public"]["Enums"]["app_role"]
           token?: string
           workspace_id: string
         }
@@ -4794,6 +4796,7 @@ export type Database = {
           invited_by?: string
           role?: string
           status?: string
+          system_role?: Database["public"]["Enums"]["app_role"]
           token?: string
           workspace_id?: string
         }

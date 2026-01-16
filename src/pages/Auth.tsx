@@ -14,6 +14,7 @@ interface InvitationInfo {
   workspace_id: string;
   email: string;
   role: string;
+  system_role?: string;
   workspace_title?: string;
 }
 
@@ -39,7 +40,7 @@ const Auth = () => {
       try {
         const { data, error } = await supabase
           .from("workspace_invitations")
-          .select("id, workspace_id, email, role")
+          .select("id, workspace_id, email, role, system_role")
           .eq("token", inviteToken)
           .eq("status", "pending")
           .gt("expires_at", new Date().toISOString())
@@ -110,6 +111,23 @@ const Auth = () => {
         user_id: userId,
         role: invitation.role,
       });
+
+      // Update user's system role if specified in invitation
+      // (replaces the default 'analyst' role assigned by trigger)
+      if (invitation.system_role && invitation.system_role !== 'analyst') {
+        // Delete default role first, then insert the specified role
+        await supabase
+          .from("user_roles")
+          .delete()
+          .eq("user_id", userId);
+        
+        await supabase
+          .from("user_roles")
+          .insert({
+            user_id: userId,
+            role: invitation.system_role as any,
+          });
+      }
 
       // Mark invitation as accepted
       await supabase
