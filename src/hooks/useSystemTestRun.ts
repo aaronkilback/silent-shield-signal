@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   systemTestRunManager,
-  SystemTestRunState,
+  type SystemTestRunState,
 } from "@/lib/testing/systemTestRunManager";
 
 export function useSystemTestRun() {
@@ -11,9 +11,7 @@ export function useSystemTestRun() {
 
   useEffect(() => {
     const unsubscribe = systemTestRunManager.subscribe(setState);
-    return () => {
-      unsubscribe();
-    };
+    return unsubscribe;
   }, []);
 
   const startRun = useCallback(() => systemTestRunManager.startRun(), []);
