@@ -1020,6 +1020,8 @@ export type Database = {
           description: string | null
           facilitator_user_id: string | null
           id: string
+          incident_id: string | null
+          investigation_id: string | null
           meeting_mode: string | null
           scheduled_start: string | null
           status: string
@@ -1035,6 +1037,8 @@ export type Database = {
           description?: string | null
           facilitator_user_id?: string | null
           id?: string
+          incident_id?: string | null
+          investigation_id?: string | null
           meeting_mode?: string | null
           scheduled_start?: string | null
           status?: string
@@ -1050,6 +1054,8 @@ export type Database = {
           description?: string | null
           facilitator_user_id?: string | null
           id?: string
+          incident_id?: string | null
+          investigation_id?: string | null
           meeting_mode?: string | null
           scheduled_start?: string | null
           status?: string
@@ -1058,6 +1064,20 @@ export type Database = {
           workspace_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "briefing_sessions_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "briefing_sessions_investigation_id_fkey"
+            columns: ["investigation_id"]
+            isOneToOne: false
+            referencedRelation: "investigations"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "briefing_sessions_workspace_id_fkey"
             columns: ["workspace_id"]
