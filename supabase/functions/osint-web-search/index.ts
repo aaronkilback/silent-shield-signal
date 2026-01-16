@@ -61,6 +61,7 @@ serve(async (req) => {
 
     let contentCreated = 0;
     let signalsCreated = 0;
+    let duplicatesSkipped = 0;
 
     // Helper function to extract meaningful keywords from entity name
     const extractKeywords = (name: string): string[] => {
@@ -308,7 +309,12 @@ Respond with structured data.`
             });
 
           if (contentError) {
-            console.error('Error creating entity content:', contentError);
+            // Track duplicates separately from errors
+            if (contentError.code === '23505') {
+              duplicatesSkipped++;
+            } else {
+              console.error('Error creating entity content:', contentError);
+            }
           } else {
             contentCreated++;
           }
@@ -366,13 +372,21 @@ Respond with structured data.`
       .update({ updated_at: new Date().toISOString() })
       .eq('id', entityId);
 
-    console.log(`OSINT web search complete. Created ${contentCreated} content items and ${signalsCreated} signals`);
+    // Get total existing content for this entity
+    const { count: existingContentCount } = await supabase
+      .from('entity_content')
+      .select('*', { count: 'exact', head: true })
+      .eq('entity_id', entityId);
+
+    console.log(`OSINT web search complete. Created ${contentCreated} new items, ${duplicatesSkipped} duplicates skipped, ${existingContentCount || 0} total items`);
 
     return new Response(
       JSON.stringify({ 
         success: true,
         entity: entity.name,
         content_created: contentCreated,
+        duplicates_skipped: duplicatesSkipped,
+        total_content: existingContentCount || 0,
         signals_created: signalsCreated
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
