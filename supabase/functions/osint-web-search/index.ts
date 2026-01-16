@@ -315,6 +315,11 @@ Respond with structured data.`
 
           // Create signal if security concern identified
           if (analysis.create_signal && analysis.security_concerns && analysis.security_concerns.length > 0) {
+            // Convert severity to integer 0-100 scale (severity_score is integer in signals table)
+            const severityInt = analysis.signal_severity === 'critical' ? 90 :
+                               analysis.signal_severity === 'high' ? 75 :
+                               analysis.signal_severity === 'medium' ? 50 : 30;
+            
             const { data: signalData, error: signalError } = await supabase
               .from('signals')
               .insert({
@@ -322,12 +327,10 @@ Respond with structured data.`
                 description: analysis.summary,
                 normalized_text: `${analysis.key_information}\n\nConcerns: ${analysis.security_concerns.join(', ')}`,
                 signal_type: 'osint',
-                severity_score: analysis.signal_severity === 'critical' ? 0.9 :
-                               analysis.signal_severity === 'high' ? 0.75 :
-                               analysis.signal_severity === 'medium' ? 0.5 : 0.3,
+                severity_score: severityInt,
                 source_url: url,
                 status: 'new',
-                relevance_score: analysis.relevance_score
+                relevance_score: analysis.relevance_score  // This is numeric type, accepts floats
               })
               .select('id')
               .single();
