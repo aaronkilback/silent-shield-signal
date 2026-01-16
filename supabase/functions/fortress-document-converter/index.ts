@@ -2,9 +2,11 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { encode as base64Encode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 import * as pdfjsLib from "https://esm.sh/pdfjs-dist@4.10.38/legacy/build/pdf.mjs";
+import "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
 
 // pdf.js requires a workerSrc to be configured in some builds even when disableWorker=true.
-// We set it defensively; with disableWorker enabled, this should not spawn a worker.
+// In edge runtimes, dynamically importing an external worker URL can fail unless it's in the module graph.
+// We import the worker above (so it's bundled) and reference the same URL here.
 try {
   (pdfjsLib as any).GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
 } catch (_err) {
@@ -96,20 +98,52 @@ async function getFileFromStorage(
   filePath: string
 ): Promise<{ data: Blob | null; error: string | null }> {
   try {
-    // Parse bucket and path
-    const pathParts = filePath.split('/');
+    // Normalize: storage paths are stored unescaped; callers sometimes pass URL-escaped paths.
+    const normalized = filePath.includes('%') ? decodeURIComponent(filePath) : filePath;
+
+    const pathParts = normalized.split('/');
     const bucketName = pathParts[0];
     const objectPath = pathParts.slice(1).join('/');
 
-    console.log(`Retrieving file from bucket: ${bucketName}, path: ${objectPath}`);
+    const tryDownload = async (bucket: string, path: string) => {
+      console.log(`Retrieving file from bucket: ${bucket}, path: ${path}`);
+      return await supabase.storage.from(bucket).download(path);
+    };
 
-    const { data, error } = await supabase.storage
-      .from(bucketName)
-      .download(objectPath);
+    // 1) First attempt: assume caller provided bucket/object
+    let { data, error } = await tryDownload(bucketName, objectPath);
 
+    // 2) If it fails, caller may have provided only an object key (no bucket), e.g. "<uuid>/<file>.pdf".
+    // In that case, we try the known buckets (storage doesn't expose storage.objects via PostgREST here).
     if (error) {
       console.error('Storage download error:', error);
-      return { data: null, error: error.message };
+
+      const looksLikeUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(bucketName);
+      if (looksLikeUuid) {
+        const candidateBuckets = [
+          'ai-chat-attachments',
+          'archival-documents',
+          'investigation-files',
+          'travel-documents',
+          'bug-screenshots',
+          'entity-photos',
+          'agent-avatars',
+        ];
+
+        for (const b of candidateBuckets) {
+          const retry = await tryDownload(b, normalized);
+          if (!retry.error && retry.data) {
+            data = retry.data;
+            error = retry.error;
+            break;
+          }
+        }
+      }
+    }
+
+    if (error) {
+      console.error('Storage download error (final):', error);
+      return { data: null, error: (error as any)?.message ?? String(error) };
     }
 
     return { data, error: null };
