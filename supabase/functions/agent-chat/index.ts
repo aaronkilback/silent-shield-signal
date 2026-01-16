@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
 import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
+import { getAntiHallucinationPrompt, getCriticalDateContext, generateVerifiedDataContext } from "../_shared/anti-hallucination.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -288,12 +289,16 @@ serve(async (req) => {
       });
     }
 
-    // Build system prompt with Fortress infrastructure documentation
+    // Build system prompt with Fortress infrastructure documentation and anti-hallucination
+    const antiHallucinationBlock = getAntiHallucinationPrompt();
+    
     const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}
 
 Your Mission: ${agent.mission_scope}
 
 Output Types You Generate: ${agent.output_types.join(', ')}
+
+${antiHallucinationBlock}
 
 ${FORTRESS_DATA_INFRASTRUCTURE}
 
@@ -308,8 +313,12 @@ COMMUNICATION GUIDELINES:
 - Focus on actionable intelligence
 - Use professional security terminology
 - Never break character
+- ALWAYS cite exact numbers and dates from the provided data
+- NEVER fabricate or approximate counts - use exact values
+- NEVER claim events occurred on dates not in the data
 - If asked about something outside your specialty, acknowledge it and suggest the appropriate resource
-- You understand the full Fortress data infrastructure and can explain how data flows through the system`;
+- You understand the full Fortress data infrastructure and can explain how data flows through the system
+- When uncertain, explicitly acknowledge it rather than guessing`;
 
     // Build messages array
     const messages = [

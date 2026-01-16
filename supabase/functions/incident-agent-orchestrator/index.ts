@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
+import { getAntiHallucinationPrompt, getCriticalDateContext, calculateIncidentAge } from "../_shared/anti-hallucination.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -235,14 +236,20 @@ serve(async (req) => {
       })
       .eq('id', incident_id);
 
-    // Build investigation context
+    // Build investigation context with anti-hallucination measures
+    const dateContext = getCriticalDateContext();
+    const incidentAge = calculateIncidentAge({ id: incident.id, opened_at: incident.opened_at });
+    const antiHallucinationBlock = getAntiHallucinationPrompt();
+    
     const investigationContext = `
-=== INCIDENT DETAILS ===
+=== VERIFIED INCIDENT DETAILS (as of ${dateContext.currentDateTimeISO}) ===
 Incident ID: ${incident.id}
 Priority: ${incident.priority?.toUpperCase()}
 Status: ${incident.status}
 Title: ${incident.title || 'N/A'}
-Opened: ${incident.opened_at}
+Opened At (EXACT): ${incident.opened_at}
+Incident Age: ${incidentAge.ageLabel} (${incidentAge.ageDays} days)
+Is Stale (>7 days): ${incidentAge.isStale ? 'YES' : 'NO'}
 
 === ORIGINATING SIGNAL ===
 Signal Text: ${incident.signals?.normalized_text || 'N/A'}
@@ -269,19 +276,24 @@ ${incident.timeline_json?.map((t: any) => `[${t.timestamp}] ${t.event}: ${t.deta
 Your specialty: ${agentConfig.specialty}
 Investigation focus areas: ${agentConfig.investigationFocus.join(', ')}
 
+${antiHallucinationBlock}
+
 ${agentConfig.promptTemplate}
 
 CRITICAL RULES:
-1. Base all findings on provided evidence only
+1. Base all findings on provided evidence only - NEVER fabricate data
 2. Clearly label assumptions vs. confirmed facts
 3. Use conditional language for uncertain conclusions
 4. Provide specific, actionable recommendations
 5. Include confidence levels for each finding
 6. Identify gaps in information that need human follow-up
+7. ALWAYS use exact dates from the data (e.g., "opened on ${incident.opened_at}")
+8. NEVER claim the incident is "new" if it is stale (${incidentAge.ageDays} days old)
+9. Reference actual field values, not approximations
 
 OUTPUT FORMAT:
 Structure your analysis with:
-- **Key Findings**: List major discoveries with evidence levels
+- **Key Findings**: List major discoveries with evidence levels (cite specific data)
 - **Assessment**: Your professional evaluation
 - **Recommendations**: Prioritized action items with owners
 - **Assumptions**: What you assumed (to be validated)

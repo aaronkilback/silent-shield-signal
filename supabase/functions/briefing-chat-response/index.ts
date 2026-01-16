@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
+import { getAntiHallucinationPrompt, getCriticalDateContext, generateVerifiedDataContext, categorizeIncidentsByAge } from "../_shared/anti-hallucination.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -210,7 +211,10 @@ serve(async (req) => {
       });
     }
 
-    // Build system prompt with scope enforcement
+    // Build system prompt with scope enforcement and anti-hallucination
+    const dateContext = getCriticalDateContext();
+    const antiHallucinationBlock = getAntiHallucinationPrompt();
+    
     const scopeEnforcementInstructions = scopeDescription ? `
 CRITICAL SCOPE ENFORCEMENT:
 This briefing is STRICTLY SCOPED to: ${scopeDescription}
@@ -234,6 +238,8 @@ Your Mission: ${agent.mission_scope}
 
 You are participating in a FORTRESS BRIEFING HUB session - an incident-centric command environment designed for Major Case Management (MCM).
 
+${antiHallucinationBlock}
+
 ${scopeEnforcementInstructions}
 
 ${is_group_question ? 'Multiple agents are being asked this question - provide your unique perspective based on your specialty.' : 'You have been specifically tagged to respond.'}
@@ -245,10 +251,13 @@ RESPONSE GUIDELINES:
 - Focus on your area of expertise: ${agent.specialty}
 - Provide actionable intelligence or recommendations when possible
 - Reference evidence, notes, or scope-specific data when relevant
+- ALWAYS cite specific data points when making claims (e.g., "The 3 open incidents..." not "several incidents")
+- ALWAYS use actual dates from the data, never approximate or guess
 - If this is a group question, acknowledge other perspectives but focus on your specialty
 - Maintain your persona as ${agent.codename}
 - Be collaborative and supportive of the investigation team
-- ALWAYS stay within the defined scope - warn if queries drift outside`;
+- ALWAYS stay within the defined scope - warn if queries drift outside
+- When uncertain, explicitly state uncertainty rather than guessing`;
 
     // Call AI Gateway
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
