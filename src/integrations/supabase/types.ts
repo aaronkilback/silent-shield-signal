@@ -646,6 +646,70 @@ export type Database = {
           },
         ]
       }
+      briefing_chat_messages: {
+        Row: {
+          author_agent_id: string | null
+          author_user_id: string | null
+          briefing_id: string
+          content: string
+          created_at: string
+          id: string
+          is_group_question: boolean | null
+          mentioned_agent_ids: string[] | null
+          message_type: string
+          metadata: Json | null
+          parent_message_id: string | null
+        }
+        Insert: {
+          author_agent_id?: string | null
+          author_user_id?: string | null
+          briefing_id: string
+          content: string
+          created_at?: string
+          id?: string
+          is_group_question?: boolean | null
+          mentioned_agent_ids?: string[] | null
+          message_type?: string
+          metadata?: Json | null
+          parent_message_id?: string | null
+        }
+        Update: {
+          author_agent_id?: string | null
+          author_user_id?: string | null
+          briefing_id?: string
+          content?: string
+          created_at?: string
+          id?: string
+          is_group_question?: boolean | null
+          mentioned_agent_ids?: string[] | null
+          message_type?: string
+          metadata?: Json | null
+          parent_message_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "briefing_chat_messages_author_agent_id_fkey"
+            columns: ["author_agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "briefing_chat_messages_briefing_id_fkey"
+            columns: ["briefing_id"]
+            isOneToOne: false
+            referencedRelation: "briefing_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "briefing_chat_messages_parent_message_id_fkey"
+            columns: ["parent_message_id"]
+            isOneToOne: false
+            referencedRelation: "briefing_chat_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       briefing_decisions: {
         Row: {
           approved_at: string | null
