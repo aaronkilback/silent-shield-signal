@@ -819,6 +819,39 @@ Inform user of successful creation and instruct to refresh if needed
   {
     type: "function",
     function: {
+      name: "process_document",
+      description: "Extract text from a stored document and update the database. Use this when get_document_content returns placeholder text (e.g., 'Uploaded via AI chat attachment: ...') or no extracted text.",
+      parameters: {
+        type: "object",
+        properties: {
+          document_id: {
+            type: "string",
+            description: "UUID of the archival document record",
+          },
+          file_path: {
+            type: "string",
+            description: "Optional full storage path including bucket (e.g., 'ai-chat-attachments/.../file.pdf'). If omitted, will be resolved from the document record.",
+          },
+          mime_type: {
+            type: "string",
+            description: "Optional MIME type override (e.g., 'application/pdf')",
+          },
+          extract_text: {
+            type: "boolean",
+            description: "Whether to run text extraction/OCR (default true)",
+          },
+          update_database: {
+            type: "boolean",
+            description: "Whether to store extracted text back into the database (default true)",
+          },
+        },
+        required: ["document_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "analyze_visual_document",
       description: `Analyze image-based documents (maps, diagrams, scanned PDFs, ArcGIS exports) using vision AI.
       
@@ -4674,6 +4707,32 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
         return { success: false, error: "Missing document_id" };
       }
 
+      const isPlaceholder = (t: string) => /^Uploaded via/i.test(t.trim());
+      const knownBuckets = [
+        'ai-chat-attachments',
+        'archival-documents',
+        'investigation-files',
+        'travel-documents',
+        'bug-screenshots',
+        'entity-photos',
+        'agent-avatars',
+      ];
+
+      const resolveFullPath = async (storagePath: string | null, metaBucket?: string | null): Promise<string | null> => {
+        if (!storagePath) return null;
+        if (knownBuckets.some((b) => storagePath.startsWith(`${b}/`))) return storagePath;
+
+        const { data: obj } = await supabaseClient
+          .from('storage.objects')
+          .select('bucket_id, name')
+          .eq('name', storagePath)
+          .maybeSingle();
+
+        if (obj?.bucket_id && obj?.name) return `${obj.bucket_id}/${obj.name}`;
+        if (metaBucket) return `${metaBucket}/${storagePath}`;
+        return storagePath;
+      };
+
       // Use maybeSingle so "not found" becomes a clean response (instead of a thrown Postgrest error)
       const { data, error } = await supabaseClient
         .from("archival_documents")
@@ -4700,7 +4759,9 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
       }
 
       const meta: any = data.metadata ?? {};
-      const contentText = data.content_text ?? "";
+      const contentText = (data.content_text ?? "") as string;
+      const placeholder = Boolean(contentText && isPlaceholder(contentText));
+      const resolvedFilePath = await resolveFullPath(data.storage_path ?? null, meta.storage_bucket ?? null);
 
       return {
         success: true,
@@ -4718,17 +4779,138 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
           correlated_entity_ids: data.correlated_entity_ids,
           metadata: data.metadata,
           client_id: data.client_id,
+          storage: {
+            storage_path: data.storage_path,
+            file_path: resolvedFilePath,
+          },
           processing: {
             entities_processed: Boolean(meta.entities_processed),
             processing_error: meta.processing_error ?? null,
-            storage_bucket: meta.storage_bucket ?? "archival-documents",
+            storage_bucket: meta.storage_bucket ?? null,
             text_length: typeof meta.text_length === 'number' ? meta.text_length : null,
           },
         },
-        note:
-          !contentText || contentText.trim().length === 0
+        note: placeholder
+          ? "Only placeholder text is stored for this document (it has not been processed yet)."
+          : (!contentText || contentText.trim().length === 0
             ? "No extracted text is stored for this document (common with map/image-based PDFs)."
-            : undefined,
+            : undefined),
+        suggestion: placeholder
+          ? {
+              tool: "process_document",
+              document_id: docId,
+              file_path: resolvedFilePath,
+            }
+          : undefined,
+      };
+    }
+
+    case "process_document": {
+      const docId = String(args.document_id || '').trim();
+      if (!docId) {
+        return { success: false, error: "Missing document_id" };
+      }
+
+      const knownBuckets = [
+        'ai-chat-attachments',
+        'archival-documents',
+        'investigation-files',
+        'travel-documents',
+        'bug-screenshots',
+        'entity-photos',
+        'agent-avatars',
+      ];
+
+      // 1) Resolve file path (prefer explicit file_path; otherwise derive from archival_documents)
+      let filePath = String(args.file_path || '').trim();
+      let docFileType: string | null = null;
+      let metaBucket: string | null = null;
+      let storagePath: string | null = null;
+
+      if (!filePath) {
+        const { data: doc, error: docErr } = await supabaseClient
+          .from('archival_documents')
+          .select('id, storage_path, file_type, metadata')
+          .eq('id', docId)
+          .maybeSingle();
+
+        if (docErr) {
+          return { success: false, error: `Failed to load document record: ${docErr.message}` };
+        }
+        if (!doc) {
+          return { success: false, error: 'Document not found', document_id: docId };
+        }
+
+        storagePath = doc.storage_path ?? null;
+        docFileType = doc.file_type ?? null;
+        metaBucket = (doc.metadata as any)?.storage_bucket ?? null;
+        filePath = storagePath ? String(storagePath) : '';
+      }
+
+      // 2) Ensure file_path includes bucket
+      if (filePath && !knownBuckets.some((b) => filePath.startsWith(`${b}/`))) {
+        const { data: obj } = await supabaseClient
+          .from('storage.objects')
+          .select('bucket_id, name')
+          .eq('name', filePath)
+          .maybeSingle();
+
+        if (obj?.bucket_id && obj?.name) {
+          filePath = `${obj.bucket_id}/${obj.name}`;
+        } else if (metaBucket) {
+          filePath = `${metaBucket}/${filePath}`;
+        }
+      }
+
+      if (!filePath) {
+        return { success: false, error: 'Missing file_path and could not resolve it from the document record.' };
+      }
+
+      // 3) Infer MIME type
+      const ext = filePath.split('.').pop()?.toLowerCase() || '';
+      const mimeMap: Record<string, string> = {
+        pdf: 'application/pdf',
+        docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        doc: 'application/msword',
+        txt: 'text/plain',
+        md: 'text/markdown',
+        csv: 'text/csv',
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        png: 'image/png',
+        webp: 'image/webp',
+        tif: 'image/tiff',
+        tiff: 'image/tiff',
+      };
+
+      const mimeType = String(args.mime_type || mimeMap[ext] || docFileType || 'application/octet-stream');
+
+      // 4) Invoke the document converter
+      const { data: docResult, error: invokeErr } = await supabaseClient.functions.invoke('fortress-document-converter', {
+        body: {
+          documentId: docId,
+          filePath,
+          mimeType,
+          extractText: args.extract_text !== false,
+          updateDatabase: args.update_database !== false,
+          targetTable: 'archival_documents',
+        },
+      });
+
+      if (invokeErr) {
+        return { success: false, error: `Document processing call failed: ${invokeErr.message}` };
+      }
+
+      if (!docResult?.success) {
+        return { success: false, error: docResult?.error || 'Document processing failed' };
+      }
+
+      return {
+        success: true,
+        document_id: docId,
+        file_path: filePath,
+        extracted_text_length: docResult.extractedTextLength ?? (docResult.extractedText ? String(docResult.extractedText).length : null),
+        database_updated: args.update_database !== false,
       };
     }
 
