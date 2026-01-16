@@ -14,6 +14,9 @@ import { EditSourceDialog } from "@/components/EditSourceDialog";
 import { SourcesList } from "@/components/SourcesList";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { reportError } from "@/lib/errorReporting";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MonitoringDiagnostics } from "@/components/MonitoringDiagnostics";
+import { Activity, Database } from "lucide-react";
 
 const Sources = () => {
   const { user, loading } = useAuth();
@@ -135,49 +138,68 @@ const Sources = () => {
           </Button>
         </div>
 
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
-          <Input
-            placeholder="Search sources by name, type, or status..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10"
-          />
-        </div>
+        <Tabs defaultValue="sources" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="sources">
+              <Database className="w-4 h-4 mr-2" />
+              Sources
+            </TabsTrigger>
+            <TabsTrigger value="diagnostics">
+              <Activity className="w-4 h-4 mr-2" />
+              Diagnostics
+            </TabsTrigger>
+          </TabsList>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Active Sources</CardTitle>
-            <CardDescription>
-              Configure and manage OSINT sources for intelligence gathering
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ErrorBoundary context="Sources List">
-              {filteredSources && filteredSources.length > 0 ? (
-                <SourcesList
-                  sources={filteredSources}
-                  onToggleActive={(id, isActive) =>
-                    toggleActiveMutation.mutate({ id, isActive })
-                  }
-                  onDelete={(id) => deleteMutation.mutate(id)}
-                  onEdit={(source) => {
-                    setEditingSource(source);
-                    setIsEditDialogOpen(true);
-                  }}
-                />
-              ) : searchQuery ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  No sources match your search.
-                </div>
-              ) : (
-                <div className="text-center py-8 text-muted-foreground">
-                  No sources configured yet. Add your first source to get started.
-                </div>
-              )}
-            </ErrorBoundary>
-          </CardContent>
-        </Card>
+          <TabsContent value="sources" className="space-y-4">
+            <div className="relative max-w-md">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+              <Input
+                placeholder="Search sources by name, type, or status..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Active Sources</CardTitle>
+                <CardDescription>
+                  Configure and manage OSINT sources for intelligence gathering
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ErrorBoundary context="Sources List">
+                  {filteredSources && filteredSources.length > 0 ? (
+                    <SourcesList
+                      sources={filteredSources}
+                      onToggleActive={(id, isActive) =>
+                        toggleActiveMutation.mutate({ id, isActive })
+                      }
+                      onDelete={(id) => deleteMutation.mutate(id)}
+                      onEdit={(source) => {
+                        setEditingSource(source);
+                        setIsEditDialogOpen(true);
+                      }}
+                    />
+                  ) : searchQuery ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No sources match your search.
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No sources configured yet. Add your first source to get started.
+                    </div>
+                  )}
+                </ErrorBoundary>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="diagnostics">
+            <MonitoringDiagnostics />
+          </TabsContent>
+        </Tabs>
       </main>
 
       <AddSourceDialog
