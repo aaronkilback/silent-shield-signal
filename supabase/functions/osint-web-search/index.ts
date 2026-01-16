@@ -287,6 +287,9 @@ Respond with structured data.`
           console.log(`Found relevant content: ${title} (relevance: ${analysis.relevance_score})`);
 
           // Create entity content record
+          // Convert relevance_score from 0-1 float to 0-100 integer
+          const relevanceInt = Math.round((analysis.relevance_score || 0) * 100);
+          
           const { error: contentError } = await supabase
             .from('entity_content')
             .insert({
@@ -299,7 +302,7 @@ Respond with structured data.`
                            url.includes('linkedin.com') ? 'social_media' :
                            url.includes('twitter.com') ? 'social_media' : 'web',
               source: new URL(url).hostname,
-              relevance_score: analysis.relevance_score,
+              relevance_score: relevanceInt,
               sentiment: analysis.sentiment,
               published_date: new Date().toISOString()
             });
@@ -312,7 +315,7 @@ Respond with structured data.`
 
           // Create signal if security concern identified
           if (analysis.create_signal && analysis.security_concerns && analysis.security_concerns.length > 0) {
-            const { error: signalError } = await supabase
+            const { data: signalData, error: signalError } = await supabase
               .from('signals')
               .insert({
                 title: `Security Intelligence: ${entity.name}`,
@@ -325,17 +328,19 @@ Respond with structured data.`
                 source_url: url,
                 status: 'new',
                 relevance_score: analysis.relevance_score
-              });
+              })
+              .select('id')
+              .single();
 
             if (signalError) {
               console.error('Error creating signal:', signalError);
             } else {
               signalsCreated++;
               
-              // Create entity mention
+              // Create entity mention with proper signal_id
               await supabase.from('entity_mentions').insert({
                 entity_id: entityId,
-                signal_id: signalError ? null : undefined,
+                signal_id: signalData?.id,
                 confidence: analysis.relevance_score,
                 context: snippet
               });
