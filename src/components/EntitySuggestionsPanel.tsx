@@ -12,10 +12,12 @@ import { CheckCircle, XCircle, Users, AlertCircle, ExternalLink, GitMerge } from
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 export const EntitySuggestionsPanel = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { selectedClientId } = useClientSelection();
   const queryClient = useQueryClient();
   const [selectedSuggestion, setSelectedSuggestion] = useState<string | null>(null);
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
@@ -85,7 +87,32 @@ export const EntitySuggestionsPanel = () => {
         throw new Error(`Potential duplicate entities found: ${duplicateNames}. Please use Merge instead or verify this is unique.`);
       }
 
-      // Create the entity
+      // Try to get client_id from the source (signal or archival document)
+      // Fall back to currently selected client if source doesn't have one
+      let clientId: string | null = null;
+      
+      if (suggestion.source_type === 'signal' && suggestion.source_id) {
+        const { data: signal } = await supabase
+          .from('signals')
+          .select('client_id')
+          .eq('id', suggestion.source_id)
+          .maybeSingle();
+        clientId = signal?.client_id || null;
+      } else if (suggestion.source_type === 'archival_document' && suggestion.source_id) {
+        const { data: doc } = await supabase
+          .from('archival_documents')
+          .select('client_id')
+          .eq('id', suggestion.source_id)
+          .maybeSingle();
+        clientId = doc?.client_id || null;
+      }
+      
+      // If no client from source, use currently selected client
+      if (!clientId && selectedClientId) {
+        clientId = selectedClientId;
+      }
+
+      // Create the entity with client_id from source
       const { data: newEntity, error: createError } = await supabase
         .from('entities')
         .insert([{
@@ -95,6 +122,7 @@ export const EntitySuggestionsPanel = () => {
           attributes: attributes || suggestion.suggested_attributes || {},
           is_active: true,
           description: `Created from ${suggestion.source_type} suggestion`,
+          client_id: clientId,
         }])
         .select()
         .single();
