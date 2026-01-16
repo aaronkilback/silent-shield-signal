@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { encode as base64Encode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -28,6 +29,11 @@ const SUPPORTED_MIME_TYPES = {
 const MAX_FILE_SIZE_MB = 20;
 const RESIZE_THRESHOLD_MB = 5;
 const TARGET_RESIZE_MB = 2;
+
+// Safe base64 encoding that handles large buffers
+function safeBase64Encode(buffer: ArrayBuffer): string {
+  return base64Encode(buffer);
+}
 
 type ConversionResult = {
   success: boolean;
@@ -134,8 +140,8 @@ async function resizeImageWithAI(
     const originalSizeBytes = arrayBuffer.byteLength;
     const originalSizeMB = originalSizeBytes / (1024 * 1024);
     
-    // Convert to base64
-    const base64Content = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+    // Safe base64 encoding
+    const base64Content = safeBase64Encode(arrayBuffer);
     
     // Calculate target dimensions based on size reduction needed
     const targetSizeMB = options.targetSizeMB || TARGET_RESIZE_MB;
@@ -229,7 +235,7 @@ async function compressImageSimple(
   
   // If already small enough, return as-is
   if (originalSizeMB <= targetSizeMB) {
-    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+    const base64 = safeBase64Encode(arrayBuffer);
     return { compressedBase64: base64, newSizeMB: originalSizeMB };
   }
   
@@ -253,9 +259,15 @@ async function extractTextWithVisionAI(
 
     // Convert blob to base64
     const arrayBuffer = await content.arrayBuffer();
-    const base64Content = btoa(
-      String.fromCharCode(...new Uint8Array(arrayBuffer))
-    );
+    
+    // Check file size - if too large, return error with guidance
+    const fileSizeMB = arrayBuffer.byteLength / (1024 * 1024);
+    if (fileSizeMB > 10) {
+      return { text: '', error: `File too large for vision processing (${fileSizeMB.toFixed(1)}MB). Consider processing pages individually.` };
+    }
+    
+    // Safe base64 encoding
+    const base64Content = safeBase64Encode(arrayBuffer);
     
     // Use Lovable AI with vision capabilities
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {

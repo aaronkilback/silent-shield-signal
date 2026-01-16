@@ -339,14 +339,30 @@ COMMUNICATION GUIDELINES:
       {
         type: "function",
         function: {
-          name: "process_document",
-          description: "Extract text content from a document (PDF, DOCX, images) stored in Fortress. Use this when you need to read or analyze a document's contents.",
+          name: "get_document_content",
+          description: "Retrieve the extracted text content from a document that has already been processed and stored in the database. Use this first to check if content is already available before calling process_document.",
           parameters: {
             type: "object",
             properties: {
-              file_path: { type: "string", description: "Storage path to the document (e.g., 'archival-documents/report.pdf')" },
+              document_id: { type: "string", description: "UUID of the document to retrieve content for" },
+              filename: { type: "string", description: "Filename to search for if document_id is not known" },
+            },
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "process_document",
+          description: "Extract text content from a document (PDF, DOCX, images) stored in Fortress. Use this when you need to read or analyze a document's contents and the content hasn't been extracted yet.",
+          parameters: {
+            type: "object",
+            properties: {
+              document_id: { type: "string", description: "UUID of the document record in the database" },
+              file_path: { type: "string", description: "Full storage path including bucket (e.g., 'ai-chat-attachments/user-id/file.pdf' or 'archival-documents/report.pdf')" },
               mime_type: { type: "string", description: "MIME type of the file (e.g., 'application/pdf', 'image/jpeg'). If not provided, will be inferred from extension." },
               extract_text: { type: "boolean", description: "Whether to extract text via OCR (default: true)" },
+              update_database: { type: "boolean", description: "Whether to update the database with extracted text (default: true)" },
             },
             required: ["file_path"],
           }
@@ -360,7 +376,7 @@ COMMUNICATION GUIDELINES:
           parameters: {
             type: "object",
             properties: {
-              file_path: { type: "string", description: "Storage path to the image (e.g., 'archival-documents/photo.jpg')" },
+              file_path: { type: "string", description: "Full storage path including bucket (e.g., 'ai-chat-attachments/user-id/photo.jpg')" },
               target_size_mb: { type: "number", description: "Target file size in MB (default: 2)" },
               max_width_px: { type: "number", description: "Maximum width in pixels" },
               max_height_px: { type: "number", description: "Maximum height in pixels" },
@@ -585,6 +601,55 @@ COMMUNICATION GUIDELINES:
             } 
           });
           
+        } else if (funcName === 'get_document_content') {
+          // Try to retrieve already-extracted content from database
+          let query = supabase.from('archival_documents').select('id, filename, content_text, file_type, storage_path');
+          
+          if (args.document_id) {
+            query = query.eq('id', args.document_id);
+          } else if (args.filename) {
+            query = query.ilike('filename', `%${args.filename}%`);
+          } else {
+            throw new Error('Either document_id or filename is required');
+          }
+          
+          const { data: docs, error } = await query.limit(1).single();
+          
+          if (error || !docs) {
+            toolResults.push({ 
+              tool: 'get_document_content', 
+              result: { 
+                success: false, 
+                error: 'Document not found',
+                suggestion: 'Use process_document with the file_path to extract content'
+              } 
+            });
+          } else if (!docs.content_text || docs.content_text.startsWith('Uploaded via')) {
+            // Content not yet extracted
+            toolResults.push({ 
+              tool: 'get_document_content', 
+              result: { 
+                success: false, 
+                document_id: docs.id,
+                filename: docs.filename,
+                storage_path: docs.storage_path,
+                error: 'Document content not yet extracted',
+                suggestion: `Call process_document with file_path="${docs.storage_path}" and document_id="${docs.id}" to extract text`
+              } 
+            });
+          } else {
+            toolResults.push({ 
+              tool: 'get_document_content', 
+              result: { 
+                success: true, 
+                document_id: docs.id,
+                filename: docs.filename,
+                content_text: docs.content_text,
+                text_length: docs.content_text.length
+              } 
+            });
+          }
+          
         } else if (funcName === 'process_document') {
           // Infer MIME type from extension if not provided
           const ext = args.file_path?.split('.').pop()?.toLowerCase() || '';
@@ -604,13 +669,17 @@ COMMUNICATION GUIDELINES:
           };
           const mimeType = args.mime_type || mimeMap[ext] || 'application/octet-stream';
           
+          // Determine target table based on file path
+          const targetTable = args.file_path?.includes('archival') ? 'archival_documents' : 'archival_documents';
+          
           const { data: docResult, error } = await supabase.functions.invoke('fortress-document-converter', {
             body: {
-              documentId: crypto.randomUUID(),
+              documentId: args.document_id || crypto.randomUUID(),
               filePath: args.file_path,
               mimeType: mimeType,
               extractText: args.extract_text !== false,
-              updateDatabase: false
+              updateDatabase: args.update_database !== false,
+              targetTable: targetTable
             }
           });
           
@@ -621,9 +690,11 @@ COMMUNICATION GUIDELINES:
             tool: 'process_document', 
             result: { 
               success: true, 
+              document_id: args.document_id,
               extracted_text: docResult.extractedText,
               text_length: docResult.extractedTextLength,
-              file_path: args.file_path
+              file_path: args.file_path,
+              database_updated: args.update_database !== false
             } 
           });
           
