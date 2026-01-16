@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
-import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon } from "lucide-react";
+import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon, Copy, Check } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState, useEffect } from "react";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
@@ -31,6 +31,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [correlationData, setCorrelationData] = useState<any>(null);
   const [correlatedSignals, setCorrelatedSignals] = useState<any[]>([]);
+  const [copied, setCopied] = useState(false);
   
   if (!signal) return null;
 
@@ -115,6 +116,61 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
     }
   };
 
+  const copyFullAnalysis = async () => {
+    const aiDecision = signal.raw_json?.ai_decision;
+    const aiAnalysis = signal.raw_json?.ai_analysis || aiDecision;
+    
+    let content = `# Strategic Intelligence Analysis\n\n`;
+    content += `## Signal Overview\n`;
+    content += `**Text:** ${decodedText}\n`;
+    content += `**Severity:** ${signal.severity?.toUpperCase()}\n`;
+    content += `**Category:** ${signal.category}\n`;
+    content += `**Status:** ${signal.status}\n`;
+    content += `**Date:** ${new Date(signal.created_at).toLocaleString()}\n\n`;
+    
+    if (aiAnalysis) {
+      if (aiAnalysis.strategic_context) {
+        content += `## Strategic Context\n${decodeHtmlEntities(aiAnalysis.strategic_context)}\n\n`;
+      }
+      if (aiAnalysis.threat_correlation) {
+        content += `## Threat Correlation\n${decodeHtmlEntities(aiAnalysis.threat_correlation)}\n\n`;
+      }
+      if (aiAnalysis.campaign_assessment) {
+        content += `## Campaign Assessment\n${decodeHtmlEntities(aiAnalysis.campaign_assessment)}\n\n`;
+      }
+      if (aiAnalysis.sector_implications) {
+        content += `## Sector Implications\n${decodeHtmlEntities(aiAnalysis.sector_implications)}\n\n`;
+      }
+      if (aiDecision) {
+        content += `## AI Decision\n`;
+        content += `**Threat Level:** ${aiDecision.threat_level?.toUpperCase()}\n`;
+        content += `**Confidence:** ${Math.round((aiDecision.confidence || 0) * 100)}%\n`;
+        content += `**Should Create Incident:** ${aiDecision.should_create_incident ? 'Yes' : 'No'}\n`;
+        if (aiDecision.incident_priority) {
+          content += `**Priority:** ${aiDecision.incident_priority.toUpperCase()}\n`;
+        }
+        if (aiDecision.reasoning) {
+          content += `\n**Reasoning:**\n${decodeHtmlEntities(aiDecision.reasoning)}\n`;
+        }
+        if (aiDecision.containment_actions?.length) {
+          content += `\n**Containment Actions:**\n${aiDecision.containment_actions.map((a: string) => `- ${decodeHtmlEntities(a)}`).join('\n')}\n`;
+        }
+        if (aiDecision.remediation_steps?.length) {
+          content += `\n**Remediation Steps:**\n${aiDecision.remediation_steps.map((s: string) => `- ${decodeHtmlEntities(s)}`).join('\n')}\n`;
+        }
+      }
+    }
+    
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      toast.success("Analysis copied to clipboard");
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      toast.error("Failed to copy");
+    }
+  };
+
   // AI analysis is stored in ai_decision by the ai-decision-engine
   const aiDecision = signal.raw_json?.ai_decision;
   // For backwards compatibility, also check ai_analysis
@@ -155,6 +211,18 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                   {isAnalyzing ? 'Analyzing...' : 'Run AI Analysis'}
                 </Button>
               )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={copyFullAnalysis}
+              >
+                {copied ? (
+                  <Check className="w-4 h-4 mr-2 text-green-500" />
+                ) : (
+                  <Copy className="w-4 h-4 mr-2" />
+                )}
+                {copied ? 'Copied!' : 'Copy Analysis'}
+              </Button>
               {selectedText ? (
                 <Button
                   variant="default"
