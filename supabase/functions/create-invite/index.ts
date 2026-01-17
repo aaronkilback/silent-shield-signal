@@ -196,21 +196,74 @@ serve(async (req) => {
             'Authorization': `Bearer ${resendApiKey}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({
-            from: fromEmail,
-            to: [email],
-            subject: `You've been invited to join ${tenant?.name || 'a tenant'} on Fortress`,
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2>You've Been Invited!</h2>
-                <p>You've been invited to join <strong>${tenant?.name || 'a tenant'}</strong> on Fortress as a <strong>${role}</strong>.</p>
-                <p>Click the button below to accept your invitation:</p>
-                <a href="${inviteUrl}" style="display: inline-block; background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin: 16px 0;">Accept Invitation</a>
-                <p style="color: #666; font-size: 14px;">This invitation will expire in 7 days.</p>
-                <p style="color: #666; font-size: 12px;">If you didn't expect this invitation, you can safely ignore this email.</p>
-              </div>
-            `
-          })
+            body: JSON.stringify({
+              from: fromEmail,
+              to: [email],
+              subject: `You're invited to join ${tenant?.name || 'the team'} on Fortress`,
+              html: `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                  <meta charset="utf-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                </head>
+                <body style="margin: 0; padding: 0; background-color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                  <div style="max-width: 560px; margin: 0 auto; padding: 40px 20px;">
+                    <!-- Header -->
+                    <div style="text-align: center; margin-bottom: 32px;">
+                      <div style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); padding: 12px 20px; border-radius: 12px;">
+                        <span style="color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">🛡️ Fortress</span>
+                      </div>
+                    </div>
+                    
+                    <!-- Main Card -->
+                    <div style="background: #1e293b; border-radius: 16px; padding: 40px; border: 1px solid #334155;">
+                      <h1 style="color: #f8fafc; font-size: 24px; font-weight: 600; margin: 0 0 16px 0; text-align: center;">
+                        You're Invited to Join the Team
+                      </h1>
+                      
+                      <p style="color: #94a3b8; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0; text-align: center;">
+                        You've been invited to join <strong style="color: #f8fafc;">${tenant?.name || 'the organization'}</strong> on Fortress — a secure intelligence platform for managing threats, incidents, and investigations.
+                      </p>
+                      
+                      <!-- Role Badge -->
+                      <div style="text-align: center; margin-bottom: 24px;">
+                        <span style="display: inline-block; background: #1e3a5f; color: #60a5fa; padding: 8px 16px; border-radius: 20px; font-size: 14px; font-weight: 500;">
+                          Your Role: ${role.charAt(0).toUpperCase() + role.slice(1)}
+                        </span>
+                      </div>
+                      
+                      <p style="color: #94a3b8; font-size: 15px; line-height: 1.6; margin: 0 0 32px 0; text-align: center;">
+                        Click below to create your account and get started. Your team is waiting for you.
+                      </p>
+                      
+                      <!-- CTA Button -->
+                      <div style="text-align: center; margin-bottom: 32px;">
+                        <a href="${inviteUrl}" style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: #ffffff; font-weight: 600; text-decoration: none; padding: 16px 40px; border-radius: 10px; font-size: 16px; box-shadow: 0 4px 14px rgba(59, 130, 246, 0.4);">
+                          Accept Invitation
+                        </a>
+                      </div>
+                      
+                      <!-- Expiry Note -->
+                      <p style="color: #64748b; font-size: 13px; text-align: center; margin: 0;">
+                        ⏰ This invitation expires in 7 days
+                      </p>
+                    </div>
+                    
+                    <!-- Footer -->
+                    <div style="text-align: center; margin-top: 32px;">
+                      <p style="color: #475569; font-size: 12px; margin: 0 0 8px 0;">
+                        Didn't expect this invitation? You can safely ignore this email.
+                      </p>
+                      <p style="color: #334155; font-size: 11px; margin: 0;">
+                        Fortress Security Intelligence Platform
+                      </p>
+                    </div>
+                  </div>
+                </body>
+                </html>
+              `
+            })
         });
 
         if (!emailResponse.ok) {
