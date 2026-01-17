@@ -2206,6 +2206,109 @@ export const guardianAgentTests = {
 };
 
 // ============================================
+// SYSTEM RESILIENCE TESTS
+// ============================================
+
+export const systemResilienceTests = {
+  name: 'System Resilience',
+  tests: [
+    {
+      name: 'Health check endpoint responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('system-health-check', {
+          body: { quick: true },
+        });
+        
+        if (error) throw error;
+        if (!data) throw new Error('No health check response');
+        if (!data.overall_status) throw new Error('Missing overall_status in response');
+        if (!data.checks || !Array.isArray(data.checks)) throw new Error('Missing checks array');
+      },
+    },
+    {
+      name: 'Health check includes core services',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('system-health-check', {
+          body: { quick: true },
+        });
+        
+        if (error) throw error;
+        
+        const checkNames = data.checks.map((c: any) => c.name);
+        const requiredChecks = ['database', 'auth', 'storage'];
+        
+        for (const required of requiredChecks) {
+          if (!checkNames.includes(required)) {
+            throw new Error(`Missing required health check: ${required}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Health check latencies are reasonable',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('system-health-check', {
+          body: { quick: true },
+        });
+        
+        if (error) throw error;
+        
+        for (const check of data.checks) {
+          if (check.latency_ms > 10000) {
+            throw new Error(`Health check ${check.name} took too long: ${check.latency_ms}ms`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Retry utility handles sync functions',
+      fn: async () => {
+        // Test the retryAsync utility
+        const { retryAsync } = await import('@/hooks/useRetry');
+        
+        let attempts = 0;
+        const result = await retryAsync(async () => {
+          attempts++;
+          if (attempts < 2) {
+            throw new Error('Simulated failure');
+          }
+          return 'success';
+        }, { maxRetries: 3 });
+        
+        if (result !== 'success') throw new Error('Expected success result');
+        if (attempts !== 2) throw new Error(`Expected 2 attempts, got ${attempts}`);
+      },
+    },
+    {
+      name: 'Circuit breaker initializes correctly',
+      fn: async () => {
+        const { CircuitBreaker } = await import('@/hooks/useRetry');
+        
+        const cb = new CircuitBreaker({ failureThreshold: 3 });
+        if (cb.getState() !== 'closed') throw new Error('Circuit should start closed');
+        if (cb.getFailures() !== 0) throw new Error('Failures should start at 0');
+      },
+    },
+    {
+      name: 'Resilience utilities export correctly',
+      fn: async () => {
+        const resilience = await import('@/lib/resilience');
+        
+        if (typeof resilience.invokeWithResilience !== 'function') {
+          throw new Error('invokeWithResilience should be a function');
+        }
+        if (typeof resilience.withTimeout !== 'function') {
+          throw new Error('withTimeout should be a function');
+        }
+        if (typeof resilience.batchWithConcurrency !== 'function') {
+          throw new Error('batchWithConcurrency should be a function');
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
 // RUN ALL TESTS
 // ============================================
 
@@ -2264,6 +2367,9 @@ export async function runAllTests(): Promise<TestSuite[]> {
     
     // Content Moderation
     guardianAgentTests,
+    
+    // System Resilience
+    systemResilienceTests,
   ];
   
   const results: TestSuite[] = [];
