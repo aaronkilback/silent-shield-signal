@@ -934,11 +934,47 @@ COMMUNICATION GUIDELINES:
       }
     }
     
-    // Get text response
+    // Get text response from first call
     let agentResponse = choice?.message?.content || '';
     
-    // If tools were called, append summary
-    if (toolResults.length > 0) {
+    // If tools were called, we need to send results back to AI for final response
+    if (toolCalls.length > 0 && toolResults.length > 0) {
+      console.log('Tools executed, sending results back to AI for final response');
+      
+      // Build tool results messages for the AI
+      const toolResultMessages = toolCalls.map((tc: any, idx: number) => ({
+        role: 'tool',
+        tool_call_id: tc.id,
+        content: JSON.stringify(toolResults[idx]?.result || { error: 'No result' })
+      }));
+      
+      // Make follow-up call with tool results
+      const followUpMessages = [
+        ...messages,
+        choice.message, // Include the assistant's message with tool_calls
+        ...toolResultMessages
+      ];
+      
+      const followUpResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-3-flash-preview',
+          messages: followUpMessages,
+        }),
+      });
+      
+      if (followUpResponse.ok) {
+        const followUpData = await followUpResponse.json();
+        agentResponse = followUpData.choices?.[0]?.message?.content || agentResponse;
+      } else {
+        console.error('Follow-up API call failed:', await followUpResponse.text());
+      }
+      
+      // Append action summary
       const successful = toolResults.filter(t => t.result.success);
       const failed = toolResults.filter(t => !t.result.success);
       
@@ -961,8 +997,10 @@ COMMUNICATION GUIDELINES:
           actionSummary += `✅ OSINT scan triggered\n`;
         } else if (result.tool === 'analyze_threat_radar') {
           actionSummary += `✅ Threat radar analysis complete\n`;
+        } else if (result.tool === 'generate_intelligence_summary') {
+          actionSummary += `✅ Intelligence briefing generated from verified database records\n`;
         } else if (result.tool === 'process_document') {
-          actionSummary += `✅ Document processed: ${result.result.text_length || 0} characters extracted from "${result.result.file_path}"\n`;
+          actionSummary += `✅ Document processed: ${result.result.text_length || 0} characters extracted\n`;
         } else if (result.tool === 'resize_image') {
           actionSummary += `✅ Image resized: ${result.result.original_size_mb?.toFixed(2) || '?'}MB → ${result.result.resized_size_mb?.toFixed(2) || '?'}MB\n`;
         } else {
