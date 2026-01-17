@@ -187,6 +187,7 @@ serve(async (req) => {
     const inviteUrl = `${origin}/invite/accept?token=${token}`;
 
     // Send email if Resend is configured
+    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Fortress <noreply@resend.dev>';
     if (resendApiKey) {
       try {
         const emailResponse = await fetch('https://api.resend.com/emails', {
@@ -196,7 +197,7 @@ serve(async (req) => {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            from: 'Fortress <noreply@resend.dev>',
+            from: fromEmail,
             to: [email],
             subject: `You've been invited to join ${tenant?.name || 'a tenant'} on Fortress`,
             html: `
