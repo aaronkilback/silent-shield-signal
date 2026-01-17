@@ -92,7 +92,7 @@ export default function TenantAdmin() {
     enabled: !!currentTenant?.id && isOwnerOrAdmin,
   });
 
-  // Fetch pending invites
+  // Fetch pending invites for current tenant
   const { data: invites, isLoading: invitesLoading } = useQuery({
     queryKey: ['tenant-invites', currentTenant?.id],
     queryFn: async () => {
@@ -110,6 +110,23 @@ export default function TenantAdmin() {
       return data || [];
     },
     enabled: !!currentTenant?.id && isOwnerOrAdmin,
+  });
+
+  // Super admin: Fetch ALL pending invites across all tenants
+  const { data: allInvites, isLoading: allInvitesLoading } = useQuery({
+    queryKey: ['all-tenant-invites'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('tenant_invites')
+        .select('*, tenants(name)')
+        .is('used_at', null)
+        .gt('expires_at', new Date().toISOString())
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: isSuperAdmin,
   });
 
   // Create invite mutation
@@ -360,6 +377,72 @@ export default function TenantAdmin() {
                 As a super admin, you can create new tenants for organizations
               </CardDescription>
             </CardHeader>
+          </Card>
+        )}
+
+        {/* Super Admin: All Pending Invites Section */}
+        {isSuperAdmin && (
+          <Card className="border-amber-500/50 bg-amber-500/5">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Mail className="h-5 w-5 text-amber-500" />
+                <CardTitle>All Pending Invites</CardTitle>
+                <Badge variant="outline" className="ml-2 border-amber-500 text-amber-500">All Tenants</Badge>
+              </div>
+              <CardDescription>
+                View all pending invitations across all tenants
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Tenant</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Expires</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {allInvitesLoading ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                        Loading all invites...
+                      </TableCell>
+                    </TableRow>
+                  ) : allInvites?.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                        No pending invites across any tenant
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    allInvites?.map((invite: any) => (
+                      <TableRow key={invite.id}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            <Building2 className="h-4 w-4 text-muted-foreground" />
+                            {invite.tenants?.name || 'Unknown'}
+                          </div>
+                        </TableCell>
+                        <TableCell>{invite.email}</TableCell>
+                        <TableCell>
+                          <Badge variant={getRoleBadgeVariant(invite.role)}>
+                            {invite.role}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          <div className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {format(new Date(invite.expires_at), 'MMM d, yyyy')}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
           </Card>
         )}
 
