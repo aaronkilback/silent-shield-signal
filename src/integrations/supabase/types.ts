@@ -2782,6 +2782,48 @@ export type Database = {
           },
         ]
       }
+      geospatial_maps: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          extracted_assets_count: number | null
+          file_size: number | null
+          file_type: string | null
+          filename: string
+          id: string
+          processing_status: string | null
+          storage_path: string
+          updated_at: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          extracted_assets_count?: number | null
+          file_size?: number | null
+          file_type?: string | null
+          filename: string
+          id?: string
+          processing_status?: string | null
+          storage_path: string
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          extracted_assets_count?: number | null
+          file_size?: number | null
+          file_type?: string | null
+          filename?: string
+          id?: string
+          processing_status?: string | null
+          storage_path?: string
+          updated_at?: string
+          uploaded_by?: string | null
+        }
+        Relationships: []
+      }
       global_chunks: {
         Row: {
           chunk_index: number
@@ -4201,6 +4243,48 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      petronas_assets: {
+        Row: {
+          asset_name: string
+          asset_type: string | null
+          created_at: string
+          id: string
+          latitude: number | null
+          location_description: string | null
+          longitude: number | null
+          metadata: Json | null
+          region: string | null
+          source_document_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          asset_name: string
+          asset_type?: string | null
+          created_at?: string
+          id?: string
+          latitude?: number | null
+          location_description?: string | null
+          longitude?: number | null
+          metadata?: Json | null
+          region?: string | null
+          source_document_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          asset_name?: string
+          asset_type?: string | null
+          created_at?: string
+          id?: string
+          latitude?: number | null
+          location_description?: string | null
+          longitude?: number | null
+          metadata?: Json | null
+          region?: string | null
+          source_document_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       playbooks: {
         Row: {
