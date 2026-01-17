@@ -6,6 +6,7 @@ import { AgentRoster } from "@/components/agents/AgentRoster";
 import { AgentPanel } from "@/components/agents/AgentPanel";
 import { AgentInteraction } from "@/components/agents/AgentInteraction";
 import { AgentAdminDialog } from "@/components/agents/AgentAdminDialog";
+import { AnticipationIndex } from "@/components/fortress";
 import { useUserRole } from "@/hooks/useUserRole";
 import { Shield } from "lucide-react";
 
@@ -89,17 +90,23 @@ export default function CommandCenter() {
   return (
     <PageLayout>
       {/* Header */}
-      <div className="flex items-center gap-3 border-b border-border pb-4">
-        <div className="p-2 rounded-lg bg-primary/10">
-          <Shield className="h-6 w-6 text-primary" />
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-border pb-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-primary/10">
+            <Shield className="h-6 w-6 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Fortress AI Command Center</h1>
+            <p className="text-sm text-muted-foreground">
+              Multi-Agent Intelligence Operations
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Fortress AI Command Center</h1>
-          <p className="text-sm text-muted-foreground">
-            Multi-Agent Intelligence Operations
-          </p>
-        </div>
+        <AnticipationIndex compact />
       </div>
+
+      {/* Anticipation Index - Full Card */}
+      <AnticipationIndex />
 
         {/* Agent Roster */}
         <AgentRoster
