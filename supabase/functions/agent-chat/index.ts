@@ -2,6 +2,14 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
 import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
 import { getAntiHallucinationPrompt } from "../_shared/anti-hallucination.ts";
+import { 
+  getReliabilityFirstPrompt, 
+  getReliabilitySettings, 
+  runQAChecks, 
+  createSourceArtifact,
+  createVerificationTask,
+  type SourceArtifact 
+} from "../_shared/reliability-first.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -285,6 +293,29 @@ serve(async (req) => {
     const now = new Date();
     const currentDate = now.toISOString().split('T')[0];
 
+    // Get reliability settings for this client
+    const reliabilitySettings = await getReliabilitySettings(supabase, client_id);
+    console.log('Reliability First mode:', reliabilitySettings.reliability_first_enabled ? 'ENABLED' : 'disabled');
+
+    // Collect source artifacts from context data
+    const sourceArtifacts: SourceArtifact[] = [];
+    
+    // Create source artifacts for signals data
+    if (contextData.includes('Recent Signals')) {
+      const artifact = await createSourceArtifact(supabase, {
+        source_type: 'incident_record',
+        title: 'Fortress Signals Database',
+        content: contextData,
+        client_id,
+      });
+      if (artifact) sourceArtifacts.push(artifact);
+    }
+
+    // Build Reliability First prompt block
+    const reliabilityFirstBlock = reliabilitySettings.reliability_first_enabled 
+      ? getReliabilityFirstPrompt(sourceArtifacts)
+      : '';
+
     // Build system prompt with agent persona
     const antiHallucinationBlock = getAntiHallucinationPrompt();
     
@@ -295,6 +326,8 @@ Your Call Sign: ${agent.call_sign}
 Output Types You Generate: ${agent.output_types.join(', ')}
 
 CURRENT DATE: ${currentDate}
+
+${reliabilityFirstBlock}
 
 ${antiHallucinationBlock}
 
@@ -309,9 +342,16 @@ ${contextData || 'No verified data available in current context. Use tools to qu
 │                    MANDATORY DATA SOURCING PROTOCOL                          │
 └─────────────────────────────────────────────────────────────────────────────┘
 
+RELIABILITY FIRST MODE: ${reliabilitySettings.reliability_first_enabled ? '🟢 ACTIVE' : '⚪ INACTIVE'}
+${reliabilitySettings.reliability_first_enabled ? `
+• Minimum sources required: ${reliabilitySettings.require_min_sources}
+• Max source age: ${reliabilitySettings.max_source_age_hours} hours
+• Block unverified claims: ${reliabilitySettings.block_unverified_claims ? 'YES' : 'NO'}
+` : ''}
+
 EVERY PIECE OF INFORMATION YOU PRESENT MUST BE:
 1. SOURCED from the database (via tools or context above)
-2. CITED with the source type and relevant identifiers
+2. CITED with the source type and relevant identifiers [S1], [S2], etc.
 3. DATED with when the data was recorded/updated
 
 WHEN GENERATING BRIEFINGS OR REPORTS:
@@ -319,6 +359,7 @@ WHEN GENERATING BRIEFINGS OR REPORTS:
 - Format the tool results into a professional briefing
 - Never supplement with invented information
 - If data is sparse, state: "Limited data available for this period"
+- End with: "Reliability Score: [X]% | Sources: [N] verified"
 
 HANDLING USER-SUBMITTED DATA:
 - Data submitted by analysts should be prefixed: "[Analyst-reported]"
@@ -329,6 +370,7 @@ IF YOU CANNOT VERIFY SOMETHING:
 → DO NOT present it as fact
 → DO say: "This cannot be verified with available data"
 → DO recommend: "Suggest obtaining additional source confirmation"
+→ Create a verification task by noting: "[VERIFICATION NEEDED: (what to check) at (where to check)]"
 
 TOOL USAGE - YOU HAVE REAL CAPABILITIES:
 You have access to the FULL Fortress toolset. When you need to:
@@ -352,7 +394,8 @@ RESPONSE FORMAT GUIDELINES:
 - Follow with analysis organized by key points
 - End with recommendations or next steps
 - Use bullet points for lists of 3+ items
-- ALWAYS include source citations (e.g., "Source: signals database, retrieved ${currentDate}")
+- ALWAYS include source citations (e.g., "[S1] signals database, retrieved ${currentDate}")
+- End briefings with a Sources section listing all citations
 
 COMMUNICATION GUIDELINES:
 - Maintain your persona at all times
