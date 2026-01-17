@@ -780,6 +780,39 @@ export type Database = {
         }
         Relationships: []
       }
+      blocked_terms: {
+        Row: {
+          category: string
+          created_at: string | null
+          created_by: string | null
+          id: string
+          is_active: boolean | null
+          is_regex: boolean | null
+          severity: string
+          term: string
+        }
+        Insert: {
+          category: string
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_regex?: boolean | null
+          severity?: string
+          term: string
+        }
+        Update: {
+          category?: string
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_regex?: boolean | null
+          severity?: string
+          term?: string
+        }
+        Relationships: []
+      }
       briefing_agenda_items: {
         Row: {
           briefing_id: string
@@ -1525,6 +1558,72 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "clients_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      content_violations: {
+        Row: {
+          action_taken: string
+          category: string
+          content_excerpt: string | null
+          content_type: string
+          created_at: string | null
+          id: string
+          matched_pattern: string | null
+          matched_term_id: string | null
+          review_notes: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          severity: string
+          tenant_id: string | null
+          user_id: string
+        }
+        Insert: {
+          action_taken: string
+          category: string
+          content_excerpt?: string | null
+          content_type: string
+          created_at?: string | null
+          id?: string
+          matched_pattern?: string | null
+          matched_term_id?: string | null
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          severity: string
+          tenant_id?: string | null
+          user_id: string
+        }
+        Update: {
+          action_taken?: string
+          category?: string
+          content_excerpt?: string | null
+          content_type?: string
+          created_at?: string | null
+          id?: string
+          matched_pattern?: string | null
+          matched_term_id?: string | null
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          severity?: string
+          tenant_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "content_violations_matched_term_id_fkey"
+            columns: ["matched_term_id"]
+            isOneToOne: false
+            referencedRelation: "blocked_terms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "content_violations_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
@@ -4391,6 +4490,30 @@ export type Database = {
           },
         ]
       }
+      rate_limit_tracking: {
+        Row: {
+          action_type: string
+          id: string
+          request_count: number | null
+          user_id: string
+          window_start: string
+        }
+        Insert: {
+          action_type: string
+          id?: string
+          request_count?: number | null
+          user_id: string
+          window_start: string
+        }
+        Update: {
+          action_type?: string
+          id?: string
+          request_count?: number | null
+          user_id?: string
+          window_start?: string
+        }
+        Relationships: []
+      }
       reliability_settings: {
         Row: {
           auto_create_verification_tasks: boolean | null
@@ -6089,6 +6212,65 @@ export type Database = {
           },
         ]
       }
+      user_conduct_records: {
+        Row: {
+          banned_at: string | null
+          banned_reason: string | null
+          created_at: string | null
+          current_suspension_until: string | null
+          id: string
+          is_permanently_banned: boolean | null
+          last_violation_at: string | null
+          last_warning_at: string | null
+          suspension_count: number | null
+          tenant_id: string | null
+          updated_at: string | null
+          user_id: string
+          violation_count: number | null
+          warning_count: number | null
+        }
+        Insert: {
+          banned_at?: string | null
+          banned_reason?: string | null
+          created_at?: string | null
+          current_suspension_until?: string | null
+          id?: string
+          is_permanently_banned?: boolean | null
+          last_violation_at?: string | null
+          last_warning_at?: string | null
+          suspension_count?: number | null
+          tenant_id?: string | null
+          updated_at?: string | null
+          user_id: string
+          violation_count?: number | null
+          warning_count?: number | null
+        }
+        Update: {
+          banned_at?: string | null
+          banned_reason?: string | null
+          created_at?: string | null
+          current_suspension_until?: string | null
+          id?: string
+          is_permanently_banned?: boolean | null
+          last_violation_at?: string | null
+          last_warning_at?: string | null
+          suspension_count?: number | null
+          tenant_id?: string | null
+          updated_at?: string | null
+          user_id?: string
+          violation_count?: number | null
+          warning_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_conduct_records_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_preferences: {
         Row: {
           communication_style: string | null
@@ -6319,6 +6501,65 @@ export type Database = {
           },
           {
             foreignKeyName: "verification_tasks_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      violation_reports: {
+        Row: {
+          assigned_to: string | null
+          content_excerpt: string | null
+          content_id: string | null
+          content_type: string
+          created_at: string | null
+          description: string | null
+          id: string
+          reported_user_id: string | null
+          reporter_id: string
+          resolution_notes: string | null
+          resolved_at: string | null
+          status: string
+          tenant_id: string | null
+          violation_category: string
+        }
+        Insert: {
+          assigned_to?: string | null
+          content_excerpt?: string | null
+          content_id?: string | null
+          content_type: string
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          reported_user_id?: string | null
+          reporter_id: string
+          resolution_notes?: string | null
+          resolved_at?: string | null
+          status?: string
+          tenant_id?: string | null
+          violation_category: string
+        }
+        Update: {
+          assigned_to?: string | null
+          content_excerpt?: string | null
+          content_id?: string | null
+          content_type?: string
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          reported_user_id?: string | null
+          reporter_id?: string
+          resolution_notes?: string | null
+          resolved_at?: string | null
+          status?: string
+          tenant_id?: string | null
+          violation_category?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "violation_reports_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
@@ -6747,6 +6988,15 @@ export type Database = {
         Args: { _user_id: string; _workspace_id: string }
         Returns: boolean
       }
+      check_rate_limit: {
+        Args: {
+          p_action_type: string
+          p_max_requests: number
+          p_user_id: string
+          p_window_minutes: number
+        }
+        Returns: boolean
+      }
       check_tenant_access: {
         Args: { p_tenant_id: string; p_user_id: string }
         Returns: boolean
@@ -6805,6 +7055,18 @@ export type Database = {
       is_workspace_owner: {
         Args: { _user_id: string; _workspace_id: string }
         Returns: boolean
+      }
+      record_violation: {
+        Args: {
+          p_category: string
+          p_content_excerpt: string
+          p_content_type: string
+          p_matched_pattern: string
+          p_severity: string
+          p_tenant_id: string
+          p_user_id: string
+        }
+        Returns: string
       }
       restore_ai_messages: {
         Args: { message_ids: string[] }

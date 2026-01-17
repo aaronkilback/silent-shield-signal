@@ -2064,6 +2064,148 @@ export const documentsSourcesTests = {
 };
 
 // ============================================
+// GUARDIAN AGENT TESTS
+// ============================================
+
+export const guardianAgentTests = {
+  name: 'Guardian Agent',
+  tests: [
+    {
+      name: 'Can read blocked_terms table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('blocked_terms')
+          .select('id, term, category, severity')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Blocked terms have valid category',
+      fn: async () => {
+        const validCategories = ['profanity', 'threat', 'harassment', 'pii', 'security_risk', 'misinformation'];
+        
+        const { data, error } = await supabase
+          .from('blocked_terms')
+          .select('id, category')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const term of data || []) {
+          if (!validCategories.includes(term.category)) {
+            throw new Error(`Blocked term ${term.id} has invalid category: ${term.category}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Blocked terms have valid severity',
+      fn: async () => {
+        const validSeverities = ['warning', 'block', 'escalate'];
+        
+        const { data, error } = await supabase
+          .from('blocked_terms')
+          .select('id, severity')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const term of data || []) {
+          if (!validSeverities.includes(term.severity)) {
+            throw new Error(`Blocked term ${term.id} has invalid severity: ${term.severity}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Can read content_violations table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('content_violations')
+          .select('id, user_id, category, action_taken')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Content violations have valid action_taken',
+      fn: async () => {
+        const validActions = ['warned', 'blocked', 'escalated', 'pending_review'];
+        
+        const { data, error } = await supabase
+          .from('content_violations')
+          .select('id, action_taken')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const violation of data || []) {
+          if (!validActions.includes(violation.action_taken)) {
+            throw new Error(`Violation ${violation.id} has invalid action_taken: ${violation.action_taken}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Can read violation_reports table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('violation_reports')
+          .select('id, reporter_id, status')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Violation reports have valid status',
+      fn: async () => {
+        const validStatuses = ['pending', 'investigating', 'confirmed', 'dismissed', 'actioned'];
+        
+        const { data, error } = await supabase
+          .from('violation_reports')
+          .select('id, status')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const report of data || []) {
+          if (!validStatuses.includes(report.status)) {
+            throw new Error(`Report ${report.id} has invalid status: ${report.status}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Can read user_conduct_records table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('user_conduct_records')
+          .select('id, user_id, violation_count')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Guardian check edge function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('guardian-check', {
+          body: { 
+            content: 'Hello, this is a test message.',
+            content_type: 'test'
+          }
+        });
+        
+        // Should return allowed: true for clean content
+        if (!data || data.allowed !== true) {
+          throw new Error('Guardian check should allow clean content');
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
 // RUN ALL TESTS
 // ============================================
 
@@ -2119,6 +2261,9 @@ export async function runAllTests(): Promise<TestSuite[]> {
     // System Health
     auditMonitoringTests,
     documentsSourcesTests,
+    
+    // Content Moderation
+    guardianAgentTests,
   ];
   
   const results: TestSuite[] = [];
