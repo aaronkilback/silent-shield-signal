@@ -17,6 +17,7 @@ import { RadicalActivityMonitor } from "@/components/threat-radar/RadicalActivit
 import { PredictiveInsightsPanel } from "@/components/threat-radar/PredictiveInsightsPanel";
 import { ThreatTimelineChart } from "@/components/threat-radar/ThreatTimelineChart";
 import { WildfireMap, WildfireDataPanel } from "@/components/wildfire";
+import { AnticipationIndex } from "@/components/fortress";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
@@ -124,6 +125,7 @@ const ThreatRadar = () => {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <AnticipationIndex clientId={selectedClientId || undefined} compact />
           <DashboardClientSelector />
           <Button 
             onClick={handleRefresh} 
