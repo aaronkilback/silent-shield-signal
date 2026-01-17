@@ -188,3 +188,6 @@ verify_jwt = false
 
 [functions.send-workspace-invitation]
 verify_jwt = false
+
+[functions.create-tenant]
+verify_jwt = false

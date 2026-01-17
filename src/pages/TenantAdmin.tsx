@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useTenant, TenantRole } from "@/hooks/useTenant";
+import { useUserRole } from "@/hooks/useUserRole";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,19 +48,27 @@ import {
   Clock, 
   Copy,
   Users,
-  Settings
+  Settings,
+  Plus,
+  Building2
 } from "lucide-react";
 import { format } from "date-fns";
 import { PageLayout } from "@/components/PageLayout";
 
 export default function TenantAdmin() {
   const { session } = useAuth();
-  const { currentTenant, isOwnerOrAdmin, isOwner } = useTenant();
+  const { currentTenant, isOwnerOrAdmin, isOwner, refetchTenants } = useTenant();
+  const { isSuperAdmin, isLoading: roleLoading } = useUserRole();
   const queryClient = useQueryClient();
   
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<TenantRole>("viewer");
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+  
+  // Create tenant state
+  const [createTenantDialogOpen, setCreateTenantDialogOpen] = useState(false);
+  const [newTenantName, setNewTenantName] = useState("");
+  const [newTenantOwnerEmail, setNewTenantOwnerEmail] = useState("");
 
   // Fetch tenant members
   const { data: members, isLoading: membersLoading } = useQuery({
@@ -203,6 +212,46 @@ export default function TenantAdmin() {
     createInviteMutation.mutate({ email: inviteEmail, role: inviteRole });
   };
 
+  // Create tenant mutation
+  const createTenantMutation = useMutation({
+    mutationFn: async ({ name, ownerEmail }: { name: string; ownerEmail?: string }) => {
+      const { data, error } = await supabase.functions.invoke('create-tenant', {
+        body: {
+          name,
+          owner_email: ownerEmail || undefined
+        },
+        headers: {
+          Authorization: `Bearer ${session?.access_token}`
+        }
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success(`Tenant "${data.tenant.name}" created successfully!`);
+      setNewTenantName("");
+      setNewTenantOwnerEmail("");
+      setCreateTenantDialogOpen(false);
+      refetchTenants();
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to create tenant');
+    }
+  });
+
+  const handleCreateTenant = () => {
+    if (!newTenantName.trim()) {
+      toast.error('Please enter a tenant name');
+      return;
+    }
+    createTenantMutation.mutate({ 
+      name: newTenantName, 
+      ownerEmail: newTenantOwnerEmail || undefined 
+    });
+  };
+
   const getRoleBadgeVariant = (role: string) => {
     switch (role) {
       case 'owner': return 'default';
@@ -212,7 +261,7 @@ export default function TenantAdmin() {
     }
   };
 
-  if (!isOwnerOrAdmin) {
+  if (!isOwnerOrAdmin && !isSuperAdmin) {
     return (
       <PageLayout>
         <div className="flex items-center justify-center h-[50vh]">
@@ -240,10 +289,79 @@ export default function TenantAdmin() {
               Tenant Administration
             </h1>
             <p className="text-muted-foreground">
-              Manage members and invites for {currentTenant?.name}
+              {currentTenant ? `Manage members and invites for ${currentTenant.name}` : 'Manage tenants'}
             </p>
           </div>
         </div>
+
+        {/* Super Admin: Create Tenant Section */}
+        {isSuperAdmin && (
+          <Card className="border-primary/50 bg-primary/5">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Building2 className="h-5 w-5 text-primary" />
+                  <CardTitle>Create New Tenant</CardTitle>
+                  <Badge variant="destructive" className="ml-2">Super Admin</Badge>
+                </div>
+                <Dialog open={createTenantDialogOpen} onOpenChange={setCreateTenantDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Create Tenant
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Create New Tenant</DialogTitle>
+                      <DialogDescription>
+                        Create a new organization/tenant in the system
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="tenant-name">Tenant Name *</Label>
+                        <Input
+                          id="tenant-name"
+                          placeholder="Acme Corporation"
+                          value={newTenantName}
+                          onChange={(e) => setNewTenantName(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="owner-email">Owner Email (optional)</Label>
+                        <Input
+                          id="owner-email"
+                          type="email"
+                          placeholder="owner@company.com"
+                          value={newTenantOwnerEmail}
+                          onChange={(e) => setNewTenantOwnerEmail(e.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          If provided and the user exists, they'll be assigned as owner. Otherwise, you'll be the owner.
+                        </p>
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setCreateTenantDialogOpen(false)}>
+                        Cancel
+                      </Button>
+                      <Button 
+                        onClick={handleCreateTenant}
+                        disabled={createTenantMutation.isPending}
+                      >
+                        {createTenantMutation.isPending ? 'Creating...' : 'Create Tenant'}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+              <CardDescription>
+                As a super admin, you can create new tenants for organizations
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        )}
 
         {/* Members Section */}
         <Card>
