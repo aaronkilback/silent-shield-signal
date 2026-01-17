@@ -19,8 +19,12 @@ export function EnsureDefaultRole() {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (!active) return;
 
+      // AuthSessionMissingError is expected when user is not logged in (e.g., on /auth page)
+      // Only log unexpected errors
       if (userError) {
-        console.error("[EnsureDefaultRole] Failed to get user:", userError);
+        if (userError.name !== 'AuthSessionMissingError') {
+          console.error("[EnsureDefaultRole] Failed to get user:", userError);
+        }
         return;
       }
 
