@@ -194,3 +194,6 @@ verify_jwt = false
 
 [functions.create-tenant]
 verify_jwt = false
+
+[functions.aggregate-global-learnings]
+verify_jwt = false
