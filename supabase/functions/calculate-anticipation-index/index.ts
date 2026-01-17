@@ -181,26 +181,26 @@ Deno.serve(async (req) => {
       else if (recentAvg < previousAvg - 0.05) trend = 'declining';
     }
 
-    // 8. Generate recommendations
+    // 8. Generate recommendations (user-friendly language)
     const recommendations: string[] = [];
     
     if (predictionAccuracy < 70) {
-      recommendations.push('Enhance predictive models with additional data sources');
+      recommendations.push('We\'re missing some threats before they happen. Consider expanding monitoring sources.');
     }
     if (signalConfidence < 60) {
-      recommendations.push('Review signal quality - many low-confidence detections');
+      recommendations.push('Many of our alerts are uncertain. This may mean we need better intelligence sources.');
     }
     if (falsePositiveRate > 20) {
-      recommendations.push('High false positive rate detected - tune detection thresholds');
+      recommendations.push('Too many false alarms are coming through. Ask Lovable to tune the detection thresholds.');
     }
     if (threatLandscapeAwareness < 50) {
-      recommendations.push('Expand monitoring coverage across threat categories');
+      recommendations.push('We have blind spots in our threat coverage. Review which threat types we\'re monitoring.');
     }
     if (responseReadiness < 60) {
-      recommendations.push('Improve incident response time - consider automated playbooks');
+      recommendations.push('Incidents are taking too long to resolve. Review response procedures with your team.');
     }
     if (recommendations.length === 0) {
-      recommendations.push('Anticipation posture is strong - maintain current protocols');
+      recommendations.push('Anticipation posture is strong. Continue current protocols.');
     }
 
     const result: AnticipationIndexResult = {
