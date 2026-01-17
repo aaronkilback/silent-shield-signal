@@ -1,5 +1,8 @@
 project_id = "udbjjeppbgwjlqmaeftn"
 
+[functions.extract-conversation-memory]
+verify_jwt = false
+
 [functions.fortress-document-converter]
 verify_jwt = false
 

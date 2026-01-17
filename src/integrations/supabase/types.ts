@@ -260,6 +260,8 @@ export type Database = {
       }
       ai_assistant_messages: {
         Row: {
+          archived_at: string | null
+          archived_memory_extracted: boolean | null
           content: string
           conversation_id: string | null
           created_at: string
@@ -268,10 +270,13 @@ export type Database = {
           is_shared: boolean | null
           role: string
           tenant_id: string | null
+          title: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
+          archived_at?: string | null
+          archived_memory_extracted?: boolean | null
           content: string
           conversation_id?: string | null
           created_at?: string
@@ -280,10 +285,13 @@ export type Database = {
           is_shared?: boolean | null
           role: string
           tenant_id?: string | null
+          title?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
+          archived_at?: string | null
+          archived_memory_extracted?: boolean | null
           content?: string
           conversation_id?: string | null
           created_at?: string
@@ -292,6 +300,7 @@ export type Database = {
           is_shared?: boolean | null
           role?: string
           tenant_id?: string | null
+          title?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -1315,6 +1324,7 @@ export type Database = {
           risk_assessment: Json | null
           status: string
           supply_chain_entities: string[] | null
+          tenant_id: string | null
           threat_profile: Json | null
           updated_at: string
         }
@@ -1336,6 +1346,7 @@ export type Database = {
           risk_assessment?: Json | null
           status?: string
           supply_chain_entities?: string[] | null
+          tenant_id?: string | null
           threat_profile?: Json | null
           updated_at?: string
         }
@@ -1357,10 +1368,19 @@ export type Database = {
           risk_assessment?: Json | null
           status?: string
           supply_chain_entities?: string[] | null
+          tenant_id?: string | null
           threat_profile?: Json | null
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "clients_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       conversation_memory: {
         Row: {
@@ -1415,6 +1435,59 @@ export type Database = {
           },
           {
             foreignKeyName: "conversation_memory_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      conversation_summaries: {
+        Row: {
+          conversation_id: string
+          created_at: string | null
+          first_message_at: string | null
+          id: string
+          key_facts: Json | null
+          last_message_at: string | null
+          message_count: number | null
+          summary: string
+          tenant_id: string | null
+          title: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string | null
+          first_message_at?: string | null
+          id?: string
+          key_facts?: Json | null
+          last_message_at?: string | null
+          message_count?: number | null
+          summary: string
+          tenant_id?: string | null
+          title: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string | null
+          first_message_at?: string | null
+          id?: string
+          key_facts?: Json | null
+          last_message_at?: string | null
+          message_count?: number | null
+          summary?: string
+          tenant_id?: string | null
+          title?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_summaries_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
@@ -1784,6 +1857,7 @@ export type Database = {
           monitoring_radius_km: number | null
           name: string
           risk_level: string | null
+          tenant_id: string | null
           threat_indicators: string[] | null
           threat_score: number | null
           type: Database["public"]["Enums"]["entity_type"]
@@ -1811,6 +1885,7 @@ export type Database = {
           monitoring_radius_km?: number | null
           name: string
           risk_level?: string | null
+          tenant_id?: string | null
           threat_indicators?: string[] | null
           threat_score?: number | null
           type: Database["public"]["Enums"]["entity_type"]
@@ -1838,6 +1913,7 @@ export type Database = {
           monitoring_radius_km?: number | null
           name?: string
           risk_level?: string | null
+          tenant_id?: string | null
           threat_indicators?: string[] | null
           threat_score?: number | null
           type?: Database["public"]["Enums"]["entity_type"]
@@ -1856,6 +1932,13 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entities_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
             referencedColumns: ["id"]
           },
         ]
@@ -2709,6 +2792,7 @@ export type Database = {
           status: Database["public"]["Enums"]["incident_status"]
           summary: string | null
           task_force_name: string | null
+          tenant_id: string | null
           timeline_json: Json | null
           title: string | null
           updated_at: string
@@ -2737,6 +2821,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["incident_status"]
           summary?: string | null
           task_force_name?: string | null
+          tenant_id?: string | null
           timeline_json?: Json | null
           title?: string | null
           updated_at?: string
@@ -2765,6 +2850,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["incident_status"]
           summary?: string | null
           task_force_name?: string | null
+          tenant_id?: string | null
           timeline_json?: Json | null
           title?: string | null
           updated_at?: string
@@ -2789,6 +2875,13 @@ export type Database = {
             columns: ["signal_id"]
             isOneToOne: false
             referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "incidents_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
             referencedColumns: ["id"]
           },
         ]
@@ -3839,6 +3932,7 @@ export type Database = {
           client_id: string | null
           created_at: string
           id: string
+          keyboard_shortcuts: Json | null
           name: string
           updated_at: string
         }
@@ -3846,6 +3940,7 @@ export type Database = {
           client_id?: string | null
           created_at?: string
           id: string
+          keyboard_shortcuts?: Json | null
           name: string
           updated_at?: string
         }
@@ -3853,6 +3948,7 @@ export type Database = {
           client_id?: string | null
           created_at?: string
           id?: string
+          keyboard_shortcuts?: Json | null
           name?: string
           updated_at?: string
         }
@@ -4504,6 +4600,7 @@ export type Database = {
           signal_type: string | null
           source_id: string | null
           status: Database["public"]["Enums"]["signal_status"]
+          tenant_id: string | null
           title: string | null
           updated_at: string
         }
@@ -4540,6 +4637,7 @@ export type Database = {
           signal_type?: string | null
           source_id?: string | null
           status?: Database["public"]["Enums"]["signal_status"]
+          tenant_id?: string | null
           title?: string | null
           updated_at?: string
         }
@@ -4576,6 +4674,7 @@ export type Database = {
           signal_type?: string | null
           source_id?: string | null
           status?: Database["public"]["Enums"]["signal_status"]
+          tenant_id?: string | null
           title?: string | null
           updated_at?: string
         }
@@ -4592,6 +4691,13 @@ export type Database = {
             columns: ["correlation_group_id"]
             isOneToOne: false
             referencedRelation: "signal_correlation_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signals_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
             referencedColumns: ["id"]
           },
         ]
@@ -4923,6 +5029,53 @@ export type Database = {
             columns: ["roe_id"]
             isOneToOne: false
             referencedRelation: "rules_of_engagement"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tenant_activity: {
+        Row: {
+          activity_type: string
+          created_at: string | null
+          description: string | null
+          id: string
+          metadata: Json | null
+          resource_id: string | null
+          resource_name: string | null
+          resource_type: string
+          tenant_id: string
+          user_id: string | null
+        }
+        Insert: {
+          activity_type: string
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          metadata?: Json | null
+          resource_id?: string | null
+          resource_name?: string | null
+          resource_type: string
+          tenant_id: string
+          user_id?: string | null
+        }
+        Update: {
+          activity_type?: string
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          metadata?: Json | null
+          resource_id?: string | null
+          resource_name?: string | null
+          resource_type?: string
+          tenant_id?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tenant_activity_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
             referencedColumns: ["id"]
           },
         ]
@@ -5579,6 +5732,50 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      user_sessions: {
+        Row: {
+          expires_at: string | null
+          id: string
+          ip_address: string | null
+          is_active: boolean | null
+          last_active_at: string | null
+          started_at: string | null
+          tenant_id: string | null
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          expires_at?: string | null
+          id?: string
+          ip_address?: string | null
+          is_active?: boolean | null
+          last_active_at?: string | null
+          started_at?: string | null
+          tenant_id?: string | null
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          expires_at?: string | null
+          id?: string
+          ip_address?: string | null
+          is_active?: boolean | null
+          last_active_at?: string | null
+          started_at?: string | null
+          tenant_id?: string | null
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_sessions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       webhook_deliveries: {
         Row: {
