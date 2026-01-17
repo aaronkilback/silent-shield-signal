@@ -1,0 +1,1 @@
+export { AnticipationIndex } from './AnticipationIndex';

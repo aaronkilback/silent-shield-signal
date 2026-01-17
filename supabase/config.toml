@@ -207,3 +207,9 @@ verify_jwt = false
 [functions.system-health-check]
 verify_jwt = false
 
+[functions.process-geospatial-map]
+verify_jwt = false
+
+[functions.calculate-anticipation-index]
+verify_jwt = false
+
