@@ -218,6 +218,77 @@ export type Database = {
           },
         ]
       }
+      agent_pending_messages: {
+        Row: {
+          agent_id: string | null
+          created_at: string
+          delivered_at: string | null
+          dismissed_at: string | null
+          id: string
+          message: string
+          priority: string
+          recipient_user_id: string
+          sender_user_id: string | null
+          tenant_id: string | null
+          trigger_event: string
+        }
+        Insert: {
+          agent_id?: string | null
+          created_at?: string
+          delivered_at?: string | null
+          dismissed_at?: string | null
+          id?: string
+          message: string
+          priority?: string
+          recipient_user_id: string
+          sender_user_id?: string | null
+          tenant_id?: string | null
+          trigger_event?: string
+        }
+        Update: {
+          agent_id?: string | null
+          created_at?: string
+          delivered_at?: string | null
+          dismissed_at?: string | null
+          id?: string
+          message?: string
+          priority?: string
+          recipient_user_id?: string
+          sender_user_id?: string | null
+          tenant_id?: string | null
+          trigger_event?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_pending_messages_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_pending_messages_recipient_user_id_fkey"
+            columns: ["recipient_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_pending_messages_sender_user_id_fkey"
+            columns: ["sender_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_pending_messages_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_agents: {
         Row: {
           avatar_color: string | null
@@ -6290,6 +6361,51 @@ export type Database = {
           {
             foreignKeyName: "travelers_created_by_fkey"
             columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_agent_preferences: {
+        Row: {
+          agent_id: string | null
+          created_at: string
+          id: string
+          muted_until: string | null
+          proactive_enabled: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          agent_id?: string | null
+          created_at?: string
+          id?: string
+          muted_until?: string | null
+          proactive_enabled?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          agent_id?: string | null
+          created_at?: string
+          id?: string
+          muted_until?: string | null
+          proactive_enabled?: boolean
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_agent_preferences_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_agent_preferences_user_id_fkey"
+            columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]

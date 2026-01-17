@@ -7,6 +7,7 @@ import { ClientSelectionProvider } from "@/hooks/useClientSelection";
 import SupportChatWidget from "@/components/SupportChatWidget";
 import { RealtimeNotifications } from "@/components/RealtimeNotifications";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ProactiveAgentMessages } from "@/components/agents/ProactiveAgentMessages";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import Clients from "./pages/Clients";
@@ -53,6 +54,7 @@ const App = () => (
           <TenantProvider>
             <ClientSelectionProvider>
               <RealtimeNotifications />
+              <ProactiveAgentMessages />
               <EnsureDefaultRole />
               <Routes>
                 <Route path="/" element={<Index />} />
