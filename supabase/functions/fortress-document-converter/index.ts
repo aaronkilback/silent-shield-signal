@@ -36,7 +36,8 @@ const SUPPORTED_MIME_TYPES = {
 } as const;
 
 // Size thresholds
-const MAX_FILE_SIZE_MB = 20;
+const MAX_FILE_SIZE_MB = 100; // Increased to support large PDFs via signed URLs
+const MAX_MEMORY_LOAD_MB = 20; // Files larger than this use signed URL approach
 const RESIZE_THRESHOLD_MB = 5;
 const TARGET_RESIZE_MB = 2;
 
@@ -511,6 +512,122 @@ Return ONLY the extracted text, no commentary.`
   }
 }
 
+// Extract text from large PDFs using signed URLs with Gemini
+async function extractTextFromLargePdfWithSignedUrl(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  filePath: string,
+  mimeType: string
+): Promise<{ text: string; error?: string }> {
+  try {
+    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
+    if (!lovableApiKey) {
+      return { text: '', error: 'LOVABLE_API_KEY not configured' };
+    }
+
+    console.log(`Processing large PDF via signed URL: ${filePath}`);
+
+    // Parse bucket and path
+    const pathParts = filePath.split('/');
+    const bucketName = pathParts[0];
+    const objectPath = pathParts.slice(1).join('/');
+
+    // Try to create signed URL from the provided bucket
+    let signedUrl: string | null = null;
+    
+    const { data: urlData, error: urlError } = await supabase.storage
+      .from(bucketName)
+      .createSignedUrl(objectPath, 3600); // 1 hour expiry
+
+    if (!urlError && urlData?.signedUrl) {
+      signedUrl = urlData.signedUrl;
+      console.log(`Created signed URL from bucket: ${bucketName}`);
+    } else {
+      // Try alternative buckets if the path might be just the object name
+      const candidateBuckets = [
+        'ai-chat-attachments',
+        'archival-documents',
+        'investigation-files',
+        'travel-documents',
+      ];
+
+      for (const bucket of candidateBuckets) {
+        const { data, error } = await supabase.storage
+          .from(bucket)
+          .createSignedUrl(filePath, 3600);
+        
+        if (!error && data?.signedUrl) {
+          signedUrl = data.signedUrl;
+          console.log(`Created signed URL from fallback bucket: ${bucket}`);
+          break;
+        }
+      }
+    }
+
+    if (!signedUrl) {
+      return { text: '', error: `Could not create signed URL for ${filePath}` };
+    }
+
+    // Use Gemini with the signed URL to extract text
+    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${lovableApiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `You are a document text extraction specialist. Extract ALL text content from this PDF document.
+
+Instructions:
+- Extract every piece of readable text, including headers, footers, tables, and captions
+- Preserve the logical reading order and structure
+- For tables, use markdown table format
+- Include any metadata visible (dates, document numbers, page numbers, etc.)
+- Note page breaks with "--- Page Break ---" between pages
+- Extract text from ALL pages in the document
+- Do NOT add any commentary or analysis - only extract the raw text
+
+Return ONLY the extracted text content, nothing else.`
+              },
+              {
+                type: 'file',
+                file: {
+                  url: signedUrl,
+                  mime_type: mimeType
+                }
+              }
+            ]
+          }
+        ],
+        max_tokens: 100000,
+        temperature: 0
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Gemini signed URL extraction error:', response.status, errorText);
+      return { text: '', error: `AI extraction failed: ${response.status}` };
+    }
+
+    const result = await response.json();
+    const extractedText = result.choices?.[0]?.message?.content || '';
+    
+    console.log(`Signed URL extraction complete: ${extractedText.length} characters`);
+    return { text: extractedText };
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error('Large PDF extraction error:', err);
+    return { text: '', error: `Large PDF extraction failed: ${errorMessage}` };
+  }
+}
+
 // Main conversion dispatcher
 async function convertDocument(
   content: Blob,
@@ -654,6 +771,127 @@ serve(async (req) => {
     console.log(`Processing document ${request.documentId} with MIME type ${request.mimeType}`);
 
     const supabase = getSupabaseClient();
+    const isPdf = request.mimeType === 'application/pdf';
+    
+    // For PDFs from storage, check if we should use signed URL approach
+    // This avoids downloading large files into memory
+    if (isPdf && request.filePath && !request.directFileContentBase64 && request.extractText !== false) {
+      // Try to get file metadata to check size without downloading
+      const pathParts = request.filePath.split('/');
+      const bucketName = pathParts[0];
+      const objectPath = pathParts.slice(1).join('/');
+      
+      // Check file size via storage API metadata
+      let fileSize = 0;
+      const candidateBuckets = [
+        bucketName,
+        'ai-chat-attachments',
+        'archival-documents',
+        'investigation-files',
+        'travel-documents',
+      ];
+      
+      let foundBucket = '';
+      let foundPath = '';
+      
+      for (const bucket of candidateBuckets) {
+        const checkPath = bucket === bucketName ? objectPath : request.filePath;
+        const { data: files } = await supabase.storage.from(bucket).list(
+          checkPath.split('/').slice(0, -1).join('/') || '',
+          { search: checkPath.split('/').pop() || '' }
+        );
+        
+        const file = files?.find(f => checkPath.endsWith(f.name));
+        if (file?.metadata?.size) {
+          fileSize = file.metadata.size;
+          foundBucket = bucket;
+          foundPath = checkPath;
+          break;
+        }
+      }
+      
+      const fileSizeMB = fileSize / (1024 * 1024);
+      console.log(`PDF file size check: ${fileSizeMB.toFixed(2)} MB`);
+      
+      // Use signed URL approach for PDFs larger than memory threshold
+      if (fileSizeMB > MAX_MEMORY_LOAD_MB || fileSizeMB === 0) {
+        console.log(`Large PDF detected (${fileSizeMB.toFixed(2)} MB > ${MAX_MEMORY_LOAD_MB} MB), using signed URL approach`);
+        
+        const fullPath = foundBucket ? `${foundBucket}/${foundPath}` : request.filePath;
+        const { text: extractedText, error: extractError } = await extractTextFromLargePdfWithSignedUrl(
+          supabase,
+          fullPath,
+          request.mimeType
+        );
+        
+        if (extractError && !extractedText) {
+          console.error(`Large PDF extraction failed: ${extractError}`);
+          
+          // Update database with error if requested
+          if (request.updateDatabase !== false) {
+            await updateDocumentRecord(
+              supabase,
+              request.documentId,
+              '',
+              request.targetTable || 'archival_documents',
+              extractError
+            );
+          }
+          
+          return new Response(
+            JSON.stringify({
+              success: false,
+              documentId: request.documentId,
+              error: 'Large PDF extraction failed',
+              details: extractError,
+              originalSizeMB: fileSizeMB
+            } as ConversionResult),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        
+        // Update database if requested
+        if (request.updateDatabase !== false) {
+          const { success: dbSuccess, error: dbError } = await updateDocumentRecord(
+            supabase,
+            request.documentId,
+            extractedText,
+            request.targetTable || 'archival_documents'
+          );
+
+          if (!dbSuccess) {
+            console.error(`Database update failed for ${request.documentId}:`, dbError);
+            return new Response(
+              JSON.stringify({
+                success: false,
+                documentId: request.documentId,
+                error: 'Database update failed',
+                details: dbError,
+                extractedTextLength: extractedText.length
+              } as ConversionResult),
+              { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+        }
+        
+        const processingTime = Date.now() - startTime;
+        console.log(`Large PDF processed via signed URL in ${processingTime}ms, extracted ${extractedText.length} characters`);
+        
+        return new Response(
+          JSON.stringify({
+            success: true,
+            documentId: request.documentId,
+            extractedTextLength: extractedText.length,
+            extractedText: extractedText.substring(0, 500) + (extractedText.length > 500 ? '...' : ''),
+            originalSizeMB: fileSizeMB,
+            message: `Large PDF processed via signed URL in ${processingTime}ms`
+          } as ConversionResult),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+    
+    // Standard flow for smaller files or non-PDFs
     let fileContent: Blob;
     let originalSizeMB = 0;
 
@@ -697,7 +935,7 @@ serve(async (req) => {
       );
     }
 
-    // Check if file is too large
+    // Check if file is too large for memory processing
     if (originalSizeMB > MAX_FILE_SIZE_MB) {
       return new Response(
         JSON.stringify({
