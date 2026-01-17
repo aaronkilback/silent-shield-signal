@@ -1266,26 +1266,859 @@ export const evidenceCitationTests = {
 };
 
 // ============================================
+// AI AGENTS TESTS
+// ============================================
+
+export const aiAgentsTests = {
+  name: 'AI Agents',
+  tests: [
+    {
+      name: 'Can read ai_agents table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('ai_agents')
+          .select('id, codename, call_sign, is_active')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Active agents have required fields',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('ai_agents')
+          .select('id, codename, call_sign, persona, specialty, mission_scope')
+          .eq('is_active', true)
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const agent of data || []) {
+          if (!agent.codename) throw new Error(`Agent ${agent.id} missing codename`);
+          if (!agent.call_sign) throw new Error(`Agent ${agent.id} missing call_sign`);
+          if (!agent.persona) throw new Error(`Agent ${agent.id} missing persona`);
+        }
+      },
+    },
+    {
+      name: 'Can read agent_conversations table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('agent_conversations')
+          .select('id, agent_id, user_id, status')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Can read agent_messages table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('agent_messages')
+          .select('id, conversation_id, role, content')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Agent memory has valid scope',
+      fn: async () => {
+        const validScopes = ['user', 'tenant', 'global', 'session'];
+        
+        const { data, error } = await supabase
+          .from('agent_memory')
+          .select('id, scope')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const memory of data || []) {
+          if (!validScopes.includes(memory.scope)) {
+            throw new Error(`Agent memory ${memory.id} has invalid scope: ${memory.scope}`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// INCIDENTS & ALERTS TESTS
+// ============================================
+
+export const incidentsTests = {
+  name: 'Incidents & Alerts',
+  tests: [
+    {
+      name: 'Can read incidents table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('incidents')
+          .select('id, title, status, severity_level')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Incidents have valid status',
+      fn: async () => {
+        const validStatuses = ['open', 'in_progress', 'resolved', 'closed', 'escalated', 'monitoring'];
+        
+        const { data, error } = await supabase
+          .from('incidents')
+          .select('id, status')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const incident of data || []) {
+          if (!validStatuses.includes(incident.status)) {
+            throw new Error(`Incident ${incident.id} has invalid status: ${incident.status}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Incidents have valid severity_level',
+      fn: async () => {
+        const validSeverities = ['critical', 'high', 'medium', 'low', 'info'];
+        
+        const { data, error } = await supabase
+          .from('incidents')
+          .select('id, severity_level')
+          .not('severity_level', 'is', null)
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const incident of data || []) {
+          if (!validSeverities.includes(incident.severity_level)) {
+            throw new Error(`Incident ${incident.id} has invalid severity_level: ${incident.severity_level}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Can read alerts table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('alerts')
+          .select('id, incident_id, channel, status')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Alerts have valid status',
+      fn: async () => {
+        const validStatuses = ['pending', 'sent', 'delivered', 'failed', 'acknowledged'];
+        
+        const { data, error } = await supabase
+          .from('alerts')
+          .select('id, status')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const alert of data || []) {
+          if (!validStatuses.includes(alert.status)) {
+            throw new Error(`Alert ${alert.id} has invalid status: ${alert.status}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Incident signals have valid references',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('incident_signals')
+          .select('incident_id, signal_id')
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const link of data || []) {
+          if (!link.incident_id || !link.signal_id) {
+            throw new Error(`Incident signal missing required references`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// TASK FORCE TESTS
+// ============================================
+
+export const taskForceTests = {
+  name: 'Task Force',
+  tests: [
+    {
+      name: 'Can read task_force_missions table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('task_force_missions')
+          .select('id, name, phase, description')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Missions have valid phase',
+      fn: async () => {
+        const validPhases = ['planning', 'execution', 'analysis', 'reporting', 'complete', 'cancelled'];
+        
+        const { data, error } = await supabase
+          .from('task_force_missions')
+          .select('id, phase')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const mission of data || []) {
+          if (mission.phase && !validPhases.includes(mission.phase)) {
+            throw new Error(`Mission ${mission.id} has invalid phase: ${mission.phase}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Can read task_force_agents table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('task_force_agents')
+          .select('id, mission_id, agent_id, role')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Can read briefing_queries table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('briefing_queries')
+          .select('id, mission_id, question, ai_response')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Rules of engagement have required fields',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('rules_of_engagement')
+          .select('id, name, description')
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const roe of data || []) {
+          if (!roe.name) throw new Error(`RoE ${roe.id} missing name`);
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// TRAVEL SECURITY TESTS
+// ============================================
+
+export const travelSecurityTests = {
+  name: 'Travel Security',
+  tests: [
+    {
+      name: 'Can read travelers table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('travelers')
+          .select('id, name, email, status')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Can read itineraries table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('itineraries')
+          .select('id, traveler_id, destination, departure_date, return_date')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Can read travel_alerts table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('travel_alerts')
+          .select('id, itinerary_id, alert_type, severity')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Itineraries have valid date ranges',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('itineraries')
+          .select('id, departure_date, return_date')
+          .not('return_date', 'is', null)
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const itinerary of data || []) {
+          if (new Date(itinerary.return_date) < new Date(itinerary.departure_date)) {
+            throw new Error(`Itinerary ${itinerary.id} has return_date before departure_date`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// BRIEFING SESSIONS TESTS
+// ============================================
+
+export const briefingSessionsTests = {
+  name: 'Briefing Sessions',
+  tests: [
+    {
+      name: 'Can read briefing_sessions table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('briefing_sessions')
+          .select('id, title, status, workspace_id')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Briefing sessions have valid status',
+      fn: async () => {
+        const validStatuses = ['scheduled', 'active', 'completed', 'cancelled', 'draft'];
+        
+        const { data, error } = await supabase
+          .from('briefing_sessions')
+          .select('id, status')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const session of data || []) {
+          if (!validStatuses.includes(session.status)) {
+            throw new Error(`Briefing session ${session.id} has invalid status: ${session.status}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Can read briefing_chat_messages table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('briefing_chat_messages')
+          .select('id, briefing_id, content, message_type')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Can read briefing_decisions table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('briefing_decisions')
+          .select('id, briefing_id, decision_text, status')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Briefing decisions have valid status',
+      fn: async () => {
+        const validStatuses = ['proposed', 'approved', 'rejected', 'implemented', 'pending'];
+        
+        const { data, error } = await supabase
+          .from('briefing_decisions')
+          .select('id, status')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const decision of data || []) {
+          if (decision.status && !validStatuses.includes(decision.status)) {
+            throw new Error(`Briefing decision ${decision.id} has invalid status: ${decision.status}`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// WORKSPACES & INVESTIGATIONS TESTS
+// ============================================
+
+export const workspacesTests = {
+  name: 'Workspaces & Investigations',
+  tests: [
+    {
+      name: 'Can read investigation_workspaces table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('investigation_workspaces')
+          .select('id, name, status')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Can read investigations table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('investigations')
+          .select('id, file_number, file_status')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Investigations have valid file_status',
+      fn: async () => {
+        const validStatuses = ['open', 'closed', 'pending', 'archived'];
+        
+        const { data, error } = await supabase
+          .from('investigations')
+          .select('id, file_status')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const inv of data || []) {
+          if (inv.file_status && !validStatuses.includes(inv.file_status)) {
+            throw new Error(`Investigation ${inv.id} has invalid file_status: ${inv.file_status}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Can read workspace_members table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('workspace_members')
+          .select('id, workspace_id, user_id, role')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Can read workspace_evidence table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('workspace_evidence')
+          .select('id, workspace_id, evidence_type')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Workspace tasks have valid status',
+      fn: async () => {
+        const validStatuses = ['todo', 'in_progress', 'completed', 'cancelled', 'blocked'];
+        
+        const { data, error } = await supabase
+          .from('workspace_tasks')
+          .select('id, status')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const task of data || []) {
+          if (!validStatuses.includes(task.status)) {
+            throw new Error(`Workspace task ${task.id} has invalid status: ${task.status}`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// API & WEBHOOKS TESTS
+// ============================================
+
+export const apiWebhooksTests = {
+  name: 'API & Webhooks',
+  tests: [
+    {
+      name: 'Can read api_keys table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('api_keys')
+          .select('id, name, is_active, key_prefix')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'API keys have valid structure',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('api_keys')
+          .select('id, name, key_prefix, key_hash')
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const key of data || []) {
+          if (!key.name) throw new Error(`API key ${key.id} missing name`);
+          if (!key.key_prefix) throw new Error(`API key ${key.id} missing key_prefix`);
+          if (!key.key_hash) throw new Error(`API key ${key.id} missing key_hash`);
+        }
+      },
+    },
+    {
+      name: 'Can read webhooks table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('webhooks')
+          .select('id, name, url, is_active')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Webhooks have valid URLs',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('webhooks')
+          .select('id, url')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const webhook of data || []) {
+          if (!webhook.url) throw new Error(`Webhook ${webhook.id} missing URL`);
+          try {
+            new URL(webhook.url);
+          } catch {
+            throw new Error(`Webhook ${webhook.id} has invalid URL: ${webhook.url}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Can read api_usage_logs table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('api_usage_logs')
+          .select('id, endpoint, method, status_code')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+  ],
+};
+
+// ============================================
+// THREAT RADAR TESTS
+// ============================================
+
+export const threatRadarTests = {
+  name: 'Threat Radar',
+  tests: [
+    {
+      name: 'Can read threat_radar_snapshots table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('threat_radar_snapshots')
+          .select('id, client_id, snapshot_data, created_at')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Can read threat_precursor_indicators table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('threat_precursor_indicators')
+          .select('id, indicator_type, severity')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Can read sentiment_tracking table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('sentiment_tracking')
+          .select('id, entity_id, sentiment_score')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Sentiment scores are valid range',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('sentiment_tracking')
+          .select('id, sentiment_score')
+          .not('sentiment_score', 'is', null)
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const item of data || []) {
+          if (item.sentiment_score < -1 || item.sentiment_score > 1) {
+            throw new Error(`Sentiment ${item.id} has invalid score: ${item.sentiment_score} (expected -1 to 1)`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Can read predictive_threat_models table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('predictive_threat_models')
+          .select('id, model_type, accuracy_score')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+  ],
+};
+
+// ============================================
+// KNOWLEDGE BASE TESTS
+// ============================================
+
+export const knowledgeBaseTests = {
+  name: 'Knowledge Base',
+  tests: [
+    {
+      name: 'Can read knowledge_base_articles table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('knowledge_base_articles')
+          .select('id, title, status')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Can read knowledge_base_categories table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('knowledge_base_categories')
+          .select('id, name')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Articles have published flag',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('knowledge_base_articles')
+          .select('id, title, is_published')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        // Just verify we can read the is_published column
+        for (const article of data || []) {
+          if (article.is_published === undefined) {
+            throw new Error(`Article ${article.id} missing is_published flag`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// AUDIT & MONITORING TESTS
+// ============================================
+
+export const auditMonitoringTests = {
+  name: 'Audit & Monitoring',
+  tests: [
+    {
+      name: 'Can read audit_events table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('audit_events')
+          .select('id, action, resource, user_id')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Audit events have required fields',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('audit_events')
+          .select('id, action, resource')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const event of data || []) {
+          if (!event.action) throw new Error(`Audit event ${event.id} missing action`);
+          if (!event.resource) throw new Error(`Audit event ${event.id} missing resource`);
+        }
+      },
+    },
+    {
+      name: 'Can read monitoring_history table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('monitoring_history')
+          .select('id, source_type, status')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Can read automation_metrics table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('automation_metrics')
+          .select('id, metric_date, signals_processed')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+  ],
+};
+
+// ============================================
+// DOCUMENTS & SOURCES TESTS
+// ============================================
+
+export const documentsSourcesTests = {
+  name: 'Documents & Sources',
+  tests: [
+    {
+      name: 'Can read sources table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('sources')
+          .select('id, name, type, is_active')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Can read archival_documents table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('archival_documents')
+          .select('id, filename, file_type')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Can read ingested_documents table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('ingested_documents')
+          .select('id, title, processing_status')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Documents have valid processing_status',
+      fn: async () => {
+        const validStatuses = ['pending', 'processing', 'completed', 'failed', 'queued'];
+        
+        const { data, error } = await supabase
+          .from('ingested_documents')
+          .select('id, processing_status')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const doc of data || []) {
+          if (doc.processing_status && !validStatuses.includes(doc.processing_status)) {
+            throw new Error(`Document ${doc.id} has invalid processing_status: ${doc.processing_status}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Source reliability metrics exist',
+      fn: async () => {
+        const { error } = await supabase
+          .from('source_reliability_metrics')
+          .select('id, source_id, accuracy_score')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+  ],
+};
+
+// ============================================
 // RUN ALL TESTS
 // ============================================
 
 export async function runAllTests(): Promise<TestSuite[]> {
   const suites = [
+    // Core Authentication & Access
     authTests,
     databaseTests,
     edgeFunctionTests,
     validationTests,
+    
+    // Entity Management
     entityManagementTests,
     entityPhotosTests,
     entityContentTests,
     entityRelationshipsTests,
     entityOsintTests,
+    
+    // Data Integrity
     dataTypeValidationTests,
-    // New Reliability First tests
+    
+    // Reliability First Framework
     reliabilityFirstTests,
     intelligenceRatingsTests,
     tenantIsolationTests,
     evidenceCitationTests,
+    
+    // AI & Agents
+    aiAgentsTests,
+    
+    // Incidents & Response
+    incidentsTests,
+    
+    // Task Force Operations
+    taskForceTests,
+    
+    // Travel Security
+    travelSecurityTests,
+    
+    // Briefings & Collaboration
+    briefingSessionsTests,
+    workspacesTests,
+    
+    // Integration & APIs
+    apiWebhooksTests,
+    
+    // Threat Intelligence
+    threatRadarTests,
+    
+    // Knowledge & Documentation
+    knowledgeBaseTests,
+    
+    // System Health
+    auditMonitoringTests,
+    documentsSourcesTests,
   ];
   
   const results: TestSuite[] = [];
