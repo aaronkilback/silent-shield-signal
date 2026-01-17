@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useNavigate, useLocation } from "react-router-dom";
 import { EntityNotifications } from "@/components/EntityNotifications";
 import { SettingsSheet } from "@/components/SettingsSheet";
+import { EnvironmentBadge } from "@/components/EnvironmentBadge";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -173,6 +174,7 @@ export const Header = () => {
               <p className="text-xs sm:text-sm text-muted-foreground">Security Intelligence Platform</p>
             </div>
             <h1 className="sm:hidden text-lg font-bold text-foreground">Fortress</h1>
+            <EnvironmentBadge />
           </div>
 
           {/* Desktop Navigation */}
