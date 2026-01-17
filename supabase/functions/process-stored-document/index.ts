@@ -368,35 +368,70 @@ serve(async (req) => {
         console.log('PDF appears to be image-based. Attempting vision-based analysis...');
         
         try {
-          const pdfBytes = await fileData.arrayBuffer();
-          const maxBytes = 20 * 1024 * 1024; // Support up to 20MB PDFs
+          const fileSizeMB = document.file_size / (1024 * 1024);
+          const maxSizeMB = 100; // Gemini supports up to 100MB via signed URLs
           
-          if (pdfBytes.byteLength > maxBytes) {
-            console.log(`PDF too large for processing (${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB > 20MB limit)`);
-            textContent = `[This PDF is too large for processing (${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB > 20MB limit). File: ${document.filename}. Please split into smaller files.]`;
+          if (fileSizeMB > maxSizeMB) {
+            console.log(`PDF too large for processing (${fileSizeMB.toFixed(1)}MB > ${maxSizeMB}MB limit)`);
+            textContent = `[This PDF is too large for processing (${fileSizeMB.toFixed(1)}MB > ${maxSizeMB}MB limit). File: ${document.filename}. Please split into smaller files.]`;
           } else {
-            console.log(`Processing ${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB PDF using direct Gemini PDF analysis...`);
+            console.log(`Processing ${fileSizeMB.toFixed(1)}MB PDF using signed URL approach...`);
             
-            // Use Gemini's native PDF support - send the PDF directly as base64
-            // This avoids pdf.js which requires web workers not available in Deno
-            const base64Pdf = base64Encode(new Uint8Array(pdfBytes).buffer);
+            // Use signed URLs for PDFs to avoid memory pressure with large files
+            // This allows processing files up to 100MB without loading into memory
+            const meta: any = document.metadata ?? {};
+            const preferredBucket = typeof meta.storage_bucket === 'string' && meta.storage_bucket.trim().length
+              ? meta.storage_bucket.trim()
+              : 'archival-documents';
             
-            console.log(`Sending PDF directly to Gemini (${(base64Pdf.length / 1024 / 1024).toFixed(2)}MB base64)`);
+            const candidateBuckets = Array.from(
+              new Set([
+                preferredBucket,
+                'archival-documents',
+                'ai-chat-attachments',
+              ].filter(Boolean))
+            );
             
-            const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                model: 'google/gemini-2.5-flash',
-                messages: [{
-                  role: 'user',
-                  content: [
-                    {
-                      type: 'text',
-                      text: `You are analyzing the document "${document.filename}" which is a PDF file.
+            let signedPdfUrl: string | null = null;
+            let usedBucket: string | null = null;
+            
+            for (const bucket of candidateBuckets) {
+              const { data: signedData, error: signedError } = await supabase.storage
+                .from(bucket)
+                .createSignedUrl(document.storage_path, 60 * 10); // 10 minute expiry
+              
+              if (!signedError && signedData?.signedUrl) {
+                signedPdfUrl = signedData.signedUrl;
+                usedBucket = bucket;
+                console.log(`Created signed URL for PDF from bucket: ${bucket}`);
+                break;
+              }
+            }
+            
+            if (!signedPdfUrl) {
+              console.error('Failed to create signed URL, falling back to base64 for smaller files');
+              
+              // Only use base64 fallback for files under 20MB
+              if (fileSizeMB <= 20) {
+                const pdfBytes = await fileData.arrayBuffer();
+                const base64Pdf = base64Encode(new Uint8Array(pdfBytes).buffer);
+                
+                console.log(`Sending PDF as base64 (${(base64Pdf.length / 1024 / 1024).toFixed(2)}MB)`);
+                
+                const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    model: 'google/gemini-2.5-flash',
+                    messages: [{
+                      role: 'user',
+                      content: [
+                        {
+                          type: 'text',
+                          text: `You are analyzing the document "${document.filename}" which is a PDF file.
 
 This document may contain maps, diagrams, tables, or image-based content.
 Analyze ALL pages thoroughly and extract every piece of visible text, data, labels, legends, and geographic/infrastructure information.
@@ -412,54 +447,11 @@ EXTRACT ALL VISIBLE INFORMATION:
 8. Legend items, symbols, and their meanings
 
 Be comprehensive - list all details visible in the document.`
-                    },
-                    {
-                      type: 'image_url',
-                      image_url: { 
-                        url: `data:application/pdf;base64,${base64Pdf}` 
-                      }
-                    }
-                  ]
-                }],
-                max_tokens: 8000
-              }),
-            });
-
-            if (visionResponse.ok) {
-              const visionData = await visionResponse.json();
-              const visionContent = visionData.choices?.[0]?.message?.content;
-              if (visionContent && visionContent.length > 100) {
-                textContent = `[VISION ANALYSIS - Map/Image Document: ${document.filename}]\n\n${visionContent}`;
-                console.log(`Direct PDF analysis successful: ${textContent.length} characters`);
-              } else {
-                console.warn('PDF analysis returned minimal content');
-              }
-            } else {
-              const errText = await visionResponse.text();
-              console.error(`Vision API error ${visionResponse.status}: ${errText}`);
-              
-              // Fallback: Try with gemini-2.5-pro for more complex documents
-              if (visionResponse.status === 400 || visionResponse.status === 415) {
-                console.log('Retrying with Gemini 2.5 Pro...');
-                const fallbackResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-                  method: 'POST',
-                  headers: {
-                    'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    model: 'google/gemini-2.5-pro',
-                    messages: [{
-                      role: 'user',
-                      content: [
-                        {
-                          type: 'text',
-                          text: `Analyze this map/infrastructure document "${document.filename}" and extract all visible content including roads, mileposts, pipelines, and geographic information.`
                         },
                         {
                           type: 'image_url',
-                          image_url: {
-                            url: `data:application/pdf;base64,${base64Pdf}`
+                          image_url: { 
+                            url: `data:application/pdf;base64,${base64Pdf}` 
                           }
                         }
                       ]
@@ -467,20 +459,121 @@ Be comprehensive - list all details visible in the document.`
                     max_tokens: 8000
                   }),
                 });
+                
+                if (visionResponse.ok) {
+                  const visionData = await visionResponse.json();
+                  const visionContent = visionData.choices?.[0]?.message?.content;
+                  if (visionContent && visionContent.length > 100) {
+                    textContent = `[VISION ANALYSIS - Map/Image Document: ${document.filename}]\n\n${visionContent}`;
+                    console.log(`Base64 PDF analysis successful: ${textContent.length} characters`);
+                  }
+                }
+              } else {
+                textContent = `[PDF could not be processed - signed URL creation failed and file too large for base64. File: ${document.filename}. Size: ${fileSizeMB.toFixed(1)}MB]`;
+              }
+            } else {
+              // Use signed URL approach - no memory overhead for large files
+              console.log(`Sending PDF via signed URL to Gemini...`);
+              
+              const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  model: 'google/gemini-2.5-flash',
+                  messages: [{
+                    role: 'user',
+                    content: [
+                      {
+                        type: 'text',
+                        text: `You are analyzing the document "${document.filename}" which is a PDF file (${fileSizeMB.toFixed(1)}MB).
 
-                if (fallbackResponse.ok) {
-                  const fallbackData = await fallbackResponse.json();
-                  const fallbackContent = fallbackData.choices?.[0]?.message?.content;
-                  if (fallbackContent && fallbackContent.length > 100) {
-                    textContent = `[VISION ANALYSIS - Map/Image Document: ${document.filename}]\n\n${fallbackContent}`;
-                    console.log(`Fallback PDF analysis successful: ${textContent.length} characters`);
+This document may contain maps, diagrams, tables, or image-based content.
+Analyze ALL pages thoroughly and extract every piece of visible text, data, labels, legends, and geographic/infrastructure information.
+
+EXTRACT ALL VISIBLE INFORMATION:
+1. Road names, highway numbers, access routes
+2. Milepost (MP) markers and their values/ranges
+3. Pipeline corridors, facilities, infrastructure
+4. Grid references, map sheet numbers
+5. Geographic features, waterways, landmarks
+6. Company names, operators, ownership info
+7. Scale information, coordinates, compass directions
+8. Legend items, symbols, and their meanings
+
+Be comprehensive - list all details visible in the document.`
+                      },
+                      {
+                        type: 'image_url',
+                        image_url: { 
+                          url: signedPdfUrl 
+                        }
+                      }
+                    ]
+                  }],
+                  max_tokens: 8000
+                }),
+              });
+
+              if (visionResponse.ok) {
+                const visionData = await visionResponse.json();
+                const visionContent = visionData.choices?.[0]?.message?.content;
+                if (visionContent && visionContent.length > 100) {
+                  textContent = `[VISION ANALYSIS - Map/Image Document: ${document.filename}]\n\n${visionContent}`;
+                  console.log(`Signed URL PDF analysis successful: ${textContent.length} characters`);
+                } else {
+                  console.warn('PDF analysis returned minimal content');
+                }
+              } else {
+                const errText = await visionResponse.text();
+                console.error(`Vision API error ${visionResponse.status}: ${errText}`);
+                
+                // Fallback: Try with gemini-2.5-pro for more complex documents
+                if (visionResponse.status === 400 || visionResponse.status === 415) {
+                  console.log('Retrying with Gemini 2.5 Pro...');
+                  const fallbackResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                      model: 'google/gemini-2.5-pro',
+                      messages: [{
+                        role: 'user',
+                        content: [
+                          {
+                            type: 'text',
+                            text: `Analyze this map/infrastructure document "${document.filename}" and extract all visible content including roads, mileposts, pipelines, and geographic information.`
+                          },
+                          {
+                            type: 'image_url',
+                            image_url: {
+                              url: signedPdfUrl
+                            }
+                          }
+                        ]
+                      }],
+                      max_tokens: 8000
+                    }),
+                  });
+
+                  if (fallbackResponse.ok) {
+                    const fallbackData = await fallbackResponse.json();
+                    const fallbackContent = fallbackData.choices?.[0]?.message?.content;
+                    if (fallbackContent && fallbackContent.length > 100) {
+                      textContent = `[VISION ANALYSIS - Map/Image Document: ${document.filename}]\n\n${fallbackContent}`;
+                      console.log(`Fallback PDF analysis successful: ${textContent.length} characters`);
+                    }
                   }
                 }
               }
             }
             
             if (!textContent || textContent.length < 100) {
-              textContent = `[Image-based PDF could not be fully analyzed. File: ${document.filename}. Size: ${(pdfBytes.byteLength / 1024 / 1024).toFixed(1)}MB]`;
+              textContent = `[Image-based PDF could not be fully analyzed. File: ${document.filename}. Size: ${fileSizeMB.toFixed(1)}MB]`;
             }
           }
         } catch (visionError) {
