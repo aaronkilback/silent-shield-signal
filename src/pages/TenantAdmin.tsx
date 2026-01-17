@@ -54,6 +54,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { PageLayout } from "@/components/PageLayout";
+import { TenantSelector } from "@/components/TenantSelector";
 
 export default function TenantAdmin() {
   const { session } = useAuth();
@@ -297,19 +298,25 @@ export default function TenantAdmin() {
   }
 
   return (
-    <PageLayout>
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Settings className="h-6 w-6" />
-              Tenant Administration
-            </h1>
-            <p className="text-muted-foreground">
-              {currentTenant ? `Manage members and invites for ${currentTenant.name}` : 'Manage tenants'}
-            </p>
+      <PageLayout>
+        <div className="space-y-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold flex items-center gap-2">
+                <Settings className="h-6 w-6" />
+                Tenant Administration
+              </h1>
+              <p className="text-muted-foreground">
+                {currentTenant ? `Manage members and invites for ${currentTenant.name}` : 'Manage tenants'}
+              </p>
+            </div>
+
+            {/* Tenant switcher (explicit on this page so it can't be missed) */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground hidden sm:inline">Current tenant:</span>
+              <TenantSelector />
+            </div>
           </div>
-        </div>
 
         {/* Super Admin: Create Tenant Section */}
         {isSuperAdmin && (
