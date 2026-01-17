@@ -42,7 +42,10 @@ serve(async (req) => {
     // Parse request body
     const { tenant_id, email, role = 'viewer' } = await req.json();
     
+    console.log('Create invite request:', { tenant_id, email, role, user_id: user.id });
+    
     if (!tenant_id || !email) {
+      console.log('Missing required fields:', { tenant_id, email });
       return new Response(
         JSON.stringify({ error: 'tenant_id and email are required' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -52,6 +55,7 @@ serve(async (req) => {
     // Validate role
     const validRoles = ['owner', 'admin', 'analyst', 'viewer'];
     if (!validRoles.includes(role)) {
+      console.log('Invalid role:', role);
       return new Response(
         JSON.stringify({ error: 'Invalid role' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -70,6 +74,7 @@ serve(async (req) => {
       .single();
 
     if (!membership || !['owner', 'admin'].includes(membership.role)) {
+      console.log('Permission denied - user membership:', membership);
       return new Response(
         JSON.stringify({ error: 'You must be an admin or owner to create invites' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -97,6 +102,7 @@ serve(async (req) => {
         .single();
 
       if (existingMembership) {
+        console.log('User is already a member:', existingUser.id);
         return new Response(
           JSON.stringify({ error: 'This user is already a member of this tenant' }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -115,6 +121,7 @@ serve(async (req) => {
       .single();
 
     if (existingInvite) {
+      console.log('Pending invite already exists:', existingInvite.id);
       return new Response(
         JSON.stringify({ error: 'A pending invite already exists for this email' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
