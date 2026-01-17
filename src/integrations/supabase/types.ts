@@ -3051,6 +3051,7 @@ export type Database = {
           deleted_at: string | null
           id: string
           incident_type: string | null
+          information_accuracy: string | null
           initial_agent_prompt: string | null
           investigation_status: string | null
           is_read: boolean | null
@@ -3062,6 +3063,7 @@ export type Database = {
           severity_level: string | null
           signal_id: string | null
           sla_targets_json: Json | null
+          source_reliability: string | null
           status: Database["public"]["Enums"]["incident_status"]
           summary: string | null
           task_force_name: string | null
@@ -3080,6 +3082,7 @@ export type Database = {
           deleted_at?: string | null
           id?: string
           incident_type?: string | null
+          information_accuracy?: string | null
           initial_agent_prompt?: string | null
           investigation_status?: string | null
           is_read?: boolean | null
@@ -3091,6 +3094,7 @@ export type Database = {
           severity_level?: string | null
           signal_id?: string | null
           sla_targets_json?: Json | null
+          source_reliability?: string | null
           status?: Database["public"]["Enums"]["incident_status"]
           summary?: string | null
           task_force_name?: string | null
@@ -3109,6 +3113,7 @@ export type Database = {
           deleted_at?: string | null
           id?: string
           incident_type?: string | null
+          information_accuracy?: string | null
           initial_agent_prompt?: string | null
           investigation_status?: string | null
           is_read?: boolean | null
@@ -3120,6 +3125,7 @@ export type Database = {
           severity_level?: string | null
           signal_id?: string | null
           sla_targets_json?: Json | null
+          source_reliability?: string | null
           status?: Database["public"]["Enums"]["incident_status"]
           summary?: string | null
           task_force_name?: string | null
@@ -4969,6 +4975,7 @@ export type Database = {
           description: string | null
           entity_tags: string[] | null
           id: string
+          information_accuracy: string | null
           is_primary_signal: boolean | null
           is_read: boolean | null
           is_test: boolean | null
@@ -4987,6 +4994,7 @@ export type Database = {
           severity_score: number | null
           signal_type: string | null
           source_id: string | null
+          source_reliability: string | null
           status: Database["public"]["Enums"]["signal_status"]
           tenant_id: string | null
           title: string | null
@@ -5006,6 +5014,7 @@ export type Database = {
           description?: string | null
           entity_tags?: string[] | null
           id?: string
+          information_accuracy?: string | null
           is_primary_signal?: boolean | null
           is_read?: boolean | null
           is_test?: boolean | null
@@ -5024,6 +5033,7 @@ export type Database = {
           severity_score?: number | null
           signal_type?: string | null
           source_id?: string | null
+          source_reliability?: string | null
           status?: Database["public"]["Enums"]["signal_status"]
           tenant_id?: string | null
           title?: string | null
@@ -5043,6 +5053,7 @@ export type Database = {
           description?: string | null
           entity_tags?: string[] | null
           id?: string
+          information_accuracy?: string | null
           is_primary_signal?: boolean | null
           is_read?: boolean | null
           is_test?: boolean | null
@@ -5061,6 +5072,7 @@ export type Database = {
           severity_score?: number | null
           signal_type?: string | null
           source_id?: string | null
+          source_reliability?: string | null
           status?: Database["public"]["Enums"]["signal_status"]
           tenant_id?: string | null
           title?: string | null

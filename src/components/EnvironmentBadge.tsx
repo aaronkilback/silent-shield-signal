@@ -39,7 +39,8 @@ export const EnvironmentBadge = () => {
   const { data: envConfig, isLoading } = useQuery({
     queryKey: ['environment-config'],
     queryFn: async () => {
-      const { data, error } = await supabase
+      // Cast to any until types are regenerated for new table
+      const { data, error } = await (supabase as any)
         .from('environment_config')
         .select('*')
         .eq('is_active', true)
