@@ -20,6 +20,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
+import { TenantSelector } from "@/components/TenantSelector";
 
 export const Header = () => {
   const { signOut } = useAuth();
@@ -202,6 +203,7 @@ export const Header = () => {
               </nav>
 
               <div className="flex items-center gap-2 ml-2 pl-2 border-l border-border">
+                <TenantSelector />
                 <EntityNotifications />
                 <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary/50">
                   <Activity className="w-3.5 h-3.5 text-status-active animate-pulse" />
@@ -235,6 +237,10 @@ export const Header = () => {
                     <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/50">
                       <Activity className="w-4 h-4 text-status-active animate-pulse" />
                       <span className="text-sm text-foreground font-medium">Systems Operational</span>
+                    </div>
+
+                    <div className="px-3">
+                      <TenantSelector />
                     </div>
                     
                     <nav className="flex flex-col gap-1">
