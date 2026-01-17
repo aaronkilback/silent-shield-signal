@@ -200,3 +200,7 @@ verify_jwt = false
 
 [functions.manage-incident-ticket]
 verify_jwt = false
+
+[functions.guardian-check]
+verify_jwt = false
+

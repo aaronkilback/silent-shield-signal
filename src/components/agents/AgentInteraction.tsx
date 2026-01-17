@@ -3,12 +3,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Loader2, Bot, User, Trash2, Copy, Check } from "lucide-react";
+import { Send, Loader2, Bot, User, Trash2, Copy, Check, Flag } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
+import { useContentModeration } from "@/hooks/useContentModeration";
+import { ReportViolationDialog } from "@/components/ReportViolationDialog";
 
 interface AIAgent {
   id: string;
@@ -38,6 +40,10 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
   const [copiedAll, setCopiedAll] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { user } = useAuth();
+  const { checkContent, isChecking } = useContentModeration({
+    contentType: 'chat_message',
+    actionType: 'agent_message'
+  });
 
   const copyMessage = async (content: string, index: number) => {
     try {
@@ -144,6 +150,14 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
     if (!input.trim() || isLoading || !conversationId) return;
 
     const userMessage = input.trim();
+    
+    // Check content before sending
+    const moderationResult = await checkContent(userMessage);
+    if (!moderationResult.allowed) {
+      // Content was blocked
+      return;
+    }
+    
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
     setIsLoading(true);
@@ -318,18 +332,31 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
                         : "bg-muted"
                     )}
                   >
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => copyMessage(message.content, index)}
-                    >
-                      {copiedIndex === index ? (
-                        <Check className="h-3 w-3 text-green-500" />
-                      ) : (
-                        <Copy className="h-3 w-3" />
+                    <div className="absolute top-1 right-1 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        onClick={() => copyMessage(message.content, index)}
+                      >
+                        {copiedIndex === index ? (
+                          <Check className="h-3 w-3 text-green-500" />
+                        ) : (
+                          <Copy className="h-3 w-3" />
+                        )}
+                      </Button>
+                      {message.role === "assistant" && (
+                        <ReportViolationDialog
+                          contentType="agent_message"
+                          contentExcerpt={message.content}
+                          trigger={
+                            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive">
+                              <Flag className="h-3 w-3" />
+                            </Button>
+                          }
+                        />
                       )}
-                    </Button>
+                    </div>
                     {message.role === "assistant" ? (
                       <div className="prose prose-sm dark:prose-invert max-w-none break-words overflow-wrap-anywhere [&>*]:max-w-full [&_pre]:overflow-x-auto [&_code]:break-all pr-6">
                         <ReactMarkdown>{message.content}</ReactMarkdown>
