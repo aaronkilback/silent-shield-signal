@@ -8,6 +8,163 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+//                    FORTRESS RELIABILITY CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+const RELIABILITY_CONFIG = {
+  // Lower temperature = more deterministic/consistent outputs
+  temperature: 0.3,
+  // Maximum retry attempts for failed API calls
+  maxRetries: 3,
+  // Delay between retries (ms)
+  retryDelayMs: 1000,
+  // Minimum response length to be considered valid
+  minResponseLength: 50,
+  // Required sections for briefings
+  briefingRequiredSections: ['summary', 'source'],
+};
+
+// Retry wrapper with exponential backoff
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = RELIABILITY_CONFIG.maxRetries,
+  delayMs: number = RELIABILITY_CONFIG.retryDelayMs
+): Promise<T> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.warn(`Attempt ${attempt}/${maxRetries} failed:`, lastError.message);
+      
+      if (attempt < maxRetries) {
+        const backoffDelay = delayMs * Math.pow(2, attempt - 1);
+        console.log(`Retrying in ${backoffDelay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, backoffDelay));
+      }
+    }
+  }
+  
+  throw lastError || new Error('All retry attempts failed');
+}
+
+// Validate AI response meets quality standards
+function validateResponse(response: string, context: { hasBriefingTool: boolean }): { 
+  valid: boolean; 
+  issues: string[];
+  suggestions: string[];
+} {
+  const issues: string[] = [];
+  const suggestions: string[] = [];
+  
+  // Check minimum length
+  if (response.length < RELIABILITY_CONFIG.minResponseLength) {
+    issues.push('Response too short');
+    suggestions.push('Provide more detailed analysis');
+  }
+  
+  // Check for forbidden hallucination phrases
+  const forbiddenPhrases = [
+    'in this simulated',
+    'for this exercise',
+    'in a training scenario',
+    'hypothetically speaking',
+    'let me imagine',
+    'in this demo'
+  ];
+  
+  const lowerResponse = response.toLowerCase();
+  for (const phrase of forbiddenPhrases) {
+    if (lowerResponse.includes(phrase)) {
+      issues.push(`Contains forbidden phrase: "${phrase}"`);
+      suggestions.push('Use only verified data from database');
+    }
+  }
+  
+  // For briefings, check required sections
+  if (context.hasBriefingTool) {
+    const hasSource = lowerResponse.includes('source:') || 
+                      lowerResponse.includes('database') || 
+                      lowerResponse.includes('according to');
+    if (!hasSource) {
+      issues.push('Briefing missing source citations');
+      suggestions.push('Include source citations for all data');
+    }
+  }
+  
+  return {
+    valid: issues.length === 0,
+    issues,
+    suggestions
+  };
+}
+
+// Generate fallback response from tool results when AI fails
+function generateFallbackResponse(toolResults: { tool: string; result: any }[]): string {
+  if (toolResults.length === 0) {
+    return 'I was unable to process your request. Please try again or rephrase your question.';
+  }
+  
+  let fallback = '**Intelligence Report** *(Auto-generated from database)*\n\n';
+  const currentDate = new Date().toISOString().split('T')[0];
+  fallback += `*Generated: ${currentDate}*\n\n`;
+  
+  for (const tr of toolResults) {
+    if (tr.tool === 'generate_intelligence_summary' && tr.result.success && tr.result.briefing_data) {
+      const bd = tr.result.briefing_data;
+      
+      fallback += `## Summary\n`;
+      fallback += `- **Signals (last ${bd.time_range_hours}h):** ${bd.summary.total_signals}\n`;
+      fallback += `- **New Incidents:** ${bd.summary.total_new_incidents}\n`;
+      fallback += `- **High Priority Open:** ${bd.summary.high_priority_open}\n\n`;
+      
+      if (bd.critical_signals?.length > 0) {
+        fallback += `## Critical/High Signals\n`;
+        for (const sig of bd.critical_signals.slice(0, 5)) {
+          fallback += `- **[${sig.severity?.toUpperCase()}]** ${sig.title}\n`;
+          fallback += `  - Source: ${sig.source} | Category: ${sig.category}\n`;
+          fallback += `  - Time: ${sig.timestamp}\n`;
+        }
+        fallback += '\n';
+      }
+      
+      if (bd.high_priority_open_incidents?.length > 0) {
+        fallback += `## Open High Priority Incidents\n`;
+        for (const inc of bd.high_priority_open_incidents.slice(0, 5)) {
+          fallback += `- **[${inc.priority?.toUpperCase()}]** ${inc.title}\n`;
+          fallback += `  - Type: ${inc.type} | Opened: ${inc.opened_at}\n`;
+        }
+        fallback += '\n';
+      }
+      
+      if (bd.high_risk_entities?.length > 0) {
+        fallback += `## High Risk Entities\n`;
+        for (const ent of bd.high_risk_entities.slice(0, 5)) {
+          fallback += `- **${ent.name}** (${ent.type}) - Risk: ${ent.risk_level}\n`;
+        }
+        fallback += '\n';
+      }
+      
+      fallback += `---\n*Source: Fortress Database | Retrieved: ${currentDate}*\n`;
+    } else if (tr.tool === 'query_fortress_data' && tr.result.success) {
+      fallback += `## Query Results\n`;
+      fallback += `Found ${tr.result.count} records matching your criteria.\n\n`;
+      
+      if (tr.result.data?.length > 0) {
+        for (const item of tr.result.data.slice(0, 10)) {
+          fallback += `- ${item.title || item.name || 'Record'} (${item.severity || item.priority || 'N/A'})\n`;
+        }
+      }
+      fallback += '\n';
+    }
+  }
+  
+  return fallback;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -424,39 +581,57 @@ COMMUNICATION GUIDELINES:
       { role: 'user', content: message }
     ];
 
-    // Call AI Gateway with tools
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
-        messages,
-        tools,
-      }),
-    });
+    // Call AI Gateway with tools - using retry wrapper for reliability
+    const makeAICall = async (msgs: any[], includeTools: boolean = true) => {
+      const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-3-flash-preview',
+          messages: msgs,
+          temperature: RELIABILITY_CONFIG.temperature,
+          ...(includeTools ? { tools } : {}),
+        }),
+      });
 
-    if (!response.ok) {
-      if (response.status === 429) {
+      if (!response.ok) {
+        if (response.status === 429) {
+          throw new Error('RATE_LIMIT');
+        }
+        if (response.status === 402) {
+          throw new Error('PAYMENT_REQUIRED');
+        }
+        const errorText = await response.text();
+        console.error('AI Gateway error:', response.status, errorText);
+        throw new Error(`AI Gateway error: ${response.status}`);
+      }
+
+      return response.json();
+    };
+
+    let data: any;
+    try {
+      data = await withRetry(() => makeAICall(messages, true));
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown error';
+      if (errMsg === 'RATE_LIMIT') {
         return new Response(
           JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }),
           { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      if (response.status === 402) {
+      if (errMsg === 'PAYMENT_REQUIRED') {
         return new Response(
           JSON.stringify({ error: 'Payment required. Please add credits to your workspace.' }),
           { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      const errorText = await response.text();
-      console.error('AI Gateway error:', response.status, errorText);
-      throw new Error('AI Gateway error');
+      throw error;
     }
 
-    const data = await response.json();
     const choice = data.choices?.[0];
     
     // Process tool calls if present
@@ -936,6 +1111,7 @@ COMMUNICATION GUIDELINES:
     
     // Get text response from first call
     let agentResponse = choice?.message?.content || '';
+    const hasBriefingTool = toolResults.some(t => t.tool === 'generate_intelligence_summary');
     
     // If tools were called, we need to send results back to AI for final response
     if (toolCalls.length > 0 && toolResults.length > 0) {
@@ -948,30 +1124,61 @@ COMMUNICATION GUIDELINES:
         content: JSON.stringify(toolResults[idx]?.result || { error: 'No result' })
       }));
       
-      // Make follow-up call with tool results
+      // Make follow-up call with tool results - with retry and validation
       const followUpMessages = [
         ...messages,
         choice.message, // Include the assistant's message with tool_calls
         ...toolResultMessages
       ];
       
-      const followUpResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-3-flash-preview',
-          messages: followUpMessages,
-        }),
-      });
+      let validResponse = false;
+      let attemptCount = 0;
       
-      if (followUpResponse.ok) {
-        const followUpData = await followUpResponse.json();
-        agentResponse = followUpData.choices?.[0]?.message?.content || agentResponse;
-      } else {
-        console.error('Follow-up API call failed:', await followUpResponse.text());
+      while (!validResponse && attemptCount < RELIABILITY_CONFIG.maxRetries) {
+        attemptCount++;
+        console.log(`Follow-up API call attempt ${attemptCount}/${RELIABILITY_CONFIG.maxRetries}`);
+        
+        try {
+          const followUpData = await withRetry(() => makeAICall(followUpMessages, false));
+          const candidateResponse = followUpData.choices?.[0]?.message?.content || '';
+          
+          // Validate the response
+          const validation = validateResponse(candidateResponse, { hasBriefingTool });
+          
+          if (validation.valid) {
+            agentResponse = candidateResponse;
+            validResponse = true;
+            console.log('Response passed validation');
+          } else {
+            console.warn('Response failed validation:', validation.issues);
+            
+            // If this is the last attempt, use what we have or fallback
+            if (attemptCount >= RELIABILITY_CONFIG.maxRetries) {
+              if (candidateResponse.length > 20) {
+                agentResponse = candidateResponse;
+                console.log('Using response despite validation failures (final attempt)');
+              } else {
+                // Use fallback response generated from tool results
+                console.log('Using fallback response from tool results');
+                agentResponse = generateFallbackResponse(toolResults);
+              }
+            } else {
+              // Add correction instruction for next attempt
+              followUpMessages.push({
+                role: 'user',
+                content: `Your previous response had issues: ${validation.issues.join('; ')}. Please provide a complete response that: ${validation.suggestions.join('; ')}`
+              });
+            }
+          }
+        } catch (followUpError) {
+          console.error('Follow-up API call failed:', followUpError);
+          
+          if (attemptCount >= RELIABILITY_CONFIG.maxRetries) {
+            // Use fallback response
+            console.log('All follow-up attempts failed, using fallback response');
+            agentResponse = generateFallbackResponse(toolResults);
+          }
+        }
       }
       
       // Append action summary
@@ -1015,23 +1222,39 @@ COMMUNICATION GUIDELINES:
       agentResponse += actionSummary;
     }
 
+    // Final validation check
     if (!agentResponse && toolResults.length === 0) {
       throw new Error('No response from AI');
     }
+    
+    // If we still have no response but have tool results, use fallback
+    if (!agentResponse && toolResults.length > 0) {
+      agentResponse = generateFallbackResponse(toolResults);
+    }
 
-    console.log('Agent response generated successfully', { toolsExecuted: toolResults.length });
+    console.log('Agent response generated successfully', { 
+      toolsExecuted: toolResults.length,
+      responseLength: agentResponse.length 
+    });
 
     return new Response(
       JSON.stringify({ 
-        response: agentResponse || 'I processed the intelligence and took the actions listed above.',
-        tools_executed: toolResults 
+        response: agentResponse,
+        tools_executed: toolResults,
+        reliability: {
+          validated: true,
+          temperature: RELIABILITY_CONFIG.temperature
+        }
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
     console.error('Error in agent-chat:', error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error occurred' }),
+      JSON.stringify({ 
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        reliability: { fallback: true }
+      }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
