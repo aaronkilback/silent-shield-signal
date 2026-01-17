@@ -20,7 +20,9 @@ export type Database = {
           client_id: string | null
           created_at: string
           id: string
+          is_shared: boolean | null
           status: string | null
+          tenant_id: string | null
           title: string | null
           updated_at: string
           user_id: string
@@ -30,7 +32,9 @@ export type Database = {
           client_id?: string | null
           created_at?: string
           id?: string
+          is_shared?: boolean | null
           status?: string | null
+          tenant_id?: string | null
           title?: string | null
           updated_at?: string
           user_id: string
@@ -40,7 +44,9 @@ export type Database = {
           client_id?: string | null
           created_at?: string
           id?: string
+          is_shared?: boolean | null
           status?: string | null
+          tenant_id?: string | null
           title?: string | null
           updated_at?: string
           user_id?: string
@@ -58,6 +64,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_conversations_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
             referencedColumns: ["id"]
           },
           {
@@ -248,32 +261,49 @@ export type Database = {
       ai_assistant_messages: {
         Row: {
           content: string
+          conversation_id: string | null
           created_at: string
           deleted_at: string | null
           id: string
+          is_shared: boolean | null
           role: string
+          tenant_id: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
           content: string
+          conversation_id?: string | null
           created_at?: string
           deleted_at?: string | null
           id?: string
+          is_shared?: boolean | null
           role: string
+          tenant_id?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
           content?: string
+          conversation_id?: string | null
           created_at?: string
           deleted_at?: string | null
           id?: string
+          is_shared?: boolean | null
           role?: string
+          tenant_id?: string | null
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "ai_assistant_messages_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       alerts: {
         Row: {
@@ -1343,6 +1373,7 @@ export type Database = {
           importance_score: number | null
           memory_type: string
           source_conversation_id: string | null
+          tenant_id: string | null
           updated_at: string
           user_id: string
         }
@@ -1356,6 +1387,7 @@ export type Database = {
           importance_score?: number | null
           memory_type: string
           source_conversation_id?: string | null
+          tenant_id?: string | null
           updated_at?: string
           user_id: string
         }
@@ -1369,6 +1401,7 @@ export type Database = {
           importance_score?: number | null
           memory_type?: string
           source_conversation_id?: string | null
+          tenant_id?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -1378,6 +1411,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversation_memory_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
             referencedColumns: ["id"]
           },
         ]

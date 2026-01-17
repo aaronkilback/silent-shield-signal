@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Sparkles, Loader2, Paperclip, X, Phone, MessageSquarePlus } from "lucide-react";
+import { Send, Sparkles, Loader2, Paperclip, X, Phone, MessageSquarePlus, Users, User, Share2 } from "lucide-react";
 import { VoiceConversationInterface } from "./VoiceConversationInterface";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,10 +11,19 @@ import { useNavigate, useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
+import { useTenant } from "@/hooks/useTenant";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type Message = {
   role: "user" | "assistant";
   content: string;
+  id?: string;
+  is_shared?: boolean;
+  user_id?: string;
+  conversation_id?: string;
 };
 
 export const DashboardAIAssistant = () => {
@@ -22,6 +31,7 @@ export const DashboardAIAssistant = () => {
   const location = useLocation();
   const { user, loading: authLoading } = useAuth();
   const { isAdmin, isSuperAdmin } = useUserRole();
+  const { currentTenant } = useTenant();
   const STORAGE_KEY = "fortress-ai-chat-history";
   
   const [messages, setMessages] = useState<Message[]>([]);
@@ -29,6 +39,9 @@ export const DashboardAIAssistant = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [attachments, setAttachments] = useState<File[]>([]);
+  const [viewMode, setViewMode] = useState<"personal" | "team">("personal");
+  const [isSharedConversation, setIsSharedConversation] = useState(false);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -40,7 +53,10 @@ export const DashboardAIAssistant = () => {
   // Limit context sent to AI to prevent confusion between topics
   const MAX_CONTEXT_MESSAGES = 20;
 
-  // Load messages from database on mount and when returning to page
+  // Generate a new conversation ID
+  const generateConversationId = () => crypto.randomUUID();
+
+  // Load messages from database on mount and when returning to page or view mode changes
   useEffect(() => {
     const loadMessages = async () => {
       const defaultMessage: Message = {
@@ -66,17 +82,30 @@ export const DashboardAIAssistant = () => {
       }
 
       try {
-        console.log(`🔄 Loading chat history for user ${user.id}`);
+        console.log(`🔄 Loading chat history for user ${user.id}, mode: ${viewMode}`);
         setIsLoadingHistory(true);
         
-        // Load the most recent 100 messages for faster loading
-        const { data: dbMessages, error } = await supabase
+        let query = supabase
           .from('ai_assistant_messages')
-          .select('id, role, content, created_at')
-          .eq('user_id', user.id)
+          .select('id, role, content, created_at, is_shared, user_id, conversation_id, tenant_id')
           .is('deleted_at', null)
           .order('created_at', { ascending: false })
           .limit(100);
+
+        if (viewMode === "personal") {
+          // Personal: show only user's own messages
+          query = query.eq('user_id', user.id);
+        } else if (viewMode === "team" && currentTenant?.id) {
+          // Team: show shared messages within tenant
+          query = query
+            .eq('tenant_id', currentTenant.id)
+            .eq('is_shared', true);
+        } else {
+          // Fallback to personal if no tenant
+          query = query.eq('user_id', user.id);
+        }
+
+        const { data: dbMessages, error } = await query;
         
         // Reverse to show chronologically (oldest to newest)
         const sortedMessages = dbMessages ? [...dbMessages].reverse() : [];
@@ -90,24 +119,37 @@ export const DashboardAIAssistant = () => {
         }
 
         if (sortedMessages && sortedMessages.length > 0) {
-          const formattedMessages = sortedMessages.map(msg => ({
+          const formattedMessages: Message[] = sortedMessages.map(msg => ({
             role: msg.role as "user" | "assistant",
-            content: msg.content
+            content: msg.content,
+            id: msg.id,
+            is_shared: msg.is_shared || false,
+            user_id: msg.user_id,
+            conversation_id: msg.conversation_id || undefined,
           }));
           setMessages(formattedMessages);
-          console.log(`✅ Loaded ${formattedMessages.length} messages for user ${user.id}`);
-        } else {
-          // Check localStorage for migration
+          // Set current conversation from last message
+          const lastConvId = formattedMessages[formattedMessages.length - 1]?.conversation_id;
+          if (lastConvId) {
+            setCurrentConversationId(lastConvId);
+          }
+          console.log(`✅ Loaded ${formattedMessages.length} messages for ${viewMode} view`);
+        } else if (viewMode === "personal") {
+          // Only migrate from localStorage for personal view
           const stored = localStorage.getItem(STORAGE_KEY);
           if (stored) {
             try {
               const parsed = JSON.parse(stored);
               console.log(`🔄 Migrating ${parsed.length} messages from localStorage`);
               
+              const newConvId = generateConversationId();
               const messagesToInsert = parsed.map((msg: Message) => ({
                 user_id: user.id,
                 role: msg.role,
-                content: msg.content
+                content: msg.content,
+                conversation_id: newConvId,
+                is_shared: false,
+                tenant_id: currentTenant?.id || null,
               }));
               
               const { error: insertError } = await supabase
@@ -119,6 +161,7 @@ export const DashboardAIAssistant = () => {
                 setMessages(parsed);
               } else {
                 setMessages(parsed);
+                setCurrentConversationId(newConvId);
                 localStorage.removeItem(STORAGE_KEY);
                 console.log("✅ Successfully migrated messages to database");
               }
@@ -131,6 +174,12 @@ export const DashboardAIAssistant = () => {
             // Save default message to DB
             await saveMessageToDb(defaultMessage);
           }
+        } else {
+          // Team view with no shared messages
+          setMessages([{
+            role: "assistant",
+            content: "No shared team conversations yet. Switch to personal mode or share a conversation with your team!",
+          }]);
         }
       } catch (error) {
         console.error("❌ Failed to load chat history:", error);
@@ -142,10 +191,10 @@ export const DashboardAIAssistant = () => {
     };
 
     loadMessages();
-  }, [user, authLoading, location.pathname]); // Re-run when navigating back to this page
+  }, [user, authLoading, location.pathname, viewMode, currentTenant?.id]); // Re-run when view mode or tenant changes
 
   // Helper function to save a new message to database immediately
-  const saveMessageToDb = async (message: Message): Promise<boolean> => {
+  const saveMessageToDb = async (message: Message, conversationId?: string): Promise<boolean> => {
     if (!user) {
       console.warn("⚠️ Cannot save message - no user logged in");
       toast.error("Not logged in - messages won't be saved!", {
@@ -155,12 +204,20 @@ export const DashboardAIAssistant = () => {
     }
     
     try {
+      const convId = conversationId || currentConversationId || generateConversationId();
+      if (!currentConversationId) {
+        setCurrentConversationId(convId);
+      }
+
       const { error } = await supabase
         .from('ai_assistant_messages')
         .insert({
           user_id: user.id,
           role: message.role,
-          content: message.content
+          content: message.content,
+          conversation_id: convId,
+          is_shared: isSharedConversation,
+          tenant_id: currentTenant?.id || null,
         });
 
       if (error) {
@@ -169,13 +226,47 @@ export const DashboardAIAssistant = () => {
         toast.error("Failed to save message to history");
         return false;
       } else {
-        console.log(`✅ Message saved: ${message.role} for user ${user.id}`);
+        console.log(`✅ Message saved: ${message.role} for user ${user.id}, shared: ${isSharedConversation}`);
         return true;
       }
     } catch (error) {
       console.error("❌ Exception saving message:", error);
       toast.error("Failed to save message");
       return false;
+    }
+  };
+
+  // Toggle sharing for current conversation
+  const toggleConversationSharing = async () => {
+    if (!currentConversationId || !user || !currentTenant?.id) {
+      toast.error("Cannot share: No active conversation or tenant");
+      return;
+    }
+
+    const newSharedState = !isSharedConversation;
+    
+    try {
+      // Update all messages in this conversation
+      const { error } = await supabase
+        .from('ai_assistant_messages')
+        .update({ 
+          is_shared: newSharedState,
+          tenant_id: currentTenant.id 
+        })
+        .eq('conversation_id', currentConversationId)
+        .eq('user_id', user.id);
+
+      if (error) {
+        console.error("Failed to toggle sharing:", error);
+        toast.error("Failed to update sharing status");
+        return;
+      }
+
+      setIsSharedConversation(newSharedState);
+      toast.success(newSharedState ? "Conversation shared with team" : "Conversation made private");
+    } catch (error) {
+      console.error("Failed to toggle sharing:", error);
+      toast.error("Failed to update sharing status");
     }
   };
 
@@ -910,58 +1001,97 @@ How can I help you now?`,
   return (
     <Card className="w-full">
       <CardHeader className="pb-3">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-              <Sparkles className="w-5 h-5 text-primary" />
-              AI Security Assistant
-            </CardTitle>
-            {!user && !authLoading && (
-              <span className="text-xs px-2 py-1 bg-destructive/10 text-destructive rounded-md font-medium">
-                History not saved (not logged in)
-              </span>
-            )}
-            {authLoading && (
-              <span className="text-xs px-2 py-1 bg-muted text-muted-foreground rounded-md">
-                Loading...
-              </span>
-            )}
-            {user && (
-              <span className="text-xs px-2 py-1 bg-green-500/10 text-green-600 dark:text-green-400 rounded-md font-medium">
-                History saved
-              </span>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+                <Sparkles className="w-5 h-5 text-primary" />
+                AI Security Assistant
+              </CardTitle>
+              {currentTenant && (
+                <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as "personal" | "team")} className="h-8">
+                  <TabsList className="h-7">
+                    <TabsTrigger value="personal" className="text-xs h-6 px-2">
+                      <User className="w-3 h-3 mr-1" />
+                      Personal
+                    </TabsTrigger>
+                    <TabsTrigger value="team" className="text-xs h-6 px-2">
+                      <Users className="w-3 h-3 mr-1" />
+                      Team
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              )}
+            </div>
+            {viewMode === "personal" && currentTenant && currentConversationId && (
+              <div className="flex items-center gap-2">
+                <Label htmlFor="share-toggle" className="text-xs text-muted-foreground">
+                  Share with team
+                </Label>
+                <Switch
+                  id="share-toggle"
+                  checked={isSharedConversation}
+                  onCheckedChange={toggleConversationSharing}
+                  className="scale-75"
+                />
+                {isSharedConversation && (
+                  <Badge variant="secondary" className="text-xs">
+                    <Share2 className="w-3 h-3 mr-1" />
+                    Shared
+                  </Badge>
+                )}
+              </div>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={startNewChat}
-              className="text-xs shrink-0"
-              title="Start fresh conversation (keeps history visible, resets AI context)"
-            >
-              <MessageSquarePlus className="w-3.5 h-3.5 mr-1.5" />
-              New Chat
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowVoiceInterface(true)}
-              className="text-xs shrink-0"
-              title="Start voice conversation"
-            >
-              <Phone className="w-3.5 h-3.5 mr-1.5" />
-              Voice
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={clearHistory}
-              className="text-xs shrink-0"
-              title="Clear conversation messages only (AI keeps all platform knowledge and tools)"
-            >
-              Clear Chat
-            </Button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {!user && !authLoading && (
+                <span className="text-xs px-2 py-1 bg-destructive/10 text-destructive rounded-md font-medium">
+                  History not saved (not logged in)
+                </span>
+              )}
+              {authLoading && (
+                <span className="text-xs px-2 py-1 bg-muted text-muted-foreground rounded-md">
+                  Loading...
+                </span>
+              )}
+              {user && (
+                <span className="text-xs px-2 py-1 bg-green-500/10 text-green-600 dark:text-green-400 rounded-md font-medium">
+                  History saved
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={startNewChat}
+                className="text-xs shrink-0"
+                title="Start fresh conversation (keeps history visible, resets AI context)"
+              >
+                <MessageSquarePlus className="w-3.5 h-3.5 mr-1.5" />
+                New Chat
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowVoiceInterface(true)}
+                className="text-xs shrink-0"
+                title="Start voice conversation"
+              >
+                <Phone className="w-3.5 h-3.5 mr-1.5" />
+                Voice
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={clearHistory}
+                className="text-xs shrink-0"
+                title="Clear conversation messages only (AI keeps all platform knowledge and tools)"
+              >
+                Clear Chat
+              </Button>
+            </div>
           </div>
         </div>
       </CardHeader>
