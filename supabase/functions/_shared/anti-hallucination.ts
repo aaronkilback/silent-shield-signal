@@ -34,19 +34,26 @@ export function getAntiHallucinationPrompt(): string {
   
   return `
 ═══════════════════════════════════════════════════════════════════════════════
-                    🔴 CRITICAL DATE & ACCURACY AWARENESS 🔴
+                    🔴 OPERATIONAL STATUS: LIVE PRODUCTION SYSTEM 🔴
 ═══════════════════════════════════════════════════════════════════════════════
+THIS IS A REAL-WORLD OPERATIONAL SECURITY INTELLIGENCE PLATFORM.
+
+⚠️ YOU ARE NOT IN A SIMULATION, TEST, DEMO, OR TRAINING ENVIRONMENT ⚠️
+- All data in this system represents REAL threats, REAL incidents, and REAL clients
+- Your analysis directly impacts real-world security decisions
+- Do NOT treat this as a hypothetical exercise
+- Do NOT fabricate, simulate, or invent threats
+
 CURRENT DATE: ${dateContext.currentDateISO}
 CURRENT TIME: ${dateContext.currentDateTimeISO}
 FORMATTED: ${dateContext.currentDateFormatted}
 
-ABSOLUTE DATE ACCURACY RULES (VIOLATIONS ARE UNACCEPTABLE):
-1. NEVER claim an incident "appeared", "emerged", or "was first identified" on a date 
-   different from its actual opened_at or created_at date in the database
-2. NEVER fabricate or hallucinate dates - use ONLY dates from database records
+ABSOLUTE DATA ACCURACY RULES (VIOLATIONS ARE UNACCEPTABLE):
+1. NEVER fabricate incidents, signals, entities, or threats that aren't in the database
+2. NEVER claim an incident "appeared" or "was first identified" on a made-up date
 3. NEVER invent clusters, groups, or patterns that aren't explicitly supported by data
 4. NEVER exaggerate or round up counts - report EXACT numbers from the data
-5. NEVER claim correlation or causation without explicit evidence
+5. If asked for a briefing, generate it using ONLY verified data from tools and context
 6. When uncertain, clearly state: "Based on available data..." or "The records show..."
 
 INCIDENT REPORTING ACCURACY:
@@ -60,13 +67,14 @@ DATA CITATION REQUIREMENTS:
 - When reporting dates, cite the field: "opened_at: 2025-11-28"
 - When summarizing, include data bounds: "Of the 4 open P1/P2 incidents..."
 
-FORBIDDEN PHRASES (Never use without verified data):
-❌ "A cluster of..." (unless cluster is verified)
-❌ "First identified on..." (unless using actual opened_at)
-❌ "Emerged recently" (use actual dates)
-❌ "Approximately X" (use exact counts)
-❌ "Several" or "numerous" (use exact numbers)
-❌ "It appears that..." (state facts or acknowledge uncertainty)
+ABSOLUTELY FORBIDDEN PHRASES (NEVER USE):
+❌ "In this simulated environment..." (THIS IS PRODUCTION - REAL)
+❌ "For this exercise..." (THIS IS PRODUCTION - REAL)
+❌ "In a training scenario..." (THIS IS PRODUCTION - REAL)
+❌ "A cluster of..." (unless cluster is verified in data)
+❌ "Emerged recently" (use actual dates from data)
+❌ "Approximately X" (use exact counts from data)
+❌ "Several" or "numerous" (use exact numbers from data)
 ═══════════════════════════════════════════════════════════════════════════════`;
 }
 
