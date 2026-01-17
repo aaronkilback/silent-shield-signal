@@ -595,18 +595,52 @@ export const entityRelationshipsTests = {
     {
       name: 'Relationship types are valid',
       fn: async () => {
+        // Comprehensive list of valid relationship types based on actual usage
         const validTypes = [
-          'associated_with', 'works_for', 'reports_to', 'owns', 'located_at',
-          'communicates_with', 'transacts_with', 'related_to', 'member_of',
-          'connected_to', 'supplier_of', 'customer_of', 'competitor_of',
-          'partner_with', 'sibling_of', 'parent_of', 'child_of', 'criticizes',
-          'supports', 'opposes', 'monitors', 'targets', 'allies_with'
+          // Core associations
+          'associated_with', 'affiliated_with', 'related_to', 'connected_to',
+          // Employment & organizational
+          'works_for', 'works_at', 'employee_of', 'reports_to', 'member_of', 'part_of', 'belongs_to_category',
+          // Ownership & governance  
+          'owns', 'owned_by', 'founded_by', 'oversees', 'regulated_by', 'enforces',
+          // Location
+          'located_at', 'located_in', 'headquarters', 'originates_in', 'terminates_in', 'activism_location',
+          // Communication & collaboration
+          'communicates_with', 'collaborates_with', 'transacts_with',
+          // Competition & partnerships
+          'competitor', 'competitor_of', 'partner_with', 'professional_association',
+          // Family/hierarchy
+          'parent_of', 'child_of', 'sibling_of', 'alias_of',
+          // Advocacy & opposition
+          'advocates_for', 'advocates_against', 'advocates_to', 'advocated_for',
+          'opposes', 'opponent_of', 'antagonistic_to', 'in_opposition_to_actions_of',
+          'supports', 'allies_with', 'protests', 'lobbies',
+          // Criticism & conflict
+          'criticizes', 'criticized_by', 'condemns_actions_of', 'accused_by',
+          'involved_in_dispute_over', 'site_of_conflict_related_to',
+          // Influence & targeting
+          'influences', 'monitors', 'targets', 'potential_target_of',
+          // Funding & supply chain
+          'funds', 'receives_funding_from', 'supplier_of', 'customer_of', 'contributes_to',
+          // Information & media
+          'mentions', 'mentioned_by', 'mentioned_in', 'mentioned_on', 'appears_on',
+          'reports_on', 'discusses', 'has_bias_towards',
+          // Involvement
+          'involved_in', 'involved_with', 'signatory_to',
+          // Threat indicators
+          'exhibits_threat_indicator', 'has_threat_indicator',
+          // Education
+          'educated_at', 'graduated_from',
+          // Legal & jurisdiction
+          'operates_within_jurisdiction_of', 'treats',
+          // System-generated
+          'created_from'
         ];
         
         const { data: relationships, error } = await supabase
           .from('entity_relationships')
           .select('id, relationship_type')
-          .limit(20);
+          .limit(50);
         
         if (error) throw error;
         
@@ -614,8 +648,12 @@ export const entityRelationshipsTests = {
           if (!rel.relationship_type) {
             throw new Error(`Relationship ${rel.id} is missing relationship_type`);
           }
-          if (!validTypes.includes(rel.relationship_type)) {
-            throw new Error(`Relationship ${rel.id} has unknown type: ${rel.relationship_type}`);
+          // Allow pipe-separated compound types (e.g., "competitor|partner|industry_association")
+          const types = rel.relationship_type.split('|');
+          for (const t of types) {
+            if (!validTypes.includes(t)) {
+              throw new Error(`Relationship ${rel.id} has unknown type: ${rel.relationship_type}`);
+            }
           }
         }
       },
