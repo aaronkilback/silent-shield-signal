@@ -2889,6 +2889,92 @@ Examples of when to use:
         required: ["action"]
       }
     }
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_global_learning_insights",
+      description: "Retrieve aggregated learning insights and patterns from across all tenants. These are anonymized patterns that help inform better decisions based on system-wide intelligence. Use this when providing strategic recommendations or understanding threat trends.",
+      parameters: {
+        type: "object",
+        properties: {
+          insight_types: {
+            type: "array",
+            items: { type: "string" },
+            description: "Filter by insight types: signal_category_trend, incident_severity_trend, entity_risk_pattern, ai_meta_insight"
+          },
+          categories: {
+            type: "array",
+            items: { type: "string" },
+            description: "Filter by categories: cyber, physical, reputational, incident_analysis, entity_monitoring, cross_tenant"
+          },
+          min_confidence: {
+            type: "number",
+            description: "Minimum confidence threshold 0-1 (default 0.5)"
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of insights to return (default 20)"
+          }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "submit_learning_insight",
+      description: "Submit a new learning insight to the global knowledge base. Use this when you identify patterns, best practices, or valuable intelligence that could benefit all users across tenants. Insights are anonymized and aggregated.",
+      parameters: {
+        type: "object",
+        properties: {
+          insight_type: {
+            type: "string",
+            enum: ["threat_pattern", "entity_pattern", "query_pattern", "best_practice", "false_positive_pattern"],
+            description: "Type of insight being submitted"
+          },
+          category: {
+            type: "string",
+            description: "Category for the insight (e.g., cyber, physical, operational)"
+          },
+          content: {
+            type: "string",
+            description: "The insight content - should be anonymized and generalizable"
+          },
+          confidence: {
+            type: "number",
+            description: "Confidence level 0-1 for this insight (default 0.6)"
+          }
+        },
+        required: ["insight_type", "category", "content"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_cross_tenant_patterns",
+      description: "Retrieve detected patterns that span multiple tenants. These patterns indicate emerging threats, common attack vectors, or operational trends that affect multiple organizations. Use for strategic threat assessment.",
+      parameters: {
+        type: "object",
+        properties: {
+          pattern_types: {
+            type: "array",
+            items: { type: "string" },
+            description: "Filter by pattern types: signal_correlation, entity_behavior, threat_evolution"
+          },
+          min_tenant_count: {
+            type: "number",
+            description: "Minimum number of affected tenants to include (default 1)"
+          },
+          severity_trend: {
+            type: "string",
+            enum: ["increasing", "stable", "decreasing"],
+            description: "Filter by severity trend direction"
+          }
+        }
+      }
+    }
   }
 ];
 
@@ -9385,6 +9471,52 @@ The signal is now in the database with status 'triaged' and rules have been appl
         console.error("Error managing project:", err);
         return { success: false, message: `Error managing project: ${err instanceof Error ? err.message : 'Unknown error'}` };
       }
+    }
+
+    case "get_global_learning_insights": {
+      const { data: insights, error } = await supabaseClient
+        .from("global_learning_insights")
+        .select("*")
+        .eq("is_active", true)
+        .gte("confidence_score", args.min_confidence || 0.5)
+        .order("confidence_score", { ascending: false })
+        .limit(args.limit || 20);
+      
+      if (error) return { error: error.message };
+      return { insights, count: insights?.length || 0, context: "Cross-tenant aggregated intelligence - anonymized patterns from all organizations" };
+    }
+
+    case "submit_learning_insight": {
+      const { error } = await supabaseClient
+        .from("global_learning_insights")
+        .insert({
+          insight_type: args.insight_type,
+          category: args.category,
+          insight_content: args.content,
+          confidence_score: args.confidence || 0.6,
+          metadata: { submitted_by_ai: true, submitted_at: new Date().toISOString() }
+        });
+      
+      if (error) return { success: false, error: error.message };
+      return { success: true, message: "Insight submitted to global knowledge base" };
+    }
+
+    case "get_cross_tenant_patterns": {
+      let query = supabaseClient
+        .from("cross_tenant_patterns")
+        .select("*")
+        .eq("is_active", true)
+        .gte("affected_tenant_count", args.min_tenant_count || 1)
+        .order("affected_tenant_count", { ascending: false })
+        .limit(20);
+      
+      if (args.severity_trend) {
+        query = query.eq("severity_trend", args.severity_trend);
+      }
+      
+      const { data: patterns, error } = await query;
+      if (error) return { error: error.message };
+      return { patterns, count: patterns?.length || 0 };
     }
 
     default:

@@ -82,6 +82,47 @@ export type Database = {
           },
         ]
       }
+      agent_learning_sessions: {
+        Row: {
+          agent_id: string | null
+          created_at: string
+          id: string
+          learnings: Json | null
+          promoted_to_global: boolean | null
+          quality_score: number | null
+          session_type: string
+          source_count: number | null
+        }
+        Insert: {
+          agent_id?: string | null
+          created_at?: string
+          id?: string
+          learnings?: Json | null
+          promoted_to_global?: boolean | null
+          quality_score?: number | null
+          session_type: string
+          source_count?: number | null
+        }
+        Update: {
+          agent_id?: string | null
+          created_at?: string
+          id?: string
+          learnings?: Json | null
+          promoted_to_global?: boolean | null
+          quality_score?: number | null
+          session_type?: string
+          source_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_learning_sessions_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_memory: {
         Row: {
           agent_id: string | null
@@ -1688,6 +1729,54 @@ export type Database = {
           },
         ]
       }
+      cross_tenant_patterns: {
+        Row: {
+          affected_tenant_count: number | null
+          created_at: string
+          first_seen_at: string
+          id: string
+          is_active: boolean | null
+          last_seen_at: string
+          metadata: Json | null
+          pattern_description: string | null
+          pattern_signature: string
+          pattern_type: string
+          recommended_actions: Json | null
+          severity_trend: string | null
+          updated_at: string
+        }
+        Insert: {
+          affected_tenant_count?: number | null
+          created_at?: string
+          first_seen_at?: string
+          id?: string
+          is_active?: boolean | null
+          last_seen_at?: string
+          metadata?: Json | null
+          pattern_description?: string | null
+          pattern_signature: string
+          pattern_type: string
+          recommended_actions?: Json | null
+          severity_trend?: string | null
+          updated_at?: string
+        }
+        Update: {
+          affected_tenant_count?: number | null
+          created_at?: string
+          first_seen_at?: string
+          id?: string
+          is_active?: boolean | null
+          last_seen_at?: string
+          metadata?: Json | null
+          pattern_description?: string | null
+          pattern_signature?: string
+          pattern_type?: string
+          recommended_actions?: Json | null
+          severity_trend?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       document_entity_mentions: {
         Row: {
           confidence: number | null
@@ -2528,6 +2617,51 @@ export type Database = {
           id?: string
           metadata?: Json | null
           title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      global_learning_insights: {
+        Row: {
+          category: string | null
+          confidence_score: number | null
+          created_at: string
+          id: string
+          insight_content: string
+          insight_type: string
+          is_active: boolean | null
+          last_validated_at: string | null
+          metadata: Json | null
+          occurrence_count: number | null
+          source_tenant_count: number | null
+          updated_at: string
+        }
+        Insert: {
+          category?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          id?: string
+          insight_content: string
+          insight_type: string
+          is_active?: boolean | null
+          last_validated_at?: string | null
+          metadata?: Json | null
+          occurrence_count?: number | null
+          source_tenant_count?: number | null
+          updated_at?: string
+        }
+        Update: {
+          category?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          id?: string
+          insight_content?: string
+          insight_type?: string
+          is_active?: boolean | null
+          last_validated_at?: string | null
+          metadata?: Json | null
+          occurrence_count?: number | null
+          source_tenant_count?: number | null
           updated_at?: string
         }
         Relationships: []
@@ -3524,6 +3658,64 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: []
+      }
+      learning_feedback: {
+        Row: {
+          agent_id: string | null
+          context: Json | null
+          created_at: string
+          feedback_text: string | null
+          feedback_type: string
+          id: string
+          insight_id: string | null
+          tenant_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          agent_id?: string | null
+          context?: Json | null
+          created_at?: string
+          feedback_text?: string | null
+          feedback_type: string
+          id?: string
+          insight_id?: string | null
+          tenant_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          agent_id?: string | null
+          context?: Json | null
+          created_at?: string
+          feedback_text?: string | null
+          feedback_type?: string
+          id?: string
+          insight_id?: string | null
+          tenant_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "learning_feedback_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "learning_feedback_insight_id_fkey"
+            columns: ["insight_id"]
+            isOneToOne: false
+            referencedRelation: "global_learning_insights"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "learning_feedback_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       learning_profiles: {
         Row: {
