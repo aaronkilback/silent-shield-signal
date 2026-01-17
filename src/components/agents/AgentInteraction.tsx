@@ -229,7 +229,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
   };
 
   return (
-    <Card className="h-[600px] flex flex-col">
+    <Card className="h-[calc(100vh-20rem)] min-h-[400px] max-h-[800px] flex flex-col">
       <CardHeader className="pb-3 flex-shrink-0">
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg flex items-center gap-2">
