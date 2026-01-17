@@ -2532,6 +2532,36 @@ export type Database = {
           },
         ]
       }
+      environment_config: {
+        Row: {
+          allow_untrusted_inputs: boolean | null
+          created_at: string | null
+          environment_name: string
+          id: string
+          is_active: boolean | null
+          require_evidence: boolean | null
+          updated_at: string | null
+        }
+        Insert: {
+          allow_untrusted_inputs?: boolean | null
+          created_at?: string | null
+          environment_name: string
+          id?: string
+          is_active?: boolean | null
+          require_evidence?: boolean | null
+          updated_at?: string | null
+        }
+        Update: {
+          allow_untrusted_inputs?: boolean | null
+          created_at?: string | null
+          environment_name?: string
+          id?: string
+          is_active?: boolean | null
+          require_evidence?: boolean | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       escalation_rules: {
         Row: {
           actions: Json
@@ -6705,12 +6735,17 @@ export type Database = {
         Args: { _user_id: string; _workspace_id: string }
         Returns: boolean
       }
+      check_tenant_access: {
+        Args: { p_tenant_id: string; p_user_id: string }
+        Returns: boolean
+      }
       cleanup_processing_queue: { Args: never; Returns: number }
       enqueue_signal_processing: {
         Args: { priority_level?: number; signal_id: string }
         Returns: string
       }
       get_user_tenant_ids: { Args: { _user_id: string }; Returns: string[] }
+      get_user_tenants: { Args: { p_user_id: string }; Returns: string[] }
       has_mcm_permission: {
         Args: {
           _required_roles: Database["public"]["Enums"]["workspace_mcm_role"][]
