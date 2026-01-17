@@ -21,6 +21,7 @@ interface SystemHealthResponse {
   version: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function checkDatabase(supabase: any): Promise<HealthCheckResult> {
   const start = Date.now();
   try {
@@ -55,14 +56,13 @@ async function checkDatabase(supabase: any): Promise<HealthCheckResult> {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function checkAuth(supabase: any): Promise<HealthCheckResult> {
   const start = Date.now();
   try {
-    // Just check that auth service responds
     const { error } = await supabase.auth.getSession();
     const latency = Date.now() - start;
     
-    // getSession returns null session when not authenticated, which is expected
     if (error && !error.message.includes('session')) {
       return {
         name: 'auth',
@@ -90,6 +90,7 @@ async function checkAuth(supabase: any): Promise<HealthCheckResult> {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function checkStorage(supabase: any): Promise<HealthCheckResult> {
   const start = Date.now();
   try {
@@ -118,6 +119,119 @@ async function checkStorage(supabase: any): Promise<HealthCheckResult> {
       status: 'unhealthy',
       latency_ms: Date.now() - start,
       message: err instanceof Error ? err.message : 'Unknown error',
+      last_checked: new Date().toISOString(),
+    };
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function checkStorageBuckets(supabase: any): Promise<HealthCheckResult> {
+  const start = Date.now();
+  const requiredBuckets = ['archival-documents', 'entity-photos', 'ai-chat-attachments'];
+  const missingBuckets: string[] = [];
+  
+  try {
+    const { data: buckets, error } = await supabase.storage.listBuckets();
+    
+    if (error) {
+      return {
+        name: 'storage_buckets',
+        status: 'degraded',
+        latency_ms: Date.now() - start,
+        message: error.message,
+        last_checked: new Date().toISOString(),
+      };
+    }
+    
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bucketIds = (buckets || []).map((b: any) => b.id);
+    
+    for (const required of requiredBuckets) {
+      if (!bucketIds.includes(required)) {
+        missingBuckets.push(required);
+      }
+    }
+    
+    const latency = Date.now() - start;
+    
+    if (missingBuckets.length > 0) {
+      return {
+        name: 'storage_buckets',
+        status: 'unhealthy',
+        latency_ms: latency,
+        message: `Missing buckets: ${missingBuckets.join(', ')}`,
+        last_checked: new Date().toISOString(),
+      };
+    }
+    
+    return {
+      name: 'storage_buckets',
+      status: 'healthy',
+      latency_ms: latency,
+      last_checked: new Date().toISOString(),
+    };
+  } catch (err) {
+    return {
+      name: 'storage_buckets',
+      status: 'degraded',
+      latency_ms: Date.now() - start,
+      message: err instanceof Error ? err.message : 'Check failed',
+      last_checked: new Date().toISOString(),
+    };
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function checkDocumentProcessing(supabase: any): Promise<HealthCheckResult> {
+  const start = Date.now();
+  try {
+    // Check for documents stuck in processing (uploaded in last hour but no content_text)
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    
+    const { data: stuckDocs, error: stuckError } = await supabase
+      .from('archival_documents')
+      .select('id')
+      .is('content_text', null)
+      .gte('created_at', oneHourAgo)
+      .limit(100);
+    
+    if (stuckError) {
+      return {
+        name: 'document_processing',
+        status: 'degraded',
+        latency_ms: Date.now() - start,
+        message: stuckError.message,
+        last_checked: new Date().toISOString(),
+      };
+    }
+    
+    const stuckCount = stuckDocs?.length || 0;
+    const latency = Date.now() - start;
+    
+    // More than 10 unprocessed docs in the last hour indicates a problem
+    if (stuckCount > 10) {
+      return {
+        name: 'document_processing',
+        status: 'degraded',
+        latency_ms: latency,
+        message: `${stuckCount} unprocessed documents in last hour`,
+        last_checked: new Date().toISOString(),
+      };
+    }
+    
+    return {
+      name: 'document_processing',
+      status: 'healthy',
+      latency_ms: latency,
+      message: stuckCount > 0 ? `${stuckCount} documents pending` : undefined,
+      last_checked: new Date().toISOString(),
+    };
+  } catch (err) {
+    return {
+      name: 'document_processing',
+      status: 'degraded',
+      latency_ms: Date.now() - start,
+      message: err instanceof Error ? err.message : 'Check failed',
       last_checked: new Date().toISOString(),
     };
   }
@@ -186,7 +300,6 @@ async function checkAIGateway(): Promise<HealthCheckResult> {
   }
   
   try {
-    // Use a minimal chat completion request to test the gateway
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
     
@@ -235,10 +348,10 @@ async function checkAIGateway(): Promise<HealthCheckResult> {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function checkRecentErrors(supabase: any): Promise<HealthCheckResult> {
   const start = Date.now();
   try {
-    // Check for recent critical errors in bug_reports
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     
     const { data: recentErrors, error } = await supabase
@@ -259,7 +372,9 @@ async function checkRecentErrors(supabase: any): Promise<HealthCheckResult> {
       };
     }
     
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const criticalCount = (recentErrors || []).filter((e: any) => e.severity === 'critical').length;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const highCount = (recentErrors || []).filter((e: any) => e.severity === 'high').length;
     
     if (criticalCount > 0) {
@@ -286,7 +401,7 @@ async function checkRecentErrors(supabase: any): Promise<HealthCheckResult> {
       name: 'error_rate',
       status: 'healthy',
       latency_ms: latency,
-      message: `${highCount} high-severity errors in last hour`,
+      message: highCount > 0 ? `${highCount} high-severity errors in last hour` : undefined,
       last_checked: new Date().toISOString(),
     };
   } catch (err) {
@@ -311,7 +426,6 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    // Parse options
     const url = new URL(req.url);
     const includeExternal = url.searchParams.get('external') !== 'false';
     const quick = url.searchParams.get('quick') === 'true';
@@ -324,6 +438,8 @@ serve(async (req) => {
       checkDatabase(supabase),
       checkAuth(supabase),
       checkStorage(supabase),
+      checkStorageBuckets(supabase),
+      checkDocumentProcessing(supabase),
       checkRecentErrors(supabase),
     ];
 
@@ -338,8 +454,8 @@ serve(async (req) => {
     const results = await Promise.all([...coreChecks, ...extendedChecks]);
 
     // Determine overall status
-    const hasUnhealthy = results.some(r => r.status === 'unhealthy');
-    const hasDegraded = results.some(r => r.status === 'degraded');
+    const hasUnhealthy = results.some((r: HealthCheckResult) => r.status === 'unhealthy');
+    const hasDegraded = results.some((r: HealthCheckResult) => r.status === 'degraded');
     
     const overall_status: 'healthy' | 'degraded' | 'unhealthy' = 
       hasUnhealthy ? 'unhealthy' : 
@@ -350,7 +466,7 @@ serve(async (req) => {
       overall_status,
       checks: results,
       timestamp: new Date().toISOString(),
-      version: '1.0.0',
+      version: '1.1.0',
     };
 
     const totalTime = Date.now() - startTime;
@@ -364,8 +480,8 @@ serve(async (req) => {
         metadata: {
           overall_status,
           checks_count: results.length,
-          unhealthy_count: results.filter(r => r.status === 'unhealthy').length,
-          degraded_count: results.filter(r => r.status === 'degraded').length,
+          unhealthy_count: results.filter((r: HealthCheckResult) => r.status === 'unhealthy').length,
+          degraded_count: results.filter((r: HealthCheckResult) => r.status === 'degraded').length,
           total_latency_ms: totalTime,
         },
       });
@@ -388,7 +504,7 @@ serve(async (req) => {
         overall_status: 'unhealthy',
         checks: [],
         timestamp: new Date().toISOString(),
-        version: '1.0.0',
+        version: '1.1.0',
         error: error instanceof Error ? error.message : 'Unknown error',
       }),
       {
