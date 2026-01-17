@@ -110,7 +110,7 @@ const ClientDetail = () => {
         return;
       }
 
-      setClient(clientData as Client);
+      setClient(clientData as unknown as Client);
 
       // Fetch related signals
       const { data: signalsData, error: signalsError } = await supabase
