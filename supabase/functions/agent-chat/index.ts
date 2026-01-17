@@ -73,7 +73,15 @@ function validateResponse(response: string, context: { hasBriefingTool: boolean 
     'in a training scenario',
     'hypothetically speaking',
     'let me imagine',
-    'in this demo'
+    'in this demo',
+    '0-day exploit',
+    'zero-day exploit',
+    'active intrusion',
+    'active breach',
+    'apt group',
+    'advanced persistent threat',
+    'nation-state actor',
+    'threat actor group'
   ];
   
   const lowerResponse = response.toLowerCase();
