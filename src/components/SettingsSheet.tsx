@@ -2,12 +2,13 @@ import { useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, Shield, Bell, Zap, Database, TestTube } from "lucide-react";
+import { Settings, Shield, Bell, Zap, Database, TestTube, Lock } from "lucide-react";
 import EscalationRulesManager from "./EscalationRulesManager";
 import { AutomationSettings } from "./AutomationSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { DatabaseSettings } from "./DatabaseSettings";
 import { TestSignalGenerator } from "./TestSignalGenerator";
+import { MFAEnrollment } from "./MFAEnrollment";
 
 export const SettingsSheet = () => {
   const [open, setOpen] = useState(false);
@@ -24,8 +25,12 @@ export const SettingsSheet = () => {
           <SheetTitle>System Settings</SheetTitle>
         </SheetHeader>
 
-        <Tabs defaultValue="escalation" className="mt-6">
-          <TabsList className="grid w-full grid-cols-5">
+        <Tabs defaultValue="security" className="mt-6">
+          <TabsList className="grid w-full grid-cols-6">
+            <TabsTrigger value="security">
+              <Lock className="w-4 h-4 mr-2" />
+              Security
+            </TabsTrigger>
             <TabsTrigger value="escalation">
               <Shield className="w-4 h-4 mr-2" />
               Escalation
@@ -47,6 +52,16 @@ export const SettingsSheet = () => {
               Database
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="security" className="mt-4 space-y-4">
+            <div className="space-y-2">
+              <h3 className="text-lg font-semibold">Account Security</h3>
+              <p className="text-sm text-muted-foreground">
+                Manage your account security settings including two-factor authentication.
+              </p>
+            </div>
+            <MFAEnrollment />
+          </TabsContent>
 
           <TabsContent value="escalation" className="mt-4">
             <EscalationRulesManager />

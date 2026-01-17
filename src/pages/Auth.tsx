@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { Shield, Loader2, Mail, FileText } from "lucide-react";
 import { getMCMRoleInfo, type MCMRole } from "@/lib/mcmRoles";
+import { MFAVerification } from "@/components/MFAVerification";
 
 const USER_AGREEMENT_CONTENT = [
   {
@@ -42,6 +43,7 @@ const USER_AGREEMENT_CONTENT = [
     content: "As a community focused on security, always prioritize safe practices. Do not share any content that could compromise the safety or security of others."
   }
 ];
+
 interface InvitationInfo {
   id: string;
   workspace_id: string;
@@ -64,6 +66,11 @@ const Auth = () => {
   const [invitation, setInvitation] = useState<InvitationInfo | null>(null);
   const [loadingInvite, setLoadingInvite] = useState(!!inviteToken);
   const [agreementAccepted, setAgreementAccepted] = useState(false);
+  
+  // MFA state
+  const [showMFAChallenge, setShowMFAChallenge] = useState(false);
+  const [mfaFactorId, setMfaFactorId] = useState<string | null>(null);
+  
   const navigate = useNavigate();
 
   // Fetch invitation details if token is present
@@ -198,12 +205,27 @@ const Auth = () => {
 
     try {
       if (isLogin) {
-        const { error } = await supabase.auth.signInWithPassword({
+        const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
 
         if (error) throw error;
+        
+        // Check if MFA is required
+        if (data.session) {
+          const { data: factorsData } = await supabase.auth.mfa.listFactors();
+          const verifiedFactors = factorsData?.totp?.filter(f => f.status === 'verified') || [];
+          
+          if (verifiedFactors.length > 0) {
+            // MFA is enabled - show verification screen
+            setMfaFactorId(verifiedFactors[0].id);
+            setShowMFAChallenge(true);
+            setLoading(false);
+            return;
+          }
+        }
+        
         toast.success("Welcome back to Fortress AI");
       } else {
         const { error } = await supabase.auth.signUp({
@@ -231,6 +253,39 @@ const Auth = () => {
       setLoading(false);
     }
   };
+  
+  const handleMFASuccess = async () => {
+    setShowMFAChallenge(false);
+    setMfaFactorId(null);
+    toast.success("Welcome back to Fortress AI");
+    
+    if (invitation) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await handleAcceptInvitation(user.id);
+      }
+      navigate(`/workspace/${invitation.workspace_id}`);
+    } else {
+      navigate("/");
+    }
+  };
+  
+  const handleMFACancel = async () => {
+    await supabase.auth.signOut();
+    setShowMFAChallenge(false);
+    setMfaFactorId(null);
+  };
+
+  // Show MFA challenge screen
+  if (showMFAChallenge && mfaFactorId) {
+    return (
+      <MFAVerification
+        factorId={mfaFactorId}
+        onSuccess={handleMFASuccess}
+        onCancel={handleMFACancel}
+      />
+    );
+  }
 
   if (loadingInvite) {
     return (
