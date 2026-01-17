@@ -582,22 +582,102 @@ COMMUNICATION GUIDELINES:
           toolResults.push({ tool: 'perform_impact_analysis', result: { success: true, ...impactResult } });
           
         } else if (funcName === 'generate_intelligence_summary') {
-          // Generate summary from recent data
+          // Generate comprehensive summary from recent data with full details
           const hoursBack = args.time_range_hours || 24;
           const cutoff = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString();
+          const focusAreas = args.focus_areas || [];
           
-          const [signalsResult, incidentsResult] = await Promise.all([
-            supabase.from('signals').select('id, title, severity').gte('created_at', cutoff).order('created_at', { ascending: false }),
-            supabase.from('incidents').select('id, title, priority, status').gte('opened_at', cutoff).order('opened_at', { ascending: false }),
+          // Fetch detailed data for the briefing
+          const [signalsResult, incidentsResult, entitiesResult] = await Promise.all([
+            supabase.from('signals')
+              .select('id, title, severity, source, created_at, rule_category, normalized_text')
+              .gte('created_at', cutoff)
+              .order('created_at', { ascending: false })
+              .limit(25),
+            supabase.from('incidents')
+              .select('id, title, priority, status, incident_type, description, opened_at, location')
+              .gte('opened_at', cutoff)
+              .order('opened_at', { ascending: false })
+              .limit(20),
+            supabase.from('entities')
+              .select('id, name, type, risk_level, threat_score, description')
+              .order('threat_score', { ascending: false })
+              .limit(15),
           ]);
+          
+          // Also fetch recent high-priority items regardless of time range
+          const { data: highPriorityIncidents } = await supabase
+            .from('incidents')
+            .select('id, title, priority, status, incident_type, opened_at, location')
+            .in('priority', ['p1', 'p2'])
+            .eq('status', 'open')
+            .order('opened_at', { ascending: false })
+            .limit(10);
+          
+          // Build detailed briefing data
+          const signals = signalsResult.data || [];
+          const incidents = incidentsResult.data || [];
+          const entities = entitiesResult.data || [];
+          
+          // Group signals by severity
+          const signalsBySeverity: Record<string, any[]> = {};
+          signals.forEach(s => {
+            const sev = s.severity || 'unknown';
+            if (!signalsBySeverity[sev]) signalsBySeverity[sev] = [];
+            signalsBySeverity[sev].push(s);
+          });
+          
+          // Build the formatted briefing content
+          const briefingData = {
+            time_range_hours: hoursBack,
+            generated_at: new Date().toISOString(),
+            focus_areas: focusAreas,
+            summary: {
+              total_signals: signals.length,
+              total_new_incidents: incidents.length,
+              high_priority_open: highPriorityIncidents?.length || 0,
+              signals_by_severity: Object.fromEntries(
+                Object.entries(signalsBySeverity).map(([k, v]) => [k, v.length])
+              ),
+            },
+            critical_signals: signals.filter(s => s.severity === 'critical' || s.severity === 'high').map(s => ({
+              title: s.title,
+              severity: s.severity,
+              source: s.source,
+              category: s.rule_category,
+              timestamp: s.created_at,
+              details: s.normalized_text?.substring(0, 300),
+            })),
+            recent_incidents: incidents.map(i => ({
+              title: i.title || 'Untitled',
+              priority: i.priority,
+              status: i.status,
+              type: i.incident_type,
+              location: i.location,
+              opened_at: i.opened_at,
+              description: i.description?.substring(0, 200),
+            })),
+            high_priority_open_incidents: (highPriorityIncidents || []).map(i => ({
+              title: i.title || 'Untitled',
+              priority: i.priority,
+              type: i.incident_type,
+              location: i.location,
+              opened_at: i.opened_at,
+            })),
+            high_risk_entities: entities.filter(e => e.risk_level === 'critical' || e.risk_level === 'high').map(e => ({
+              name: e.name,
+              type: e.type,
+              risk_level: e.risk_level,
+              threat_score: e.threat_score,
+            })),
+          };
           
           toolResults.push({ 
             tool: 'generate_intelligence_summary', 
             result: { 
-              success: true, 
-              signals_count: signalsResult.data?.length || 0,
-              incidents_count: incidentsResult.data?.length || 0,
-              time_range_hours: hoursBack,
+              success: true,
+              briefing_data: briefingData,
+              instruction: 'Use the briefing_data above to generate a formatted intelligence brief. Present ALL the data in a clear, professional format appropriate for the requested format type.'
             } 
           });
           
