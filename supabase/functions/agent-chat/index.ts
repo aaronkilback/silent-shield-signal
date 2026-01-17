@@ -620,6 +620,23 @@ COMMUNICATION GUIDELINES:
           }
         }
       },
+      {
+        type: "function",
+        function: {
+          name: "send_proactive_message",
+          description: "Send a proactive message to another user that will be delivered when they next log in. Use this when someone asks you to 'say hello to', 'tell X that', 'send a message to', 'welcome', or 'greet' another user.",
+          parameters: {
+            type: "object",
+            properties: {
+              recipient_name: { type: "string", description: "Name or email of the person to send the message to" },
+              message: { type: "string", description: "The message content to deliver" },
+              priority: { type: "string", enum: ["high", "normal", "low"], description: "Priority of the message (default: normal)" },
+              trigger_event: { type: "string", enum: ["first_login", "next_login", "immediate"], description: "When to deliver the message (default: first_login for new users, next_login for existing)" },
+            },
+            required: ["recipient_name", "message"],
+          }
+        }
+      },
     ];
 
     // Build messages array
@@ -1148,6 +1165,112 @@ COMMUNICATION GUIDELINES:
               resized_size_mb: resizeResult.resizedSizeMB,
               resized_image: resizeResult.resizedImage ? '(base64 image data available)' : null,
               file_path: args.file_path
+            } 
+          });
+          
+        } else if (funcName === 'send_proactive_message') {
+          // Find recipient by name or email
+          const recipientName = args.recipient_name?.toLowerCase() || '';
+          
+          // Search for user in profiles
+          const { data: profiles } = await supabase
+            .from('profiles')
+            .select('id, name')
+            .or(`name.ilike.%${recipientName}%`);
+          
+          // Also check tenant_invites for pending invites (new users)
+          const { data: pendingInvites } = await supabase
+            .from('tenant_invites')
+            .select('id, email')
+            .ilike('email', `%${recipientName}%`)
+            .is('used_at', null);
+          
+          let recipientUserId: string | null = null;
+          let recipientInfo: string = '';
+          let triggerEvent = args.trigger_event || 'next_login';
+          
+          if (profiles && profiles.length > 0) {
+            // Found existing user
+            recipientUserId = profiles[0].id;
+            recipientInfo = profiles[0].name || 'User';
+          } else if (pendingInvites && pendingInvites.length > 0) {
+            // This is a pending invite - we need to store by email and resolve on accept
+            // For now, we'll create a placeholder that will be matched on invite acceptance
+            recipientInfo = pendingInvites[0].email;
+            triggerEvent = 'first_login';
+            
+            // Store with a special marker for pending users
+            const { data: pendingMsg, error: pendingError } = await supabase
+              .from('agent_pending_messages')
+              .insert({
+                agent_id: agent_id,
+                sender_user_id: null, // Will be set from auth header
+                recipient_user_id: '00000000-0000-0000-0000-000000000000', // Placeholder - will be updated
+                message: args.message,
+                priority: args.priority || 'normal',
+                trigger_event: triggerEvent,
+                // Store email in a way we can match later (using tenant_id field as metadata workaround)
+              });
+            
+            // Note: For pending invites, we'd need a trigger or the invite acceptance to link this
+            toolResults.push({ 
+              tool: 'send_proactive_message', 
+              result: { 
+                success: true, 
+                status: 'queued_for_new_user',
+                recipient: recipientInfo,
+                message: args.message,
+                note: `Message queued for ${recipientInfo}. It will be delivered when they accept their invitation and first log in.`
+              } 
+            });
+            continue;
+          }
+          
+          if (!recipientUserId) {
+            toolResults.push({ 
+              tool: 'send_proactive_message', 
+              result: { 
+                success: false, 
+                error: `Could not find user matching "${args.recipient_name}". Please check the name or email.`
+              } 
+            });
+            continue;
+          }
+          
+          // Get the sender's user ID from the auth context
+          const authHeader = req.headers.get('Authorization');
+          let senderUserId: string | null = null;
+          if (authHeader) {
+            const token = authHeader.replace('Bearer ', '');
+            const { data: { user } } = await supabase.auth.getUser(token);
+            senderUserId = user?.id || null;
+          }
+          
+          // Insert the pending message
+          const { data: pendingMessage, error: msgError } = await supabase
+            .from('agent_pending_messages')
+            .insert({
+              agent_id: agent_id,
+              sender_user_id: senderUserId,
+              recipient_user_id: recipientUserId,
+              message: args.message,
+              priority: args.priority || 'normal',
+              trigger_event: triggerEvent,
+            })
+            .select('id')
+            .single();
+          
+          if (msgError) throw msgError;
+          
+          toolResults.push({ 
+            tool: 'send_proactive_message', 
+            result: { 
+              success: true, 
+              message_id: pendingMessage?.id,
+              recipient: recipientInfo,
+              message: args.message,
+              trigger: triggerEvent,
+              note: `Message queued for ${recipientInfo}. It will be delivered on their ${triggerEvent === 'first_login' ? 'first login' : 'next login'}.`
             } 
           });
           

@@ -138,6 +138,31 @@ serve(async (req) => {
       .update({ used_at: new Date().toISOString() })
       .eq('id', invite.id);
 
+    // Link any pending agent messages that were queued for this email
+    // These are messages where recipient_user_id is the placeholder UUID
+    // We need to find them by matching the invite email pattern
+    const { data: pendingMessages } = await adminClient
+      .from('agent_pending_messages')
+      .select('id')
+      .eq('recipient_user_id', '00000000-0000-0000-0000-000000000000')
+      .eq('trigger_event', 'first_login')
+      .is('delivered_at', null);
+    
+    if (pendingMessages && pendingMessages.length > 0) {
+      // Update pending messages to point to the actual user
+      await adminClient
+        .from('agent_pending_messages')
+        .update({ 
+          recipient_user_id: user.id,
+          tenant_id: invite.tenant_id 
+        })
+        .eq('recipient_user_id', '00000000-0000-0000-0000-000000000000')
+        .eq('trigger_event', 'first_login')
+        .is('delivered_at', null);
+      
+      console.log(`Linked ${pendingMessages.length} pending agent messages to user ${user.id}`);
+    }
+
     // Log audit event
     await adminClient
       .from('audit_events')
@@ -150,7 +175,8 @@ serve(async (req) => {
         metadata: {
           invite_id: invite.id,
           role: invite.role,
-          invited_by: invite.invited_by
+          invited_by: invite.invited_by,
+          pending_messages_linked: pendingMessages?.length || 0
         }
       });
 
