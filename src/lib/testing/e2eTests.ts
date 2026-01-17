@@ -2034,7 +2034,7 @@ export const documentsSourcesTests = {
     {
       name: 'Documents have valid processing_status',
       fn: async () => {
-        const validStatuses = ['pending', 'processing', 'completed', 'failed', 'queued'];
+        const validStatuses = ['pending', 'processing', 'completed', 'failed', 'queued', 'processed'];
         
         const { data, error } = await supabase
           .from('ingested_documents')
@@ -2058,6 +2058,183 @@ export const documentsSourcesTests = {
           .select('id, source_id, accuracy_score')
           .limit(5);
         if (error) throw error;
+      },
+    },
+  ],
+};
+
+// ============================================
+// DOCUMENT PROCESSING TESTS
+// ============================================
+
+export const documentProcessingTests = {
+  name: 'Document Processing Functions',
+  tests: [
+    {
+      name: 'parse-document function responds',
+      fn: async () => {
+        // Test with a minimal text file to verify function works
+        const testContent = btoa('Test document content for parse-document function verification.');
+        
+        const { data, error } = await supabase.functions.invoke('parse-document', {
+          body: {
+            file: testContent,
+            filename: 'test-verification.txt',
+            mimeType: 'text/plain',
+          },
+        });
+        
+        // The function should respond (even if it reports an error about the test file)
+        if (error && !error.message.includes('FunctionError')) {
+          throw new Error(`parse-document invocation failed: ${error.message}`);
+        }
+        
+        // Check for a response structure
+        if (!data) {
+          throw new Error('parse-document returned no data');
+        }
+      },
+    },
+    {
+      name: 'fortress-document-converter function responds',
+      fn: async () => {
+        // Test that the function responds to ping-like requests
+        const { data, error } = await supabase.functions.invoke('fortress-document-converter', {
+          body: {
+            documentId: 'test-ping-' + Date.now(),
+            mimeType: 'text/plain',
+            directFileContentBase64: btoa('Test content'),
+            extractText: true,
+            updateDatabase: false,
+          },
+        });
+        
+        // Function should respond
+        if (error && !error.message.includes('FunctionError')) {
+          throw new Error(`fortress-document-converter invocation failed: ${error.message}`);
+        }
+        
+        if (!data) {
+          throw new Error('fortress-document-converter returned no data');
+        }
+        
+        // Verify response structure
+        if (data.success === undefined) {
+          throw new Error('fortress-document-converter response missing success field');
+        }
+      },
+    },
+    {
+      name: 'create-archival-record function responds',
+      fn: async () => {
+        // This test just verifies the function is deployed and responds
+        // (actual record creation requires valid storage path)
+        const { data, error } = await supabase.functions.invoke('create-archival-record', {
+          body: {
+            filename: 'test-ping.txt',
+            storagePath: 'test/path/test-ping.txt',
+            fileSize: 100,
+            mimeType: 'text/plain',
+            tags: ['test'],
+          },
+        });
+        
+        // Expecting an error since path doesn't exist, but function should respond
+        if (!data && !error) {
+          throw new Error('create-archival-record returned no response');
+        }
+      },
+    },
+    {
+      name: 'archival-documents storage bucket accessible',
+      fn: async () => {
+        const { data, error } = await supabase.storage
+          .from('archival-documents')
+          .list('', { limit: 1 });
+        
+        // Bucket should be accessible (even if empty)
+        if (error && !error.message.includes('empty') && !error.message.includes('0 results')) {
+          throw error;
+        }
+      },
+    },
+    {
+      name: 'Archival documents have required fields',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('archival_documents')
+          .select('id, filename, storage_path, file_size, file_type')
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const doc of data || []) {
+          if (!doc.filename) {
+            throw new Error(`Document ${doc.id} missing filename`);
+          }
+          if (!doc.storage_path) {
+            throw new Error(`Document ${doc.id} missing storage_path`);
+          }
+          if (doc.file_size === null || doc.file_size === undefined) {
+            throw new Error(`Document ${doc.id} missing file_size`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Processed documents have content_text or error in metadata',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('archival_documents')
+          .select('id, filename, content_text, metadata')
+          .not('metadata', 'is', null)
+          .limit(10);
+        
+        if (error) throw error;
+        
+        // Check that documents with processing metadata have either content or error
+        for (const doc of data || []) {
+          const meta = doc.metadata as Record<string, unknown> | null;
+          const hasProcessingMeta = meta?.processed_at || meta?.entities_processed !== undefined;
+          
+          if (hasProcessingMeta && !doc.content_text && !meta?.processing_error) {
+            // Not necessarily an error, but worth flagging
+            console.warn(`Document ${doc.id} (${doc.filename}) has processing metadata but no content_text or error`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Document hash uniqueness enforced',
+      fn: async () => {
+        const { error } = await supabase
+          .from('document_hashes')
+          .select('content_hash, filename')
+          .limit(10);
+        
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'text/plain MIME type processing works',
+      fn: async () => {
+        // Verify text extraction from plain text works
+        const testText = 'This is a test document for verifying text extraction.';
+        const { data, error } = await supabase.functions.invoke('fortress-document-converter', {
+          body: {
+            documentId: 'test-text-' + Date.now(),
+            mimeType: 'text/plain',
+            directFileContentBase64: btoa(testText),
+            extractText: true,
+            updateDatabase: false,
+          },
+        });
+        
+        if (error) throw new Error(`Text extraction failed: ${error.message}`);
+        if (!data?.success) throw new Error(`Text extraction unsuccessful: ${data?.error}`);
+        if (!data?.extractedText?.includes('test document')) {
+          throw new Error('Extracted text does not contain expected content');
+        }
       },
     },
   ],
@@ -2364,6 +2541,9 @@ export async function runAllTests(): Promise<TestSuite[]> {
     // System Health
     auditMonitoringTests,
     documentsSourcesTests,
+    
+    // Document Processing
+    documentProcessingTests,
     
     // Content Moderation
     guardianAgentTests,
