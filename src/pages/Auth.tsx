@@ -135,8 +135,14 @@ const Auth = () => {
         // If there's an invitation, accept it
         if (invitation) {
           await handleAcceptInvitation(session.user.id);
+          navigate(`/workspace/${invitation.workspace_id}`);
+        } else {
+          // Regular sign in - go to home
+          navigate("/");
         }
-        navigate(invitation ? `/workspace/${invitation.workspace_id}` : "/");
+      } else if (session && event === "USER_UPDATED") {
+        // This can happen after signup confirmation
+        navigate("/");
       }
     });
 
@@ -244,7 +250,20 @@ const Auth = () => {
         });
 
         if (error) throw error;
-        toast.success("Account created! You're now signed in.");
+        
+        // Redirect to welcome page for new signups
+        if (invitation) {
+          // For invitations, accept and go to workspace
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            await handleAcceptInvitation(user.id);
+          }
+          navigate(`/workspace/${invitation.workspace_id}`);
+        } else {
+          // Regular signup - show welcome page
+          navigate("/welcome");
+        }
+        toast.success("Account created! Welcome to Fortress.");
       }
     } catch (error: any) {
       console.error("Auth error:", error);

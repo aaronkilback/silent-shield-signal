@@ -37,6 +37,7 @@ import NotFound from "./pages/NotFound";
 import InviteRequired from "./pages/InviteRequired";
 import AcceptInvite from "./pages/AcceptInvite";
 import TenantAdmin from "./pages/TenantAdmin";
+import Welcome from "./pages/Welcome";
 import { EnsureDefaultRole } from "@/components/EnsureDefaultRole";
 import { TenantProvider } from "@/hooks/useTenant";
 
@@ -56,6 +57,7 @@ const App = () => (
               <Routes>
                 <Route path="/" element={<Index />} />
                 <Route path="/auth" element={<Auth />} />
+                <Route path="/welcome" element={<Welcome />} />
                 <Route path="/invite/accept" element={<AcceptInvite />} />
                 <Route path="/invite-required" element={<InviteRequired />} />
                 <Route path="/tenant-admin" element={<TenantAdmin />} />
