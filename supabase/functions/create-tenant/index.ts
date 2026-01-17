@@ -101,52 +101,53 @@ Deno.serve(async (req) => {
 
     console.log("[create-tenant] Tenant created:", tenant.id);
 
-    // If owner_email is provided, find the user and add them as owner
-    if (owner_email && typeof owner_email === "string") {
-      // Look up user by email in auth.users (using admin client)
-      const { data: authUsers, error: authLookupError } = await supabaseAdmin.auth.admin.listUsers();
-      
-      if (authLookupError) {
-        console.error("[create-tenant] Auth lookup error:", authLookupError);
-        // Tenant is created, just log the warning
-        console.warn("[create-tenant] Could not assign owner, tenant created without owner");
-      } else {
-        const ownerUser = authUsers.users.find(u => u.email === owner_email.toLowerCase());
-        
-        if (ownerUser) {
-          // Add user as tenant owner
-          const { error: memberError } = await supabaseAdmin
-            .from("tenant_users")
-            .insert({
-              tenant_id: tenant.id,
-              user_id: ownerUser.id,
-              role: "owner"
-            });
+    // Assign an owner membership.
+    // IMPORTANT: if an owner email is provided but that user doesn't exist yet,
+    // we fall back to making the creating super_admin the owner so the tenant is manageable.
+    const normalizedOwnerEmail =
+      typeof owner_email === "string" ? owner_email.trim().toLowerCase() : null;
 
-          if (memberError) {
-            console.error("[create-tenant] Failed to add owner:", memberError);
-          } else {
-            console.log("[create-tenant] Owner assigned:", ownerUser.id);
-          }
+    let ownerUserId: string | null = null;
+
+    if (normalizedOwnerEmail) {
+      try {
+        const { data: usersPage, error: listUsersError } =
+          await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+
+        if (listUsersError) {
+          console.error("[create-tenant] listUsers error:", listUsersError);
         } else {
-          console.log("[create-tenant] Owner email not found, skipping owner assignment");
+          const ownerUser = usersPage.users.find(
+            (u) => (u.email ?? "").toLowerCase() === normalizedOwnerEmail
+          );
+          ownerUserId = ownerUser?.id ?? null;
         }
-      }
-    } else {
-      // No owner email provided, add the creating super_admin as owner
-      const { error: memberError } = await supabaseAdmin
-        .from("tenant_users")
-        .insert({
-          tenant_id: tenant.id,
-          user_id: user.id,
-          role: "owner"
-        });
 
-      if (memberError) {
-        console.error("[create-tenant] Failed to add super_admin as owner:", memberError);
-      } else {
-        console.log("[create-tenant] Super admin added as owner");
+        if (!ownerUserId) {
+          console.warn(
+            `[create-tenant] Owner email not found (${normalizedOwnerEmail}); falling back to creator as owner`
+          );
+        }
+      } catch (e) {
+        console.error("[create-tenant] Owner lookup unexpected error:", e);
       }
+    }
+
+    // Fallback: always ensure the creator has access to manage the tenant
+    const effectiveOwnerUserId = ownerUserId ?? user.id;
+
+    const { error: memberError } = await supabaseAdmin
+      .from("tenant_users")
+      .insert({
+        tenant_id: tenant.id,
+        user_id: effectiveOwnerUserId,
+        role: "owner",
+      });
+
+    if (memberError) {
+      console.error("[create-tenant] Failed to add owner membership:", memberError);
+    } else {
+      console.log("[create-tenant] Owner membership created:", effectiveOwnerUserId);
     }
 
     // Log audit event
