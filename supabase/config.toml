@@ -197,3 +197,6 @@ verify_jwt = false
 
 [functions.aggregate-global-learnings]
 verify_jwt = false
+
+[functions.manage-incident-ticket]
+verify_jwt = false
