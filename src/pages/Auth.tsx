@@ -6,10 +6,42 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { Shield, Loader2, Mail } from "lucide-react";
+import { Shield, Loader2, Mail, FileText } from "lucide-react";
 import { getMCMRoleInfo, type MCMRole } from "@/lib/mcmRoles";
 
+const USER_AGREEMENT_CONTENT = [
+  {
+    title: "1. Professionalism & Respect",
+    content: "Treat all members with courtesy. Engage in discussions in a respectful, professional manner. Personal attacks, harassment, or any form of discrimination will not be tolerated."
+  },
+  {
+    title: "2. Respect for Aegis & Agents",
+    content: "Our digital agents, including Aegis and other AI-driven team members, are here to support you. Please interact with them courteously and respect the boundaries of their use. Abuse or misuse of our agents will not be permitted."
+  },
+  {
+    title: "3. AI Limitations & Feedback",
+    content: "Understand that our AI agents, while powerful, are not perfect. Some results may require your oversight and feedback. We encourage you to provide constructive feedback to help us improve and to ensure that the information or recommendations you receive are accurate and useful."
+  },
+  {
+    title: "4. Confidentiality & Privacy",
+    content: "Respect the confidentiality of any information shared within Fortress. Do not disclose private or sensitive details outside the group or platform."
+  },
+  {
+    title: "5. Integrity & Authenticity",
+    content: "Be honest and authentic in your contributions. Misleading or false information undermines the community and will be addressed accordingly."
+  },
+  {
+    title: "6. Constructive Participation",
+    content: "Contribute constructively. Share insights, ask questions, and provide feedback that helps others grow and learn."
+  },
+  {
+    title: "7. Security First",
+    content: "As a community focused on security, always prioritize safe practices. Do not share any content that could compromise the safety or security of others."
+  }
+];
 interface InvitationInfo {
   id: string;
   workspace_id: string;
@@ -31,6 +63,7 @@ const Auth = () => {
   const [loading, setLoading] = useState(false);
   const [invitation, setInvitation] = useState<InvitationInfo | null>(null);
   const [loadingInvite, setLoadingInvite] = useState(!!inviteToken);
+  const [agreementAccepted, setAgreementAccepted] = useState(false);
   const navigate = useNavigate();
 
   // Fetch invitation details if token is present
@@ -154,6 +187,13 @@ const Auth = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Require agreement acceptance for signup
+    if (!isLogin && !agreementAccepted) {
+      toast.error("Please accept the User Agreement & Code of Conduct to continue");
+      return;
+    }
+    
     setLoading(true);
 
     try {
@@ -172,6 +212,8 @@ const Auth = () => {
           options: {
             data: {
               name: name || email,
+              agreement_accepted: true,
+              agreement_accepted_at: new Date().toISOString(),
             },
             emailRedirectTo: invitation 
               ? `${window.location.origin}/workspace/${invitation.workspace_id}`
@@ -283,7 +325,7 @@ const Auth = () => {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
+            <Label htmlFor="password">Password (min. 6 characters)</Label>
             <Input
               id="password"
               type="password"
@@ -296,10 +338,54 @@ const Auth = () => {
             />
           </div>
 
+          {/* User Agreement for Signup */}
+          {!isLogin && (
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <FileText className="w-4 h-4 text-primary" />
+                <span>User Agreement & Code of Conduct</span>
+              </div>
+              
+              <ScrollArea className="h-48 rounded-md border border-border bg-secondary/50 p-4">
+                <div className="space-y-4 pr-4">
+                  <p className="text-sm text-muted-foreground">
+                    Welcome to Fortress! To ensure a secure, respectful, and professional environment for everyone, we ask all members to agree to the following principles before proceeding:
+                  </p>
+                  
+                  {USER_AGREEMENT_CONTENT.map((item, index) => (
+                    <div key={index} className="space-y-1">
+                      <h4 className="text-sm font-semibold text-foreground">{item.title}</h4>
+                      <p className="text-xs text-muted-foreground leading-relaxed">{item.content}</p>
+                    </div>
+                  ))}
+                  
+                  <p className="text-sm text-muted-foreground pt-2 border-t border-border">
+                    By agreeing to these principles, you help us create a trusted and professional environment for all members. Thank you for being a part of Fortress!
+                  </p>
+                </div>
+              </ScrollArea>
+              
+              <div className="flex items-start space-x-3 pt-1">
+                <Checkbox
+                  id="agreement"
+                  checked={agreementAccepted}
+                  onCheckedChange={(checked) => setAgreementAccepted(checked === true)}
+                  className="mt-0.5"
+                />
+                <Label 
+                  htmlFor="agreement" 
+                  className="text-sm text-muted-foreground leading-snug cursor-pointer"
+                >
+                  I have read and agree to the <span className="font-medium text-foreground">Fortress User Agreement & Code of Conduct</span>
+                </Label>
+              </div>
+            </div>
+          )}
+
           <Button
             type="submit"
             className="w-full"
-            disabled={loading}
+            disabled={loading || (!isLogin && !agreementAccepted)}
           >
             {loading ? (
               <>
