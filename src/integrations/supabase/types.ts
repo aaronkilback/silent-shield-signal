@@ -894,6 +894,73 @@ export type Database = {
           },
         ]
       }
+      briefing_claims: {
+        Row: {
+          agent_message_id: string | null
+          briefing_session_id: string | null
+          citation_key: string
+          claim_text: string
+          claim_type: string
+          confidence_level: string
+          confidence_rationale: string | null
+          created_at: string
+          id: string
+          is_verified: boolean | null
+          provenance: string
+          verification_task_id: string | null
+        }
+        Insert: {
+          agent_message_id?: string | null
+          briefing_session_id?: string | null
+          citation_key: string
+          claim_text: string
+          claim_type: string
+          confidence_level: string
+          confidence_rationale?: string | null
+          created_at?: string
+          id?: string
+          is_verified?: boolean | null
+          provenance: string
+          verification_task_id?: string | null
+        }
+        Update: {
+          agent_message_id?: string | null
+          briefing_session_id?: string | null
+          citation_key?: string
+          claim_text?: string
+          claim_type?: string
+          confidence_level?: string
+          confidence_rationale?: string | null
+          created_at?: string
+          id?: string
+          is_verified?: boolean | null
+          provenance?: string
+          verification_task_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "briefing_claims_agent_message_id_fkey"
+            columns: ["agent_message_id"]
+            isOneToOne: false
+            referencedRelation: "agent_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "briefing_claims_briefing_session_id_fkey"
+            columns: ["briefing_session_id"]
+            isOneToOne: false
+            referencedRelation: "briefing_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "briefing_claims_verification_task_id_fkey"
+            columns: ["verification_task_id"]
+            isOneToOne: false
+            referencedRelation: "verification_tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       briefing_decisions: {
         Row: {
           approved_at: string | null
@@ -1342,6 +1409,48 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      claim_sources: {
+        Row: {
+          claim_id: string
+          created_at: string
+          id: string
+          is_primary_source: boolean | null
+          relevance_score: number | null
+          source_artifact_id: string
+        }
+        Insert: {
+          claim_id: string
+          created_at?: string
+          id?: string
+          is_primary_source?: boolean | null
+          relevance_score?: number | null
+          source_artifact_id: string
+        }
+        Update: {
+          claim_id?: string
+          created_at?: string
+          id?: string
+          is_primary_source?: boolean | null
+          relevance_score?: number | null
+          source_artifact_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "claim_sources_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "briefing_claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "claim_sources_source_artifact_id_fkey"
+            columns: ["source_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "source_artifacts"
             referencedColumns: ["id"]
           },
         ]
@@ -4246,6 +4355,63 @@ export type Database = {
           },
         ]
       }
+      reliability_settings: {
+        Row: {
+          auto_create_verification_tasks: boolean | null
+          block_unverified_claims: boolean | null
+          client_id: string | null
+          created_at: string
+          id: string
+          max_source_age_hours: number | null
+          reliability_first_enabled: boolean | null
+          require_min_sources: number | null
+          require_snapshot_for_external: boolean | null
+          tenant_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          auto_create_verification_tasks?: boolean | null
+          block_unverified_claims?: boolean | null
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          max_source_age_hours?: number | null
+          reliability_first_enabled?: boolean | null
+          require_min_sources?: number | null
+          require_snapshot_for_external?: boolean | null
+          tenant_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          auto_create_verification_tasks?: boolean | null
+          block_unverified_claims?: boolean | null
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          max_source_age_hours?: number | null
+          reliability_first_enabled?: boolean | null
+          require_min_sources?: number | null
+          require_snapshot_for_external?: boolean | null
+          tenant_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reliability_settings_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: true
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reliability_settings_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       report_action_items: {
         Row: {
           action_description: string
@@ -4887,6 +5053,75 @@ export type Database = {
           },
           {
             foreignKeyName: "signals_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      source_artifacts: {
+        Row: {
+          client_id: string | null
+          content_hash: string
+          created_at: string
+          id: string
+          is_verified: boolean | null
+          metadata: Json | null
+          retrieved_at: string
+          source_type: string
+          storage_path: string | null
+          tenant_id: string | null
+          title: string | null
+          updated_at: string
+          url: string | null
+          verified_at: string | null
+          verified_by: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          content_hash: string
+          created_at?: string
+          id?: string
+          is_verified?: boolean | null
+          metadata?: Json | null
+          retrieved_at?: string
+          source_type: string
+          storage_path?: string | null
+          tenant_id?: string | null
+          title?: string | null
+          updated_at?: string
+          url?: string | null
+          verified_at?: string | null
+          verified_by?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          content_hash?: string
+          created_at?: string
+          id?: string
+          is_verified?: boolean | null
+          metadata?: Json | null
+          retrieved_at?: string
+          source_type?: string
+          storage_path?: string | null
+          tenant_id?: string | null
+          title?: string | null
+          updated_at?: string
+          url?: string | null
+          verified_at?: string | null
+          verified_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "source_artifacts_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "source_artifacts_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
@@ -5962,6 +6197,86 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "user_sessions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      verification_tasks: {
+        Row: {
+          assigned_to: string | null
+          briefing_session_id: string | null
+          claim_text: string
+          client_id: string | null
+          created_at: string
+          deadline: string | null
+          id: string
+          resolution_notes: string | null
+          source_artifact_id: string | null
+          status: string
+          tenant_id: string | null
+          updated_at: string
+          verification_type: string
+          where_to_check: string | null
+        }
+        Insert: {
+          assigned_to?: string | null
+          briefing_session_id?: string | null
+          claim_text: string
+          client_id?: string | null
+          created_at?: string
+          deadline?: string | null
+          id?: string
+          resolution_notes?: string | null
+          source_artifact_id?: string | null
+          status?: string
+          tenant_id?: string | null
+          updated_at?: string
+          verification_type: string
+          where_to_check?: string | null
+        }
+        Update: {
+          assigned_to?: string | null
+          briefing_session_id?: string | null
+          claim_text?: string
+          client_id?: string | null
+          created_at?: string
+          deadline?: string | null
+          id?: string
+          resolution_notes?: string | null
+          source_artifact_id?: string | null
+          status?: string
+          tenant_id?: string | null
+          updated_at?: string
+          verification_type?: string
+          where_to_check?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "verification_tasks_briefing_session_id_fkey"
+            columns: ["briefing_session_id"]
+            isOneToOne: false
+            referencedRelation: "briefing_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "verification_tasks_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "verification_tasks_source_artifact_id_fkey"
+            columns: ["source_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "source_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "verification_tasks_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
