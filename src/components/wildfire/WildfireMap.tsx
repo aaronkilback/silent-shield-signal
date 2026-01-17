@@ -869,7 +869,7 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
 
   // Update fire perimeters on map
   const updatePerimeters = useCallback(() => {
-    if (!map.current || !firePerimeters) return;
+    if (!map.current || !firePerimeters || !styleLoaded) return;
 
     const source = map.current.getSource('fire-perimeters') as mapboxgl.GeoJSONSource;
     if (!source) return;
@@ -883,11 +883,11 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
       }));
 
     source.setData({ type: 'FeatureCollection', features });
-  }, [firePerimeters]);
+  }, [firePerimeters, styleLoaded]);
 
   // Update weather alerts on map
   const updateWeatherAlerts = useCallback(() => {
-    if (!map.current || !weatherAlerts) return;
+    if (!map.current || !weatherAlerts || !styleLoaded) return;
 
     const source = map.current.getSource('weather-alerts') as mapboxgl.GeoJSONSource;
     if (!source) return;
@@ -901,11 +901,11 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
       }));
 
     source.setData({ type: 'FeatureCollection', features });
-  }, [weatherAlerts]);
+  }, [weatherAlerts, styleLoaded]);
 
   // Update fire points on map
   const updateFireMarkers = useCallback(() => {
-    if (!map.current || !firePoints) return;
+    if (!map.current || !firePoints || !styleLoaded) return;
 
     // Clear existing markers
     markersRef.current.forEach(marker => marker.remove());
@@ -983,7 +983,7 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
       };
       (map.current.getSource('smoke-plumes') as mapboxgl.GeoJSONSource).setData(smokePlumeData);
     }
-  }, [firePoints, showFirePoints]);
+  }, [firePoints, showFirePoints, styleLoaded]);
 
   // Toggle heatmap visibility
   useEffect(() => {
