@@ -103,7 +103,8 @@ serve(async (req) => {
           type: 'server_vad',
           threshold: 0.5,
           prefix_padding_ms: 300,
-          silence_duration_ms: 800
+          silence_duration_ms: 800,
+          create_response: true
         }
       }),
     });
