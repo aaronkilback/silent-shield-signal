@@ -141,7 +141,9 @@ const Auth = () => {
 
     // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session && event === "SIGNED_IN") {
+      // Don't redirect if user just signed up and is on welcome page flow
+      // The navigate("/welcome") is called explicitly in handleSubmit
+      if (event === "SIGNED_IN" && window.location.pathname === "/auth") {
         // Check for invite redirect first
         const inviteRedirect = sessionStorage.getItem('invite_redirect');
         if (inviteRedirect) {
@@ -152,12 +154,10 @@ const Auth = () => {
         
         // If there's an invitation, accept it
         if (invitation) {
-          await handleAcceptInvitation(session.user.id);
+          await handleAcceptInvitation(session!.user.id);
           navigate(`/workspace/${invitation.workspace_id}`);
-        } else {
-          // Regular sign in - go to home
-          navigate("/");
         }
+        // Don't navigate for regular sign-in here - let handleSubmit handle it
       } else if (session && event === "USER_UPDATED") {
         // This can happen after signup confirmation - check for invite redirect
         const inviteRedirect = sessionStorage.getItem('invite_redirect');
@@ -166,7 +166,10 @@ const Auth = () => {
           window.location.href = inviteRedirect;
           return;
         }
-        navigate("/");
+        // Only redirect if not already on welcome page
+        if (window.location.pathname !== "/welcome") {
+          navigate("/");
+        }
       }
     });
 

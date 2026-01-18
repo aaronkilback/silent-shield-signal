@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -6,6 +5,12 @@ import { Shield, Mail, Users, Bot, Sparkles, ArrowRight, CheckCircle2 } from "lu
 
 const Welcome = () => {
   const navigate = useNavigate();
+
+  const handleContinue = () => {
+    // Mark that user has seen welcome page
+    sessionStorage.setItem('welcome_completed', 'true');
+    navigate("/");
+  };
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -99,11 +104,11 @@ const Welcome = () => {
 
         {/* CTA Button */}
         <Button 
-          onClick={() => navigate("/")} 
+          onClick={handleContinue} 
           className="w-full group"
           size="lg"
         >
-          Enter Fortress
+          Continue to Fortress
           <ArrowRight className="ml-2 w-4 h-4 group-hover:translate-x-1 transition-transform" />
         </Button>
       </Card>
