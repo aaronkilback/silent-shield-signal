@@ -3,8 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Sparkles, Loader2, Paperclip, X, Mic, MessageSquarePlus, Users, User, Share2 } from "lucide-react";
-import { VoiceConversationOverlay } from "./voice";
+import { Send, Sparkles, Loader2, Paperclip, X, Mic, MicOff, MessageSquarePlus, Users, User, Share2 } from "lucide-react";
+import { useOpenAIRealtime } from "./voice/useOpenAIRealtime";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -48,7 +48,54 @@ export const DashboardAIAssistant = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const hasLoadedOnceRef = useRef(false);
-  const [showVoiceInterface, setShowVoiceInterface] = useState(false);
+  
+  // Voice state
+  const [isVoiceActive, setIsVoiceActive] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState("");
+  const [voiceAgentResponse, setVoiceAgentResponse] = useState("");
+  const pendingVoiceUserMsgRef = useRef<string | null>(null);
+  const pendingVoiceAgentMsgRef = useRef<string | null>(null);
+
+  // Voice hook integration
+  const {
+    status: voiceStatus,
+    isAgentSpeaking,
+    connect: connectVoice,
+    disconnect: disconnectVoice,
+    isConnected: isVoiceConnected,
+  } = useOpenAIRealtime({
+    agentContext: `You are Aegis, a strategic AI security advisor for Silent Shield. Be concise and helpful.`,
+    conversationHistory: messages.slice(-10).map(m => ({ role: m.role, content: m.content })),
+    onTranscript: (text, isFinal) => {
+      if (isFinal && text.trim()) {
+        // User finished speaking - add to chat
+        const userMsg: Message = { role: "user", content: `🎙️ ${text}` };
+        setMessages(prev => [...prev, userMsg]);
+        saveMessageToDb(userMsg);
+        pendingVoiceUserMsgRef.current = text;
+      }
+      setVoiceTranscript(text);
+    },
+    onAgentResponse: (delta) => {
+      setVoiceAgentResponse(prev => prev + delta);
+    },
+    onError: (error) => {
+      toast.error(error);
+      setIsVoiceActive(false);
+    },
+    onStatusChange: (status) => {
+      console.log('Voice status:', status);
+      if (status === 'idle') {
+        // Voice ended - save accumulated agent response
+        if (voiceAgentResponse.trim()) {
+          const agentMsg: Message = { role: "assistant", content: `🔊 ${voiceAgentResponse}` };
+          setMessages(prev => [...prev, agentMsg]);
+          saveMessageToDb(agentMsg);
+          setVoiceAgentResponse("");
+        }
+      }
+    },
+  });
   
   // Limit context sent to AI to prevent confusion between topics
   const MAX_CONTEXT_MESSAGES = 20;
@@ -989,14 +1036,29 @@ How can I help you now?`,
     toast.success("New conversation started - context reset");
   };
 
-  if (showVoiceInterface) {
-    return (
-      <VoiceConversationOverlay 
-        onClose={() => setShowVoiceInterface(false)}
-        conversationHistory={messages}
-      />
-    );
-  }
+  // Voice toggle handler
+  const handleVoiceToggle = () => {
+    if (isVoiceActive) {
+      // Stop voice
+      disconnectVoice();
+      setIsVoiceActive(false);
+      // Save any pending agent response
+      if (voiceAgentResponse.trim()) {
+        const agentMsg: Message = { role: "assistant", content: `🔊 ${voiceAgentResponse}` };
+        setMessages(prev => [...prev, agentMsg]);
+        saveMessageToDb(agentMsg);
+        setVoiceAgentResponse("");
+      }
+      toast.success("Voice session ended");
+    } else {
+      // Start voice
+      setIsVoiceActive(true);
+      setVoiceTranscript("");
+      setVoiceAgentResponse("");
+      connectVoice();
+      toast.info("Starting voice session...");
+    }
+  };
 
   return (
     <Card className="w-full">
@@ -1176,6 +1238,48 @@ How can I help you now?`,
                         </div>
                       </div>
                     )}
+                    {/* Live voice transcript indicator */}
+                    {isVoiceActive && voiceTranscript && (
+                      <div className="flex justify-end animate-fade-in">
+                        <div className="max-w-[80%] rounded-lg p-3 bg-primary/10 border border-primary/30">
+                          <div className="flex items-center gap-2 text-sm">
+                            <Mic className="w-4 h-4 text-primary animate-pulse" />
+                            <span className="text-muted-foreground italic">{voiceTranscript}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {/* Live agent voice response indicator */}
+                    {isVoiceActive && voiceAgentResponse && (
+                      <div className="flex justify-start animate-fade-in">
+                        <div className="max-w-[80%] rounded-lg p-3 bg-muted border border-muted-foreground/20">
+                          <div className="flex items-center gap-2 text-sm">
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span>{voiceAgentResponse}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {/* Voice status indicator */}
+                    {isVoiceActive && !voiceTranscript && !voiceAgentResponse && (
+                      <div className="flex justify-center animate-fade-in">
+                        <div className="rounded-lg p-3 bg-primary/5 border border-primary/20">
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <div className="flex gap-1">
+                              <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{animationDelay: '0ms'}} />
+                              <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{animationDelay: '150ms'}} />
+                              <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{animationDelay: '300ms'}} />
+                            </div>
+                            <span>
+                              {voiceStatus === 'connecting' && 'Connecting...'}
+                              {voiceStatus === 'connected' && 'Listening...'}
+                              {voiceStatus === 'listening' && 'Listening...'}
+                              {voiceStatus === 'speaking' && 'Aegis is speaking...'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {isLoading && !streamingContent && messages[messages.length - 1]?.role === "user" && (
                       <div className="flex justify-start animate-fade-in">
                         <div className="bg-muted rounded-lg p-3 min-h-[40px] flex items-center">
@@ -1240,14 +1344,21 @@ How can I help you now?`,
               </Button>
               <Button
                 type="button"
-                variant="outline"
+                variant={isVoiceActive ? "destructive" : "outline"}
                 size="icon"
-                className="shrink-0 bg-primary/10 hover:bg-primary/20 border-primary/30"
-                onClick={() => setShowVoiceInterface(true)}
+                className={isVoiceActive 
+                  ? "shrink-0 animate-pulse" 
+                  : "shrink-0 bg-primary/10 hover:bg-primary/20 border-primary/30"
+                }
+                onClick={handleVoiceToggle}
                 disabled={isLoading || isUploading}
-                title="Talk to Aegis"
+                title={isVoiceActive ? "End voice session" : "Talk to Aegis"}
               >
-                <Mic className="w-4 h-4 text-primary" />
+                {isVoiceActive ? (
+                  <MicOff className="w-4 h-4" />
+                ) : (
+                  <Mic className="w-4 h-4 text-primary" />
+                )}
               </Button>
             </form>
         </div>
