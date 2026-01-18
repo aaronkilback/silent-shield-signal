@@ -1,245 +1,456 @@
-# Fortress Intellectual Property & Trade Secrets
+# Fortress AI Technical Trade Secrets & Intellectual Property Register
 
-**Document Classification:** CONFIDENTIAL - INTERNAL USE ONLY  
-**Last Updated:** January 18, 2026  
-**Document Owner:** Ember Leaf Security Inc.
-
----
-
-## 1. Overview
-
-This document identifies and classifies the intellectual property (IP), trade secrets, and proprietary technologies that constitute the core competitive advantages of the Fortress Security Intelligence Platform.
+**Document Classification:** TRADE SECRET  
+**Version:** 2.0  
+**Last Updated:** 2026-01-18  
+**Document Owner:** Ember Leaf Security Inc.  
+**Maintained By:** Development Team
 
 ---
 
-## 2. Proprietary Technology
+## 1. Document Purpose
 
-### 2.1 Core Platform Components
+**Classification:** PUBLIC
 
-| Component | Classification | Description |
-|-----------|---------------|-------------|
-| FORTRESS AI Engine | Trade Secret | Multi-model AI orchestration system using Gemini/GPT-5 for threat analysis |
-| Signal Processing Pipeline | Trade Secret | Automated ingestion, normalization, and correlation of intelligence signals |
-| Entity Correlation Engine | Trade Secret | Real-time entity extraction and relationship mapping algorithms |
-| Autonomous SOC Framework | Proprietary | Self-managing security operations with human-in-the-loop escalation |
-| AI Agent Architecture | Trade Secret | Specialized AI agents with defined personas, tools, and capabilities |
+This document serves as the authoritative record of Fortress AI's technical trade secrets, proprietary design logic, system architecture, and intellectual property. It is intended to establish ownership, prevent misappropriation, and provide a defensible record of what makes Fortress AI unique.
 
-### 2.2 AI/ML Innovations
-
-| Innovation | Status | Description |
-|------------|--------|-------------|
-| Anticipation Index Algorithm | Trade Secret | Predictive threat scoring based on signal patterns and entity behavior |
-| Confidence Calibration System | Proprietary | Self-adjusting AI confidence thresholds based on feedback loops |
-| Anti-Hallucination Framework | Trade Secret | Multi-layer verification system preventing AI fabrication of intelligence |
-| Reliability First Protocol | Proprietary | Citation and source verification requirements for AI outputs |
-| Simple Acknowledgment Detection | Proprietary | Context-aware conversational AI that recognizes simple responses |
-
-### 2.3 Edge Function Library
-
-The following edge functions represent significant R&D investment:
-
-**Tier 1 - Core Trade Secrets:**
-- `ai-decision-engine` - Automated threat assessment and incident creation logic
-- `incident-agent-orchestrator` - Multi-agent investigation coordination
-- `correlate-signals` - Signal pattern matching and grouping algorithms
-- `correlate-entities` - Entity extraction and relationship inference
-- `threat-radar-analysis` - Comprehensive threat landscape assessment
-
-**Tier 2 - Proprietary Methods:**
-- `auto-orchestrator` - Automated monitoring coordination
-- `calculate-anticipation-index` - Predictive threat scoring
-- `dashboard-ai-assistant` - Context-aware AI assistant with tool calling
-- `agent-chat` - Specialized agent interaction with reliability validation
-
-**Tier 3 - Implementation Know-How:**
-- All 50+ OSINT monitoring functions
-- Document processing and entity extraction
-- Travel risk assessment algorithms
+This is a living document that must be updated whenever the system meaningfully evolves.
 
 ---
 
-## 3. Trade Secrets
+## 2. System Definition
 
-### 3.1 Algorithms & Methods
+**Classification:** CONFIDENTIAL
 
-| Trade Secret | Business Value | Protection Level |
-|--------------|----------------|------------------|
-| Signal Severity Scoring | Enables accurate threat prioritization | Maximum |
-| Entity Risk Calculation | Differentiates threat actors by danger level | Maximum |
-| Incident Auto-Creation Rules | Reduces analyst workload by 70%+ | Maximum |
-| OSINT Source Weighting | Improves signal quality assessment | High |
-| Duplicate Detection Logic | Prevents alert fatigue | High |
-| AI Agent Persona Templates | Enables specialized investigation capabilities | High |
+### 2.1 What Fortress AI Is
 
-### 3.2 Data Processing Methods
+Fortress AI is a decision-support intelligence system that ingests multi-source signals, performs entity correlation, structures risk, and produces human-actionable outputs that compress the **Signal → Decision → Action** loop for security teams.
 
-1. **Signal Normalization Pipeline**
-   - Proprietary text normalization algorithms
-   - Multi-source deduplication logic
-   - Confidence score calculation methods
+### 2.2 Problem Statement
 
-2. **Entity Extraction System**
-   - Named entity recognition fine-tuning
-   - Alias detection and resolution
-   - Relationship inference algorithms
+Security teams are overwhelmed by:
+- High-volume, low-context alerts from disparate sources
+- Manual correlation across siloed data systems
+- Time pressure to make consequential decisions with incomplete information
+- Inability to track threat evolution across time and entities
 
-3. **Threat Scoring Model**
-   - Multi-factor severity assessment
-   - Temporal decay functions
-   - Client-specific risk weighting
+Fortress solves this by transforming raw signals into structured, correlated intelligence with clear decision pathways.
 
-### 3.3 Integration Architectures
+### 2.3 What Fortress AI Is NOT
 
-- OSINT source connection patterns
-- Real-time notification orchestration
-- Multi-tenant data isolation methods
-- AI gateway integration patterns
+| Fortress Is NOT | Why It Is Different |
+|-----------------|---------------------|
+| A chatbot | Fortress does not merely answer questions — it structures risk, correlates entities, and produces actionable intelligence outputs |
+| A dashboard | Dashboards display data; Fortress *reasons* about data, surfaces what matters, and provides decision context |
+| A SIEM | SIEMs aggregate logs and generate alerts; Fortress correlates across sources, tracks entities over time, and structures threat narratives |
+| A basic OSINT tool | OSINT tools scrape data; Fortress extracts entities, correlates patterns, assesses momentum, and maps consequences |
 
----
+### 2.4 Core Value Proposition
 
-## 4. Confidential Business Information
-
-### 4.1 Client Intelligence
-
-| Data Type | Handling Requirement |
-|-----------|---------------------|
-| Client monitoring keywords | Encrypted, tenant-isolated |
-| High-value asset lists | Encrypted, need-to-know access |
-| Threat profiles | Encrypted, client-specific RLS |
-| Entity watchlists | Encrypted, audit-logged access |
-
-### 4.2 Operational Data
-
-- OSINT source configurations and API integrations
-- Monitoring scan frequencies and patterns
-- Alert threshold configurations
-- Escalation rule definitions
-
-### 4.3 Business Metrics
-
-- AI accuracy rates and performance metrics
-- False positive/negative rates
-- Mean time to detect (MTTD) benchmarks
-- Mean time to resolve (MTTR) benchmarks
+Fortress compresses the cognitive load of security decision-making by:
+1. **Ingesting** signals from multiple sources (OSINT, internal data, environmental data)
+2. **Correlating** those signals to entities, locations, and patterns
+3. **Structuring** risk using confidence, momentum, proximity, and consequence
+4. **Outputting** decision-ready intelligence (Risk Snapshots, Incident Cards, Entity Profiles)
+5. **Keeping humans in the loop** for high-consequence decisions
 
 ---
 
-## 5. Access Control Matrix
+## 3. System Architecture Map
 
-### 5.1 IP Access by Role
+**Classification:** TRADE SECRET
 
-| IP Category | super_admin | admin | analyst | viewer |
-|-------------|-------------|-------|---------|--------|
-| Algorithm Source Code | ✅ | ❌ | ❌ | ❌ |
-| Edge Function Logic | ✅ | ❌ | ❌ | ❌ |
-| AI System Prompts | ✅ | ✅ | ❌ | ❌ |
-| Client Configurations | ✅ | ✅ | ✅ | ❌ |
-| Operational Dashboards | ✅ | ✅ | ✅ | ✅ |
+### 3.1 Architecture Overview
 
-### 5.2 Development Access
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           HUMAN-IN-THE-LOOP LAYER                           │
+│         Analyst validation │ Incident approval │ Decision authority         │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      ▲
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              OUTPUT LAYER                                    │
+│   Risk Snapshots │ Incident Cards │ Entity Cards │ Executive Briefings      │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      ▲
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            REASONING LAYER                                   │
+│   Signal Confidence │ Threat Momentum │ Proximity to Trigger │ Consequence  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      ▲
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          CORRELATION ENGINE                                  │
+│   Entity Extraction │ Cross-Source Linkage │ Temporal Pattern Tracking      │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      ▲
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         OSINT & SIGNAL LAYER                                 │
+│   Source Prioritization │ Noise Filtering │ Signal Normalization            │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      ▲
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         DATA INGESTION LAYER                                 │
+│   External Sources (OSINT, Environmental) │ Internal Client Data            │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-| Team Member | Repository Access | Production Access | Secrets Access |
-|-------------|-------------------|-------------------|----------------|
-| Lead Developer | Full | Full | Full |
-| Backend Developer | Full | Read-only | Limited |
-| Frontend Developer | Full | Read-only | None |
-| Security Analyst | Docs only | Read-only | None |
+### 3.2 Layer Details
+
+#### 3.2.1 Data Ingestion Layer
+
+**Purpose:** Receive and normalize data from all configured sources.
+
+| Mechanism | Description |
+|-----------|-------------|
+| Scheduled Edge Functions | Automated polling of external sources (news, social, threat intel) |
+| Document Upload | Manual ingestion of security reports, intelligence documents |
+| API Integration | Real-time feeds from configured external systems |
+| Manual Signal Entry | Analyst-submitted intelligence |
+
+**Technical Implementation:** 50+ Deno edge functions coordinated by `auto-orchestrator`.
+
+#### 3.2.2 OSINT & Signal Layer
+
+**Purpose:** Transform raw data into normalized, prioritized signals.
+
+| Function | Implementation |
+|----------|----------------|
+| Source Prioritization | Weighted scoring based on source reliability and historical accuracy |
+| Noise Filtering | Duplicate detection, relevance scoring, confidence thresholds |
+| Signal Normalization | Standardized schema (title, description, severity, source, category) |
+| Severity Classification | P1-P4 based on threat characteristics and client context |
+
+**Key Edge Functions:** `ingest-signal`, `detect-near-duplicate-signals`, `cleanup-duplicate-signals`
+
+#### 3.2.3 Correlation Engine
+
+**Purpose:** Connect signals to entities and identify patterns.
+
+| Capability | Description |
+|------------|-------------|
+| Entity Extraction | Named entity recognition (people, organizations, locations, infrastructure) |
+| Cross-Source Linkage | Connecting mentions of the same entity across different signals |
+| Temporal Pattern Tracking | Identifying escalation patterns, repeat mentions, threat evolution |
+| Relationship Mapping | Building entity relationship graphs (works_for, located_in, affiliated_with) |
+
+**Key Edge Functions:** `correlate-signals`, `correlate-entities`, `auto-enrich-entities`
+
+#### 3.2.4 Reasoning Layer
+
+**Purpose:** Structure risk and assess threat significance.
+
+| Risk Dimension | Description |
+|----------------|-------------|
+| Signal Confidence | How reliable is the source? How verifiable is the claim? |
+| Threat Momentum | Is this threat escalating, stable, or declining? |
+| Proximity to Trigger | How close is this threat to materializing? |
+| Consequence Mapping | What is the potential impact if this threat materializes? |
+
+**Key Edge Functions:** `ai-decision-engine`, `threat-radar-analysis`, `calculate-anticipation-index`
+
+#### 3.2.5 Output Layer
+
+**Purpose:** Present structured intelligence in decision-ready formats.
+
+| Output Type | Purpose | Audience |
+|-------------|---------|----------|
+| Risk Snapshots | Point-in-time risk summary for a client | Executives, Security Managers |
+| Incident Cards | Structured incident details with timeline and entities | Analysts, Responders |
+| Entity Cards | Comprehensive entity profile with risk assessment | Investigators |
+| Threat Signals | Prioritized alert with context and recommendations | SOC Analysts |
+| Executive Briefings | High-level summary with strategic implications | C-Suite |
+
+#### 3.2.6 Human-in-the-Loop Layer
+
+**Purpose:** Ensure human judgment governs consequential decisions.
+
+| Decision Type | Human Role |
+|---------------|------------|
+| Incident Creation | AI recommends; analyst approves or rejects |
+| Entity Risk Escalation | AI flags; analyst validates |
+| Alert Dispatch | AI drafts; analyst authorizes |
+| Client Communication | AI assists; human delivers |
 
 ---
 
-## 6. Protection Measures
+## 4. Data Sources (Technical IP)
 
-### 6.1 Technical Controls
+**Classification:** CONFIDENTIAL
 
-- **Code Repository**: Private GitHub repository with branch protection
-- **Secrets Management**: Supabase secrets, never in codebase
-- **Database Encryption**: AES-256 at rest, TLS 1.3 in transit
-- **Row Level Security**: Tenant isolation at database level
-- **Audit Logging**: All sensitive operations logged
+### 4.1 External Data Sources
 
-### 6.2 Operational Controls
+#### 4.1.1 Open-Source Intelligence (OSINT)
 
-- Employee confidentiality agreements
-- Code review requirements for sensitive areas
-- Limited production access
-- Regular access reviews
+| Source Type | What It Is | Why It Matters | How Fortress Uses It |
+|-------------|-----------|----------------|---------------------|
+| News Feeds | Real-time news from multiple providers | Early warning of incidents, contextual awareness | `monitor-news`, `monitor-news-google` extract relevant stories, normalize to signals |
+| Social Media | Twitter/X, Facebook, Instagram, LinkedIn | Activist activity, public sentiment, emerging threats | Platform-specific monitors extract mentions, assess credibility |
+| Threat Intelligence Feeds | Commercial and open threat intel | Known threat actors, TTPs, IOCs | `monitor-threat-intel` correlates to client assets |
+| Dark Web Monitoring | Tor sites, paste sites, forums | Credential leaks, threat chatter, attack planning | `monitor-darkweb`, `monitor-pastebin` surface relevant mentions |
+| Court & Legal Records | Public court filings, regulatory actions | Legal risks, litigation exposure | `monitor-court-registry` tracks relevant cases |
+| Government Sources | CSIS, regulatory agencies | Official threat assessments, compliance changes | `monitor-csis`, `monitor-regulatory-changes` |
 
-### 6.3 Legal Protections
+#### 4.1.2 Environmental & Safety Data
 
-- [ ] Non-disclosure agreements with all contractors
-- [ ] Employment agreements with IP assignment clauses
-- [ ] Terms of service protecting platform IP
-- [ ] Privacy policy compliant with PIPEDA
+| Source Type | What It Is | Why It Matters | How Fortress Uses It |
+|-------------|-----------|----------------|---------------------|
+| Wildfire Data | Active fire locations, spread predictions | Physical asset threats, evacuation planning | `monitor-wildfires`, `monitor-wildfire-comprehensive` |
+| Weather Risk | Severe weather alerts, forecasts | Operational impact, safety risks | `monitor-weather` with geographic filtering |
+| Earthquake Data | Seismic activity, magnitude, location | Infrastructure threats, response planning | `monitor-earthquakes` for relevant regions |
+| Travel Risk | Country risk levels, incident data | Personnel safety, travel advisory | `monitor-travel-risks` with itinerary context |
 
----
+#### 4.1.3 Regional Intelligence
 
-## 7. IP Development Log
+| Source Type | What It Is | Why It Matters | How Fortress Uses It |
+|-------------|-----------|----------------|---------------------|
+| Canadian Sources | Canada-specific news, government, industry | Localized threat context | `monitor-canadian-sources` |
+| APAC Regional | Asia-Pacific regional intelligence | Geopolitical risk, supply chain | `monitor-regional-apac` |
 
-### Recent Innovations (2026)
+### 4.2 Internal Client Data Sources
 
-| Date | Innovation | Status | Inventor |
-|------|------------|--------|----------|
-| Jan 18, 2026 | Simple Acknowledgment Detection | Implemented | Development Team |
-| Jan 2026 | Anti-Hallucination Framework | Implemented | Development Team |
-| Jan 2026 | Reliability First Protocol | Implemented | Development Team |
-| 2025 | AI Agent Architecture | Production | Development Team |
-| 2025 | Autonomous SOC Framework | Production | Development Team |
-
-### Pending Patents / Registrations
-
-- [ ] Consider patent application for Anticipation Index algorithm
-- [ ] Consider trademark registration for "FORTRESS" brand
-- [ ] Document all invention disclosures
-
----
-
-## 8. Third-Party IP
-
-### 8.1 Licensed Technology
-
-| Technology | Vendor | License Type | Restrictions |
-|------------|--------|--------------|--------------|
-| Supabase | Supabase Inc. | Apache 2.0 | Open source |
-| React | Meta | MIT | Open source |
-| Tailwind CSS | Tailwind Labs | MIT | Open source |
-| Lovable AI Gateway | Lovable | Commercial API | Per-workspace usage |
-| Mapbox GL | Mapbox | Commercial | Attribution required |
-
-### 8.2 Open Source Components
-
-All open source dependencies listed in `package.json` with compatible licenses (MIT, Apache 2.0, BSD).
+| Data Type | What It Is | How Fortress Integrates It |
+|-----------|-----------|---------------------------|
+| Incident Logs | Historical security incidents | Cross-referenced with signals for pattern detection |
+| Security Reports | 3Si reports, guard reports, assessments | Parsed via `process-intelligence-document`, entities extracted |
+| Asset Records | High-value assets, locations, personnel | Used for proximity analysis and impact assessment |
+| Entity Watchlists | Persons/orgs of interest | Monitored via OSINT for activity |
+| Patrol Data | Guard patrol logs, observations | Ingested as internal signals for correlation |
+| Near-Miss Reports | Incidents that almost occurred | Analyzed for precursor patterns |
+| Travel Itineraries | Personnel travel schedules | Cross-referenced with location-based threats |
 
 ---
 
-## 9. Incident Response
+## 5. Core Technical Capabilities
 
-### IP Breach Protocol
+**Classification:** TRADE SECRET
 
-1. **Detection**: Monitor for unauthorized access, code leaks, or competitive intelligence
-2. **Containment**: Revoke access, rotate secrets, isolate affected systems
-3. **Assessment**: Determine scope and impact of breach
-4. **Notification**: Legal counsel, affected parties as required
-5. **Remediation**: Patch vulnerabilities, enhance controls
-6. **Documentation**: Complete incident report for legal records
+### 5.1 Entity Extraction & Tracking
+
+**Strategic Importance:** Entities are the connective tissue of intelligence. Without entity tracking, signals remain isolated events rather than parts of an evolving threat picture.
+
+| Capability | Description |
+|------------|-------------|
+| Entity Identification | AI-powered extraction of people, organizations, locations, infrastructure from unstructured text |
+| Persistent Tracking | Entities maintain identity across time; new mentions link to existing profiles |
+| Cross-Dataset Linkage | Same entity recognized across news, social media, documents, incidents |
+| Alias Resolution | Multiple names/identifiers resolved to single entity |
+| Relationship Inference | Automated detection of relationships (employment, affiliation, location) |
+
+**Implementation:** `correlate-entities`, `auto-enrich-entities`, `osint-entity-scan`
+
+### 5.2 Signal Correlation
+
+**Strategic Importance:** Isolated alerts create noise; correlated signals create intelligence.
+
+| Capability | Description |
+|------------|-------------|
+| Pattern Detection | Identifying clusters of related signals across time and source |
+| Temporal Correlation | Recognizing escalation patterns (increasing frequency, severity) |
+| Geographic Correlation | Clustering signals by location proximity |
+| Entity-Based Correlation | Grouping signals that reference the same entities |
+| Terrain of Risk | Building a holistic threat picture rather than a list of alerts |
+
+**Implementation:** `correlate-signals`, `signal_correlation_groups` table, `detect-near-duplicate-signals`
+
+### 5.3 Risk Structuring Logic (Key Differentiator)
+
+**Strategic Importance:** This is the core intellectual property that distinguishes Fortress from alert-generators.
+
+| Risk Dimension | Definition | How Fortress Measures It |
+|----------------|------------|-------------------------|
+| **Signal Confidence** | How reliable and verifiable is this information? | Source reliability score, corroboration count, recency |
+| **Threat Momentum** | Is this threat escalating, stable, or declining? | Signal frequency trend, severity progression, geographic spread |
+| **Proximity to Trigger** | How close is this threat to materializing? | Precursor indicators, temporal patterns, stated timelines |
+| **Consequence Mapping** | What is the potential impact? | Asset proximity, client criticality, historical precedent |
+
+**Implementation:** `ai-decision-engine`, `calculate-anticipation-index`, `threat-radar-analysis`
+
+### 5.4 Structured Outputs Catalog
+
+| Output | Purpose | Structure | Audience |
+|--------|---------|-----------|----------|
+| **Risk Snapshot** | Point-in-time client risk summary | Summary, active threats, entity activity, recommendations | Executives, Security Managers |
+| **Incident Card** | Comprehensive incident record | Title, timeline, entities, signals, AI analysis, actions | Analysts, Responders |
+| **Entity Card** | Comprehensive entity profile | Name, type, aliases, risk level, relationships, activity timeline | Investigators |
+| **Threat Signal** | Prioritized alert with context | Title, severity, source, description, entity mentions, recommendations | SOC Analysts |
+| **Executive Briefing** | Strategic summary for leadership | Overview, key threats, trends, recommendations, metrics | C-Suite |
+| **Anticipation Index** | Predictive threat score | Composite score, contributing factors, trend direction | Strategic Planning |
 
 ---
 
-## 10. Review & Updates
+## 6. Proprietary Prompts & Agents Registry
 
-This document should be reviewed:
-- Quarterly for accuracy
-- After any significant platform changes
-- After any IP-related incidents
-- When new trade secrets are developed
+**Classification:** TRADE SECRET
+
+> **Note:** Full prompt text is NOT stored in this document. This registry tracks existence, purpose, and access only.
+
+### 6.1 Core Prompts
+
+| Name | Purpose | Storage Location | Access | Sensitivity |
+|------|---------|------------------|--------|-------------|
+| Aegis Master Prompt | Primary dashboard AI assistant system prompt | `dashboard-ai-assistant/index.ts` | super_admin only | TRADE SECRET |
+| Agent Chat Prompt | Specialized agent interaction with tools | `agent-chat/index.ts` | super_admin only | TRADE SECRET |
+| Briefing Chat Prompt | Incident-scoped briefing responses | `briefing-chat-response/index.ts` | super_admin only | TRADE SECRET |
+| AI Decision Engine Prompt | Autonomous signal analysis and incident creation | `ai-decision-engine/index.ts` | super_admin only | TRADE SECRET |
+| Investigation AI Assist Prompt | Investigation writing assistance | `investigation-ai-assist/index.ts` | super_admin only | TRADE SECRET |
+
+### 6.2 Specialized Agents
+
+| Agent Name | Call Sign | Purpose | Specialty | Sensitivity |
+|------------|-----------|---------|-----------|-------------|
+| AEGIS | AEGIS-1 | Primary user-facing AI assistant | General intelligence, system queries | TRADE SECRET |
+| (Additional agents as configured) | Various | Specialized investigation roles | Domain-specific analysis | TRADE SECRET |
+
+### 6.3 Proprietary Logic Modules
+
+| Module | Purpose | Location | Sensitivity |
+|--------|---------|----------|-------------|
+| Anti-Hallucination Framework | Prevents AI fabrication of intelligence | `_shared/anti-hallucination.ts` | TRADE SECRET |
+| Reliability First Protocol | Enforces source citation requirements | `_shared/reliability-first.ts` | TRADE SECRET |
+| Tenant Isolation Logic | Multi-tenant data separation | `_shared/tenant-isolation.ts` | TRADE SECRET |
+| Simple Acknowledgment Detection | Context-aware conversational responses | All AI chat functions | PROPRIETARY |
 
 ---
 
-**Document History:**
+## 7. Design Principles of the AI
+
+**Classification:** CONFIDENTIAL
+
+Fortress AI agents are designed according to these technical principles:
+
+### 7.1 Information Integrity
+
+| Principle | Implementation |
+|-----------|----------------|
+| Prioritize Verifiable Information | Agents query databases before making claims; tool results take precedence over inference |
+| Distinguish Fact from Inference | Responses explicitly mark unverified claims; confidence levels stated |
+| Reduce Hallucination Risk | Anti-hallucination prompts, forbidden phrase detection, source citation requirements |
+| Use Structured Intelligence Standards | Outputs follow consistent schemas; claims are categorized by confidence |
+| Cite Sources When Possible | Database sources, document references, and tool results are cited |
+
+### 7.2 Response Quality
+
+| Principle | Implementation |
+|-----------|----------------|
+| Context-Appropriate Responses | Simple acknowledgments receive brief replies; complex queries receive comprehensive analysis |
+| Tool Execution Over Description | Agents call tools rather than describing what they would do |
+| Scope Enforcement | Briefing agents stay within incident/investigation scope |
+| Client Isolation | Agents never reference data from other tenants |
+
+---
+
+## 8. Human-in-the-Loop Principles
+
+**Classification:** CONFIDENTIAL
+
+Fortress is intentionally designed so that:
+
+| Principle | Implementation |
+|-----------|----------------|
+| AI accelerates judgment — it does not replace it | AI surfaces, structures, and recommends; humans decide and act |
+| Humans validate high-consequence decisions | Incident creation, alert dispatch, client communication require human approval |
+| The system is a decision amplifier | AI handles volume and correlation; humans handle judgment and accountability |
+| Transparency over automation | AI reasoning is visible; analysts can see why recommendations were made |
+| Override capability | Humans can override AI recommendations at any point |
+
+### 8.1 Decision Authority Matrix
+
+| Decision Type | AI Authority | Human Authority |
+|---------------|--------------|-----------------|
+| Signal Ingestion | Full | Review optional |
+| Signal Prioritization | Full | Override available |
+| Entity Extraction | Full | Correction available |
+| Incident Recommendation | Recommend only | Approval required |
+| Incident Creation | Auto-create for P1/P2 | Must acknowledge |
+| Alert Dispatch | Draft only | Approval required |
+| Client Communication | Assist only | Human delivers |
+
+---
+
+## 9. Technical Differentiation Statement
+
+**Classification:** CONFIDENTIAL
+
+### What Fortress Is
+
+Fortress AI is a **decision system that compresses Signal → Decision → Action through structured intelligence and correlation.**
+
+### What Fortress Is NOT
+
+| Category | Why Fortress Is Different |
+|----------|--------------------------|
+| Not merely a dashboard | Dashboards display; Fortress reasons, correlates, and recommends |
+| Not merely a chatbot | Chatbots answer; Fortress structures risk and produces intelligence outputs |
+| Not merely a SIEM | SIEMs aggregate logs; Fortress correlates entities across OSINT, documents, and internal data |
+| Not merely an OSINT scraper | Scrapers collect; Fortress extracts entities, tracks patterns, and maps consequences |
+
+### Core Differentiators
+
+1. **Entity-Centric Intelligence:** Everything connects to entities tracked over time
+2. **Multi-Source Correlation:** Signals from disparate sources are linked, not siloed
+3. **Structured Risk Assessment:** Confidence, momentum, proximity, and consequence — not just severity labels
+4. **Decision-Ready Outputs:** Risk Snapshots, Incident Cards, Entity Profiles — not just alerts
+5. **Human-in-the-Loop Design:** AI accelerates; humans decide
+
+---
+
+## 10. Version Control & Change Log
+
+**Classification:** PUBLIC
+
+### Current Version
+
+| Field | Value |
+|-------|-------|
+| Version | 2.0 |
+| Last Updated | 2026-01-18 |
+| Updated By | Development Team |
+
+### Change Log
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
-| 1.0 | Jan 18, 2026 | Development Team | Initial creation |
+| 2.0 | 2026-01-18 | Development Team | Complete restructure per IP Register mandate; added all 11 sections |
+| 1.0 | 2026-01-18 | Development Team | Initial creation |
+
+### Update Triggers
+
+This document must be updated when:
+- New data sources are integrated
+- New AI agents or prompts are created
+- New output types are added
+- Core algorithms are modified
+- Architecture changes significantly
+- New proprietary capabilities are developed
 
 ---
 
-*This document contains confidential trade secrets and proprietary information of Ember Leaf Security Inc. Unauthorized disclosure, copying, or distribution is strictly prohibited.*
+## 11. Sensitivity Classification Key
+
+**Classification:** PUBLIC
+
+| Label | Definition | Examples |
+|-------|------------|----------|
+| **PUBLIC** | May be shared externally | Document purpose, version info |
+| **CONFIDENTIAL** | Internal use only; not for external distribution | System definition, design principles, data source categories |
+| **TRADE SECRET** | Maximum protection; access restricted to authorized personnel | Architecture details, correlation algorithms, prompts, risk structuring logic |
+
+### Default Classifications
+
+| Section | Default Classification |
+|---------|----------------------|
+| Document Purpose | PUBLIC |
+| System Definition | CONFIDENTIAL |
+| System Architecture | TRADE SECRET |
+| Data Sources | CONFIDENTIAL |
+| Core Capabilities | TRADE SECRET |
+| Prompts & Agents | TRADE SECRET |
+| Design Principles | CONFIDENTIAL |
+| Human-in-the-Loop | CONFIDENTIAL |
+| Differentiation Statement | CONFIDENTIAL |
+| Version Control | PUBLIC |
+| Sensitivity Key | PUBLIC |
+
+---
+
+*This document contains confidential trade secrets and proprietary information of Ember Leaf Security Inc. Unauthorized disclosure, copying, or distribution is strictly prohibited and may result in legal action.*
