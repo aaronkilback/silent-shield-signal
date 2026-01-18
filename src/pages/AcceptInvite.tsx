@@ -44,16 +44,28 @@ export default function AcceptInvite() {
       setStatus('loading');
       
       const { data, error } = await supabase.functions.invoke('accept-invite', {
-        body: { token },
-        headers: {
-          Authorization: `Bearer ${session?.access_token}`
-        }
+        body: { token }
       });
 
       if (error) {
         console.error('Accept invite error:', error);
+        // Try to extract error details from the response
+        let errorMessage = 'Failed to accept invitation';
+        try {
+          // The error context might contain the response body
+          if (error.context?.body) {
+            const bodyText = await error.context.text?.() || error.context.body;
+            const parsed = typeof bodyText === 'string' ? JSON.parse(bodyText) : bodyText;
+            if (parsed?.error) {
+              errorMessage = parsed.error;
+            }
+          }
+        } catch {
+          // If parsing fails, use the error message
+          errorMessage = error.message || 'Failed to accept invitation';
+        }
         setStatus('error');
-        setMessage(error.message || 'Failed to accept invitation');
+        setMessage(errorMessage);
         return;
       }
 
@@ -72,10 +84,10 @@ export default function AcceptInvite() {
       
       toast.success(`Welcome to ${data.tenant_name}!`);
 
-    } catch (err) {
+    } catch (err: any) {
       console.error('Accept invite error:', err);
       setStatus('error');
-      setMessage('An unexpected error occurred');
+      setMessage(err?.message || 'An unexpected error occurred');
     }
   };
 
@@ -86,9 +98,18 @@ export default function AcceptInvite() {
     navigate('/auth');
   };
 
+  const handleSignOutAndRetry = async () => {
+    const currentUrl = window.location.href;
+    sessionStorage.setItem('invite_redirect', currentUrl);
+    await supabase.auth.signOut();
+    navigate('/auth');
+  };
+
   const handleContinue = () => {
     navigate('/');
   };
+
+  const isEmailMismatch = message.toLowerCase().includes('email');
 
   if (authLoading) {
     return (
@@ -140,11 +161,19 @@ export default function AcceptInvite() {
           {status === 'error' && (
             <div className="space-y-4">
               <p className="text-center text-sm text-muted-foreground">
-                The invitation may have expired or already been used.
+                {isEmailMismatch 
+                  ? 'Please sign out and sign in with the correct email address, or request a new invitation.'
+                  : 'The invitation may have expired or already been used.'}
               </p>
-              <Button variant="outline" onClick={() => navigate('/')} className="w-full">
-                Go to Home
-              </Button>
+              {isEmailMismatch ? (
+                <Button onClick={handleSignOutAndRetry} className="w-full">
+                  Sign Out & Try Again
+                </Button>
+              ) : (
+                <Button variant="outline" onClick={() => navigate('/')} className="w-full">
+                  Go to Home
+                </Button>
+              )}
             </div>
           )}
 

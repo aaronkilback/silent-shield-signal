@@ -120,6 +120,14 @@ const Auth = () => {
     // Check if user is already logged in
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
+        // Check for invite redirect first
+        const inviteRedirect = sessionStorage.getItem('invite_redirect');
+        if (inviteRedirect) {
+          sessionStorage.removeItem('invite_redirect');
+          window.location.href = inviteRedirect;
+          return;
+        }
+        
         // If there's an invitation, handle it before redirecting
         if (invitation) {
           handleAcceptInvitation(session.user.id);
@@ -132,6 +140,14 @@ const Auth = () => {
     // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session && event === "SIGNED_IN") {
+        // Check for invite redirect first
+        const inviteRedirect = sessionStorage.getItem('invite_redirect');
+        if (inviteRedirect) {
+          sessionStorage.removeItem('invite_redirect');
+          window.location.href = inviteRedirect;
+          return;
+        }
+        
         // If there's an invitation, accept it
         if (invitation) {
           await handleAcceptInvitation(session.user.id);
