@@ -60,14 +60,12 @@ export const Header = () => {
     { path: "/sources", icon: Database, label: "Sources" },
     { path: "/reports", icon: FileText, label: "Reports" },
     { path: "/matching-dashboard", icon: BarChart3, label: "Match Analytics" },
-    { path: "/unmatched-signals", icon: FileSearch, label: "Unmatched Signals" },
   ];
 
   // Operations dropdown items
   const operationsItems = [
     { path: "/command-center", icon: Bot, label: "Agents" },
-    { path: "/task-forces", icon: Swords, label: "AI Task Forces" },
-    { path: "/task-force", icon: Crosshair, label: "Mission Planner" },
+    { path: "/task-force", icon: Swords, label: "Task Force" },
     { path: "/travel", icon: Plane, label: "Travel" },
     { path: "/clients", icon: Building2, label: "Clients" },
   ];
