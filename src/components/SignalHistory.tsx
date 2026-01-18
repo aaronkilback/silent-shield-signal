@@ -5,7 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
-import { History, Clock, AlertCircle, Trash2 } from "lucide-react";
+import { History, Clock, AlertCircle, Trash2, ExternalLink } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 
@@ -454,6 +454,19 @@ export const SignalHistory = () => {
                             <span className="text-xs text-blue-600 font-medium">
                               ⚡ {signal.applied_rules.length} rule{signal.applied_rules.length > 1 ? 's' : ''} applied
                             </span>
+                          )}
+                          {/* Source link */}
+                          {(signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link) && (
+                            <a
+                              href={signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1 text-primary hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              Source
+                            </a>
                           )}
                         </div>
                         {signal.sources && (
