@@ -23,15 +23,12 @@ import Travel from "./pages/Travel";
 import KnowledgeBase from "./pages/KnowledgeBase";
 import BugReports from "./pages/BugReports";
 import RuleApprovals from "./pages/RuleApprovals";
-import MonitoringSources from "./pages/MonitoringSources";
 import Benchmark from "./pages/Benchmark";
 import UserManagement from "./pages/UserManagement";
 import CommandCenter from "./pages/CommandCenter";
 import TaskForce from "./pages/TaskForce";
-import TaskForces from "./pages/TaskForces";
 import ThreatRadar from "./pages/ThreatRadar";
 import Integrations from "./pages/Integrations";
-import UnmatchedSignals from "./pages/UnmatchedSignals";
 import MatchingDashboard from "./pages/MatchingDashboard";
 import Workspace from "./pages/Workspace";
 import NotFound from "./pages/NotFound";
@@ -70,7 +67,6 @@ const App = () => (
                 <Route path="/incidents" element={<Incidents />} />
                 <Route path="/signals" element={<Signals />} />
                 <Route path="/sources" element={<Sources />} />
-                <Route path="/monitoring-sources" element={<MonitoringSources />} />
                 <Route path="/entities" element={<Entities />} />
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/investigations" element={<Investigations />} />
@@ -82,11 +78,9 @@ const App = () => (
                 <Route path="/user-management" element={<UserManagement />} />
                 <Route path="/command-center" element={<CommandCenter />} />
                 <Route path="/task-force" element={<TaskForce />} />
-                <Route path="/task-forces" element={<TaskForces />} />
                 <Route path="/threat-radar" element={<ThreatRadar />} />
                 <Route path="/integrations" element={<Integrations />} />
                 <Route path="/benchmark" element={<Benchmark />} />
-                <Route path="/unmatched-signals" element={<UnmatchedSignals />} />
                 <Route path="/matching-dashboard" element={<MatchingDashboard />} />
                 <Route path="/workspace/:id" element={<Workspace />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
