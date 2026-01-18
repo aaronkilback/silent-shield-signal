@@ -3,7 +3,7 @@ import { SignalHistory } from "@/components/SignalHistory";
 import { UnifiedDocumentUpload } from "@/components/UnifiedDocumentUpload";
 import { ArchivalDocumentsList } from "@/components/ArchivalDocumentsList";
 import { ReprocessDocuments } from "@/components/ReprocessDocuments";
-import { DashboardClientSelector } from "@/components/DashboardClientSelector";
+import { DashboardClientSelector } from "@/components/ClientSelector";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";

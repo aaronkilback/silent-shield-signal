@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { DashboardClientSelector } from "@/components/DashboardClientSelector";
+import { DashboardClientSelector } from "@/components/ClientSelector";
 import { ThreatRadarVisualization } from "@/components/threat-radar/ThreatRadarVisualization";
 import { ThreatScoreCards } from "@/components/threat-radar/ThreatScoreCards";
 import { PrecursorActivityPanel } from "@/components/threat-radar/PrecursorActivityPanel";

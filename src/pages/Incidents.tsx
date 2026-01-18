@@ -16,7 +16,7 @@ import { IncidentActionDialog } from "@/components/IncidentActionDialog";
 import { DeleteIncidentDialog } from "@/components/DeleteIncidentDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useClientSelection } from "@/hooks/useClientSelection";
-import { DashboardClientSelector } from "@/components/DashboardClientSelector";
+import { DashboardClientSelector } from "@/components/ClientSelector";
 
 
 interface Incident {
