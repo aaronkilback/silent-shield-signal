@@ -23,6 +23,9 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const connectTimeoutRef = useRef<number | null>(null);
+  const greetTimeoutRef = useRef<number | null>(null);
+  const userHasSpokenRef = useRef(false);
+  const greetedRef = useRef(false);
   
   // Use ref for options to avoid stale closures in event handlers
   const optionsRef = useRef(options);
@@ -48,6 +51,12 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         break;
 
       case 'input_audio_buffer.speech_started':
+        // If the user starts talking quickly after connect, don't fire the proactive greeting
+        userHasSpokenRef.current = true;
+        if (greetTimeoutRef.current) {
+          window.clearTimeout(greetTimeoutRef.current);
+          greetTimeoutRef.current = null;
+        }
         updateStatus('listening');
         setIsAgentSpeaking(false);
         break;
@@ -126,6 +135,11 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       connectTimeoutRef.current = null;
     }
 
+    if (greetTimeoutRef.current) {
+      window.clearTimeout(greetTimeoutRef.current);
+      greetTimeoutRef.current = null;
+    }
+
     // Close data channel
     if (dcRef.current) {
       dcRef.current.close();
@@ -157,6 +171,9 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       audioContextRef.current.close();
       audioContextRef.current = null;
     }
+
+    userHasSpokenRef.current = false;
+    greetedRef.current = false;
 
     setTranscript('');
     setAgentResponse('');
@@ -267,20 +284,28 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           connectTimeoutRef.current = null;
         }
         updateStatus('connected');
-        
-        // Proactively greet the user when connection is established
-        setTimeout(() => {
-          if (dc.readyState === 'open') {
-            console.log('Sending proactive greeting request...');
-            dc.send(JSON.stringify({
-              type: 'response.create',
-              response: {
-                modalities: ['audio', 'text'],
-                instructions: 'Greet the user briefly. Say something like "Aegis here. How can I help?" Keep it under 10 words.'
-              }
-            }));
-          }
-        }, 500); // Small delay to ensure connection is stable
+
+        // Reset per-session greeting state
+        userHasSpokenRef.current = false;
+        greetedRef.current = false;
+
+        // Proactively greet the user when connection is established (only if they haven't started talking)
+        greetTimeoutRef.current = window.setTimeout(() => {
+          if (greetedRef.current) return;
+          if (userHasSpokenRef.current) return;
+          if (dc.readyState !== 'open') return;
+
+          greetedRef.current = true;
+          console.log('Sending proactive greeting request...');
+          dc.send(JSON.stringify({
+            type: 'response.create',
+            response: {
+              modalities: ['audio', 'text'],
+              instructions:
+                'Greet the user briefly. Say something like "Aegis here. How can I help?" Keep it under 10 words.',
+            },
+          }));
+        }, 500);
       };
 
       dc.onmessage = (event) => {
