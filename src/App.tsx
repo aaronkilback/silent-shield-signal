@@ -39,6 +39,7 @@ import InviteRequired from "./pages/InviteRequired";
 import AcceptInvite from "./pages/AcceptInvite";
 import TenantAdmin from "./pages/TenantAdmin";
 import Welcome from "./pages/Welcome";
+import SuperAdminDashboard from "./pages/SuperAdminDashboard";
 import { EnsureDefaultRole } from "@/components/EnsureDefaultRole";
 import { TenantProvider } from "@/hooks/useTenant";
 
@@ -63,6 +64,7 @@ const App = () => (
                 <Route path="/invite/accept" element={<AcceptInvite />} />
                 <Route path="/invite-required" element={<InviteRequired />} />
                 <Route path="/tenant-admin" element={<TenantAdmin />} />
+                <Route path="/super-admin" element={<SuperAdminDashboard />} />
                 <Route path="/clients" element={<Clients />} />
                 <Route path="/client/:id" element={<ClientDetail />} />
                 <Route path="/incidents" element={<Incidents />} />
