@@ -74,6 +74,17 @@ export function VoiceConversationOverlay({
     }
   });
 
+  // Auto-connect when overlay opens
+  useEffect(() => {
+    console.log('VoiceConversationOverlay mounted, auto-connecting...');
+    connect();
+    return () => {
+      console.log('VoiceConversationOverlay unmounting, disconnecting...');
+      disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Timer for elapsed time
   useEffect(() => {
     if (isConnected) {
@@ -239,26 +250,26 @@ export function VoiceConversationOverlay({
           </div>
         </div>
 
-        {/* Talk to Aegis button */}
-        <button
-          onClick={handleMicClick}
-          disabled={isConnected || isReconnecting}
-          className={cn(
-            "px-12 py-4 rounded-full text-lg font-medium transition-all duration-300 mb-4",
-            "bg-gradient-to-b from-slate-700/80 to-slate-800/90",
-            "border border-slate-600/50",
-            "text-slate-200 hover:text-white",
-            "hover:from-slate-600/80 hover:to-slate-700/90",
-            "shadow-lg shadow-black/30",
-            isConnected && "opacity-50 cursor-not-allowed"
-          )}
-        >
-          Talk to Aegis
-        </button>
+        {/* Status badge */}
+        <div className={cn(
+          "px-6 py-3 rounded-full text-base font-medium mb-4",
+          "border",
+          status === 'connecting' && "bg-slate-800/60 border-slate-600/50 text-slate-300",
+          status === 'connected' && "bg-emerald-900/30 border-emerald-700/40 text-emerald-400",
+          status === 'listening' && "bg-emerald-900/50 border-emerald-600/50 text-emerald-300",
+          status === 'speaking' && "bg-emerald-800/60 border-emerald-500/50 text-emerald-200",
+          status === 'idle' && "bg-slate-800/60 border-slate-600/50 text-slate-400"
+        )}>
+          {status === 'connecting' && 'Connecting to Aegis...'}
+          {status === 'connected' && 'Ready — Speak anytime'}
+          {status === 'listening' && 'Listening...'}
+          {status === 'speaking' && 'Aegis is responding...'}
+          {status === 'idle' && 'Initializing...'}
+        </div>
 
         {/* Subtitle */}
         <p className="text-slate-500 text-sm mb-8">
-          Press Spacebar or Tap to Speak
+          {isConnected ? 'Speak naturally — Aegis is listening' : 'Press Spacebar or Tap Mic to Speak'}
         </p>
       </div>
 
