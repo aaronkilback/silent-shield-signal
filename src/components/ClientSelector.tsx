@@ -23,7 +23,7 @@ export const ClientSelector = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
-  const { currentTenant, isAllTenantsView, getFilterTenantIds } = useTenant();
+  const { currentTenant, isAllTenantsView, getFilterTenantIds, hasTenantSelection } = useTenant();
 
   useEffect(() => {
     fetchClients();
@@ -80,6 +80,23 @@ export const ClientSelector = () => {
         <CardContent className="pt-6 flex items-center justify-center">
           <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
         </CardContent>
+      </Card>
+    );
+  }
+
+  // Show message when super admin has no selection
+  if (!hasTenantSelection) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Building2 className="w-5 h-5" />
+            Select Client
+          </CardTitle>
+          <CardDescription>
+            Select a tenant from the dropdown above to view clients.
+          </CardDescription>
+        </CardHeader>
       </Card>
     );
   }

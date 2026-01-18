@@ -1,4 +1,4 @@
-import { Check, ChevronsUpDown, Building2, Globe } from "lucide-react";
+import { Check, ChevronsUpDown, Building2, Globe, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,7 +21,15 @@ import { useIsSuperAdmin } from "@/hooks/useIsSuperAdmin";
 import { useState } from "react";
 
 export function TenantSelector() {
-  const { tenants, currentTenant, setCurrentTenant, isLoading, isAllTenantsView, setAllTenantsView } = useTenant();
+  const { 
+    tenants, 
+    currentTenant, 
+    setCurrentTenant, 
+    isLoading, 
+    isAllTenantsView, 
+    setAllTenantsView,
+    hasTenantSelection 
+  } = useTenant();
   const { isSuperAdmin } = useIsSuperAdmin();
   const [open, setOpen] = useState(false);
 
@@ -61,6 +69,39 @@ export function TenantSelector() {
     setOpen(false);
   };
 
+  const handleClearSelection = () => {
+    setAllTenantsView(false);
+    setCurrentTenant(null);
+    setOpen(false);
+  };
+
+  // Determine display state
+  const getDisplayContent = () => {
+    if (isAllTenantsView) {
+      return (
+        <>
+          <Globe className="h-3.5 w-3.5 shrink-0 text-primary" />
+          <span className="truncate text-sm font-medium">All Tenants</span>
+        </>
+      );
+    }
+    if (hasTenantSelection && currentTenant) {
+      return (
+        <>
+          <Building2 className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate text-sm">{currentTenant.name}</span>
+        </>
+      );
+    }
+    // Super admin with no selection
+    return (
+      <>
+        <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="truncate text-sm text-muted-foreground">Select tenant...</span>
+      </>
+    );
+  };
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -72,22 +113,12 @@ export function TenantSelector() {
           size="sm"
         >
           <div className="flex items-center gap-1.5 truncate">
-            {isAllTenantsView ? (
-              <>
-                <Globe className="h-3.5 w-3.5 shrink-0 text-primary" />
-                <span className="truncate text-sm font-medium">All Tenants</span>
-              </>
-            ) : (
-              <>
-                <Building2 className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate text-sm">{currentTenant?.name || "Select tenant..."}</span>
-              </>
-            )}
+            {getDisplayContent()}
           </div>
           <ChevronsUpDown className="ml-1.5 h-3.5 w-3.5 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[240px] p-0">
+      <PopoverContent className="w-[260px] p-0">
         <Command>
           <CommandInput placeholder="Search tenants..." />
           <CommandList>
@@ -114,11 +145,24 @@ export function TenantSelector() {
                       global
                     </Badge>
                   </CommandItem>
+                  {hasTenantSelection && (
+                    <CommandItem
+                      value="clear-selection"
+                      onSelect={handleClearSelection}
+                      className="flex items-center justify-between text-muted-foreground"
+                    >
+                      <div className="flex items-center gap-2">
+                        <X className="h-4 w-4 opacity-0" />
+                        <X className="h-4 w-4" />
+                        <span>Clear Selection</span>
+                      </div>
+                    </CommandItem>
+                  )}
                 </CommandGroup>
                 <CommandSeparator />
               </>
             )}
-            <CommandGroup heading="Your Tenants">
+            <CommandGroup heading="Tenants">
               {tenants.map((tenant) => (
                 <CommandItem
                   key={tenant.id}
@@ -130,7 +174,9 @@ export function TenantSelector() {
                     <Check
                       className={cn(
                         "h-4 w-4",
-                        !isAllTenantsView && currentTenant?.id === tenant.id ? "opacity-100" : "opacity-0"
+                        !isAllTenantsView && hasTenantSelection && currentTenant?.id === tenant.id 
+                          ? "opacity-100" 
+                          : "opacity-0"
                       )}
                     />
                     <span className="truncate">{tenant.name}</span>

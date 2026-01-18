@@ -23,10 +23,15 @@ interface TenantContextType {
   refetchTenants: () => void;
   isOwnerOrAdmin: boolean;
   isOwner: boolean;
-  // New: "All Tenants" view for super admins
+  // "All Tenants" view for super admins (shows all data)
   isAllTenantsView: boolean;
   setAllTenantsView: (value: boolean) => void;
-  // Helper to get tenant IDs for filtering (returns all user's tenant IDs, or null for all tenants view)
+  // Whether super admin has explicitly selected a tenant (false = no data shown)
+  hasTenantSelection: boolean;
+  // Helper to get tenant IDs for filtering
+  // Returns null for "All Tenants" view (no filter)
+  // Returns empty array [] when no selection (shows no data)
+  // Returns [tenantId] when specific tenant selected
   getFilterTenantIds: () => string[] | null;
 }
 
@@ -40,6 +45,29 @@ export function TenantProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [currentTenant, setCurrentTenantState] = useState<Tenant | null>(null);
   const [isAllTenantsView, setIsAllTenantsView] = useState(false);
+  const [hasTenantSelection, setHasTenantSelection] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+
+  // Check if user is super admin
+  useEffect(() => {
+    const checkSuperAdmin = async () => {
+      if (!user?.id) {
+        setIsSuperAdmin(false);
+        return;
+      }
+
+      const { data } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', user.id)
+        .eq('role', 'super_admin')
+        .maybeSingle();
+
+      setIsSuperAdmin(!!data);
+    };
+
+    checkSuperAdmin();
+  }, [user?.id]);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['user-tenants', user?.id],
@@ -68,37 +96,50 @@ export function TenantProvider({ children }: { children: ReactNode }) {
   const tenants = data?.tenants || [];
   const hasTenants = data?.has_tenants || false;
 
-  // Restore current tenant and all-tenants view from localStorage
+  // Restore current tenant and view state from localStorage
   useEffect(() => {
     if (tenants.length > 0 && !currentTenant) {
       const savedAllTenantsView = localStorage.getItem(ALL_TENANTS_VIEW_KEY) === 'true';
       const savedTenantId = localStorage.getItem(CURRENT_TENANT_KEY);
       const savedTenant = tenants.find(t => t.id === savedTenantId);
       
-      if (savedAllTenantsView) {
-        setIsAllTenantsView(true);
-        // Still set a current tenant for context, but view is "all"
+      if (isSuperAdmin) {
+        // Super admin: restore previous selection or start with no selection
+        if (savedAllTenantsView) {
+          setIsAllTenantsView(true);
+          setHasTenantSelection(true);
+          if (savedTenant) {
+            setCurrentTenantState(savedTenant);
+          }
+        } else if (savedTenant) {
+          setCurrentTenantState(savedTenant);
+          setHasTenantSelection(true);
+          setIsAllTenantsView(false);
+        } else {
+          // No saved selection - super admin starts with no data visible
+          setHasTenantSelection(false);
+          setIsAllTenantsView(false);
+        }
+      } else {
+        // Regular user: always select first tenant by default
         if (savedTenant) {
           setCurrentTenantState(savedTenant);
         } else {
           setCurrentTenantState(tenants[0]);
+          localStorage.setItem(CURRENT_TENANT_KEY, tenants[0].id);
         }
-      } else if (savedTenant) {
-        setCurrentTenantState(savedTenant);
-        setIsAllTenantsView(false);
-      } else {
-        setCurrentTenantState(tenants[0]);
-        localStorage.setItem(CURRENT_TENANT_KEY, tenants[0].id);
+        setHasTenantSelection(true);
         setIsAllTenantsView(false);
       }
     }
-  }, [tenants, currentTenant]);
+  }, [tenants, currentTenant, isSuperAdmin]);
 
-  // Clear current tenant if user logs out
+  // Clear state if user logs out
   useEffect(() => {
     if (!user) {
       setCurrentTenantState(null);
       setIsAllTenantsView(false);
+      setHasTenantSelection(false);
       localStorage.removeItem(CURRENT_TENANT_KEY);
       localStorage.removeItem(ALL_TENANTS_VIEW_KEY);
     }
@@ -108,8 +149,10 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     setCurrentTenantState(tenant);
     if (tenant) {
       localStorage.setItem(CURRENT_TENANT_KEY, tenant.id);
+      setHasTenantSelection(true);
     } else {
       localStorage.removeItem(CURRENT_TENANT_KEY);
+      setHasTenantSelection(false);
     }
     // Invalidate all tenant-scoped queries when tenant changes
     queryClient.invalidateQueries();
@@ -119,6 +162,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     setIsAllTenantsView(value);
     if (value) {
       localStorage.setItem(ALL_TENANTS_VIEW_KEY, 'true');
+      setHasTenantSelection(true);
     } else {
       localStorage.removeItem(ALL_TENANTS_VIEW_KEY);
     }
@@ -127,16 +171,24 @@ export function TenantProvider({ children }: { children: ReactNode }) {
   };
 
   // Helper function to get tenant IDs for filtering
-  // Returns null when "All Tenants" view is active (meaning no filter)
-  // Returns array of tenant IDs when viewing specific tenant or default view
+  // Returns null when "All Tenants" view is active (meaning no filter - show all)
+  // Returns empty array [] when super admin has no selection (show no data)
+  // Returns [tenantId] when specific tenant selected
+  // Returns all user's tenant IDs for regular users with no specific selection
   const getFilterTenantIds = (): string[] | null => {
     if (isAllTenantsView) {
       return null; // No filter - show all
     }
+    
+    if (isSuperAdmin && !hasTenantSelection) {
+      return []; // Super admin with no selection - show nothing
+    }
+    
     if (currentTenant) {
       return [currentTenant.id]; // Filter to specific tenant
     }
-    // Default: filter to all user's tenants (for non-super admins or when no specific tenant selected)
+    
+    // Default for regular users: filter to all user's tenants
     return tenants.map(t => t.id);
   };
 
@@ -155,6 +207,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
       isOwner,
       isAllTenantsView,
       setAllTenantsView,
+      hasTenantSelection,
       getFilterTenantIds
     }}>
       {children}
