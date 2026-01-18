@@ -162,38 +162,61 @@ serve(async (req) => {
       // Word documents (.docx, .doc)
       console.log('Extracting text from Word document...');
       
-      const arrayBuffer = await fileData.slice(0, 500 * 1024).arrayBuffer(); // Limit to 500KB
-      
       // For .docx files (ZIP-based Office Open XML)
+      // CRITICAL: DOCX is a ZIP file - we MUST read the ENTIRE file to access the central directory
+      // Slicing breaks the ZIP structure since the directory is at the END of the file
       if (document.file_type.includes('openxmlformats')) {
         try {
-          // Import JSZip for unzipping .docx
-          const JSZip = (await import('https://esm.sh/jszip@3.10.1')).default;
-          const zip = await JSZip.loadAsync(arrayBuffer);
-          
-          // Extract document.xml which contains the text content
-          const documentXml = await zip.file('word/document.xml')?.async('string');
-          
-          if (documentXml) {
-            // Extract text between XML tags
-            const textMatches = documentXml.match(/<w:t[^>]*>([^<]*)<\/w:t>/g);
-            if (textMatches) {
-              textContent = textMatches
-                .map(match => match.replace(/<[^>]+>/g, ''))
-                .join(' ')
-                .replace(/\s+/g, ' ')
+          // Check file size - limit to 25MB to avoid memory issues
+          const maxDocxSize = 25 * 1024 * 1024;
+          if (fileData.size > maxDocxSize) {
+            console.log(`DOCX too large (${(fileData.size / 1024 / 1024).toFixed(1)}MB), skipping full extraction`);
+            textContent = `[Large Word document: ${document.filename} (${(fileData.size / 1024 / 1024).toFixed(1)}MB). Please use archival upload for full processing.]`;
+          } else {
+            // Read the ENTIRE file to preserve ZIP structure
+            const arrayBuffer = await fileData.arrayBuffer();
+            console.log(`Loading DOCX file: ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(2)}MB`);
+            
+            // Import JSZip for unzipping .docx
+            const JSZip = (await import('https://esm.sh/jszip@3.10.1')).default;
+            const zip = await JSZip.loadAsync(arrayBuffer);
+            
+            // Extract document.xml which contains the text content
+            const documentXml = await zip.file('word/document.xml')?.async('string');
+            
+            if (documentXml) {
+              // Extract text with paragraph preservation
+              textContent = documentXml
+                // Add newlines before paragraphs
+                .replace(/<w:p[^>]*>/g, '\n')
+                // Extract text from <w:t> tags
+                .replace(/<w:t[^>]*>([^<]*)<\/w:t>/g, '$1')
+                // Remove all remaining XML tags
+                .replace(/<[^>]+>/g, '')
+                // Decode common XML entities
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&apos;/g, "'")
+                // Clean up whitespace
+                .replace(/\n\s*\n/g, '\n\n')
                 .trim()
-                .slice(0, 50000);
+                .slice(0, 200000); // Allow up to 200K chars for large docs
               
               console.log(`Extracted ${textContent.length} characters from Word document`);
+            } else {
+              console.warn('No document.xml found in DOCX');
+              textContent = `[Word document: ${document.filename}. Could not extract content - document may be corrupted.]`;
             }
           }
         } catch (error) {
           console.error('Error extracting Word document:', error);
-          textContent = '';
+          textContent = `[Word document extraction failed: ${error instanceof Error ? error.message : 'Unknown error'}]`;
         }
       } else {
-        // For older .doc files, try basic text extraction
+        // For older .doc files, try basic text extraction (slice is OK for binary .doc)
+        const arrayBuffer = await fileData.slice(0, 500 * 1024).arrayBuffer();
         const text = new TextDecoder('utf-8', { fatal: false }).decode(arrayBuffer);
         textContent = text
           .replace(/[^\x20-\x7E\s]/g, ' ')
@@ -207,55 +230,65 @@ serve(async (req) => {
       // Excel documents (.xlsx, .xls)
       console.log('Extracting text from Excel document...');
       
-      const arrayBuffer = await fileData.slice(0, 500 * 1024).arrayBuffer(); // Limit to 500KB
-      
       // For .xlsx files (ZIP-based Office Open XML)
+      // CRITICAL: XLSX is a ZIP file - we MUST read the ENTIRE file for valid ZIP structure
       if (document.file_type.includes('openxmlformats')) {
         try {
-          const JSZip = (await import('https://esm.sh/jszip@3.10.1')).default;
-          const zip = await JSZip.loadAsync(arrayBuffer);
-          
-          // Extract shared strings (contains cell text values)
-          const sharedStringsXml = await zip.file('xl/sharedStrings.xml')?.async('string');
-          
-          if (sharedStringsXml) {
-            // Extract text from shared strings
-            const textMatches = sharedStringsXml.match(/<t[^>]*>([^<]*)<\/t>/g);
-            if (textMatches) {
-              textContent = textMatches
-                .map(match => match.replace(/<[^>]+>/g, ''))
-                .join(' ')
-                .replace(/\s+/g, ' ')
-                .trim()
-                .slice(0, 50000);
-              
-              console.log(`Extracted ${textContent.length} characters from Excel document`);
-            }
-          }
-          
-          // Also try to extract from worksheet if shared strings is empty
-          if (!textContent) {
-            const sheet1Xml = await zip.file('xl/worksheets/sheet1.xml')?.async('string');
-            if (sheet1Xml) {
-              const cellMatches = sheet1Xml.match(/<v[^>]*>([^<]*)<\/v>/g);
-              if (cellMatches) {
-                textContent = cellMatches
+          const maxXlsxSize = 15 * 1024 * 1024; // 15MB limit for Excel
+          if (fileData.size > maxXlsxSize) {
+            console.log(`XLSX too large (${(fileData.size / 1024 / 1024).toFixed(1)}MB), skipping extraction`);
+            textContent = `[Large Excel document: ${document.filename} (${(fileData.size / 1024 / 1024).toFixed(1)}MB). Please use archival upload for full processing.]`;
+          } else {
+            // Read the ENTIRE file to preserve ZIP structure
+            const arrayBuffer = await fileData.arrayBuffer();
+            console.log(`Loading XLSX file: ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(2)}MB`);
+            
+            const JSZip = (await import('https://esm.sh/jszip@3.10.1')).default;
+            const zip = await JSZip.loadAsync(arrayBuffer);
+            
+            // Extract shared strings (contains cell text values)
+            const sharedStringsXml = await zip.file('xl/sharedStrings.xml')?.async('string');
+            
+            if (sharedStringsXml) {
+              // Extract text from shared strings
+              const textMatches = sharedStringsXml.match(/<t[^>]*>([^<]*)<\/t>/g);
+              if (textMatches) {
+                textContent = textMatches
                   .map(match => match.replace(/<[^>]+>/g, ''))
                   .join(' ')
                   .replace(/\s+/g, ' ')
                   .trim()
-                  .slice(0, 50000);
+                  .slice(0, 100000);
                 
-                console.log(`Extracted ${textContent.length} characters from Excel worksheet`);
+                console.log(`Extracted ${textContent.length} characters from Excel document`);
+              }
+            }
+            
+            // Also try to extract from worksheet if shared strings is empty
+            if (!textContent) {
+              const sheet1Xml = await zip.file('xl/worksheets/sheet1.xml')?.async('string');
+              if (sheet1Xml) {
+                const cellMatches = sheet1Xml.match(/<v[^>]*>([^<]*)<\/v>/g);
+                if (cellMatches) {
+                  textContent = cellMatches
+                    .map(match => match.replace(/<[^>]+>/g, ''))
+                    .join(' ')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .slice(0, 100000);
+                  
+                  console.log(`Extracted ${textContent.length} characters from Excel worksheet`);
+                }
               }
             }
           }
         } catch (error) {
           console.error('Error extracting Excel document:', error);
-          textContent = '';
+          textContent = `[Excel extraction failed: ${error instanceof Error ? error.message : 'Unknown error'}]`;
         }
       } else {
-        // For older .xls files, try basic text extraction
+        // For older .xls files, try basic text extraction (slicing is OK for binary .xls)
+        const arrayBuffer = await fileData.slice(0, 500 * 1024).arrayBuffer();
         const text = new TextDecoder('utf-8', { fatal: false }).decode(arrayBuffer);
         textContent = text
           .replace(/[^\x20-\x7E\s]/g, ' ')
