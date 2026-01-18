@@ -17,6 +17,7 @@ import { DeleteIncidentDialog } from "@/components/DeleteIncidentDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { DashboardClientSelector } from "@/components/DashboardClientSelector";
+import { useTenant } from "@/hooks/useTenant";
 
 interface Incident {
   id: string;
@@ -43,6 +44,7 @@ const Incidents = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { selectedClientId } = useClientSelection();
+  const { currentTenant } = useTenant();
   const [searchParams, setSearchParams] = useSearchParams();
   
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -72,9 +74,14 @@ const Incidents = () => {
         setLoading(true);
         let query = supabase
           .from("incidents")
-          .select("*, clients(name)")
+          .select("*, clients(name, tenant_id)")
           .is("deleted_at", null) // Filter out soft-deleted incidents
           .order("opened_at", { ascending: false });
+
+        // Filter by tenant through clients
+        if (currentTenant?.id) {
+          query = query.eq("clients.tenant_id", currentTenant.id);
+        }
 
         if (selectedClientId) {
           query = query.eq("client_id", selectedClientId);
@@ -89,7 +96,13 @@ const Incidents = () => {
         const { data, error } = await query;
 
         if (error) throw error;
-        setIncidents((data || []) as Incident[]);
+        
+        // Filter out incidents where client doesn't match tenant (if tenant filter applied)
+        const filtered = currentTenant?.id 
+          ? (data || []).filter((inc: any) => inc.clients?.tenant_id === currentTenant.id)
+          : (data || []);
+        
+        setIncidents(filtered as Incident[]);
       } catch (error) {
         console.error("Error loading incidents:", error);
         toast({
@@ -123,7 +136,7 @@ const Incidents = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, selectedClientId, statusFilter, priorityFilter, toast, reloadTrigger]);
+  }, [user, selectedClientId, currentTenant?.id, statusFilter, priorityFilter, toast, reloadTrigger]);
 
   // Auto-open incident from URL parameter (e.g., from investigation page)
   useEffect(() => {

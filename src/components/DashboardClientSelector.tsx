@@ -4,6 +4,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Building2, Loader2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenant } from "@/hooks/useTenant";
 
 interface Client {
   id: string;
@@ -16,6 +17,7 @@ export const DashboardClientSelector = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const { selectedClientId, setSelectedClientId } = useClientSelection();
+  const { currentTenant } = useTenant();
 
   useEffect(() => {
     fetchClients();
@@ -39,14 +41,21 @@ export const DashboardClientSelector = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [currentTenant?.id]);
 
   const fetchClients = async () => {
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from("clients")
         .select("id, name, organization, status")
         .order("name", { ascending: true });
+
+      // Filter by tenant if one is selected
+      if (currentTenant?.id) {
+        query = query.eq("tenant_id", currentTenant.id);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
       setClients(data || []);
@@ -59,13 +68,16 @@ export const DashboardClientSelector = () => {
           // No selection at all, pick first
           setSelectedClientId(data[0].id);
         } else {
-          // Validate the stored selection exists
+          // Validate the stored selection exists in current tenant's clients
           const isValid = data.some(client => client.id === selectedClientId);
           if (!isValid) {
-            // Stored client doesn't exist, pick first
+            // Stored client doesn't exist in this tenant, pick first
             setSelectedClientId(data[0].id);
           }
         }
+      } else {
+        // No clients in this tenant, clear selection
+        setSelectedClientId(null);
       }
     } catch (error) {
       console.error("Error fetching clients:", error);
@@ -106,9 +118,17 @@ export const DashboardClientSelector = () => {
         <CardTitle className="flex items-center gap-2">
           <Building2 className="w-5 h-5" />
           Client Filter
+          {currentTenant && (
+            <span className="text-sm font-normal text-muted-foreground">
+              — {currentTenant.name}
+            </span>
+          )}
         </CardTitle>
         <CardDescription>
-          View signals and data for selected client
+          {currentTenant 
+            ? `View signals and data for clients in ${currentTenant.name}`
+            : "View signals and data for selected client"
+          }
         </CardDescription>
       </CardHeader>
       <CardContent>
