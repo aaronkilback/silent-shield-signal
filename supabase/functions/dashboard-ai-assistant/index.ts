@@ -9876,6 +9876,8 @@ serve(async (req) => {
     
     // Extract authenticated user ID from Authorization header for memory tools
     let authenticatedUserId: string | undefined;
+    let userTenantId: string | undefined;
+    let tenantKnowledgeContext = "";
     const authHeader = req.headers.get("Authorization");
     if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.replace("Bearer ", "");
@@ -9884,6 +9886,44 @@ serve(async (req) => {
         if (!authError && user) {
           authenticatedUserId = user.id;
           console.log("Authenticated user for memory tools:", authenticatedUserId);
+          
+          // Get user's tenant ID
+          const { data: tenantUserData } = await supabaseClient
+            .from("tenant_users")
+            .select("tenant_id, tenants(name)")
+            .eq("user_id", user.id)
+            .limit(1)
+            .single();
+          
+          if (tenantUserData?.tenant_id) {
+            userTenantId = tenantUserData.tenant_id;
+            const tenantName = (tenantUserData.tenants as any)?.name || "Unknown Tenant";
+            console.log("User tenant:", userTenantId, tenantName);
+            
+            // Fetch tenant knowledge for this user's tenant
+            const { data: tenantKnowledge } = await supabaseClient
+              .from("tenant_knowledge")
+              .select("*")
+              .eq("tenant_id", userTenantId)
+              .eq("is_active", true)
+              .or("expires_at.is.null,expires_at.gt.now()")
+              .order("importance_score", { ascending: false })
+              .limit(50);
+            
+            if (tenantKnowledge && tenantKnowledge.length > 0) {
+              console.log(`Found ${tenantKnowledge.length} tenant knowledge entries for ${tenantName}`);
+              tenantKnowledgeContext = `
+═══════════════════════════════════════════════════════════════════════════════
+                     📚 TENANT KNOWLEDGE CONTEXT: ${tenantName}
+═══════════════════════════════════════════════════════════════════════════════
+The following context has been provided by administrators about this tenant and its users. Use this information to personalize your responses:
+
+${tenantKnowledge.map(k => `[${k.knowledge_type?.toUpperCase() || 'CONTEXT'}]${k.subject ? ` (${k.subject})` : ''}: ${k.content}`).join('\n\n')}
+
+═══════════════════════════════════════════════════════════════════════════════
+`;
+            }
+          }
         }
       } catch (authErr) {
         console.log("Could not extract user from auth token (non-fatal):", authErr);
@@ -10024,7 +10064,7 @@ serve(async (req) => {
           {
             role: "system",
             content: `You are the Fortress AI Assistant - an intelligent security operations assistant with comprehensive knowledge of the platform, its codebase, architecture, and all features.
-
+${tenantKnowledgeContext}
 PLATFORM OVERVIEW:
 Fortress is a security intelligence and threat monitoring platform built on React/TypeScript frontend with Supabase (PostgreSQL + Edge Functions) backend. The platform automates OSINT collection, threat detection, incident management, entity tracking, travel security, and investigation management through 50+ edge functions and AI-powered automation.
 
