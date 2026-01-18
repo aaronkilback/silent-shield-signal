@@ -53,49 +53,20 @@ export const DashboardAIAssistant = () => {
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState("");
   const [voiceAgentResponse, setVoiceAgentResponse] = useState("");
-  const pendingVoiceUserMsgRef = useRef<string | null>(null);
-  const pendingVoiceAgentMsgRef = useRef<string | null>(null);
-
-  // Voice hook integration
-  const {
-    status: voiceStatus,
-    isAgentSpeaking,
-    connect: connectVoice,
-    disconnect: disconnectVoice,
-    isConnected: isVoiceConnected,
-  } = useOpenAIRealtime({
-    agentContext: `You are Aegis, a strategic AI security advisor for Silent Shield. Be concise and helpful.`,
-    conversationHistory: messages.slice(-10).map(m => ({ role: m.role, content: m.content })),
-    onTranscript: (text, isFinal) => {
-      if (isFinal && text.trim()) {
-        // User finished speaking - add to chat
-        const userMsg: Message = { role: "user", content: `🎙️ ${text}` };
-        setMessages(prev => [...prev, userMsg]);
-        saveMessageToDb(userMsg);
-        pendingVoiceUserMsgRef.current = text;
-      }
-      setVoiceTranscript(text);
-    },
-    onAgentResponse: (delta) => {
-      setVoiceAgentResponse(prev => prev + delta);
-    },
-    onError: (error) => {
-      toast.error(error);
-      setIsVoiceActive(false);
-    },
-    onStatusChange: (status) => {
-      console.log('Voice status:', status);
-      if (status === 'idle') {
-        // Voice ended - save accumulated agent response
-        if (voiceAgentResponse.trim()) {
-          const agentMsg: Message = { role: "assistant", content: `🔊 ${voiceAgentResponse}` };
-          setMessages(prev => [...prev, agentMsg]);
-          saveMessageToDb(agentMsg);
-          setVoiceAgentResponse("");
-        }
-      }
-    },
-  });
+  const voiceAgentResponseRef = useRef("");
+  
+  // Keep refs for callback data to avoid stale closures
+  const messagesRef = useRef<Message[]>([]);
+  const saveMessageRef = useRef<((msg: Message) => Promise<boolean>) | null>(null);
+  
+  // Update refs when values change
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+  
+  useEffect(() => {
+    voiceAgentResponseRef.current = voiceAgentResponse;
+  }, [voiceAgentResponse]);
   
   // Limit context sent to AI to prevent confusion between topics
   const MAX_CONTEXT_MESSAGES = 20;
@@ -282,6 +253,60 @@ export const DashboardAIAssistant = () => {
       return false;
     }
   };
+
+  // Update saveMessageRef when saveMessageToDb is available
+  useEffect(() => {
+    saveMessageRef.current = saveMessageToDb;
+  });
+
+  // Voice hook integration - must be after saveMessageToDb is defined
+  const {
+    status: voiceStatus,
+    isAgentSpeaking,
+    connect: connectVoice,
+    disconnect: disconnectVoice,
+    isConnected: isVoiceConnected,
+  } = useOpenAIRealtime({
+    agentContext: `You are Aegis, a strategic AI security advisor for Silent Shield. Be concise and helpful.`,
+    conversationHistory: useMemo(() => 
+      messagesRef.current.slice(-10).map(m => ({ role: m.role, content: m.content })), 
+      []
+    ),
+    onTranscript: (text, isFinal) => {
+      if (isFinal && text.trim()) {
+        // User finished speaking - add to chat
+        const userMsg: Message = { role: "user", content: `🎙️ ${text}` };
+        setMessages(prev => [...prev, userMsg]);
+        saveMessageRef.current?.(userMsg);
+      }
+      setVoiceTranscript(text);
+    },
+    onAgentResponse: (delta) => {
+      setVoiceAgentResponse(prev => {
+        const newVal = prev + delta;
+        voiceAgentResponseRef.current = newVal;
+        return newVal;
+      });
+    },
+    onError: (error) => {
+      toast.error(error);
+      setIsVoiceActive(false);
+    },
+    onStatusChange: (status) => {
+      console.log('Voice status:', status);
+      if (status === 'idle') {
+        // Voice ended - save accumulated agent response
+        const response = voiceAgentResponseRef.current;
+        if (response.trim()) {
+          const agentMsg: Message = { role: "assistant", content: `🔊 ${response}` };
+          setMessages(prev => [...prev, agentMsg]);
+          saveMessageRef.current?.(agentMsg);
+          setVoiceAgentResponse("");
+          voiceAgentResponseRef.current = "";
+        }
+      }
+    },
+  });
 
   // Toggle sharing for current conversation
   const toggleConversationSharing = async () => {
