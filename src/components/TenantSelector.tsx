@@ -1,4 +1,4 @@
-import { Check, ChevronsUpDown, Building2, Globe, X } from "lucide-react";
+import { Check, ChevronsUpDown, Building2, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,8 +27,7 @@ export function TenantSelector() {
     setCurrentTenant, 
     isLoading, 
     isAllTenantsView, 
-    setAllTenantsView,
-    hasTenantSelection 
+    setAllTenantsView
   } = useTenant();
   const { isSuperAdmin } = useIsSuperAdmin();
   const [open, setOpen] = useState(false);
@@ -70,6 +69,7 @@ export function TenantSelector() {
   };
 
   const handleClearSelection = () => {
+    // Clear to default view (user's own tenants)
     setAllTenantsView(false);
     setCurrentTenant(null);
     setOpen(false);
@@ -85,7 +85,7 @@ export function TenantSelector() {
         </>
       );
     }
-    if (hasTenantSelection && currentTenant) {
+    if (currentTenant) {
       return (
         <>
           <Building2 className="h-3.5 w-3.5 shrink-0" />
@@ -93,11 +93,11 @@ export function TenantSelector() {
         </>
       );
     }
-    // Super admin with no selection
+    // Super admin with no specific tenant - show "My Tenants" (default view)
     return (
       <>
-        <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="truncate text-sm text-muted-foreground">Select tenant...</span>
+        <Building2 className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate text-sm">My Tenants</span>
       </>
     );
   };
@@ -145,17 +145,25 @@ export function TenantSelector() {
                       global
                     </Badge>
                   </CommandItem>
-                  {hasTenantSelection && (
+                  {(currentTenant || isAllTenantsView) && (
                     <CommandItem
-                      value="clear-selection"
+                      value="my-tenants"
                       onSelect={handleClearSelection}
-                      className="flex items-center justify-between text-muted-foreground"
+                      className="flex items-center justify-between"
                     >
                       <div className="flex items-center gap-2">
-                        <X className="h-4 w-4 opacity-0" />
-                        <X className="h-4 w-4" />
-                        <span>Clear Selection</span>
+                        <Check
+                          className={cn(
+                            "h-4 w-4",
+                            !isAllTenantsView && !currentTenant ? "opacity-100" : "opacity-0"
+                          )}
+                        />
+                        <Building2 className="h-4 w-4" />
+                        <span>My Tenants</span>
                       </div>
+                      <Badge variant="outline" className="text-xs">
+                        default
+                      </Badge>
                     </CommandItem>
                   )}
                 </CommandGroup>
@@ -174,7 +182,7 @@ export function TenantSelector() {
                     <Check
                       className={cn(
                         "h-4 w-4",
-                        !isAllTenantsView && hasTenantSelection && currentTenant?.id === tenant.id 
+                        !isAllTenantsView && currentTenant?.id === tenant.id 
                           ? "opacity-100" 
                           : "opacity-0"
                       )}

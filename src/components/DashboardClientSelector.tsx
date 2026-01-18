@@ -17,7 +17,7 @@ export const DashboardClientSelector = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const { selectedClientId, setSelectedClientId } = useClientSelection();
-  const { currentTenant, isAllTenantsView, getFilterTenantIds, hasTenantSelection } = useTenant();
+  const { currentTenant, isAllTenantsView, getFilterTenantIds } = useTenant();
 
   useEffect(() => {
     fetchClients();
@@ -98,22 +98,6 @@ export const DashboardClientSelector = () => {
     );
   }
 
-  // Show message when super admin has no selection
-  if (!hasTenantSelection) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Building2 className="w-5 h-5" />
-            Client Filter
-          </CardTitle>
-          <CardDescription>
-            Select a tenant from the dropdown above to view clients.
-          </CardDescription>
-        </CardHeader>
-      </Card>
-    );
-  }
 
   if (clients.length === 0) {
     return (
