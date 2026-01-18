@@ -57,6 +57,7 @@ export function VoiceConversationOverlay({
   conversationHistory = []
 }: VoiceConversationOverlayProps) {
   const [uiState, setUiState] = useState<UIState>('idle');
+  const [hasStarted, setHasStarted] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [transcriptHistory, setTranscriptHistory] = useState<Array<{ role: 'user' | 'agent'; text: string; time: string }>>([]);
   const [currentText, setCurrentText] = useState('');
@@ -116,16 +117,12 @@ export function VoiceConversationOverlay({
     }
   });
 
-  // Auto-connect when overlay opens
+  // Cleanup on unmount
   useEffect(() => {
-    console.log('VoiceConversationOverlay mounted, auto-connecting...');
-    connect();
     return () => {
-      console.log('VoiceConversationOverlay unmounting, disconnecting...');
       disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [disconnect]);
 
   // Timer for elapsed time
   useEffect(() => {
@@ -141,6 +138,12 @@ export function VoiceConversationOverlay({
 
   // Map internal status to UI state
   useEffect(() => {
+    if (!hasStarted) {
+      setUiState('idle');
+      setStatusMessage('Tap the mic to start');
+      return;
+    }
+
     if (status === 'listening') {
       setUiState('listening');
       setStatusMessage('Listening...');
@@ -152,8 +155,10 @@ export function VoiceConversationOverlay({
       setStatusMessage('Ready — speak anytime');
     } else if (status === 'connecting') {
       setStatusMessage('Connecting to Aegis...');
+    } else {
+      setStatusMessage('Tap the mic to start');
     }
-  }, [status, isAgentSpeaking]);
+  }, [status, isAgentSpeaking, hasStarted]);
 
   // When agent stops speaking, save response to history
   useEffect(() => {
@@ -187,6 +192,9 @@ export function VoiceConversationOverlay({
   }, [disconnect, connect]);
 
   const handleMicClick = () => {
+    if (!hasStarted) {
+      setHasStarted(true);
+    }
     if (!isConnected) {
       connect();
     }
