@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import JSZip from "https://esm.sh/jszip@3.10.1";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -125,11 +126,39 @@ serve(async (req) => {
       // Just create a basic signal with metadata
       text = `PDF document uploaded: ${filename}. Size: ${(binaryData.length / 1024).toFixed(1)}KB. Use Archival Upload for full content extraction.`;
     } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || filename.endsWith('.docx')) {
-      const docxText = new TextDecoder().decode(binaryData);
-      text = docxText.replace(/[^\x20-\x7E\n]/g, ' ').trim();
-      
-      if (!text || text.length < 50) {
-        text = `DOCX document: ${filename}. Raw content length: ${binaryData.length} bytes. Manual review recommended.`;
+      // DOCX is a ZIP archive containing XML - extract text properly
+      try {
+        console.log('Extracting DOCX content using JSZip...');
+        const zip = await JSZip.loadAsync(binaryData);
+        const documentXml = await zip.file('word/document.xml')?.async('string');
+        
+        if (documentXml) {
+          // Extract text content from XML, preserving paragraph breaks
+          text = documentXml
+            // Add newlines before paragraphs
+            .replace(/<w:p[^>]*>/g, '\n')
+            // Extract text from <w:t> tags
+            .replace(/<w:t[^>]*>([^<]*)<\/w:t>/g, '$1')
+            // Remove all remaining XML tags
+            .replace(/<[^>]+>/g, '')
+            // Decode common XML entities
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&apos;/g, "'")
+            // Clean up whitespace
+            .replace(/\n\s*\n/g, '\n\n')
+            .trim();
+          
+          console.log(`DOCX text extracted: ${text.length} characters`);
+        } else {
+          console.warn('No document.xml found in DOCX');
+          text = `DOCX document: ${filename}. Could not extract content - document may be corrupted.`;
+        }
+      } catch (zipError) {
+        console.error('DOCX extraction error:', zipError);
+        text = `DOCX document: ${filename}. Extraction failed: ${zipError instanceof Error ? zipError.message : 'Unknown error'}. Manual review recommended.`;
       }
     } else {
       text = `Document uploaded: ${filename} (${mimeType}). Size: ${binaryData.length} bytes. Manual review required.`;
