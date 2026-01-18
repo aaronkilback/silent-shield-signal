@@ -21,7 +21,7 @@ import { useIsSuperAdmin } from "@/hooks/useIsSuperAdmin";
 import { useState } from "react";
 
 export function TenantSelector() {
-  const { tenants, currentTenant, setCurrentTenant, isLoading } = useTenant();
+  const { tenants, currentTenant, setCurrentTenant, isLoading, isAllTenantsView, setAllTenantsView } = useTenant();
   const { isSuperAdmin } = useIsSuperAdmin();
   const [open, setOpen] = useState(false);
 
@@ -50,12 +50,16 @@ export function TenantSelector() {
     );
   }
 
-  const handleSelect = (tenant: Tenant | null) => {
+  const handleSelectTenant = (tenant: Tenant) => {
+    setAllTenantsView(false);
     setCurrentTenant(tenant);
     setOpen(false);
   };
 
-  const isAllTenantsView = currentTenant === null;
+  const handleSelectAllTenants = () => {
+    setAllTenantsView(true);
+    setOpen(false);
+  };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -76,7 +80,7 @@ export function TenantSelector() {
             ) : (
               <>
                 <Building2 className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate text-sm">{currentTenant?.name || "Tenant..."}</span>
+                <span className="truncate text-sm">{currentTenant?.name || "Select tenant..."}</span>
               </>
             )}
           </div>
@@ -93,7 +97,7 @@ export function TenantSelector() {
                 <CommandGroup heading="Super Admin">
                   <CommandItem
                     value="all-tenants"
-                    onSelect={() => handleSelect(null)}
+                    onSelect={handleSelectAllTenants}
                     className="flex items-center justify-between"
                   >
                     <div className="flex items-center gap-2">
@@ -114,19 +118,19 @@ export function TenantSelector() {
                 <CommandSeparator />
               </>
             )}
-            <CommandGroup heading="Tenants">
+            <CommandGroup heading="Your Tenants">
               {tenants.map((tenant) => (
                 <CommandItem
                   key={tenant.id}
                   value={tenant.name}
-                  onSelect={() => handleSelect(tenant)}
+                  onSelect={() => handleSelectTenant(tenant)}
                   className="flex items-center justify-between"
                 >
                   <div className="flex items-center gap-2">
                     <Check
                       className={cn(
                         "h-4 w-4",
-                        currentTenant?.id === tenant.id ? "opacity-100" : "opacity-0"
+                        !isAllTenantsView && currentTenant?.id === tenant.id ? "opacity-100" : "opacity-0"
                       )}
                     />
                     <span className="truncate">{tenant.name}</span>

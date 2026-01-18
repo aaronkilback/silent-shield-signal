@@ -73,7 +73,7 @@ export const SignalHistory = () => {
   const [selectedSignalIds, setSelectedSignalIds] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
   const { selectedClientId } = useClientSelection();
-  const { currentTenant } = useTenant();
+  const { currentTenant, isAllTenantsView, getFilterTenantIds } = useTenant();
   
   // Filter states
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -85,7 +85,7 @@ export const SignalHistory = () => {
     
     // Subscribe to real-time updates for selected client only
     const channel = supabase
-      .channel(`signal-history-${selectedClientId || 'all'}-${currentTenant?.id || 'all'}`)
+      .channel(`signal-history-${selectedClientId || 'all'}-${currentTenant?.id || 'all'}-${isAllTenantsView}`)
       .on(
         'postgres_changes',
         {
@@ -117,7 +117,7 @@ export const SignalHistory = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [selectedClientId, currentTenant?.id]);
+  }, [selectedClientId, currentTenant?.id, isAllTenantsView]);
 
   const loadSignals = async () => {
     try {
@@ -157,11 +157,12 @@ export const SignalHistory = () => {
       const { data, error } = await query;
       if (error) throw error;
       
-      // Filter by tenant if one is selected
+      // Filter by tenant IDs (unless "All Tenants" view is active)
       let filteredData = data || [];
-      if (currentTenant?.id) {
+      const tenantIds = getFilterTenantIds();
+      if (tenantIds !== null) {
         filteredData = filteredData.filter((signal: any) => 
-          signal.clients?.tenant_id === currentTenant.id
+          signal.clients?.tenant_id && tenantIds.includes(signal.clients.tenant_id)
         );
       }
       
