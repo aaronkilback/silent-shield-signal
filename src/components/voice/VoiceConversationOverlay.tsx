@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Mic, MicOff, RotateCcw } from "lucide-react";
+import { Mic, MicOff, RotateCcw, Volume2, VolumeX } from "lucide-react";
 import { useOpenAIRealtime } from "./useOpenAIRealtime";
-import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 interface VoiceConversationOverlayProps {
@@ -13,12 +12,50 @@ interface VoiceConversationOverlayProps {
 
 type UIState = 'idle' | 'listening' | 'responding';
 
+// Audio waveform visualization component
+function AudioWaveform({ isActive, isResponding }: { isActive: boolean; isResponding: boolean }) {
+  const bars = 40;
+  
+  return (
+    <div className="flex items-center justify-center gap-[2px] h-12 px-8">
+      {Array.from({ length: bars }).map((_, i) => {
+        const centerDistance = Math.abs(i - bars / 2) / (bars / 2);
+        const baseHeight = isActive ? (1 - centerDistance * 0.7) : 0.15;
+        
+        return (
+          <div
+            key={i}
+            className={cn(
+              "w-[3px] rounded-full transition-all",
+              isResponding ? "bg-emerald-500" : "bg-emerald-600/60"
+            )}
+            style={{
+              height: `${baseHeight * 100}%`,
+              animationName: isActive ? 'waveform' : 'none',
+              animationDuration: `${0.3 + Math.random() * 0.4}s`,
+              animationIterationCount: 'infinite',
+              animationDirection: 'alternate',
+              animationTimingFunction: 'ease-in-out',
+              animationDelay: `${i * 0.02}s`,
+            }}
+          />
+        );
+      })}
+      <style>{`
+        @keyframes waveform {
+          0% { transform: scaleY(0.3); }
+          100% { transform: scaleY(1); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 export function VoiceConversationOverlay({
   onClose,
   agentContext,
   conversationHistory = []
 }: VoiceConversationOverlayProps) {
-  const { toast } = useToast();
   const [uiState, setUiState] = useState<UIState>('idle');
   const [isMuted, setIsMuted] = useState(false);
   const [transcriptHistory, setTranscriptHistory] = useState<Array<{ role: 'user' | 'agent'; text: string; time: string }>>([]);
@@ -56,12 +93,10 @@ export function VoiceConversationOverlay({
       setCurrentText(prev => prev + delta);
     },
     onError: (error) => {
-      // Autoplay is commonly blocked until first user gesture
       if (error.includes('Audio playback blocked')) {
         setStatusMessage('Tap once to enable audio.');
         return;
       }
-
       if (error.includes('microphone') || error.includes('Microphone')) {
         setStatusMessage("Can't access microphone. Check permissions.");
       } else {
@@ -114,9 +149,9 @@ export function VoiceConversationOverlay({
       setStatusMessage('Responding...');
     } else if (status === 'connected') {
       setUiState('idle');
-      setStatusMessage('');
+      setStatusMessage('Ready — speak anytime');
     } else if (status === 'connecting') {
-      setStatusMessage('Connecting...');
+      setStatusMessage('Connecting to Aegis...');
     }
   }, [status, isAgentSpeaking]);
 
@@ -157,6 +192,8 @@ export function VoiceConversationOverlay({
     }
   };
 
+  const isWaveformActive = uiState === 'listening' || uiState === 'responding';
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col overflow-hidden" style={{ background: 'linear-gradient(180deg, #1a1f2e 0%, #0d1117 50%, #0a0d12 100%)' }}>
       {/* Noise texture overlay */}
@@ -169,27 +206,27 @@ export function VoiceConversationOverlay({
         </span>
       </div>
 
-       {/* Top right controls */}
-       <div className="absolute top-4 right-6 flex items-center gap-4 z-20">
-         <button
-           onClick={() => {
-             const next = !isMuted;
-             setIsMuted(next);
-             setOutputMuted(next);
-           }}
-           className="flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors text-sm"
-         >
-           {isMuted ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-           <span>{isMuted ? 'Unmute' : 'Mute'}</span>
-         </button>
-         <button
-           onClick={handleRestart}
-           className="flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors text-sm"
-         >
-           <RotateCcw className="w-4 h-4" />
-           <span>Restart</span>
-         </button>
-       </div>
+      {/* Top right controls */}
+      <div className="absolute top-4 right-6 flex items-center gap-4 z-20">
+        <button
+          onClick={() => {
+            const next = !isMuted;
+            setIsMuted(next);
+            setOutputMuted(next);
+          }}
+          className="flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors text-sm"
+        >
+          {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          <span>{isMuted ? 'Unmute' : 'Mute'}</span>
+        </button>
+        <button
+          onClick={handleRestart}
+          className="flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors text-sm"
+        >
+          <RotateCcw className="w-4 h-4" />
+          <span>Restart</span>
+        </button>
+      </div>
 
       {/* Close button (X) - top left */}
       <button
@@ -201,169 +238,174 @@ export function VoiceConversationOverlay({
         </svg>
       </button>
 
-      {/* Main content - centered */}
-      <div className="flex-1 flex flex-col items-center justify-center px-8 relative z-10">
+      {/* Main content */}
+      <div className="flex-1 flex flex-col relative z-10 overflow-hidden">
         
-        {/* Shield with glow */}
-        <div className="relative mb-8">
-          {/* Green glow behind shield */}
-          <div className={cn(
-            "absolute inset-0 rounded-full blur-3xl transition-all duration-700",
-            uiState === 'responding' 
-              ? "bg-emerald-500/20 scale-150" 
-              : uiState === 'listening'
-              ? "bg-emerald-500/15 scale-125 animate-pulse"
-              : "bg-emerald-500/10 scale-110"
-          )} style={{ width: '200px', height: '200px', left: '-30px', top: '-30px' }} />
-          
-          {/* Shield SVG */}
+        {/* Shield with glow - positioned at top */}
+        <div className="flex justify-center pt-8 pb-4">
           <div className="relative">
-            <svg width="140" height="160" viewBox="0 0 140 160" fill="none" xmlns="http://www.w3.org/2000/svg">
-              {/* Shield body with gradient */}
-              <defs>
-                <linearGradient id="shieldGradient" x1="70" y1="0" x2="70" y2="160" gradientUnits="userSpaceOnUse">
-                  <stop offset="0%" stopColor="#4a5568" />
-                  <stop offset="50%" stopColor="#2d3748" />
-                  <stop offset="100%" stopColor="#1a202c" />
-                </linearGradient>
-                <linearGradient id="shieldBorder" x1="70" y1="0" x2="70" y2="160" gradientUnits="userSpaceOnUse">
-                  <stop offset="0%" stopColor="#718096" />
-                  <stop offset="100%" stopColor="#2d3748" />
-                </linearGradient>
-              </defs>
-              
-              {/* Shield shape */}
-              <path 
-                d="M70 8L12 32V72C12 112 38 148 70 156C102 148 128 112 128 72V32L70 8Z" 
-                fill="url(#shieldGradient)"
-                stroke="url(#shieldBorder)"
-                strokeWidth="2"
-              />
-              
-              {/* Inner chevron / A symbol */}
-              <path 
-                d="M70 50L45 95H55L70 70L85 95H95L70 50Z" 
-                fill="#1a202c"
-                stroke="#4a5568"
-                strokeWidth="1"
-              />
-              
-              {/* Chevron below */}
-              <path 
-                d="M50 100L70 120L90 100" 
-                fill="none"
-                stroke="#4a5568"
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+            {/* Green glow behind shield */}
+            <div className={cn(
+              "absolute inset-0 rounded-full blur-3xl transition-all duration-700",
+              uiState === 'responding' 
+                ? "bg-emerald-500/25 scale-150" 
+                : uiState === 'listening'
+                ? "bg-emerald-500/20 scale-125 animate-pulse"
+                : "bg-emerald-500/10 scale-110"
+            )} style={{ width: '160px', height: '160px', left: '-20px', top: '-20px' }} />
+            
+            {/* Shield SVG */}
+            <div className="relative">
+              <svg width="120" height="140" viewBox="0 0 140 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="shieldGradient" x1="70" y1="0" x2="70" y2="160" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stopColor="#4a5568" />
+                    <stop offset="50%" stopColor="#2d3748" />
+                    <stop offset="100%" stopColor="#1a202c" />
+                  </linearGradient>
+                  <linearGradient id="shieldBorder" x1="70" y1="0" x2="70" y2="160" gradientUnits="userSpaceOnUse">
+                    <stop offset="0%" stopColor="#718096" />
+                    <stop offset="100%" stopColor="#2d3748" />
+                  </linearGradient>
+                </defs>
+                <path 
+                  d="M70 8L12 32V72C12 112 38 148 70 156C102 148 128 112 128 72V32L70 8Z" 
+                  fill="url(#shieldGradient)"
+                  stroke="url(#shieldBorder)"
+                  strokeWidth="2"
+                />
+                <path 
+                  d="M70 50L45 95H55L70 70L85 95H95L70 50Z" 
+                  fill="#1a202c"
+                  stroke="#4a5568"
+                  strokeWidth="1"
+                />
+                <path 
+                  d="M50 100L70 120L90 100" 
+                  fill="none"
+                  stroke="#4a5568"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
           </div>
         </div>
 
-        {/* Status badge */}
-        <div className={cn(
-          "px-6 py-3 rounded-full text-base font-medium mb-4",
-          "border",
-          status === 'connecting' && "bg-slate-800/60 border-slate-600/50 text-slate-300",
-          status === 'connected' && "bg-emerald-900/30 border-emerald-700/40 text-emerald-400",
-          status === 'listening' && "bg-emerald-900/50 border-emerald-600/50 text-emerald-300",
-          status === 'speaking' && "bg-emerald-800/60 border-emerald-500/50 text-emerald-200",
-          status === 'idle' && "bg-slate-800/60 border-slate-600/50 text-slate-400"
-        )}>
-          {status === 'connecting' && 'Connecting to Aegis...'}
-          {status === 'connected' && 'Ready — Speak anytime'}
-          {status === 'listening' && 'Listening...'}
-          {status === 'speaking' && 'Aegis is responding...'}
-          {status === 'idle' && 'Initializing...'}
-        </div>
-
-        {/* Subtitle */}
-        <p className="text-slate-500 text-sm mb-8">
-          {isConnected ? 'Speak naturally — Aegis is listening' : 'Press Spacebar or Tap Mic to Speak'}
-        </p>
-      </div>
-
-      {/* Transcript area */}
-      <div className="relative z-10 px-6 pb-4">
-        {/* Transcript bubbles */}
-        {(transcriptHistory.length > 0 || currentText) && (
-          <div className="max-w-2xl mx-auto mb-6 space-y-3">
-            {transcriptHistory.slice(-4).map((item, i) => (
+        {/* Scrollable transcript area */}
+        <div className="flex-1 overflow-y-auto px-6 pb-4">
+          <div className="max-w-2xl mx-auto space-y-4">
+            {/* Transcript bubbles */}
+            {transcriptHistory.map((item, i) => (
               <div 
                 key={i} 
                 className={cn(
-                  "flex items-center gap-3",
+                  "flex items-start gap-3",
                   item.role === 'user' ? "justify-start" : "justify-end"
                 )}
               >
+                {item.role === 'user' && (
+                  <div className="w-8 h-8 rounded-full bg-slate-700/80 flex items-center justify-center shrink-0">
+                    <Mic className="w-4 h-4 text-slate-400" />
+                  </div>
+                )}
+                
                 <div className={cn(
-                  "px-4 py-2.5 rounded-lg text-sm max-w-[70%]",
+                  "relative px-4 py-3 rounded-2xl text-sm max-w-[75%]",
                   item.role === 'user' 
-                    ? "bg-slate-800/70 text-slate-300 border border-slate-700/50" 
-                    : "bg-slate-800/50 text-slate-400 border border-slate-700/30"
+                    ? "bg-slate-800/80 text-slate-200 rounded-tl-sm" 
+                    : "bg-slate-800/60 text-slate-300 rounded-tr-sm border border-emerald-900/30"
                 )}>
-                  {item.text}
+                  <p className="leading-relaxed">{item.text}</p>
+                  <span className="absolute -right-12 bottom-1 text-[10px] text-slate-600 font-mono whitespace-nowrap">
+                    {item.time}
+                  </span>
                 </div>
-                <span className="text-[11px] text-slate-600 font-mono shrink-0">
-                  {item.time}
-                </span>
+                
+                {item.role === 'agent' && (
+                  <div className="w-8 h-8 rounded-full bg-emerald-900/40 flex items-center justify-center shrink-0 border border-emerald-800/50">
+                    <svg width="16" height="18" viewBox="0 0 140 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M70 8L12 32V72C12 112 38 148 70 156C102 148 128 112 128 72V32L70 8Z" fill="#2d3748" stroke="#4a5568" strokeWidth="8"/>
+                    </svg>
+                  </div>
+                )}
               </div>
             ))}
             
             {/* Current live text */}
             {currentText && (
               <div className={cn(
-                "flex items-center gap-3",
+                "flex items-start gap-3",
                 uiState === 'listening' ? "justify-start" : "justify-end"
               )}>
+                {uiState === 'listening' && (
+                  <div className="w-8 h-8 rounded-full bg-slate-700/80 flex items-center justify-center shrink-0 animate-pulse">
+                    <Mic className="w-4 h-4 text-emerald-400" />
+                  </div>
+                )}
+                
                 <div className={cn(
-                  "px-4 py-2.5 rounded-lg text-sm max-w-[70%]",
+                  "px-4 py-3 rounded-2xl text-sm max-w-[75%]",
                   uiState === 'listening'
-                    ? "bg-slate-800/70 text-slate-300 border border-slate-700/50" 
-                    : "bg-slate-800/50 text-emerald-400/80 border border-emerald-800/30"
+                    ? "bg-slate-800/80 text-slate-200 rounded-tl-sm" 
+                    : "bg-slate-800/60 text-emerald-300 rounded-tr-sm border border-emerald-800/40"
                 )}>
-                  {currentText}
-                  {uiState === 'responding' && (
-                    <span className="inline-block w-0.5 h-4 ml-1 bg-emerald-500/60 animate-pulse" />
-                  )}
+                  <p className="leading-relaxed">
+                    {currentText}
+                    {uiState === 'responding' && (
+                      <span className="inline-block w-0.5 h-4 ml-1 bg-emerald-500/60 animate-pulse align-middle" />
+                    )}
+                  </p>
                 </div>
+                
+                {uiState === 'responding' && (
+                  <div className="w-8 h-8 rounded-full bg-emerald-900/40 flex items-center justify-center shrink-0 border border-emerald-700/50 animate-pulse">
+                    <svg width="16" height="18" viewBox="0 0 140 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M70 8L12 32V72C12 112 38 148 70 156C102 148 128 112 128 72V32L70 8Z" fill="#2d3748" stroke="#10b981" strokeWidth="8"/>
+                    </svg>
+                  </div>
+                )}
               </div>
             )}
           </div>
-        )}
+        </div>
 
-        {/* Status line with "Listening..." */}
+        {/* Status line */}
         {statusMessage && (
-          <div className="flex items-center justify-center gap-4 mb-6">
-            <div className="flex-1 h-px bg-gradient-to-r from-transparent to-slate-700" />
+          <div className="flex items-center justify-center gap-4 px-6 py-2">
+            <div className="flex-1 h-px bg-gradient-to-r from-transparent to-slate-700 max-w-24" />
             <span className={cn(
               "text-sm font-medium tracking-wide",
-              uiState === 'responding' ? "text-emerald-500/70" : "text-slate-500"
+              uiState === 'responding' ? "text-emerald-500/80" : "text-slate-500"
             )}>
               {statusMessage}
             </span>
-            <div className="flex-1 h-px bg-gradient-to-l from-transparent to-slate-700" />
+            <div className="flex-1 h-px bg-gradient-to-l from-transparent to-slate-700 max-w-24" />
           </div>
         )}
 
+        {/* Audio waveform */}
+        <div className="py-4">
+          <AudioWaveform isActive={isWaveformActive} isResponding={uiState === 'responding'} />
+        </div>
+
         {/* Mic button */}
-        <div className="flex justify-center pb-6">
+        <div className="flex justify-center pb-8 pt-2">
           <button
             onClick={handleMicClick}
             disabled={isReconnecting}
             className={cn(
-              "w-16 h-16 rounded-full flex items-center justify-center transition-all duration-300",
-              "border-2",
-              "shadow-lg shadow-black/40",
+              "w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300",
+              "border-2 shadow-xl",
               uiState === 'listening' 
-                ? "bg-emerald-900/60 border-emerald-600/60 text-emerald-400" 
+                ? "bg-emerald-900/70 border-emerald-500/70 text-emerald-400 shadow-emerald-900/40" 
                 : uiState === 'responding'
-                ? "bg-emerald-900/40 border-emerald-700/40 text-emerald-500"
-                : "bg-slate-800/80 border-slate-600/50 text-emerald-500 hover:bg-slate-700/80 hover:border-slate-500/60"
+                ? "bg-emerald-900/50 border-emerald-600/50 text-emerald-500 shadow-emerald-900/30"
+                : "bg-slate-800/90 border-emerald-700/40 text-emerald-500 hover:bg-slate-700/90 hover:border-emerald-600/60 shadow-black/40"
             )}
           >
-            <Mic className="w-6 h-6" />
+            <Mic className="w-8 h-8" />
           </button>
         </div>
       </div>
