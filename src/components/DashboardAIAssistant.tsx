@@ -343,11 +343,17 @@ export const DashboardAIAssistant = () => {
   };
 
 
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll to bottom when messages change - with slight delay for render
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    const timer = setTimeout(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTo({
+          top: scrollRef.current.scrollHeight,
+          behavior: 'smooth'
+        });
+      }
+    }, 50);
+    return () => clearTimeout(timer);
   }, [messages, streamingContent]);
 
   const streamChat = async (userMessage: string) => {

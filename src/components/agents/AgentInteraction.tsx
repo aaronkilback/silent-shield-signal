@@ -139,11 +139,18 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
     loadConversation();
   }, [agent.id, loadConversation]);
 
-  // Auto-scroll to bottom
+  // Ref for the actual scroll container (ScrollArea viewport)
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Auto-scroll to bottom - scroll within container only, not the page
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollIntoView({ behavior: "smooth" });
-    }
+    // Small delay to ensure content is rendered
+    const timer = setTimeout(() => {
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+      }
+    }, 50);
+    return () => clearTimeout(timer);
   }, [messages]);
 
   const handleSend = async () => {
@@ -281,8 +288,8 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
       </CardHeader>
 
       <CardContent className="flex-1 flex flex-col min-h-0 p-0">
-        {/* Messages Area */}
-        <ScrollArea className="flex-1 px-6">
+        {/* Messages Area - use ref on the viewport to control scrolling */}
+        <ScrollArea className="flex-1 px-6" ref={scrollContainerRef as React.RefObject<HTMLDivElement>}>
           {isLoadingHistory ? (
             <div className="h-full flex items-center justify-center py-12">
               <div className="text-center text-muted-foreground">
@@ -392,7 +399,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
                   </div>
                 </div>
               )}
-              <div ref={scrollRef} />
+              {/* Removed scrollRef div - scrolling now handled by container */}
             </div>
           )}
         </ScrollArea>
