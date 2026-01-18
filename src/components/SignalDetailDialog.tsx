@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
-import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon, Copy, Check, FileWarning } from "lucide-react";
+import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon, Copy, Check, FileWarning, ExternalLink, Shield } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState, useEffect } from "react";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
@@ -297,7 +297,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                 <AlertTriangle className="w-4 h-4" />
                 Signal Overview
               </h3>
-              <div className="bg-muted p-4 rounded-lg space-y-2">
+              <div className="bg-muted p-4 rounded-lg space-y-3">
                 <p className="font-medium">{decodedText}</p>
                 <div className="flex flex-wrap gap-2 mt-2">
                   <Badge variant={getSeverityColor(signal.severity) as any}>
@@ -305,17 +305,58 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                   </Badge>
                   <Badge variant="outline">{signal.category}</Badge>
                   <Badge variant="secondary">{signal.status}</Badge>
-                  {signal.confidence && (
-                  <Badge variant="outline">
-                    {Math.round(signal.confidence * 100)}% confidence
-                  </Badge>
+                  {signal.confidence != null && (
+                    <Badge variant="outline">
+                      {Math.round(signal.confidence)}% confidence
+                    </Badge>
+                  )}
+                  <SignalFeedback 
+                    signalId={signal.id}
+                    onFeedbackChange={() => onSignalUpdated?.()}
+                  />
+                </div>
+
+                {/* Source Reliability & Information Accuracy */}
+                {(signal.source_reliability || signal.information_accuracy) && (
+                  <div className="flex flex-wrap gap-3 text-sm border-t border-border pt-3 mt-2">
+                    {signal.source_reliability && signal.source_reliability !== 'unknown' && (
+                      <div className="flex items-center gap-1.5">
+                        <Shield className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span className="text-muted-foreground">Reliability:</span>
+                        <Badge variant="outline" className="capitalize">
+                          {signal.source_reliability.replace(/_/g, ' ')}
+                        </Badge>
+                      </div>
+                    )}
+                    {signal.information_accuracy && signal.information_accuracy !== 'cannot_be_judged' && (
+                      <div className="flex items-center gap-1.5">
+                        <Check className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span className="text-muted-foreground">Accuracy:</span>
+                        <Badge variant="outline" className="capitalize">
+                          {signal.information_accuracy.replace(/_/g, ' ')}
+                        </Badge>
+                      </div>
+                    )}
+                  </div>
                 )}
-                <SignalFeedback 
-                  signalId={signal.id}
-                  onFeedbackChange={() => onSignalUpdated?.()}
-                />
-              </div>
-                <div className="flex items-center gap-2 text-sm text-muted-foreground mt-2">
+
+                {/* Original Source Link */}
+                {(signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link) && (
+                  <div className="flex items-center gap-2 text-sm border-t border-border pt-3 mt-2">
+                    <ExternalLink className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-muted-foreground">Source:</span>
+                    <a 
+                      href={signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline truncate max-w-md"
+                    >
+                      {signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link}
+                    </a>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Clock className="w-3 h-3" />
                   {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
                 </div>
