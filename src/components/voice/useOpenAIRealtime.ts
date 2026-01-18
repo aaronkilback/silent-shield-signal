@@ -54,11 +54,25 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       // Set up audio element for playback
       const audioEl = document.createElement('audio');
       audioEl.autoplay = true;
+      (audioEl as any).playsInline = true;
+      audioEl.setAttribute('playsinline', 'true');
+      audioEl.muted = false;
+      audioEl.volume = 1;
       audioElementRef.current = audioEl;
+      // Append to DOM to improve autoplay reliability on some browsers
+      document.body.appendChild(audioEl);
 
       pc.ontrack = (event) => {
         console.log('Received audio track from OpenAI');
         audioEl.srcObject = event.streams[0];
+        audioEl.play().catch((err) => {
+          console.warn('Audio autoplay blocked, waiting for user gesture...', err);
+          options.onError?.('Audio playback blocked by browser. Tap once to enable sound.');
+          const resume = () => {
+            audioEl.play().catch(() => {});
+          };
+          window.addEventListener('pointerdown', resume, { once: true });
+        });
       };
 
       // Get microphone access
@@ -238,7 +252,9 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
     // Clean up audio element
     if (audioElementRef.current) {
+      audioElementRef.current.pause?.();
       audioElementRef.current.srcObject = null;
+      audioElementRef.current.remove();
       audioElementRef.current = null;
     }
 
@@ -292,6 +308,9 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     connect,
     disconnect,
     sendTextMessage,
+    setOutputMuted: (muted: boolean) => {
+      if (audioElementRef.current) audioElementRef.current.muted = muted;
+    },
     isConnected: status !== 'idle' && status !== 'connecting'
   };
 }
