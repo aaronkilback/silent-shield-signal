@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { History, Clock, AlertCircle, Trash2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenant } from "@/hooks/useTenant";
 import { SignalDetailDialog } from "./SignalDetailDialog";
 import { SignalFeedback } from "./SignalFeedback";
 import { toast } from "sonner";
@@ -72,6 +73,7 @@ export const SignalHistory = () => {
   const [selectedSignalIds, setSelectedSignalIds] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
   const { selectedClientId } = useClientSelection();
+  const { currentTenant } = useTenant();
   
   // Filter states
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -83,14 +85,14 @@ export const SignalHistory = () => {
     
     // Subscribe to real-time updates for selected client only
     const channel = supabase
-      .channel(`signal-history-${selectedClientId}`)
+      .channel(`signal-history-${selectedClientId || 'all'}-${currentTenant?.id || 'all'}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'signals',
-          filter: `client_id=eq.${selectedClientId}`
+          ...(selectedClientId ? { filter: `client_id=eq.${selectedClientId}` } : {})
         },
         (payload) => {
           // Deduplicate by updating existing signal or adding new one
@@ -115,7 +117,7 @@ export const SignalHistory = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [selectedClientId]);
+  }, [selectedClientId, currentTenant?.id]);
 
   const loadSignals = async () => {
     try {
@@ -140,7 +142,8 @@ export const SignalHistory = () => {
           rule_priority,
           routed_to_team,
           clients (
-            name
+            name,
+            tenant_id
           )
         `)
         .order('created_at', { ascending: false })
@@ -154,8 +157,16 @@ export const SignalHistory = () => {
       const { data, error } = await query;
       if (error) throw error;
       
+      // Filter by tenant if one is selected
+      let filteredData = data || [];
+      if (currentTenant?.id) {
+        filteredData = filteredData.filter((signal: any) => 
+          signal.clients?.tenant_id === currentTenant.id
+        );
+      }
+      
       // Fetch source names separately if needed
-      const dataWithSources = await Promise.all((data || []).map(async (signal) => {
+      const dataWithSources = await Promise.all(filteredData.map(async (signal: any) => {
         if (signal.source_id) {
           const { data: sourceData } = await supabase
             .from('sources')

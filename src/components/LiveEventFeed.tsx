@@ -4,6 +4,7 @@ import { AlertTriangle, Shield, Activity, Zap, Link as LinkIcon } from "lucide-r
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenant } from "@/hooks/useTenant";
 
 interface Signal {
   id: string;
@@ -74,6 +75,7 @@ const getSeverityIcon = (severity: string | null) => {
 
 export const LiveEventFeed = () => {
   const { selectedClientId } = useClientSelection();
+  const { currentTenant } = useTenant();
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -82,7 +84,7 @@ export const LiveEventFeed = () => {
     const fetchSignals = async () => {
       let query = supabase
         .from('signals')
-        .select('*')
+        .select('*, clients(tenant_id)')
         .neq('status', 'false_positive') // Exclude false positives
         .order('received_at', { ascending: false })
         .limit(10);
@@ -98,7 +100,14 @@ export const LiveEventFeed = () => {
       if (error) {
         console.error('Error fetching signals:', error);
       } else if (data) {
-        setSignals(data);
+        // Filter by tenant if one is selected
+        let filtered = data;
+        if (currentTenant?.id) {
+          filtered = data.filter((signal: any) => 
+            signal.clients?.tenant_id === currentTenant.id
+          );
+        }
+        setSignals(filtered);
       }
       setLoading(false);
     };
@@ -107,7 +116,7 @@ export const LiveEventFeed = () => {
 
     // Subscribe to realtime updates
     const channel = supabase
-      .channel('signals-changes')
+      .channel(`signals-changes-${currentTenant?.id || 'all'}`)
       .on(
         'postgres_changes',
         {
@@ -121,7 +130,8 @@ export const LiveEventFeed = () => {
           // Only add if not a false positive and matches client filter
           if (newSignal.status !== 'false_positive') {
             if (!selectedClientId || newSignal.client_id === selectedClientId) {
-              setSignals(prev => [newSignal, ...prev].slice(0, 10));
+              // We'll need to verify tenant on refetch
+              fetchSignals();
             }
           }
         }
@@ -131,7 +141,7 @@ export const LiveEventFeed = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [selectedClientId]);
+  }, [selectedClientId, currentTenant?.id]);
 
   if (loading) {
     return (

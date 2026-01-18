@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/select";
 import { Building2, Loader2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useTenant } from "@/hooks/useTenant";
 
 interface Client {
   id: string;
@@ -22,6 +23,7 @@ export const ClientSelector = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+  const { currentTenant } = useTenant();
 
   useEffect(() => {
     fetchClients();
@@ -45,14 +47,21 @@ export const ClientSelector = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [currentTenant?.id]);
 
   const fetchClients = async () => {
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from("clients")
         .select("id, name, organization, status")
         .order("name", { ascending: true });
+
+      // Filter by tenant if one is selected
+      if (currentTenant?.id) {
+        query = query.eq("tenant_id", currentTenant.id);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
       setClients(data || []);

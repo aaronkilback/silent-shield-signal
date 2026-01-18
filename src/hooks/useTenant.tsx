@@ -91,8 +91,8 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     } else {
       localStorage.removeItem(CURRENT_TENANT_KEY);
     }
-    // Invalidate tenant-scoped queries
-    queryClient.invalidateQueries({ queryKey: ['tenant'] });
+    // Invalidate all tenant-scoped queries when tenant changes
+    queryClient.invalidateQueries();
   };
 
   const isOwnerOrAdmin = currentTenant?.role === 'owner' || currentTenant?.role === 'admin';
