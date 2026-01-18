@@ -9,17 +9,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
+import { Tables } from "@/integrations/supabase/types";
 
 const sourceSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
   type: z.string().min(1, "Type is required"),
-  config_json: z.string().optional(),
+  config: z.string().optional(),
 });
 
 interface EditSourceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  source: any;
+  source: Tables<"sources"> | null;
 }
 
 export const EditSourceDialog = ({ open, onOpenChange, source }: EditSourceDialogProps) => {
@@ -61,9 +62,9 @@ export const EditSourceDialog = ({ open, onOpenChange, source }: EditSourceDialo
       setName(source.name || "");
       setType(source.type || "");
       setMonitorType(source.monitor_type || "");
-      const config = source.config;
+      const config = source.config as Record<string, unknown> | null;
       if (config && typeof config === 'object' && 'url' in config) {
-        setUrl(config.url || "");
+        setUrl(String(config.url || ""));
         const { url: _, ...restConfig } = config;
         setConfigJson(Object.keys(restConfig).length > 0 ? JSON.stringify(restConfig, null, 2) : "");
       } else {
