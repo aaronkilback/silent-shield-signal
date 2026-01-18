@@ -39,6 +39,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const sendLockRef = useRef(false);
   const { user } = useAuth();
   const { checkContent, isChecking } = useContentModeration({
     contentType: 'chat_message',
@@ -155,16 +156,18 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
 
   const handleSend = async () => {
     if (!input.trim() || isLoading || !conversationId) return;
+    if (sendLockRef.current) return;
 
     const userMessage = input.trim();
-    
+
     // Check content before sending
     const moderationResult = await checkContent(userMessage);
     if (!moderationResult.allowed) {
       // Content was blocked
       return;
     }
-    
+
+    sendLockRef.current = true;
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
     setIsLoading(true);
@@ -194,18 +197,20 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
       if (error) throw error;
 
       const assistantMessage = data.response;
-      
+
+      // Dedup in case multiple submit events fire
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last?.role === 'assistant' && last.content === assistantMessage) return prev;
+        return [...prev, { role: "assistant", content: assistantMessage }];
+      });
+
       // Save assistant message to database
       await supabase.from("agent_messages").insert({
         conversation_id: conversationId,
         role: "assistant",
         content: assistantMessage,
       });
-
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: assistantMessage },
-      ]);
     } catch (error) {
       console.error("Agent chat error:", error);
       toast.error("Failed to get response from agent");
@@ -221,6 +226,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
         .limit(1);
     } finally {
       setIsLoading(false);
+      sendLockRef.current = false;
     }
   };
 

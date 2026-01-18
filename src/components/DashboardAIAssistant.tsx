@@ -54,6 +54,7 @@ export const DashboardAIAssistant = () => {
   const [voiceTranscript, setVoiceTranscript] = useState("");
   const [voiceAgentResponse, setVoiceAgentResponse] = useState("");
   const voiceAgentResponseRef = useRef("");
+  const lastVoiceSavedRef = useRef<string | null>(null);
   
   // Keep refs for callback data to avoid stale closures
   const messagesRef = useRef<Message[]>([]);
@@ -288,12 +289,18 @@ export const DashboardAIAssistant = () => {
       setVoiceAgentResponse(prev => prev + delta);
     },
     onAgentResponseComplete: (fullText) => {
-      // Agent finished speaking - save the complete response to chat
-      if (fullText.trim()) {
-        const agentMsg: Message = { role: "assistant", content: `🔊 ${fullText}` };
-        setMessages(prev => [...prev, agentMsg]);
-        saveMessageRef.current?.(agentMsg);
+      // Agent finished speaking - save the complete response to chat (deduped)
+      const trimmed = (fullText || '').trim();
+      if (trimmed) {
+        const content = `🔊 ${trimmed}`;
+        if (lastVoiceSavedRef.current !== content) {
+          lastVoiceSavedRef.current = content;
+          const agentMsg: Message = { role: "assistant", content };
+          setMessages(prev => [...prev, agentMsg]);
+          saveMessageRef.current?.(agentMsg);
+        }
       }
+
       // Clear the live response
       setVoiceAgentResponse("");
       voiceAgentResponseRef.current = "";
@@ -1073,22 +1080,19 @@ How can I help you now?`,
       // Stop voice
       disconnectVoice();
       setIsVoiceActive(false);
-      // Save any pending agent response
-      if (voiceAgentResponse.trim()) {
-        const agentMsg: Message = { role: "assistant", content: `🔊 ${voiceAgentResponse}` };
-        setMessages(prev => [...prev, agentMsg]);
-        saveMessageToDb(agentMsg);
-        setVoiceAgentResponse("");
-      }
-      toast.success("Voice session ended");
-    } else {
-      // Start voice
-      setIsVoiceActive(true);
       setVoiceTranscript("");
       setVoiceAgentResponse("");
-      connectVoice();
-      toast.info("Starting voice session...");
+      toast.success("Voice session ended");
+      return;
     }
+
+    // Start voice
+    lastVoiceSavedRef.current = null;
+    setIsVoiceActive(true);
+    setVoiceTranscript("");
+    setVoiceAgentResponse("");
+    connectVoice();
+    toast.info("Starting voice session...");
   };
 
   return (
