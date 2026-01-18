@@ -3,8 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Sparkles, Loader2, Paperclip, X, Phone, MessageSquarePlus, Users, User, Share2 } from "lucide-react";
-import { VoiceConversationInterface } from "./VoiceConversationInterface";
+import { Send, Sparkles, Loader2, Paperclip, X, Mic, MessageSquarePlus, Users, User, Share2 } from "lucide-react";
+import { VoiceConversationOverlay } from "./voice";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -991,7 +991,7 @@ How can I help you now?`,
 
   if (showVoiceInterface) {
     return (
-      <VoiceConversationInterface 
+      <VoiceConversationOverlay 
         onClose={() => setShowVoiceInterface(false)}
         conversationHistory={messages}
       />
@@ -1071,16 +1071,6 @@ How can I help you now?`,
               >
                 <MessageSquarePlus className="w-3.5 h-3.5 mr-1.5" />
                 New Chat
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowVoiceInterface(true)}
-                className="text-xs shrink-0"
-                title="Start voice conversation"
-              >
-                <Phone className="w-3.5 h-3.5 mr-1.5" />
-                Voice
               </Button>
               <Button
                 variant="outline"
@@ -1196,13 +1186,26 @@ How can I help you now?`,
               >
                 <Paperclip className="w-4 h-4" />
               </Button>
-              <Input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask about threats, signals..."
-                disabled={isLoading || isUploading}
-                className="min-w-0"
-              />
+              <div className="relative flex-1 min-w-0">
+                <Input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Ask about threats, signals..."
+                  disabled={isLoading || isUploading}
+                  className="pr-10"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowVoiceInterface(true)}
+                  disabled={isLoading || isUploading}
+                  title="Start voice conversation"
+                >
+                  <Mic className="w-4 h-4" />
+                </Button>
+              </div>
               <Button type="submit" disabled={isLoading || isUploading || (!input.trim() && attachments.length === 0)} className="shrink-0">
                 {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </Button>
