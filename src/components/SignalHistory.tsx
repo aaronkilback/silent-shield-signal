@@ -8,7 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { History, Clock, AlertCircle, Trash2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
-import { useTenant } from "@/hooks/useTenant";
+
 import { SignalDetailDialog } from "./SignalDetailDialog";
 import { SignalFeedback } from "./SignalFeedback";
 import { toast } from "sonner";
@@ -73,7 +73,6 @@ export const SignalHistory = () => {
   const [selectedSignalIds, setSelectedSignalIds] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
   const { selectedClientId } = useClientSelection();
-  const { currentTenant, isAllTenantsView, getFilterTenantIds } = useTenant();
   
   // Filter states
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -85,7 +84,7 @@ export const SignalHistory = () => {
     
     // Subscribe to real-time updates for selected client only
     const channel = supabase
-      .channel(`signal-history-${selectedClientId || 'all'}-${currentTenant?.id || 'all'}-${isAllTenantsView}`)
+      .channel(`signal-history-${selectedClientId || 'all'}`)
       .on(
         'postgres_changes',
         {
@@ -117,7 +116,7 @@ export const SignalHistory = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [selectedClientId, currentTenant?.id, isAllTenantsView]);
+  }, [selectedClientId]);
 
   const loadSignals = async () => {
     try {
@@ -142,8 +141,7 @@ export const SignalHistory = () => {
           rule_priority,
           routed_to_team,
           clients (
-            name,
-            tenant_id
+            name
           )
         `)
         .order('created_at', { ascending: false })
@@ -157,17 +155,8 @@ export const SignalHistory = () => {
       const { data, error } = await query;
       if (error) throw error;
       
-      // Filter by tenant IDs (unless "All Tenants" view is active)
-      let filteredData = data || [];
-      const tenantIds = getFilterTenantIds();
-      if (tenantIds !== null) {
-        filteredData = filteredData.filter((signal: any) => 
-          signal.clients?.tenant_id && tenantIds.includes(signal.clients.tenant_id)
-        );
-      }
-      
       // Fetch source names separately if needed
-      const dataWithSources = await Promise.all(filteredData.map(async (signal: any) => {
+      const dataWithSources = await Promise.all((data || []).map(async (signal: any) => {
         if (signal.source_id) {
           const { data: sourceData } = await supabase
             .from('sources')

@@ -54,7 +54,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { PageLayout } from "@/components/PageLayout";
-import { TenantSelector } from "@/components/TenantSelector";
+
 
 export default function TenantAdmin() {
   const { session } = useAuth();
@@ -311,11 +311,6 @@ export default function TenantAdmin() {
               </p>
             </div>
 
-            {/* Tenant switcher (explicit on this page so it can't be missed) */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground hidden sm:inline">Current tenant:</span>
-              <TenantSelector />
-            </div>
           </div>
 
         {/* Super Admin: Create Tenant Section */}
