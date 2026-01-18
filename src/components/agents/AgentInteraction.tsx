@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Send, Loader2, Bot, User, Trash2, Copy, Check, Flag, Mic, MicOff } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -224,18 +223,15 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
     loadConversation();
   }, [agent.id, loadConversation]);
 
-  // Auto-scroll
+  // Auto-scroll to bottom when messages change or history loads
   useEffect(() => {
     const timer = setTimeout(() => {
       if (scrollContainerRef.current) {
-        scrollContainerRef.current.scrollTo({
-          top: scrollContainerRef.current.scrollHeight,
-          behavior: 'smooth'
-        });
+        scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
       }
-    }, 50);
+    }, 100);
     return () => clearTimeout(timer);
-  }, [messages, voiceAgentResponse]);
+  }, [messages, voiceAgentResponse, isLoadingHistory]);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading || !conversationId) return;
@@ -340,7 +336,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
   };
 
   return (
-    <Card className="flex flex-col h-full max-h-[calc(100vh-12rem)] overflow-hidden">
+    <Card className="flex flex-col h-[calc(100vh-10rem)] overflow-hidden">
       <CardHeader className="pb-3 flex-shrink-0">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <CardTitle className="text-lg flex items-center gap-2">
@@ -381,7 +377,10 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
 
       <CardContent className="flex-1 flex flex-col min-h-0 p-0 overflow-hidden">
         {/* Messages Area */}
-        <ScrollArea className="flex-1 px-6 overflow-y-auto" ref={scrollContainerRef as React.RefObject<HTMLDivElement>}>
+        <div 
+          ref={scrollContainerRef}
+          className="flex-1 px-6 overflow-y-auto"
+        >
           {isLoadingHistory ? (
             <div className="h-full flex items-center justify-center py-12">
               <div className="text-center text-muted-foreground">
@@ -515,7 +514,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
               )}
             </div>
           )}
-        </ScrollArea>
+        </div>
 
         {/* Input Area */}
         <div className="p-4 border-t border-border flex-shrink-0">
