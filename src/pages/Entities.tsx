@@ -16,7 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
-import { DashboardClientSelector } from "@/components/DashboardClientSelector";
+import { DashboardClientSelector } from "@/components/ClientSelector";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { LocationsMap } from "@/components/LocationsMap";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";

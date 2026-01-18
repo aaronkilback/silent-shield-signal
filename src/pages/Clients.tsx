@@ -23,7 +23,7 @@ const Clients = () => {
   return (
     <PageLayout loading={loading}>
       <ClientOnboarding />
-      <ClientSelector />
+      <ClientSelector mode="navigate" />
       <ClientRiskSnapshot />
     </PageLayout>
   );

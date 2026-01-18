@@ -1,5 +1,5 @@
 import { PageLayout } from "@/components/PageLayout";
-import { DashboardClientSelector } from "@/components/DashboardClientSelector";
+import { DashboardClientSelector } from "@/components/ClientSelector";
 import { MonitoringHistory } from "@/components/MonitoringHistory";
 import { DashboardAIAssistant } from "@/components/DashboardAIAssistant";
 import { LiveEventFeed } from "@/components/LiveEventFeed";
