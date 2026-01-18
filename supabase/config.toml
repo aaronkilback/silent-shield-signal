@@ -213,3 +213,6 @@ verify_jwt = false
 [functions.calculate-anticipation-index]
 verify_jwt = false
 
+[functions.accept-invite]
+verify_jwt = false
+
