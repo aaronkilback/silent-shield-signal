@@ -16,7 +16,48 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
 
-    // Get user from auth header
+    // Parse request body first to check for peek mode
+    const { token, peek } = await req.json();
+    if (!token) {
+      return new Response(
+        JSON.stringify({ error: 'Token is required' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Hash the token to compare with stored hash
+    const encoder = new TextEncoder();
+    const data = encoder.encode(token);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const tokenHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+    // Use service role to bypass RLS for invite validation
+    const adminClient = createClient(supabaseUrl, supabaseServiceKey);
+
+    // For peek mode, just return the invite email without requiring auth
+    if (peek) {
+      const { data: peekInvite } = await adminClient
+        .from('tenant_invites')
+        .select('email, tenants(name)')
+        .eq('token_hash', tokenHash)
+        .is('used_at', null)
+        .single();
+
+      if (peekInvite) {
+        const tenantData = peekInvite.tenants as unknown as { name: string } | null;
+        return new Response(
+          JSON.stringify({ invite_email: peekInvite.email, tenant_name: tenantData?.name }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      return new Response(
+        JSON.stringify({ error: 'Invite not found' }),
+        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Get user from auth header for actual acceptance
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(
@@ -38,26 +79,7 @@ serve(async (req) => {
       );
     }
 
-    // Parse request body
-    const { token } = await req.json();
-    if (!token) {
-      return new Response(
-        JSON.stringify({ error: 'Token is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Hash the token to compare with stored hash
-    const encoder = new TextEncoder();
-    const data = encoder.encode(token);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const tokenHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
-    // Use service role to bypass RLS for invite validation
-    const adminClient = createClient(supabaseUrl, supabaseServiceKey);
-
-    // Find the invite
+    // adminClient already created above
     const { data: invite, error: inviteError } = await adminClient
       .from('tenant_invites')
       .select('*, tenants(name)')

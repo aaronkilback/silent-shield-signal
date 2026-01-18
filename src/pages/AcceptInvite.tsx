@@ -17,8 +17,27 @@ export default function AcceptInvite() {
   const [status, setStatus] = useState<'loading' | 'success' | 'error' | 'needs-auth'>('loading');
   const [message, setMessage] = useState('');
   const [tenantName, setTenantName] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState<string | null>(null);
 
   const token = searchParams.get('token');
+
+  // Fetch invite details to show which email it's for
+  const fetchInviteDetails = async () => {
+    if (!token) return;
+    
+    try {
+      // We'll peek at the invite to get the email (this is a lightweight check)
+      const { data, error } = await supabase.functions.invoke('accept-invite', {
+        body: { token, peek: true }
+      });
+      
+      if (data?.invite_email) {
+        setInviteEmail(data.invite_email);
+      }
+    } catch {
+      // Ignore errors - this is just for UX improvement
+    }
+  };
 
   useEffect(() => {
     if (authLoading) return;
@@ -31,7 +50,8 @@ export default function AcceptInvite() {
 
     if (!user || !session) {
       setStatus('needs-auth');
-      setMessage('Please sign in to accept this invitation');
+      setMessage('Please sign in or create an account to accept this invitation');
+      fetchInviteDetails();
       return;
     }
 
@@ -179,11 +199,19 @@ export default function AcceptInvite() {
 
           {status === 'needs-auth' && (
             <div className="space-y-4">
+              {inviteEmail && (
+                <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg text-center">
+                  <p className="text-xs text-muted-foreground mb-1">Invitation sent to:</p>
+                  <p className="font-medium text-sm">{inviteEmail}</p>
+                </div>
+              )}
               <p className="text-center text-sm text-muted-foreground">
-                You need to sign in or create an account to accept this invitation.
+                {inviteEmail 
+                  ? `Please sign up or sign in with the email address above to accept this invitation.`
+                  : 'You need to sign in or create an account to accept this invitation.'}
               </p>
               <Button onClick={handleGoToAuth} className="w-full">
-                Sign In / Sign Up
+                Sign Up / Sign In
               </Button>
             </div>
           )}

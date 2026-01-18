@@ -58,7 +58,9 @@ const Auth = () => {
   const [searchParams] = useSearchParams();
   const inviteToken = searchParams.get("invite");
   
-  const [isLogin, setIsLogin] = useState(!inviteToken); // Default to signup if invite token present
+  // Check if coming from tenant invite flow - default to signup
+  const hasTenantInviteRedirect = typeof window !== 'undefined' && sessionStorage.getItem('invite_redirect');
+  const [isLogin, setIsLogin] = useState(!inviteToken && !hasTenantInviteRedirect); // Default to signup if invite
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -157,7 +159,13 @@ const Auth = () => {
           navigate("/");
         }
       } else if (session && event === "USER_UPDATED") {
-        // This can happen after signup confirmation
+        // This can happen after signup confirmation - check for invite redirect
+        const inviteRedirect = sessionStorage.getItem('invite_redirect');
+        if (inviteRedirect) {
+          sessionStorage.removeItem('invite_redirect');
+          window.location.href = inviteRedirect;
+          return;
+        }
         navigate("/");
       }
     });
