@@ -8,9 +8,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Building2, Globe, Loader2 } from "lucide-react";
+import { Building2, Loader2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useTenant } from "@/hooks/useTenant";
 
 interface Client {
   id: string;
@@ -23,7 +22,6 @@ export const ClientSelector = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
-  const { currentTenant, isAllTenantsView, getFilterTenantIds } = useTenant();
 
   useEffect(() => {
     fetchClients();
@@ -47,23 +45,14 @@ export const ClientSelector = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentTenant?.id, isAllTenantsView]);
+  }, []);
 
   const fetchClients = async () => {
     try {
-      let query = supabase
+      const { data, error } = await supabase
         .from("clients")
-        .select("id, name, organization, status, tenant_id")
+        .select("id, name, organization, status")
         .order("name", { ascending: true });
-
-      // Apply tenant filtering based on view mode
-      const tenantIds = getFilterTenantIds();
-      if (tenantIds !== null && tenantIds.length > 0) {
-        query = query.in("tenant_id", tenantIds);
-      }
-      // If tenantIds is null (All Tenants view), no filter applied - shows everything
-
-      const { data, error } = await query;
 
       if (error) throw error;
       setClients(data || []);
@@ -83,7 +72,6 @@ export const ClientSelector = () => {
       </Card>
     );
   }
-
 
   if (clients.length === 0) {
     return (
@@ -107,17 +95,9 @@ export const ClientSelector = () => {
         <CardTitle className="flex items-center gap-2">
           <Building2 className="w-5 h-5" />
           Select Client
-          {isAllTenantsView && (
-            <span className="text-sm font-normal text-primary flex items-center gap-1">
-              <Globe className="w-3 h-3" /> All Tenants
-            </span>
-          )}
         </CardTitle>
         <CardDescription>
-          {isAllTenantsView 
-            ? "Viewing clients across all tenants"
-            : "Choose a client to view their details and reports"
-          }
+          Choose a client to view their details and reports
         </CardDescription>
       </CardHeader>
       <CardContent>

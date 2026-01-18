@@ -17,7 +17,7 @@ import { DeleteIncidentDialog } from "@/components/DeleteIncidentDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { DashboardClientSelector } from "@/components/DashboardClientSelector";
-import { useTenant } from "@/hooks/useTenant";
+
 
 interface Incident {
   id: string;
@@ -44,7 +44,7 @@ const Incidents = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { selectedClientId } = useClientSelection();
-  const { currentTenant, isAllTenantsView, getFilterTenantIds } = useTenant();
+  
   const [searchParams, setSearchParams] = useSearchParams();
   
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -74,13 +74,9 @@ const Incidents = () => {
         setLoading(true);
         let query = supabase
           .from("incidents")
-          .select("*, clients(name, tenant_id)")
+          .select("*, clients(name)")
           .is("deleted_at", null) // Filter out soft-deleted incidents
           .order("opened_at", { ascending: false });
-
-        // Apply tenant filtering based on view mode
-        const tenantIds = getFilterTenantIds();
-        // Note: We filter after fetching since we need to join with clients
 
         if (selectedClientId) {
           query = query.eq("client_id", selectedClientId);
@@ -96,14 +92,7 @@ const Incidents = () => {
 
         if (error) throw error;
         
-        // Filter by tenant IDs (unless "All Tenants" view is active - tenantIds will be null)
-        const filtered = tenantIds !== null
-          ? (data || []).filter((inc: any) => 
-              inc.clients?.tenant_id && tenantIds.includes(inc.clients.tenant_id)
-            )
-          : (data || []);
-        
-        setIncidents(filtered as Incident[]);
+        setIncidents((data || []) as Incident[]);
       } catch (error) {
         console.error("Error loading incidents:", error);
         toast({
@@ -137,7 +126,7 @@ const Incidents = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, selectedClientId, currentTenant?.id, isAllTenantsView, statusFilter, priorityFilter, toast, reloadTrigger]);
+  }, [user, selectedClientId, statusFilter, priorityFilter, toast, reloadTrigger]);
 
   // Auto-open incident from URL parameter (e.g., from investigation page)
   useEffect(() => {
