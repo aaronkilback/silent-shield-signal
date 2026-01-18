@@ -1286,21 +1286,42 @@ How can I help you now?`,
                       </div>
                     )}
                     {/* Voice status indicator */}
-                    {isVoiceActive && !voiceTranscript && !voiceAgentResponse && (
+                    {isVoiceActive && (
                       <div className="flex justify-center animate-fade-in">
                         <div className="rounded-lg p-3 bg-primary/5 border border-primary/20">
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <div className="flex gap-1">
-                              <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{animationDelay: '0ms'}} />
-                              <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{animationDelay: '150ms'}} />
-                              <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{animationDelay: '300ms'}} />
-                            </div>
-                            <span>
-                              {voiceStatus === 'connecting' && 'Connecting...'}
-                              {voiceStatus === 'connected' && 'Listening...'}
-                              {voiceStatus === 'listening' && 'Listening...'}
-                              {voiceStatus === 'speaking' && 'Aegis is speaking...'}
-                            </span>
+                            {voiceStatus === 'connecting' && (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                                <span>Connecting to Aegis...</span>
+                              </>
+                            )}
+                            {voiceStatus === 'connected' && (
+                              <>
+                                <div className="flex gap-1">
+                                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                                </div>
+                                <span>Connected - speak now</span>
+                              </>
+                            )}
+                            {voiceStatus === 'listening' && (
+                              <>
+                                <Mic className="w-4 h-4 text-primary animate-pulse" />
+                                <span>Hearing you...</span>
+                              </>
+                            )}
+                            {voiceStatus === 'speaking' && (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                                <span>Aegis is responding...</span>
+                              </>
+                            )}
+                            {voiceStatus === 'idle' && (
+                              <>
+                                <span className="w-2 h-2 bg-muted-foreground rounded-full" />
+                                <span>Disconnected</span>
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>
