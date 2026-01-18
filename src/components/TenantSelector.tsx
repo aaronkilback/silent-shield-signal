@@ -59,13 +59,14 @@ export function TenantSelector() {
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-[220px] justify-between"
+          className="w-auto max-w-[180px] justify-between"
+          size="sm"
         >
-          <div className="flex items-center gap-2 truncate">
-            <Building2 className="h-4 w-4 shrink-0" />
-            <span className="truncate">{currentTenant?.name || "Select tenant..."}</span>
+          <div className="flex items-center gap-1.5 truncate">
+            <Building2 className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate text-sm">{currentTenant?.name || "Tenant..."}</span>
           </div>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          <ChevronsUpDown className="ml-1.5 h-3.5 w-3.5 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[220px] p-0">

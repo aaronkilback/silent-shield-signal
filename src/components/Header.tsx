@@ -48,13 +48,13 @@ export const Header = () => {
   // Primary nav items (always visible)
   const primaryItems = [
     { path: "/", icon: Home, label: "Dashboard" },
-    { path: "/threat-radar", icon: Radar, label: "Threat Radar" },
     { path: "/signals", icon: Radio, label: "Signals" },
     { path: "/incidents", icon: AlertTriangle, label: "Incidents" },
   ];
 
   // Intelligence dropdown items
   const intelligenceItems = [
+    { path: "/threat-radar", icon: Radar, label: "Threat Radar" },
     { path: "/investigations", icon: ClipboardList, label: "Investigations", matchPrefix: true },
     { path: "/entities", icon: Users, label: "Entities", badge: pendingSuggestions },
     { path: "/sources", icon: Database, label: "Sources" },
@@ -72,14 +72,16 @@ export const Header = () => {
     { path: "/clients", icon: Building2, label: "Clients" },
   ];
 
-  // Admin dropdown items
+  // Admin dropdown items (consolidated)
   const adminItems = [
     { path: "/integrations", icon: Plug, label: "Integrations" },
     { path: "/rule-approvals", icon: CheckCircle, label: "Rules" },
     { path: "/bug-reports", icon: Bug, label: "Bugs" },
     ...((isSuperAdmin || isAdmin) ? [{ path: "/user-management", icon: UserCog, label: "Users" }] : []),
-    ...(isSuperAdmin ? [{ path: "/super-admin", icon: Shield, label: "Super Admin" }] : []),
-    ...(isSuperAdmin ? [{ path: "/tenant-admin", icon: Building2, label: "Tenant Settings" }] : []),
+    ...(isSuperAdmin ? [
+      { path: "/super-admin", icon: Shield, label: "Super Admin" },
+      { path: "/tenant-admin", icon: Building2, label: "Tenant Settings" },
+    ] : []),
   ];
 
   // All items for mobile
@@ -182,18 +184,19 @@ export const Header = () => {
 
           {/* Desktop Navigation */}
           {!isMobile && (
-            <div className="flex items-center gap-2 lg:gap-3">
-              <nav className="flex items-center gap-1">
-                {/* Primary items */}
+            <div className="flex items-center gap-1 lg:gap-2 flex-wrap justify-end">
+              <nav className="flex items-center gap-0.5 lg:gap-1">
+                {/* Primary items - icons only on medium screens */}
                 {primaryItems.map((item) => (
                   <Button
                     key={item.path}
                     onClick={() => navigate(item.path)}
                     variant={isActive(item) ? "default" : "ghost"}
                     size="sm"
+                    className="px-2 lg:px-3"
                   >
-                    <item.icon className="w-4 h-4 lg:mr-2" />
-                    <span className="hidden lg:inline">{item.label}</span>
+                    <item.icon className="w-4 h-4 lg:mr-1.5" />
+                    <span className="hidden xl:inline text-sm">{item.label}</span>
                   </Button>
                 ))}
                 
@@ -203,10 +206,10 @@ export const Header = () => {
                 <NavDropdown label="Admin" icon={Settings} items={adminItems} />
               </nav>
 
-              <div className="flex items-center gap-2 ml-2 pl-2 border-l border-border">
+              <div className="flex items-center gap-1 lg:gap-2 ml-1 lg:ml-2 pl-1 lg:pl-2 border-l border-border">
                 <TenantSelector />
                 <EntityNotifications />
-                <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary/50">
+                <div className="hidden 2xl:flex items-center gap-2 px-2 py-1.5 rounded-lg bg-secondary/50">
                   <Activity className="w-3.5 h-3.5 text-status-active animate-pulse" />
                   <span className="text-xs text-foreground font-medium">Online</span>
                 </div>
@@ -215,7 +218,7 @@ export const Header = () => {
                   variant="ghost"
                   size="sm"
                   onClick={signOut}
-                  className="text-muted-foreground hover:text-foreground"
+                  className="text-muted-foreground hover:text-foreground px-2"
                 >
                   <LogOut className="w-4 h-4" />
                 </Button>
