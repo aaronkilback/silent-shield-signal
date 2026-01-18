@@ -39,7 +39,8 @@ export function VoiceConversationOverlay({
     isAgentSpeaking,
     connect,
     disconnect,
-    isConnected
+    isConnected,
+    setOutputMuted,
   } = useOpenAIRealtime({
     agentContext,
     conversationHistory,
@@ -55,6 +56,12 @@ export function VoiceConversationOverlay({
       setCurrentText(prev => prev + delta);
     },
     onError: (error) => {
+      // Autoplay is commonly blocked until first user gesture
+      if (error.includes('Audio playback blocked')) {
+        setStatusMessage('Tap once to enable audio.');
+        return;
+      }
+
       if (error.includes('microphone') || error.includes('Microphone')) {
         setStatusMessage("Can't access microphone. Check permissions.");
       } else {
@@ -162,23 +169,27 @@ export function VoiceConversationOverlay({
         </span>
       </div>
 
-      {/* Top right controls */}
-      <div className="absolute top-4 right-6 flex items-center gap-4 z-20">
-        <button
-          onClick={() => setIsMuted(!isMuted)}
-          className="flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors text-sm"
-        >
-          <MicOff className="w-4 h-4" />
-          <span>Mute</span>
-        </button>
-        <button
-          onClick={handleRestart}
-          className="flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors text-sm"
-        >
-          <RotateCcw className="w-4 h-4" />
-          <span>Restart</span>
-        </button>
-      </div>
+       {/* Top right controls */}
+       <div className="absolute top-4 right-6 flex items-center gap-4 z-20">
+         <button
+           onClick={() => {
+             const next = !isMuted;
+             setIsMuted(next);
+             setOutputMuted(next);
+           }}
+           className="flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors text-sm"
+         >
+           {isMuted ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+           <span>{isMuted ? 'Unmute' : 'Mute'}</span>
+         </button>
+         <button
+           onClick={handleRestart}
+           className="flex items-center gap-2 text-slate-400 hover:text-slate-200 transition-colors text-sm"
+         >
+           <RotateCcw className="w-4 h-4" />
+           <span>Restart</span>
+         </button>
+       </div>
 
       {/* Close button (X) - top left */}
       <button
