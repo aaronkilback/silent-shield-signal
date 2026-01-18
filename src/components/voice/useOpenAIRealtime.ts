@@ -21,16 +21,74 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
+  const connectTimeoutRef = useRef<number | null>(null);
 
   const updateStatus = useCallback((newStatus: typeof status) => {
     setStatus(newStatus);
     options.onStatusChange?.(newStatus);
   }, [options]);
 
+  const disconnect = useCallback(() => {
+    console.log('Disconnecting...');
+
+    if (connectTimeoutRef.current) {
+      window.clearTimeout(connectTimeoutRef.current);
+      connectTimeoutRef.current = null;
+    }
+
+    // Close data channel
+    if (dcRef.current) {
+      dcRef.current.close();
+      dcRef.current = null;
+    }
+
+    // Close peer connection
+    if (pcRef.current) {
+      pcRef.current.close();
+      pcRef.current = null;
+    }
+
+    // Stop media stream
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+    }
+
+    // Clean up audio element
+    if (audioElementRef.current) {
+      audioElementRef.current.pause?.();
+      audioElementRef.current.srcObject = null;
+      audioElementRef.current.remove();
+      audioElementRef.current = null;
+    }
+
+    // Close audio context
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+
+    setTranscript('');
+    setAgentResponse('');
+    setIsAgentSpeaking(false);
+    updateStatus('idle');
+  }, [updateStatus]);
+
   const connect = useCallback(async () => {
     try {
+      // getUserMedia + autoplay often require user gesture on some browsers,
+      // so if connect is called without a click/tap it may fail.
       updateStatus('connecting');
       console.log('Requesting ephemeral token...');
+
+      if (connectTimeoutRef.current) {
+        window.clearTimeout(connectTimeoutRef.current);
+      }
+      connectTimeoutRef.current = window.setTimeout(() => {
+        console.warn('Realtime voice connection timed out');
+        options.onError?.('Voice connection timed out. Tap mic to try again.');
+        disconnect();
+      }, 15000);
 
       // Get ephemeral token from our edge function
       const { data: tokenData, error: tokenError } = await supabase.functions.invoke('openai-realtime-token', {
@@ -50,6 +108,21 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       // Create RTCPeerConnection
       const pc = new RTCPeerConnection();
       pcRef.current = pc;
+
+      pc.oniceconnectionstatechange = () => {
+        console.log('ICE state:', pc.iceConnectionState);
+        if (pc.iceConnectionState === 'failed') {
+          options.onError?.('Voice connection failed (ICE).');
+          disconnect();
+        }
+      };
+      pc.onconnectionstatechange = () => {
+        console.log('Peer connection state:', pc.connectionState);
+        if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+          options.onError?.('Voice connection lost.');
+          disconnect();
+        }
+      };
 
       // Set up audio element for playback
       const audioEl = document.createElement('audio');
@@ -99,6 +172,10 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
       dc.onopen = () => {
         console.log('Data channel opened');
+        if (connectTimeoutRef.current) {
+          window.clearTimeout(connectTimeoutRef.current);
+          connectTimeoutRef.current = null;
+        }
         updateStatus('connected');
       };
 
@@ -147,12 +224,16 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       console.log('WebRTC connection established!');
 
     } catch (error) {
+      if (connectTimeoutRef.current) {
+        window.clearTimeout(connectTimeoutRef.current);
+        connectTimeoutRef.current = null;
+      }
       console.error('Connection error:', error);
       options.onError?.(error instanceof Error ? error.message : 'Connection failed');
       updateStatus('idle');
       disconnect();
     }
-  }, [options, updateStatus]);
+  }, [options, updateStatus, disconnect]);
 
   const handleRealtimeEvent = useCallback((event: Record<string, unknown>) => {
     console.log('Realtime event:', event.type, event);
@@ -229,46 +310,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     }
   }, [options, updateStatus]);
 
-  const disconnect = useCallback(() => {
-    console.log('Disconnecting...');
+  // disconnect is defined above to allow connect() to reference it safely.
 
-    // Close data channel
-    if (dcRef.current) {
-      dcRef.current.close();
-      dcRef.current = null;
-    }
-
-    // Close peer connection
-    if (pcRef.current) {
-      pcRef.current.close();
-      pcRef.current = null;
-    }
-
-    // Stop media stream
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(track => track.stop());
-      mediaStreamRef.current = null;
-    }
-
-    // Clean up audio element
-    if (audioElementRef.current) {
-      audioElementRef.current.pause?.();
-      audioElementRef.current.srcObject = null;
-      audioElementRef.current.remove();
-      audioElementRef.current = null;
-    }
-
-    // Close audio context
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-
-    setTranscript('');
-    setAgentResponse('');
-    setIsAgentSpeaking(false);
-    updateStatus('idle');
-  }, [updateStatus]);
 
   const sendTextMessage = useCallback((text: string) => {
     if (dcRef.current?.readyState !== 'open') {
