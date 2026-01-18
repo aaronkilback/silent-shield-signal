@@ -78,7 +78,8 @@ export const Header = () => {
     { path: "/rule-approvals", icon: CheckCircle, label: "Rules" },
     { path: "/bug-reports", icon: Bug, label: "Bugs" },
     ...((isSuperAdmin || isAdmin) ? [{ path: "/user-management", icon: UserCog, label: "Users" }] : []),
-    ...(isSuperAdmin ? [{ path: "/tenant-admin", icon: Building2, label: "Tenants" }] : []),
+    ...(isSuperAdmin ? [{ path: "/super-admin", icon: Shield, label: "Super Admin" }] : []),
+    ...(isSuperAdmin ? [{ path: "/tenant-admin", icon: Building2, label: "Tenant Settings" }] : []),
   ];
 
   // All items for mobile
