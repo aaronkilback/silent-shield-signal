@@ -10002,6 +10002,84 @@ ${tenantKnowledge.map(k => `[${k.knowledge_type?.toUpperCase() || 'CONTEXT'}]${k
 
     // Limit incoming messages to prevent token overflow
     const limitedMessages = limitMessageHistory(messages, 12);
+    
+    // Detect simple acknowledgment messages that don't need full processing
+    const isSimpleAcknowledgment = (msgs: any[]): boolean => {
+      if (msgs.length === 0) return false;
+      const lastUserMessage = msgs.filter((m: any) => m.role === 'user').pop();
+      if (!lastUserMessage) return false;
+      
+      const content = typeof lastUserMessage.content === 'string' 
+        ? lastUserMessage.content.trim().toLowerCase() 
+        : '';
+      
+      // Common acknowledgment patterns (short messages, 1-5 words)
+      const acknowledgmentPatterns = [
+        /^(ok|okay|k|kk)$/i,
+        /^(ok|okay)\s+(great|good|thanks|thank you|cool|perfect|sounds good|got it|understood)$/i,
+        /^(great|good|thanks|thank you|cool|perfect|awesome|nice|excellent|wonderful)$/i,
+        /^(sounds good|got it|understood|roger|copy|noted|alright|all right|right)$/i,
+        /^(yes|yeah|yep|yup|sure|certainly|of course|absolutely)$/i,
+        /^(no problem|no worries|np|nw)$/i,
+        /^(will do|sure thing|makes sense|fair enough)$/i,
+        /^(i see|i understand|that makes sense)$/i,
+        /^(👍|👌|🙌|✅|💯|🎉|😊|🤝|⭐|✨)+$/,
+        /^(ok|okay|great|good|thanks)[\s!.]*$/i,
+      ];
+      
+      // Only check messages that are very short (under 50 chars) 
+      if (content.length > 50) return false;
+      
+      return acknowledgmentPatterns.some(pattern => pattern.test(content));
+    };
+    
+    // Handle simple acknowledgments with a fast, contextual response
+    if (isSimpleAcknowledgment(limitedMessages)) {
+      console.log("Detected simple acknowledgment message, using fast response path");
+      
+      // Use lightweight AI call with minimal context for simple ack
+      const ackResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash-lite",
+          messages: [
+            {
+              role: "system",
+              content: `You are Aegis, a helpful security intelligence AI assistant. The user just sent a simple acknowledgment message (like "ok great", "thanks", "got it", etc.).
+
+CRITICAL RULES:
+1. Respond BRIEFLY and NATURALLY - just 1-2 short sentences
+2. DO NOT provide system summaries, status reports, or data overviews
+3. DO NOT call any tools or query data
+4. Simply acknowledge their acknowledgment in a warm, professional way
+5. If appropriate, offer to help with anything else
+
+Examples of good responses:
+- "Perfect! Let me know if you need anything else."
+- "Sounds good! I'm here if you have more questions."
+- "Great! Standing by if you need me."
+- "👍 Happy to help anytime."
+
+The user's message is just a conversational acknowledgment - respond in kind, don't launch into analysis.`
+            },
+            ...limitedMessages.slice(-4), // Only last few messages for context
+          ],
+          stream: true,
+        }),
+      }, 10000); // Shorter timeout for simple responses
+      
+      if (ackResponse.ok) {
+        return new Response(ackResponse.body, {
+          headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+        });
+      }
+      // If fast path fails, fall through to normal processing
+      console.log("Fast acknowledgment response failed, falling back to normal processing");
+    }
 
     // Process messages to extract file attachments and format for vision
     const processedMessages = await Promise.all(
