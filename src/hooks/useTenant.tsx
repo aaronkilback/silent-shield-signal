@@ -171,24 +171,21 @@ export function TenantProvider({ children }: { children: ReactNode }) {
   };
 
   // Helper function to get tenant IDs for filtering
-  // Returns null when "All Tenants" view is active (meaning no filter - show all)
-  // Returns empty array [] when super admin has no selection (show no data)
-  // Returns [tenantId] when specific tenant selected
-  // Returns all user's tenant IDs for regular users with no specific selection
+  // Returns null when "All Tenants" view is active (meaning no filter - show all data)
+  // Returns [tenantId] when specific tenant selected (including other tenants for super admin)
+  // Returns all user's own tenant IDs by default (shows their own data, not other tenants')
   const getFilterTenantIds = (): string[] | null => {
     if (isAllTenantsView) {
-      return null; // No filter - show all
-    }
-    
-    if (isSuperAdmin && !hasTenantSelection) {
-      return []; // Super admin with no selection - show nothing
+      return null; // No filter - show all (super admin only)
     }
     
     if (currentTenant) {
-      return [currentTenant.id]; // Filter to specific tenant
+      return [currentTenant.id]; // Filter to specific selected tenant
     }
     
-    // Default for regular users: filter to all user's tenants
+    // Default: show data from user's own tenants (the ones they belong to)
+    // This ensures super admins see their own clients (Dan Martell, Petronas, RDOS, etc.)
+    // but not other tenants' data unless they explicitly select them
     return tenants.map(t => t.id);
   };
 
