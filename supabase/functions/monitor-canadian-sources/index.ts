@@ -11,6 +11,21 @@ interface Client {
   name: string;
   industry: string | null;
   locations: string[] | null;
+  monitoring_keywords?: string[] | null;
+  competitor_names?: string[] | null;
+  supply_chain_entities?: string[] | null;
+  monitoring_config?: {
+    min_relevance_score: number;
+    auto_create_incidents: boolean;
+    priority_keywords: string[];
+    exclude_keywords: string[];
+  } | null;
+}
+
+interface RelevanceMatch {
+  score: number;
+  reasons: string[];
+  matchType: string[];
 }
 
 serve(async (req) => {
@@ -18,15 +33,30 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const supabaseClient = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  );
+
+  // Create monitoring history entry
+  const { data: historyEntry, error: historyError } = await supabaseClient
+    .from('monitoring_history')
+    .insert({
+      source_name: 'Canadian Sources Enhanced',
+      status: 'running',
+      scan_metadata: { sources: ['RCMP Gazette', 'BC Energy Regulator'] }
+    })
+    .select()
+    .single();
+
+  if (historyError) {
+    console.error('Failed to create monitoring history:', historyError);
+  }
+
   try {
-    console.log('Starting Canadian sources monitoring scan');
+    console.log('Starting Canadian sources monitoring scan with enhanced relevance scoring');
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
-
-    // Fetch all clients
+    // Fetch all clients with monitoring config
     const { data: clients, error: clientsError } = await supabaseClient
       .from('clients')
       .select('*');
@@ -44,19 +74,27 @@ serve(async (req) => {
       const rcmpItems = parseRSS(rcmpText);
       
       for (const item of rcmpItems.slice(0, 10)) {
-        const matchedClients = findMatchingClients(clients, item.title + ' ' + item.description);
-        for (const client of matchedClients) {
-          await createSignal(supabaseClient, {
-            client_id: client.id,
-            source: 'RCMP Gazette',
-            category: 'threat-intelligence',
-            severity: determineSeverity(item.title + ' ' + item.description),
-            title: item.title,
-            description: item.description,
-            url: item.link,
-            published_date: item.pubDate
-          });
-          signalsCreated++;
+        const content = item.title + ' ' + item.description;
+        
+        for (const client of clients) {
+          const match = calculateRelevance(client, content, 'RCMP Gazette');
+          
+          // Lower threshold to catch more potential signals (was 50)
+          if (match.score >= (client.monitoring_config?.min_relevance_score || 35)) {
+            await createSignal(supabaseClient, {
+              client_id: client.id,
+              source: 'RCMP Gazette',
+              category: 'threat-intelligence',
+              severity: determineSeverity(content, match.score),
+              title: item.title,
+              description: item.description,
+              url: item.link,
+              published_date: item.pubDate,
+              relevance_score: match.score,
+              relevance_reasons: match.reasons
+            });
+            signalsCreated++;
+          }
         }
       }
       sources.push('RCMP Gazette');
@@ -64,38 +102,7 @@ serve(async (req) => {
       console.error('Error monitoring RCMP:', error);
     }
 
-    // 2. DriveBC Alerts
-    try {
-      console.log('Monitoring DriveBC alerts...');
-      const driveBcResponse = await fetch('https://api.open511.gov.bc.ca/events?format=json&status=ACTIVE');
-      const driveBcData = await driveBcResponse.json();
-      
-      for (const event of (driveBcData.events || []).slice(0, 20)) {
-        const description = `${event.headline || ''} - ${event.description || ''}`;
-        const location = event.geography?.coordinates || event.roads?.[0]?.name || 'BC';
-        
-        const matchedClients = findMatchingClientsByLocation(clients, location);
-        for (const client of matchedClients) {
-          await createSignal(supabaseClient, {
-            client_id: client.id,
-            source: 'DriveBC',
-            category: 'operational-risk',
-            severity: event.severity || 'medium',
-            title: event.headline || 'DriveBC Alert',
-            description: description,
-            location: location,
-            url: `https://drivebc.ca/`,
-            published_date: event.created || new Date().toISOString()
-          });
-          signalsCreated++;
-        }
-      }
-      sources.push('DriveBC');
-    } catch (error) {
-      console.error('Error monitoring DriveBC:', error);
-    }
-
-    // 3. BC Energy Regulator Bulletins
+    // 2. BC Energy Regulator Bulletins
     try {
       console.log('Monitoring BC Energy Regulator...');
       const bcerResponse = await fetch('https://www.bc-er.ca/feed/');
@@ -103,19 +110,27 @@ serve(async (req) => {
       const bcerItems = parseRSS(bcerText);
       
       for (const item of bcerItems.slice(0, 10)) {
-        const matchedClients = findMatchingClients(clients, item.title + ' ' + item.description, ['energy', 'oil', 'gas']);
-        for (const client of matchedClients) {
-          await createSignal(supabaseClient, {
-            client_id: client.id,
-            source: 'BC Energy Regulator',
-            category: 'regulatory',
-            severity: determineSeverity(item.title),
-            title: item.title,
-            description: item.description,
-            url: item.link,
-            published_date: item.pubDate
-          });
-          signalsCreated++;
+        const content = item.title + ' ' + item.description;
+        
+        for (const client of clients) {
+          const match = calculateRelevance(client, content, 'BC Energy Regulator');
+          
+          // Lower threshold to catch more potential signals (was 50)
+          if (match.score >= (client.monitoring_config?.min_relevance_score || 35)) {
+            await createSignal(supabaseClient, {
+              client_id: client.id,
+              source: 'BC Energy Regulator',
+              category: 'regulatory',
+              severity: determineSeverity(content, match.score),
+              title: item.title,
+              description: item.description,
+              url: item.link,
+              published_date: item.pubDate,
+              relevance_score: match.score,
+              relevance_reasons: match.reasons
+            });
+            signalsCreated++;
+          }
         }
       }
       sources.push('BC Energy Regulator');
@@ -123,70 +138,190 @@ serve(async (req) => {
       console.error('Error monitoring BC Energy Regulator:', error);
     }
 
-    // 4. Peace River Regional District
-    try {
-      console.log('Monitoring Peace River Regional District...');
-      const prrdResponse = await fetch('https://www.prrd.bc.ca/feed/');
-      const prrdText = await prrdResponse.text();
-      const prrdItems = parseRSS(prrdText);
-      
-      for (const item of prrdItems.slice(0, 10)) {
-        const matchedClients = findMatchingClientsByLocation(clients, 'Peace River');
-        for (const client of matchedClients) {
-          await createSignal(supabaseClient, {
-            client_id: client.id,
-            source: 'Peace River Regional District',
-            category: 'regional-alert',
-            severity: determineSeverity(item.title),
-            title: item.title,
-            description: item.description,
-            url: item.link,
-            published_date: item.pubDate
-          });
-          signalsCreated++;
-        }
-      }
-      sources.push('Peace River Regional District');
-    } catch (error) {
-      console.error('Error monitoring PRRD:', error);
-    }
-
-    // 5. Glassdoor (company reviews - using search)
-    try {
-      console.log('Monitoring Glassdoor reviews...');
-      for (const client of clients) {
-        try {
-          // Note: Glassdoor doesn't have a public API, so this is a placeholder
-          // In production, you'd need to use a third-party service or web scraping
-          console.log(`Would check Glassdoor for: ${client.name}`);
-        } catch (error) {
-          console.error(`Error checking Glassdoor for ${client.name}:`, error);
-        }
-      }
-    } catch (error) {
-      console.error('Error monitoring Glassdoor:', error);
-    }
-
     console.log(`Canadian sources monitoring complete. Created ${signalsCreated} signals from sources: ${sources.join(', ')}`);
+
+    // Update monitoring history with success
+    if (historyEntry) {
+      await supabaseClient
+        .from('monitoring_history')
+        .update({
+          status: 'completed',
+          scan_completed_at: new Date().toISOString(),
+          items_scanned: sources.length,
+          signals_created: signalsCreated,
+          scan_metadata: { sources, details: `Scanned ${sources.length} sources` }
+        })
+        .eq('id', historyEntry.id);
+    }
 
     return new Response(
       JSON.stringify({
         success: true,
-        message: `Scanned ${sources.length} Canadian sources`,
+        message: `Scanned ${sources.length} Canadian sources with enhanced relevance scoring`,
         signalsCreated,
-        sources
+        sources,
+        historyId: historyEntry?.id
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
     console.error('Canadian sources monitoring error:', error);
+    
+    // Update monitoring history with failure
+    if (historyEntry) {
+      await supabaseClient
+        .from('monitoring_history')
+        .update({
+          status: 'failed',
+          scan_completed_at: new Date().toISOString(),
+          error_message: error instanceof Error ? error.message : 'Unknown error'
+        })
+        .eq('id', historyEntry.id);
+    }
+
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });
+
+// Enhanced relevance calculation with scoring
+function calculateRelevance(client: Client, content: string, source: string): RelevanceMatch {
+  const lowerContent = content.toLowerCase();
+  let score = 0;
+  const reasons: string[] = [];
+  const matchType: string[] = [];
+
+  // Check for exclude keywords first (immediate disqualification)
+  if (client.monitoring_config?.exclude_keywords) {
+    for (const keyword of client.monitoring_config.exclude_keywords) {
+      if (lowerContent.includes(keyword.toLowerCase())) {
+        return { score: 0, reasons: [`Excluded by keyword: ${keyword}`], matchType: ['excluded'] };
+      }
+    }
+  }
+
+  // 1. Direct client name match (40 points)
+  if (lowerContent.includes(client.name.toLowerCase())) {
+    score += 40;
+    reasons.push(`Direct mention of ${client.name}`);
+    matchType.push('name');
+  }
+
+  // 2. Custom monitoring keywords (30 points max, 5 per match, max 6 matches)
+  if (client.monitoring_keywords && client.monitoring_keywords.length > 0) {
+    let keywordMatches = 0;
+    const matchedKeywords: string[] = [];
+    
+    for (const keyword of client.monitoring_keywords) {
+      if (lowerContent.includes(keyword.toLowerCase())) {
+        keywordMatches++;
+        matchedKeywords.push(keyword);
+        if (keywordMatches <= 6) {
+          score += 5;
+        }
+      }
+    }
+    
+    if (keywordMatches > 0) {
+      reasons.push(`Matched ${keywordMatches} custom keywords: ${matchedKeywords.slice(0, 3).join(', ')}${matchedKeywords.length > 3 ? '...' : ''}`);
+      matchType.push('keywords');
+    }
+  }
+
+  // 3. Priority keywords (20 points, critical issues)
+  if (client.monitoring_config?.priority_keywords) {
+    let priorityMatches = 0;
+    const matchedPriority: string[] = [];
+    
+    for (const keyword of client.monitoring_config.priority_keywords) {
+      if (lowerContent.includes(keyword.toLowerCase())) {
+        priorityMatches++;
+        matchedPriority.push(keyword);
+      }
+    }
+    
+    if (priorityMatches > 0) {
+      score += 20;
+      reasons.push(`High-priority keywords matched: ${matchedPriority.join(', ')}`);
+      matchType.push('priority');
+    }
+  }
+
+  // 4. Industry match (15 points)
+  if (client.industry && lowerContent.includes(client.industry.toLowerCase())) {
+    score += 15;
+    reasons.push(`Industry match: ${client.industry}`);
+    matchType.push('industry');
+  }
+
+  // 5. Location match (15 points)
+  if (client.locations) {
+    let locationMatches = 0;
+    const matchedLocations: string[] = [];
+    
+    for (const location of client.locations) {
+      if (lowerContent.includes(location.toLowerCase())) {
+        locationMatches++;
+        matchedLocations.push(location);
+      }
+    }
+    
+    if (locationMatches > 0) {
+      score += 15;
+      reasons.push(`Location match: ${matchedLocations.join(', ')}`);
+      matchType.push('location');
+    }
+  }
+
+  // 6. Competitor mentions (10 points) - indirect relevance
+  if (client.competitor_names && client.competitor_names.length > 0) {
+    let competitorMatches = 0;
+    const matchedCompetitors: string[] = [];
+    
+    for (const competitor of client.competitor_names) {
+      if (lowerContent.includes(competitor.toLowerCase())) {
+        competitorMatches++;
+        matchedCompetitors.push(competitor);
+      }
+    }
+    
+    if (competitorMatches > 0) {
+      score += 10;
+      reasons.push(`Competitor mentioned: ${matchedCompetitors.slice(0, 2).join(', ')}`);
+      matchType.push('competitor');
+    }
+  }
+
+  // 7. Supply chain entities (10 points)
+  if (client.supply_chain_entities && client.supply_chain_entities.length > 0) {
+    let supplyChainMatches = 0;
+    const matchedEntities: string[] = [];
+    
+    for (const entity of client.supply_chain_entities) {
+      if (lowerContent.includes(entity.toLowerCase())) {
+        supplyChainMatches++;
+        matchedEntities.push(entity);
+      }
+    }
+    
+    if (supplyChainMatches > 0) {
+      score += 10;
+      reasons.push(`Supply chain entity: ${matchedEntities.slice(0, 2).join(', ')}`);
+      matchType.push('supply_chain');
+    }
+  }
+
+  // Bonus: Source-specific relevance boost
+  if (source === 'BC Energy Regulator' && client.industry?.toLowerCase().includes('energy')) {
+    score += 5;
+    reasons.push('Regulatory source relevant to industry');
+  }
+
+  return { score: Math.min(score, 100), reasons, matchType };
+}
 
 // Helper function to parse RSS feeds
 function parseRSS(xmlText: string) {
@@ -213,84 +348,36 @@ function extractTag(xml: string, tag: string): string {
   return match ? match[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').trim() : '';
 }
 
-// Find clients matching keywords in content
-function findMatchingClients(clients: Client[], content: string, industries?: string[]): Client[] {
-  const lowerContent = content.toLowerCase();
-  const matched: Client[] = [];
-
-  for (const client of clients) {
-    // Check if client name appears in content
-    if (lowerContent.includes(client.name.toLowerCase())) {
-      matched.push(client);
-      continue;
-    }
-
-    // Check if client industry matches (if industries filter provided)
-    if (industries && client.industry) {
-      const clientIndustry = client.industry.toLowerCase();
-      if (industries.some(ind => clientIndustry.includes(ind.toLowerCase()))) {
-        matched.push(client);
-        continue;
-      }
-    }
-
-    // Check if any client location appears in content
-    if (client.locations) {
-      for (const location of client.locations) {
-        if (lowerContent.includes(location.toLowerCase())) {
-          matched.push(client);
-          break;
-        }
-      }
-    }
-  }
-
-  return matched;
-}
-
-// Find clients by location proximity
-function findMatchingClientsByLocation(clients: Client[], location: string): Client[] {
-  const lowerLocation = location.toLowerCase();
-  const matched: Client[] = [];
-
-  for (const client of clients) {
-    if (client.locations) {
-      for (const clientLocation of client.locations) {
-        if (lowerLocation.includes(clientLocation.toLowerCase()) || 
-            clientLocation.toLowerCase().includes(lowerLocation)) {
-          matched.push(client);
-          break;
-        }
-      }
-    }
-  }
-
-  return matched;
-}
-
-// Determine severity based on keywords
-function determineSeverity(text: string): string {
+// Determine severity based on content and relevance score
+function determineSeverity(text: string, relevanceScore: number): string {
   const lowerText = text.toLowerCase();
   
-  if (lowerText.includes('critical') || lowerText.includes('emergency') || 
-      lowerText.includes('severe') || lowerText.includes('urgent')) {
+  // High relevance with critical keywords
+  if (relevanceScore >= 80 && (
+    lowerText.includes('critical') || lowerText.includes('emergency') || 
+    lowerText.includes('severe') || lowerText.includes('explosion') ||
+    lowerText.includes('fatality')
+  )) {
     return 'critical';
   }
   
-  if (lowerText.includes('warning') || lowerText.includes('alert') || 
-      lowerText.includes('incident') || lowerText.includes('violation')) {
+  // High relevance or serious keywords
+  if (relevanceScore >= 70 || lowerText.includes('violation') || 
+      lowerText.includes('fine') || lowerText.includes('incident') ||
+      lowerText.includes('spill') || lowerText.includes('leak')) {
     return 'high';
   }
   
-  if (lowerText.includes('notice') || lowerText.includes('update') || 
-      lowerText.includes('advisory')) {
+  // Medium relevance or warning keywords
+  if (relevanceScore >= 60 || lowerText.includes('warning') || 
+      lowerText.includes('advisory') || lowerText.includes('concern')) {
     return 'medium';
   }
   
   return 'low';
 }
 
-// Create a signal in the database
+// Create a signal in the database with relevance metadata
 async function createSignal(supabaseClient: any, data: {
   client_id: string;
   source: string;
@@ -299,8 +386,9 @@ async function createSignal(supabaseClient: any, data: {
   title: string;
   description: string;
   url?: string;
-  location?: string;
   published_date?: string;
+  relevance_score: number;
+  relevance_reasons: string[];
 }) {
   try {
     const { error } = await supabaseClient
@@ -310,21 +398,24 @@ async function createSignal(supabaseClient: any, data: {
         category: data.category,
         severity: data.severity,
         status: 'new',
-        location: data.location || null,
         normalized_text: `${data.title}\n\n${data.description}`,
         raw_json: {
           source: data.source,
           title: data.title,
           description: data.description,
           url: data.url,
-          published_date: data.published_date
+          published_date: data.published_date,
+          relevance_score: data.relevance_score,
+          relevance_reasons: data.relevance_reasons
         },
-        confidence: 75,
+        confidence: data.relevance_score,
         received_at: new Date().toISOString()
       });
 
     if (error) {
       console.error('Error creating signal:', error);
+    } else {
+      console.log(`Created signal with ${data.relevance_score}% relevance: ${data.title.substring(0, 50)}...`);
     }
   } catch (error) {
     console.error('Error in createSignal:', error);

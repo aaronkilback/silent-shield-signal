@@ -15,8 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, CheckCircle, Shield, XCircle, Brain, History, Link2, Users, Swords, Target } from "lucide-react";
 import { IncidentLocationMap } from "./IncidentLocationMap";
-import { IncidentOutcomeDialog } from "./IncidentOutcomeDialog";
-import IncidentFeedbackDialog from "./IncidentFeedbackDialog";
+import { IncidentFeedbackDialog } from "./incidents/IncidentFeedbackDialog";
 import { AIAnalysisTimeline } from "./incidents/AIAnalysisTimeline";
 import { WorkspaceButton } from "./workspace";
 import { useNavigate } from "react-router-dom";
@@ -531,15 +530,16 @@ export const IncidentActionDialog = ({
         </Tabs>
       </DialogContent>
 
-      <IncidentOutcomeDialog
+      <IncidentFeedbackDialog
         incidentId={fullIncident.id}
+        mode="outcome"
         open={showOutcomeDialog}
-        onClose={() => setShowOutcomeDialog(false)}
+        onOpenChange={(open) => !open && setShowOutcomeDialog(false)}
+        openedAt={fullIncident.opened_at}
         onSuccess={() => {
           setShowOutcomeDialog(false);
           onSuccess();
         }}
-        openedAt={fullIncident.opened_at}
       />
     </Dialog>
   );
