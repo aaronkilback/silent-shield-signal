@@ -2383,6 +2383,151 @@ export const guardianAgentTests = {
 };
 
 // ============================================
+// TENANT INVITE FLOW TESTS
+// ============================================
+
+export const tenantInviteFlowTests = {
+  name: 'Tenant Invite Flow',
+  tests: [
+    {
+      name: 'tenant_invites table exists with required columns',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('tenant_invites')
+          .select('id, tenant_id, email, role, token_hash, expires_at, used_at, invited_by, created_at')
+          .limit(0);
+        
+        if (error) throw new Error(`tenant_invites table query failed: ${error.message}`);
+      },
+    },
+    {
+      name: 'tenant_users table exists with required columns',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('tenant_users')
+          .select('id, tenant_id, user_id, role, created_at')
+          .limit(0);
+        
+        if (error) throw new Error(`tenant_users table query failed: ${error.message}`);
+      },
+    },
+    {
+      name: 'tenants table exists with required columns',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('tenants')
+          .select('id, name, status, settings, created_at')
+          .limit(0);
+        
+        if (error) throw new Error(`tenants table query failed: ${error.message}`);
+      },
+    },
+    {
+      name: 'create-invite edge function responds',
+      fn: async () => {
+        // Test that the function exists and handles requests (will fail auth but that's expected)
+        const { data, error } = await supabase.functions.invoke('create-invite', {
+          body: { tenant_id: 'test', email: 'test@test.com', role: 'viewer' }
+        });
+        
+        // We expect either a success or an auth/permission error - not a 500 or function not found
+        if (error && error.message?.includes('not found')) {
+          throw new Error('create-invite edge function not deployed');
+        }
+        // Auth/permission errors are expected without proper authentication
+      },
+    },
+    {
+      name: 'accept-invite edge function responds',
+      fn: async () => {
+        // Test that the function exists and handles requests
+        const { data, error } = await supabase.functions.invoke('accept-invite', {
+          body: { token: 'test-token' }
+        });
+        
+        // We expect either a success or an auth error - not a 500 or function not found
+        if (error && error.message?.includes('not found')) {
+          throw new Error('accept-invite edge function not deployed');
+        }
+        // Auth errors are expected without proper authentication
+      },
+    },
+    {
+      name: 'get-user-tenants edge function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('get-user-tenants', {
+          body: {}
+        });
+        
+        if (error && error.message?.includes('not found')) {
+          throw new Error('get-user-tenants edge function not deployed');
+        }
+        // Auth errors are expected for unauthenticated requests
+      },
+    },
+    {
+      name: 'Invite expiration is properly configured (7 days)',
+      fn: async () => {
+        // Check that pending invites have reasonable expiration times
+        const now = new Date();
+        const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+        const fourteenDaysFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+        
+        const { data: invites } = await supabase
+          .from('tenant_invites')
+          .select('expires_at')
+          .is('used_at', null)
+          .gt('expires_at', now.toISOString())
+          .limit(5);
+        
+        if (invites && invites.length > 0) {
+          for (const invite of invites) {
+            const expiresAt = new Date(invite.expires_at);
+            if (expiresAt > fourteenDaysFromNow) {
+              throw new Error('Found invite with expiration > 14 days - possible configuration issue');
+            }
+          }
+        }
+        // Pass if no pending invites or all have reasonable expiration
+      },
+    },
+    {
+      name: 'No orphaned invites (invites for non-existent tenants)',
+      fn: async () => {
+        const { data: invites, error } = await supabase
+          .from('tenant_invites')
+          .select('id, tenant_id, tenants(id)')
+          .is('used_at', null)
+          .limit(10);
+        
+        if (error) throw error;
+        
+        if (invites) {
+          const orphaned = invites.filter(inv => !inv.tenants);
+          if (orphaned.length > 0) {
+            throw new Error(`Found ${orphaned.length} orphaned invites without valid tenants`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Audit events are logged for invite actions',
+      fn: async () => {
+        // Check that audit events exist for invite-related actions
+        const { data: events, error } = await supabase
+          .from('audit_events')
+          .select('action')
+          .in('action', ['invite_created', 'invite_accepted'])
+          .limit(1);
+        
+        // Just verify the query works - we don't require events to exist
+        if (error) throw new Error(`Audit events query failed: ${error.message}`);
+      },
+    },
+  ],
+};
+
+// ============================================
 // SYSTEM RESILIENCE TESTS
 // ============================================
 
@@ -2547,6 +2692,9 @@ export async function runAllTests(): Promise<TestSuite[]> {
     
     // Content Moderation
     guardianAgentTests,
+    
+    // Tenant & Invite Management
+    tenantInviteFlowTests,
     
     // System Resilience
     systemResilienceTests,

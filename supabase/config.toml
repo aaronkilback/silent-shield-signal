@@ -216,3 +216,8 @@ verify_jwt = false
 [functions.accept-invite]
 verify_jwt = false
 
+[functions.create-invite]
+verify_jwt = false
+
+[functions.get-user-tenants]
+verify_jwt = false
