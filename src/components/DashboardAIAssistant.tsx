@@ -1003,11 +1003,49 @@ How can I help you now?`,
       <CardHeader className="pb-3">
         <div className="flex flex-col gap-3">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-3">
+              {/* Shield icon */}
+              <div className="w-10 h-10 flex items-center justify-center">
+                <svg width="32" height="36" viewBox="0 0 140 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <linearGradient id="aegisShieldGradient" x1="70" y1="0" x2="70" y2="160" gradientUnits="userSpaceOnUse">
+                      <stop offset="0%" stopColor="#4a5568" />
+                      <stop offset="50%" stopColor="#2d3748" />
+                      <stop offset="100%" stopColor="#1a202c" />
+                    </linearGradient>
+                    <linearGradient id="aegisShieldBorder" x1="70" y1="0" x2="70" y2="160" gradientUnits="userSpaceOnUse">
+                      <stop offset="0%" stopColor="#10b981" />
+                      <stop offset="100%" stopColor="#047857" />
+                    </linearGradient>
+                  </defs>
+                  <path 
+                    d="M70 8L12 32V72C12 112 38 148 70 156C102 148 128 112 128 72V32L70 8Z" 
+                    fill="url(#aegisShieldGradient)"
+                    stroke="url(#aegisShieldBorder)"
+                    strokeWidth="4"
+                  />
+                  <path 
+                    d="M70 50L45 95H55L70 70L85 95H95L70 50Z" 
+                    fill="#1a202c"
+                    stroke="#4a5568"
+                    strokeWidth="1"
+                  />
+                  <path 
+                    d="M50 100L70 120L90 100" 
+                    fill="none"
+                    stroke="#4a5568"
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </div>
+              <div className="flex flex-col">
+                <CardTitle className="text-xl font-semibold">Aegis</CardTitle>
+                <span className="text-xs text-muted-foreground">Your strategic AI advisor for Silent Shield</span>
+              </div>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
-              <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-                <Sparkles className="w-5 h-5 text-primary" />
-                AI Security Assistant
-              </CardTitle>
               {currentTenant && (
                 <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as "personal" | "team")} className="h-8">
                   <TabsList className="h-7">
