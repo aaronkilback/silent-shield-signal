@@ -4,6 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 interface UseOpenAIRealtimeOptions {
   onTranscript?: (text: string, isFinal: boolean) => void;
   onAgentResponse?: (text: string) => void;
+  onAgentResponseComplete?: (fullText: string) => void;
   onError?: (error: string) => void;
   onStatusChange?: (status: 'idle' | 'connecting' | 'connected' | 'speaking' | 'listening') => void;
   agentContext?: string;
@@ -74,7 +75,13 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         break;
 
       case 'response.audio_transcript.done':
-        console.log('Agent finished speaking transcript');
+        {
+          // Full transcript is complete - notify with final text
+          const fullTranscript = (event as Record<string, unknown>).transcript as string;
+          console.log('Agent finished speaking, full transcript:', fullTranscript);
+          // Call a new callback for the complete response
+          optionsRef.current.onAgentResponseComplete?.(fullTranscript || '');
+        }
         break;
 
       case 'response.audio.delta':
@@ -91,7 +98,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       case 'response.done':
         setIsAgentSpeaking(false);
         updateStatus('connected');
-        // Reset agent response for next turn
+        // Reset internal agent response for next turn
         setAgentResponse('');
         break;
 
@@ -260,6 +267,20 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           connectTimeoutRef.current = null;
         }
         updateStatus('connected');
+        
+        // Proactively greet the user when connection is established
+        setTimeout(() => {
+          if (dc.readyState === 'open') {
+            console.log('Sending proactive greeting request...');
+            dc.send(JSON.stringify({
+              type: 'response.create',
+              response: {
+                modalities: ['audio', 'text'],
+                instructions: 'Greet the user briefly. Say something like "Aegis here. How can I help?" Keep it under 10 words.'
+              }
+            }));
+          }
+        }, 500); // Small delay to ensure connection is stable
       };
 
       dc.onmessage = (event) => {

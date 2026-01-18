@@ -278,15 +278,25 @@ export const DashboardAIAssistant = () => {
         const userMsg: Message = { role: "user", content: `🎙️ ${text}` };
         setMessages(prev => [...prev, userMsg]);
         saveMessageRef.current?.(userMsg);
+        setVoiceTranscript(""); // Clear transcript after saving
+      } else {
+        setVoiceTranscript(text);
       }
-      setVoiceTranscript(text);
     },
     onAgentResponse: (delta) => {
-      setVoiceAgentResponse(prev => {
-        const newVal = prev + delta;
-        voiceAgentResponseRef.current = newVal;
-        return newVal;
-      });
+      // Accumulate live response for display
+      setVoiceAgentResponse(prev => prev + delta);
+    },
+    onAgentResponseComplete: (fullText) => {
+      // Agent finished speaking - save the complete response to chat
+      if (fullText.trim()) {
+        const agentMsg: Message = { role: "assistant", content: `🔊 ${fullText}` };
+        setMessages(prev => [...prev, agentMsg]);
+        saveMessageRef.current?.(agentMsg);
+      }
+      // Clear the live response
+      setVoiceAgentResponse("");
+      voiceAgentResponseRef.current = "";
     },
     onError: (error) => {
       toast.error(error);
@@ -294,17 +304,7 @@ export const DashboardAIAssistant = () => {
     },
     onStatusChange: (status) => {
       console.log('Voice status:', status);
-      if (status === 'idle') {
-        // Voice ended - save accumulated agent response
-        const response = voiceAgentResponseRef.current;
-        if (response.trim()) {
-          const agentMsg: Message = { role: "assistant", content: `🔊 ${response}` };
-          setMessages(prev => [...prev, agentMsg]);
-          saveMessageRef.current?.(agentMsg);
-          setVoiceAgentResponse("");
-          voiceAgentResponseRef.current = "";
-        }
-      }
+      // No longer save on idle - we save on onAgentResponseComplete instead
     },
   });
 
