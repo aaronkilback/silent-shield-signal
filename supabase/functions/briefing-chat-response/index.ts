@@ -27,6 +27,71 @@ serve(async (req) => {
       throw new Error('LOVABLE_API_KEY not configured');
     }
 
+    // Detect simple acknowledgment messages that don't need full processing
+    const isSimpleAcknowledgment = (msg: string): boolean => {
+      if (!msg || typeof msg !== 'string') return false;
+      const content = msg.trim().toLowerCase();
+      if (content.length > 50) return false;
+      
+      const acknowledgmentPatterns = [
+        /^(ok|okay|k|kk)$/i,
+        /^(ok|okay)\s+(great|good|thanks|thank you|cool|perfect|sounds good|got it|understood)$/i,
+        /^(great|good|thanks|thank you|cool|perfect|awesome|nice|excellent|wonderful)$/i,
+        /^(sounds good|got it|understood|roger|copy|noted|alright|all right|right)$/i,
+        /^(yes|yeah|yep|yup|sure|certainly|of course|absolutely)$/i,
+        /^(no problem|no worries|np|nw)$/i,
+        /^(will do|sure thing|makes sense|fair enough)$/i,
+        /^(i see|i understand|that makes sense)$/i,
+        /^(👍|👌|🙌|✅|💯|🎉|😊|🤝|⭐|✨)+$/,
+        /^(ok|okay|great|good|thanks)[\s!.]*$/i,
+      ];
+      
+      return acknowledgmentPatterns.some(pattern => pattern.test(content));
+    };
+
+    // Fast path for simple acknowledgments
+    if (isSimpleAcknowledgment(user_message)) {
+      console.log("Detected simple acknowledgment in briefing chat, using fast response path");
+      
+      const ackResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.5-flash-lite',
+          messages: [
+            {
+              role: 'system',
+              content: `You are a security briefing AI agent. The user just sent a simple acknowledgment message (like "ok great", "thanks", "got it").
+
+CRITICAL RULES:
+1. Respond BRIEFLY - just 1-2 short sentences
+2. DO NOT provide briefing summaries, incident reports, or data overviews
+3. Simply acknowledge their acknowledgment professionally
+4. Offer to continue with the briefing if needed
+
+Examples: "Understood. Ready when you are." / "Perfect, let me know what else you'd like to cover." / "👍 Standing by."
+
+Respond naturally and briefly.`
+            },
+            { role: 'user', content: user_message }
+          ],
+        }),
+      });
+
+      if (ackResponse.ok) {
+        const ackData = await ackResponse.json();
+        const ackContent = ackData.choices?.[0]?.message?.content || "Understood. Let me know how I can help.";
+        return new Response(
+          JSON.stringify({ response: ackContent, agent_id }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      console.log("Fast acknowledgment response failed, falling back to normal processing");
+    }
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
