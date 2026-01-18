@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Loader2, Bot, User, Trash2, Copy, Check, Flag } from "lucide-react";
+import { Send, Loader2, Bot, User, Trash2, Copy, Check, Flag, Mic, MicOff } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
@@ -11,6 +11,7 @@ import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import { useContentModeration } from "@/hooks/useContentModeration";
 import { ReportViolationDialog } from "@/components/ReportViolationDialog";
+import { useOpenAIRealtime } from "@/components/voice/useOpenAIRealtime";
 
 interface AIAgent {
   id: string;
@@ -38,13 +39,100 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const sendLockRef = useRef(false);
   const { user } = useAuth();
-  const { checkContent, isChecking } = useContentModeration({
+  const { checkContent } = useContentModeration({
     contentType: 'chat_message',
     actionType: 'agent_message'
   });
+
+  // Voice state
+  const [isVoiceActive, setIsVoiceActive] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState("");
+  const [voiceAgentResponse, setVoiceAgentResponse] = useState("");
+  const lastVoiceSavedRef = useRef<string | null>(null);
+  const messagesRef = useRef<Message[]>([]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  // Voice hook
+  const {
+    status: voiceStatus,
+    isAgentSpeaking,
+    connect: connectVoice,
+    disconnect: disconnectVoice,
+    isConnected: isVoiceConnected,
+  } = useOpenAIRealtime({
+    agentContext: agent.system_prompt || `You are ${agent.call_sign}, a specialized AI agent. Be concise and helpful.`,
+    conversationHistory: useMemo(
+      () => messagesRef.current.slice(-10).map(m => ({ role: m.role, content: m.content })),
+      []
+    ),
+    onTranscript: (text, isFinal) => {
+      if (isFinal && text.trim()) {
+        const userMsg: Message = { role: "user", content: `🎙️ ${text}` };
+        setMessages(prev => [...prev, userMsg]);
+        saveMessageToDb(userMsg);
+        setVoiceTranscript("");
+      } else {
+        setVoiceTranscript(text);
+      }
+    },
+    onAgentResponse: (delta) => {
+      setVoiceAgentResponse(prev => prev + delta);
+    },
+    onAgentResponseComplete: (fullText) => {
+      const trimmed = (fullText || '').trim();
+      if (trimmed) {
+        const content = `🔊 ${trimmed}`;
+        if (lastVoiceSavedRef.current !== content) {
+          lastVoiceSavedRef.current = content;
+          const agentMsg: Message = { role: "assistant", content };
+          setMessages(prev => [...prev, agentMsg]);
+          saveMessageToDb(agentMsg);
+        }
+      }
+      setVoiceAgentResponse("");
+    },
+    onError: (error) => {
+      toast.error(error);
+      setIsVoiceActive(false);
+    },
+    onStatusChange: () => {},
+  });
+
+  const handleVoiceToggle = () => {
+    if (isVoiceActive) {
+      disconnectVoice();
+      setIsVoiceActive(false);
+      setVoiceTranscript("");
+      setVoiceAgentResponse("");
+      toast.success("Voice session ended");
+      return;
+    }
+    lastVoiceSavedRef.current = null;
+    setIsVoiceActive(true);
+    setVoiceTranscript("");
+    setVoiceAgentResponse("");
+    connectVoice();
+    toast.info("Starting voice session...");
+  };
+
+  const saveMessageToDb = async (message: Message) => {
+    if (!conversationId) return;
+    try {
+      await supabase.from("agent_messages").insert({
+        conversation_id: conversationId,
+        role: message.role,
+        content: message.content,
+      });
+    } catch (error) {
+      console.error("Failed to save voice message:", error);
+    }
+  };
 
   const copyMessage = async (content: string, index: number) => {
     try {
@@ -52,33 +140,31 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
       setCopiedIndex(index);
       toast.success("Copied to clipboard");
       setTimeout(() => setCopiedIndex(null), 2000);
-    } catch (error) {
+    } catch {
       toast.error("Failed to copy");
     }
   };
 
   const copyEntireConversation = async () => {
-    const formatted = messages.map((m, i) => 
+    const formatted = messages.map((m) =>
       `${m.role === 'user' ? '👤 USER' : `🤖 ${agent.call_sign}`}:\n${m.content}`
     ).join('\n\n---\n\n');
-    
+
     try {
       await navigator.clipboard.writeText(formatted);
       setCopiedAll(true);
       toast.success("Entire conversation copied");
       setTimeout(() => setCopiedAll(false), 2000);
-    } catch (error) {
+    } catch {
       toast.error("Failed to copy conversation");
     }
   };
 
-  // Load or create conversation when agent changes
   const loadConversation = useCallback(async () => {
     if (!user) return;
-    
+
     setIsLoadingHistory(true);
     try {
-      // Find existing conversation for this user + agent
       const { data: existingConv, error: convError } = await supabase
         .from("agent_conversations")
         .select("id")
@@ -93,8 +179,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
 
       if (existingConv) {
         setConversationId(existingConv.id);
-        
-        // Load messages for this conversation
+
         const { data: msgs, error: msgsError } = await supabase
           .from("agent_messages")
           .select("role, content")
@@ -103,12 +188,11 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
 
         if (msgsError) throw msgsError;
 
-        setMessages(msgs?.map(m => ({ 
-          role: m.role as "user" | "assistant", 
-          content: m.content 
+        setMessages(msgs?.map(m => ({
+          role: m.role as "user" | "assistant",
+          content: m.content
         })) || []);
       } else {
-        // Create new conversation
         const { data: newConv, error: newConvError } = await supabase
           .from("agent_conversations")
           .insert({
@@ -140,19 +224,18 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
     loadConversation();
   }, [agent.id, loadConversation]);
 
-  // Ref for the actual scroll container (ScrollArea viewport)
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  
-  // Auto-scroll to bottom - scroll within container only, not the page
+  // Auto-scroll
   useEffect(() => {
-    // Small delay to ensure content is rendered
     const timer = setTimeout(() => {
       if (scrollContainerRef.current) {
-        scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+        scrollContainerRef.current.scrollTo({
+          top: scrollContainerRef.current.scrollHeight,
+          behavior: 'smooth'
+        });
       }
     }, 50);
     return () => clearTimeout(timer);
-  }, [messages]);
+  }, [messages, voiceAgentResponse]);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading || !conversationId) return;
@@ -160,12 +243,8 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
 
     const userMessage = input.trim();
 
-    // Check content before sending
     const moderationResult = await checkContent(userMessage);
-    if (!moderationResult.allowed) {
-      // Content was blocked
-      return;
-    }
+    if (!moderationResult.allowed) return;
 
     sendLockRef.current = true;
     setInput("");
@@ -173,14 +252,12 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
     setIsLoading(true);
 
     try {
-      // Save user message to database
       await supabase.from("agent_messages").insert({
         conversation_id: conversationId,
         role: "user",
         content: userMessage,
       });
 
-      // Update conversation timestamp
       await supabase
         .from("agent_conversations")
         .update({ updated_at: new Date().toISOString() })
@@ -198,14 +275,12 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
 
       const assistantMessage = data.response;
 
-      // Dedup in case multiple submit events fire
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === 'assistant' && last.content === assistantMessage) return prev;
         return [...prev, { role: "assistant", content: assistantMessage }];
       });
 
-      // Save assistant message to database
       await supabase.from("agent_messages").insert({
         conversation_id: conversationId,
         role: "assistant",
@@ -214,9 +289,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
     } catch (error) {
       console.error("Agent chat error:", error);
       toast.error("Failed to get response from agent");
-      // Remove the user message on error
       setMessages((prev) => prev.slice(0, -1));
-      // Also delete from database
       await supabase
         .from("agent_messages")
         .delete()
@@ -239,14 +312,13 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
 
   const clearConversation = async () => {
     if (!conversationId) return;
-    
+
     try {
-      // Delete all messages for this conversation
       await supabase
         .from("agent_messages")
         .delete()
         .eq("conversation_id", conversationId);
-      
+
       setMessages([]);
       toast.success("Conversation cleared");
     } catch (error) {
@@ -255,47 +327,61 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
     }
   };
 
+  // Get voice status text
+  const getVoiceStatusText = () => {
+    if (!isVoiceActive) return null;
+    switch (voiceStatus) {
+      case 'connecting': return 'Connecting...';
+      case 'speaking': return `${agent.call_sign} is speaking...`;
+      case 'listening': return 'Listening...';
+      case 'connected': return 'Connected - speak now';
+      default: return null;
+    }
+  };
+
   return (
-    <Card className="h-[calc(100vh-20rem)] min-h-[400px] max-h-[800px] flex flex-col">
+    <Card className="flex flex-col h-full max-h-[calc(100vh-12rem)] overflow-hidden">
       <CardHeader className="pb-3 flex-shrink-0">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <CardTitle className="text-lg flex items-center gap-2">
             <Bot className="h-5 w-5" style={{ color: agent.avatar_color }} />
             {agent.header_name || agent.codename}
             <span className="text-sm font-normal text-muted-foreground">— Active Session</span>
           </CardTitle>
-          {messages.length > 0 && (
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={copyEntireConversation}
-                className="text-muted-foreground"
-              >
-                {copiedAll ? (
-                  <Check className="h-4 w-4 mr-1 text-green-500" />
-                ) : (
-                  <Copy className="h-4 w-4 mr-1" />
-                )}
-                Copy All
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={clearConversation}
-                className="text-muted-foreground"
-              >
-                <Trash2 className="h-4 w-4 mr-1" />
-                Clear
-              </Button>
-            </div>
-          )}
+          <div className="flex items-center gap-1">
+            {messages.length > 0 && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={copyEntireConversation}
+                  className="text-muted-foreground"
+                >
+                  {copiedAll ? (
+                    <Check className="h-4 w-4 mr-1 text-green-500" />
+                  ) : (
+                    <Copy className="h-4 w-4 mr-1" />
+                  )}
+                  Copy All
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearConversation}
+                  className="text-muted-foreground"
+                >
+                  <Trash2 className="h-4 w-4 mr-1" />
+                  Clear
+                </Button>
+              </>
+            )}
+          </div>
         </div>
       </CardHeader>
 
-      <CardContent className="flex-1 flex flex-col min-h-0 p-0">
-        {/* Messages Area - use ref on the viewport to control scrolling */}
-        <ScrollArea className="flex-1 px-6" ref={scrollContainerRef as React.RefObject<HTMLDivElement>}>
+      <CardContent className="flex-1 flex flex-col min-h-0 p-0 overflow-hidden">
+        {/* Messages Area */}
+        <ScrollArea className="flex-1 px-6 overflow-y-auto" ref={scrollContainerRef as React.RefObject<HTMLDivElement>}>
           {isLoadingHistory ? (
             <div className="h-full flex items-center justify-center py-12">
               <div className="text-center text-muted-foreground">
@@ -405,13 +491,47 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
                   </div>
                 </div>
               )}
-              {/* Removed scrollRef div - scrolling now handled by container */}
+              {/* Live voice transcript */}
+              {isVoiceActive && voiceTranscript && (
+                <div className="flex justify-end">
+                  <div className="max-w-[80%] rounded-lg px-4 py-2.5 bg-primary/50 text-primary-foreground">
+                    <p className="text-sm italic">{voiceTranscript}...</p>
+                  </div>
+                </div>
+              )}
+              {/* Live agent voice response */}
+              {isVoiceActive && voiceAgentResponse && (
+                <div className="flex gap-3">
+                  <div
+                    className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center"
+                    style={{ backgroundColor: agent.avatar_color + "20" }}
+                  >
+                    <Loader2 className="h-4 w-4 animate-spin" style={{ color: agent.avatar_color }} />
+                  </div>
+                  <div className="bg-muted rounded-lg px-4 py-2.5 border border-muted-foreground/20">
+                    <p className="text-sm">{voiceAgentResponse}</p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </ScrollArea>
 
         {/* Input Area */}
         <div className="p-4 border-t border-border flex-shrink-0">
+          {/* Voice status indicator */}
+          {isVoiceActive && (
+            <div className="flex items-center gap-2 mb-2 text-sm text-muted-foreground">
+              <div className={cn(
+                "w-2 h-2 rounded-full",
+                voiceStatus === 'speaking' ? "bg-primary animate-pulse" :
+                voiceStatus === 'listening' ? "bg-green-500 animate-pulse" :
+                voiceStatus === 'connecting' ? "bg-yellow-500 animate-pulse" :
+                "bg-muted-foreground"
+              )} />
+              <span>{getVoiceStatusText()}</span>
+            </div>
+          )}
           <div className="flex gap-2">
             <Textarea
               value={input}
@@ -420,11 +540,24 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
               placeholder={`Message ${agent.header_name || agent.codename}...`}
               className="min-h-[44px] max-h-32 resize-none"
               rows={1}
-              disabled={isLoading}
+              disabled={isLoading || isVoiceActive}
             />
             <Button
+              variant={isVoiceActive ? "destructive" : "outline"}
+              size="icon"
+              onClick={handleVoiceToggle}
+              className="flex-shrink-0"
+              title={isVoiceActive ? "End voice session" : "Start voice session"}
+            >
+              {isVoiceActive ? (
+                <MicOff className="h-4 w-4" />
+              ) : (
+                <Mic className="h-4 w-4" />
+              )}
+            </Button>
+            <Button
               onClick={handleSend}
-              disabled={!input.trim() || isLoading}
+              disabled={!input.trim() || isLoading || isVoiceActive}
               size="icon"
               className="flex-shrink-0"
             >
