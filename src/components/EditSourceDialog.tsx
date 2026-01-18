@@ -61,7 +61,7 @@ export const EditSourceDialog = ({ open, onOpenChange, source }: EditSourceDialo
       setName(source.name || "");
       setType(source.type || "");
       setMonitorType(source.monitor_type || "");
-      const config = source.config_json;
+      const config = source.config;
       if (config && typeof config === 'object' && 'url' in config) {
         setUrl(config.url || "");
         const { url: _, ...restConfig } = config;
@@ -102,7 +102,7 @@ export const EditSourceDialog = ({ open, onOpenChange, source }: EditSourceDialo
           name: name.trim(),
           type: type.trim(),
           monitor_type: monitorType || null,
-          config_json: parsedConfig,
+          config: parsedConfig,
         })
         .eq("id", source.id);
 
