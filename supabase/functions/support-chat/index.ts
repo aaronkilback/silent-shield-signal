@@ -19,6 +19,75 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
+    // Detect simple acknowledgment messages that don't need full processing
+    const isSimpleAcknowledgment = (msgs: any[]): boolean => {
+      if (!msgs || msgs.length === 0) return false;
+      const lastUserMessage = msgs.filter((m: any) => m.role === 'user').pop();
+      if (!lastUserMessage) return false;
+      
+      const content = typeof lastUserMessage.content === 'string' 
+        ? lastUserMessage.content.trim().toLowerCase() 
+        : '';
+      
+      if (content.length > 50) return false;
+      
+      const acknowledgmentPatterns = [
+        /^(ok|okay|k|kk)$/i,
+        /^(ok|okay)\s+(great|good|thanks|thank you|cool|perfect|sounds good|got it|understood)$/i,
+        /^(great|good|thanks|thank you|cool|perfect|awesome|nice|excellent|wonderful)$/i,
+        /^(sounds good|got it|understood|roger|copy|noted|alright|all right|right)$/i,
+        /^(yes|yeah|yep|yup|sure|certainly|of course|absolutely)$/i,
+        /^(no problem|no worries|np|nw)$/i,
+        /^(will do|sure thing|makes sense|fair enough)$/i,
+        /^(i see|i understand|that makes sense)$/i,
+        /^(👍|👌|🙌|✅|💯|🎉|😊|🤝|⭐|✨)+$/,
+        /^(ok|okay|great|good|thanks)[\s!.]*$/i,
+      ];
+      
+      return acknowledgmentPatterns.some(pattern => pattern.test(content));
+    };
+
+    // Fast path for simple acknowledgments (before action handling)
+    if (!action && isSimpleAcknowledgment(messages)) {
+      console.log("Detected simple acknowledgment in support chat, using fast response path");
+      
+      const ackResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash-lite",
+          messages: [
+            {
+              role: "system",
+              content: `You are a helpful support assistant. The user just sent a simple acknowledgment message.
+
+CRITICAL RULES:
+1. Respond BRIEFLY - just 1-2 short sentences
+2. DO NOT provide platform summaries or feature lists
+3. Simply acknowledge their acknowledgment warmly
+4. Offer to help with anything else
+
+Examples: "Happy to help! Let me know if you have more questions." / "You're welcome! I'm here if you need anything." / "Great! 😊"
+
+Respond naturally and briefly.`
+            },
+            ...messages.slice(-3),
+          ],
+          stream: true,
+        }),
+      });
+
+      if (ackResponse.ok) {
+        return new Response(ackResponse.body, {
+          headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+        });
+      }
+      console.log("Fast acknowledgment response failed, falling back to normal processing");
+    }
+
     // Initialize Supabase client
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
