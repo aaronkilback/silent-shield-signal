@@ -75,7 +75,7 @@ const getSeverityIcon = (severity: string | null) => {
 
 export const LiveEventFeed = () => {
   const { selectedClientId } = useClientSelection();
-  const { currentTenant } = useTenant();
+  const { currentTenant, isAllTenantsView, getFilterTenantIds } = useTenant();
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -100,11 +100,12 @@ export const LiveEventFeed = () => {
       if (error) {
         console.error('Error fetching signals:', error);
       } else if (data) {
-        // Filter by tenant if one is selected
+        // Filter by tenant IDs (unless "All Tenants" view is active)
         let filtered = data;
-        if (currentTenant?.id) {
+        const tenantIds = getFilterTenantIds();
+        if (tenantIds !== null) {
           filtered = data.filter((signal: any) => 
-            signal.clients?.tenant_id === currentTenant.id
+            signal.clients?.tenant_id && tenantIds.includes(signal.clients.tenant_id)
           );
         }
         setSignals(filtered);
@@ -116,7 +117,7 @@ export const LiveEventFeed = () => {
 
     // Subscribe to realtime updates
     const channel = supabase
-      .channel(`signals-changes-${currentTenant?.id || 'all'}`)
+      .channel(`signals-changes-${currentTenant?.id || 'all'}-${isAllTenantsView}`)
       .on(
         'postgres_changes',
         {
@@ -141,7 +142,7 @@ export const LiveEventFeed = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [selectedClientId, currentTenant?.id]);
+  }, [selectedClientId, currentTenant?.id, isAllTenantsView]);
 
   if (loading) {
     return (
