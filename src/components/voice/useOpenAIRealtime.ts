@@ -22,11 +22,94 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const connectTimeoutRef = useRef<number | null>(null);
+  
+  // Use ref for options to avoid stale closures in event handlers
+  const optionsRef = useRef(options);
+  useEffect(() => {
+    optionsRef.current = options;
+  }, [options]);
 
   const updateStatus = useCallback((newStatus: typeof status) => {
     setStatus(newStatus);
-    options.onStatusChange?.(newStatus);
-  }, [options]);
+    optionsRef.current.onStatusChange?.(newStatus);
+  }, []);
+
+  const handleRealtimeEvent = useCallback((event: Record<string, unknown>) => {
+    console.log('Realtime event:', event.type, event);
+
+    switch (event.type) {
+      case 'session.created':
+        console.log('Session created');
+        break;
+
+      case 'session.updated':
+        console.log('Session updated');
+        break;
+
+      case 'input_audio_buffer.speech_started':
+        updateStatus('listening');
+        setIsAgentSpeaking(false);
+        break;
+
+      case 'input_audio_buffer.speech_stopped':
+        console.log('User stopped speaking');
+        break;
+
+      case 'conversation.item.input_audio_transcription.completed':
+        {
+          const transcriptText = (event as Record<string, unknown>).transcript as string;
+          console.log('User transcript:', transcriptText);
+          setTranscript(transcriptText);
+          optionsRef.current.onTranscript?.(transcriptText, true);
+        }
+        break;
+
+      case 'response.audio_transcript.delta':
+        {
+          const delta = (event as Record<string, unknown>).delta as string;
+          console.log('Agent response delta:', delta);
+          setAgentResponse(prev => prev + delta);
+          optionsRef.current.onAgentResponse?.(delta);
+        }
+        break;
+
+      case 'response.audio_transcript.done':
+        console.log('Agent finished speaking transcript');
+        break;
+
+      case 'response.audio.delta':
+        // Audio is handled by WebRTC track, but this indicates agent is speaking
+        setIsAgentSpeaking(true);
+        updateStatus('speaking');
+        break;
+
+      case 'response.audio.done':
+        setIsAgentSpeaking(false);
+        updateStatus('connected');
+        break;
+
+      case 'response.done':
+        setIsAgentSpeaking(false);
+        updateStatus('connected');
+        // Reset agent response for next turn
+        setAgentResponse('');
+        break;
+
+      case 'error':
+        {
+          const errorData = (event as Record<string, unknown>).error as Record<string, unknown>;
+          console.error('Realtime error:', errorData);
+          optionsRef.current.onError?.(errorData?.message as string || 'Unknown error');
+        }
+        break;
+
+      default:
+        // Log unhandled events for debugging
+        if (event.type && !(event.type as string).startsWith('rate_limits')) {
+          console.log('Unhandled event type:', event.type);
+        }
+    }
+  }, [updateStatus]);
 
   const disconnect = useCallback(() => {
     console.log('Disconnecting...');
@@ -86,15 +169,15 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       }
       connectTimeoutRef.current = window.setTimeout(() => {
         console.warn('Realtime voice connection timed out');
-        options.onError?.('Voice connection timed out. Tap mic to try again.');
+        optionsRef.current.onError?.('Voice connection timed out. Tap mic to try again.');
         disconnect();
       }, 15000);
 
       // Get ephemeral token from our edge function
       const { data: tokenData, error: tokenError } = await supabase.functions.invoke('openai-realtime-token', {
         body: {
-          agentContext: options.agentContext,
-          conversationHistory: options.conversationHistory
+          agentContext: optionsRef.current.agentContext,
+          conversationHistory: optionsRef.current.conversationHistory
         }
       });
 
@@ -112,14 +195,14 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       pc.oniceconnectionstatechange = () => {
         console.log('ICE state:', pc.iceConnectionState);
         if (pc.iceConnectionState === 'failed') {
-          options.onError?.('Voice connection failed (ICE).');
+          optionsRef.current.onError?.('Voice connection failed (ICE).');
           disconnect();
         }
       };
       pc.onconnectionstatechange = () => {
         console.log('Peer connection state:', pc.connectionState);
         if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-          options.onError?.('Voice connection lost.');
+          optionsRef.current.onError?.('Voice connection lost.');
           disconnect();
         }
       };
@@ -140,7 +223,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         audioEl.srcObject = event.streams[0];
         audioEl.play().catch((err) => {
           console.warn('Audio autoplay blocked, waiting for user gesture...', err);
-          options.onError?.('Audio playback blocked by browser. Tap once to enable sound.');
+          optionsRef.current.onError?.('Audio playback blocked by browser. Tap once to enable sound.');
           const resume = () => {
             audioEl.play().catch(() => {});
           };
@@ -190,7 +273,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
       dc.onerror = (error) => {
         console.error('Data channel error:', error);
-        options.onError?.('Data channel error');
+        optionsRef.current.onError?.('Data channel error');
       };
 
       dc.onclose = () => {
@@ -229,89 +312,11 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         connectTimeoutRef.current = null;
       }
       console.error('Connection error:', error);
-      options.onError?.(error instanceof Error ? error.message : 'Connection failed');
+      optionsRef.current.onError?.(error instanceof Error ? error.message : 'Connection failed');
       updateStatus('idle');
       disconnect();
     }
-  }, [options, updateStatus, disconnect]);
-
-  const handleRealtimeEvent = useCallback((event: Record<string, unknown>) => {
-    console.log('Realtime event:', event.type, event);
-
-    switch (event.type) {
-      case 'session.created':
-        console.log('Session created');
-        break;
-
-      case 'session.updated':
-        console.log('Session updated');
-        break;
-
-      case 'input_audio_buffer.speech_started':
-        updateStatus('listening');
-        setIsAgentSpeaking(false);
-        break;
-
-      case 'input_audio_buffer.speech_stopped':
-        console.log('User stopped speaking');
-        break;
-
-      case 'conversation.item.input_audio_transcription.completed':
-        {
-          const transcriptText = (event as Record<string, unknown>).transcript as string;
-          setTranscript(transcriptText);
-          options.onTranscript?.(transcriptText, true);
-        }
-        break;
-
-      case 'response.audio_transcript.delta':
-        {
-          const delta = (event as Record<string, unknown>).delta as string;
-          setAgentResponse(prev => prev + delta);
-          options.onAgentResponse?.(delta);
-        }
-        break;
-
-      case 'response.audio_transcript.done':
-        console.log('Agent finished speaking transcript');
-        break;
-
-      case 'response.audio.delta':
-        // Audio is handled by WebRTC track, but this indicates agent is speaking
-        setIsAgentSpeaking(true);
-        updateStatus('speaking');
-        break;
-
-      case 'response.audio.done':
-        setIsAgentSpeaking(false);
-        updateStatus('connected');
-        break;
-
-      case 'response.done':
-        setIsAgentSpeaking(false);
-        updateStatus('connected');
-        // Reset agent response for next turn
-        setAgentResponse('');
-        break;
-
-      case 'error':
-        {
-          const errorData = (event as Record<string, unknown>).error as Record<string, unknown>;
-          console.error('Realtime error:', errorData);
-          options.onError?.(errorData?.message as string || 'Unknown error');
-        }
-        break;
-
-      default:
-        // Log unhandled events for debugging
-        if (event.type && !(event.type as string).startsWith('rate_limits')) {
-          console.log('Unhandled event type:', event.type);
-        }
-    }
-  }, [options, updateStatus]);
-
-  // disconnect is defined above to allow connect() to reference it safely.
-
+  }, [updateStatus, disconnect, handleRealtimeEvent]);
 
   const sendTextMessage = useCallback((text: string) => {
     if (dcRef.current?.readyState !== 'open') {
