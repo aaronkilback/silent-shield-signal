@@ -1186,28 +1186,30 @@ How can I help you now?`,
               >
                 <Paperclip className="w-4 h-4" />
               </Button>
-              <div className="relative flex-1 min-w-0">
-                <Input
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ask about threats, signals..."
-                  disabled={isLoading || isUploading}
-                  className="pr-10"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-muted-foreground hover:text-foreground"
-                  onClick={() => setShowVoiceInterface(true)}
-                  disabled={isLoading || isUploading}
-                  title="Start voice conversation"
-                >
-                  <Mic className="w-4 h-4" />
-                </Button>
-              </div>
-              <Button type="submit" disabled={isLoading || isUploading || (!input.trim() && attachments.length === 0)} className="shrink-0">
+              <Input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Ask about threats, signals..."
+                disabled={isLoading || isUploading}
+                className="flex-1 min-w-0"
+              />
+              <Button 
+                type="submit" 
+                disabled={isLoading || isUploading || (!input.trim() && attachments.length === 0)} 
+                className="shrink-0"
+              >
                 {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="shrink-0 bg-primary/10 hover:bg-primary/20 border-primary/30"
+                onClick={() => setShowVoiceInterface(true)}
+                disabled={isLoading || isUploading}
+                title="Talk to Aegis"
+              >
+                <Mic className="w-4 h-4 text-primary" />
               </Button>
             </form>
         </div>
