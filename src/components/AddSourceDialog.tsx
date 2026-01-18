@@ -38,7 +38,7 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
   ];
 
   const monitorTypes = [
-    { value: "monitor-canadian-sources-enhanced", label: "Canadian Sources" },
+    { value: "monitor-canadian-sources", label: "Canadian Sources" },
     { value: "monitor-news", label: "News Monitoring" },
     { value: "monitor-social", label: "Social Media" },
     { value: "monitor-threat-intel", label: "Threat Intelligence" },
