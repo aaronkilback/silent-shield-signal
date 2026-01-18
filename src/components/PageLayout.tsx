@@ -46,14 +46,14 @@ export const PageLayout = ({
           </div>
         )}
         
-        {/* Content area with stable minimum height */}
-        <div className="min-h-[calc(100vh-200px)] relative">
+        {/* Content area with stable minimum height and overflow containment */}
+        <div className="min-h-[calc(100vh-200px)] relative overflow-hidden">
           {loading ? (
             <div className="absolute inset-0 flex items-center justify-center">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
             </div>
           ) : (
-            <div className="space-y-4 sm:space-y-6 animate-fade-in">
+            <div className="space-y-4 sm:space-y-6">
               {children}
             </div>
           )}
