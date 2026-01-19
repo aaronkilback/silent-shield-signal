@@ -1966,9 +1966,16 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
         { pattern: /\b(or\s+)?web\s+search\.?\s*Cite\s+sources\s+as\s*\[S1\][^\n\r]*$/gim, label: 'cite-sources instruction line' },
         { pattern: /\bCite\s+sources\b[^\n\r]*$/gim, label: 'cite-sources instruction' },
         { pattern: /\bUse\s+(the\s+)?(mandatory|provided)\s+briefing\s+template\b[^\n\r]*\.?/gim, label: 'briefing-template instruction' },
+        { pattern: /\bUse\s+the\s+Standard\s+Fortress\s+Intelligence\s+Format\s*\(SFIF\)[^\n\r]*\.?/gim, label: 'SFIF instruction' },
+        { pattern: /\bDo\s+not\s+(use\s+any\s+)?forbidden\s+phrases\b[^\n\r]*\.?/gim, label: 'forbidden-phrases instruction' },
+        { pattern: /\bDo\s+not\s+invent\s+(information|content|data)\b[^\n\r]*\.?/gim, label: 'do-not-invent instruction' },
         { pattern: /\bDo\s+not\s+invent\b[^\n\r]*\.?/gim, label: 'do-not-invent instruction' },
         { pattern: /\bDo\s+not\s+mention\s+other\s+clients\b[^\n\r]*\.?/gim, label: 'no-other-clients instruction' },
         { pattern: /\bStick\s+to\s+the\s+24-?hour\s+window\b[^\n\r]*\.?/gim, label: '24h-window instruction' },
+        { pattern: /\bor\s+web\s+search\.\s*Use\s+the\s+Standard/gim, label: 'web-search-SFIF fragment' },
+        { pattern: /\bFollow\s+the\s+(anti-?hallucination|SFIF)\s+protocol\b[^\n\r]*\.?/gim, label: 'protocol instruction' },
+        { pattern: /\bYou\s+must\s+(always\s+)?structure\s+outputs?\b[^\n\r]*\.?/gim, label: 'structure-outputs instruction' },
+        { pattern: /\bMANDATORY\s+FORMAT\b[^\n\r]*\.?/gim, label: 'mandatory-format instruction' },
       ];
 
       for (const { pattern, label } of leakagePatterns) {
