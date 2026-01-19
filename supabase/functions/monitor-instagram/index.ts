@@ -42,18 +42,24 @@ serve(async (req) => {
 
     if (clientsError) throw clientsError;
 
-    // Fetch high-risk/monitored entities (activist groups, threat actors, etc.)
+    // Fetch high-risk/monitored entities WITH Instagram handles
     const { data: watchedEntities, error: entitiesError } = await supabase
       .from('entities')
-      .select('id, name, type, aliases, risk_level')
-      .or('risk_level.eq.high,risk_level.eq.critical,is_active_monitoring.eq.true')
+      .select('id, name, type, aliases, risk_level, attributes')
+      .eq('active_monitoring_enabled', true)
       .in('type', ['organization', 'person']);
 
     if (entitiesError) {
       console.error('Error fetching entities:', entitiesError);
     }
 
-    console.log(`Monitoring Instagram for ${clients?.length || 0} clients and ${watchedEntities?.length || 0} watched entities`);
+    // Extract entities with Instagram handles for profile-based monitoring
+    const entitiesWithInstagram = (watchedEntities || []).filter(e => 
+      e.attributes?.instagram_handle || 
+      e.aliases?.some((a: string) => a.startsWith('@'))
+    );
+
+    console.log(`Monitoring Instagram for ${clients?.length || 0} clients, ${watchedEntities?.length || 0} watched entities (${entitiesWithInstagram.length} with Instagram profiles)`);
 
     let signalsCreated = 0;
     let totalSearches = 0;
@@ -114,6 +120,22 @@ serve(async (req) => {
       try {
         const searchQueries: string[] = [];
         
+        // Get Instagram handle if available
+        const instagramHandle = entity.attributes?.instagram_handle || 
+          entity.aliases?.find((a: string) => a.startsWith('@'));
+        
+        // PRIORITY: Direct profile search if we have a handle
+        if (instagramHandle) {
+          const cleanHandle = instagramHandle.replace('@', '');
+          // Search for recent posts from this specific profile
+          searchQueries.push(`site:instagram.com/${cleanHandle}`);
+          searchQueries.push(`site:instagram.com/reel "${cleanHandle}"`);
+          searchQueries.push(`site:instagram.com/p "${cleanHandle}" (pipeline OR LNG OR protest OR blockade OR action)`);
+          // Search for their tagged content
+          searchQueries.push(`site:instagram.com "#${cleanHandle}" OR "@${cleanHandle}"`);
+          console.log(`Direct profile monitoring for @${cleanHandle}`);
+        }
+        
         // Entity name + pipeline/energy project terms
         searchQueries.push(`site:instagram.com "${entity.name}" (pipeline OR LNG OR "Coastal GasLink" OR PRGT OR protest OR blockade)`);
         
@@ -124,8 +146,17 @@ serve(async (req) => {
         // Include aliases in search
         if (entity.aliases && entity.aliases.length > 0) {
           for (const alias of entity.aliases.slice(0, 2)) {
-            searchQueries.push(`site:instagram.com "${alias}" (pipeline OR protest OR blockade)`);
+            if (!alias.startsWith('@')) { // Skip handles, already covered
+              searchQueries.push(`site:instagram.com "${alias}" (pipeline OR protest OR blockade)`);
+            }
           }
+        }
+        
+        // Search for focus areas if available
+        const focusAreas = entity.attributes?.focus_areas || entity.attributes?.client_targets;
+        if (focusAreas && focusAreas.length > 0) {
+          const focusTerms = focusAreas.slice(0, 3).map((f: string) => `"${f}"`).join(' OR ');
+          searchQueries.push(`site:instagram.com "${entity.name}" (${focusTerms})`);
         }
 
         for (const query of searchQueries) {
