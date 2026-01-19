@@ -56,6 +56,21 @@ interface Signal {
   rule_category?: string;
   rule_priority?: string;
   routed_to_team?: string;
+  // Social media fields
+  title?: string;
+  description?: string;
+  post_caption?: string;
+  mentions?: string[];
+  hashtags?: string[];
+  comments?: any[];
+  engagement_metrics?: {
+    likes?: number;
+    comments?: number;
+    shares?: number;
+    views?: number;
+  };
+  media_urls?: string[];
+  thumbnail_url?: string;
   sources?: {
     name: string;
     type: string;
@@ -140,6 +155,15 @@ export const SignalHistory = () => {
           rule_category,
           rule_priority,
           routed_to_team,
+          title,
+          description,
+          post_caption,
+          mentions,
+          hashtags,
+          comments,
+          engagement_metrics,
+          media_urls,
+          thumbnail_url,
           clients (
             name
           )
@@ -440,9 +464,58 @@ export const SignalHistory = () => {
                         </div>
                       </div>
                       
-                      <p className="text-sm leading-relaxed mb-3 line-clamp-3">
-                        {cleanSignalText(signal.normalized_text)}
+                      {/* Signal title or cleaned text */}
+                      <p className="text-sm font-medium mb-1">
+                        {signal.title || cleanSignalText(signal.normalized_text)}
                       </p>
+                      
+                      {/* Description or post caption */}
+                      {(signal.description || signal.post_caption) && (
+                        <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
+                          {signal.description || signal.post_caption}
+                        </p>
+                      )}
+                      
+                      {/* Hashtags */}
+                      {signal.hashtags && signal.hashtags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {signal.hashtags.slice(0, 5).map((tag, idx) => (
+                            <Badge key={idx} variant="outline" className="text-xs text-blue-600">
+                              #{tag}
+                            </Badge>
+                          ))}
+                          {signal.hashtags.length > 5 && (
+                            <span className="text-xs text-muted-foreground">+{signal.hashtags.length - 5} more</span>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Engagement metrics */}
+                      {signal.engagement_metrics && (signal.engagement_metrics.likes || signal.engagement_metrics.comments || signal.engagement_metrics.shares) && (
+                        <div className="flex gap-3 text-xs text-muted-foreground mb-2">
+                          {signal.engagement_metrics.likes && (
+                            <span>❤️ {signal.engagement_metrics.likes.toLocaleString()}</span>
+                          )}
+                          {signal.engagement_metrics.comments && (
+                            <span>💬 {signal.engagement_metrics.comments.toLocaleString()}</span>
+                          )}
+                          {signal.engagement_metrics.shares && (
+                            <span>🔄 {signal.engagement_metrics.shares.toLocaleString()}</span>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Thumbnail */}
+                      {signal.thumbnail_url && (
+                        <div className="mb-2">
+                          <img 
+                            src={signal.thumbnail_url} 
+                            alt="Signal media" 
+                            className="h-20 w-auto rounded object-cover"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                          />
+                        </div>
+                      )}
                       
                       <div className="flex items-center justify-between text-xs text-muted-foreground">
                         <div className="flex items-center gap-3">
