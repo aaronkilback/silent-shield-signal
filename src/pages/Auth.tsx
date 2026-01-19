@@ -260,6 +260,9 @@ const Auth = () => {
         }
         
         toast.success("Welcome back to Fortress AI");
+        
+        // Navigate to dashboard after successful login (no MFA case)
+        navigate("/");
       } else {
         const { error } = await supabase.auth.signUp({
           email,
