@@ -279,7 +279,7 @@ async function processSearch(
           continue;
         }
 
-        const { caption, authorHandle, authorName, mediaUrls, comments, engagement, postType } = postData;
+        const { caption, authorHandle, authorName, mediaUrls, comments, engagement, postType, postDate } = postData;
 
         // Check for relevance
         const lowerCaption = caption.toLowerCase();
@@ -290,6 +290,22 @@ async function processSearch(
 
         if (!isRelevant) {
           console.log(`Content not relevant, skipping`);
+          continue;
+        }
+
+        // Check if content is too old (reject posts older than 90 days)
+        const maxAgeMs = 90 * 24 * 60 * 60 * 1000; // 90 days
+        const now = Date.now();
+        
+        if (postDate && (now - postDate.getTime() > maxAgeMs)) {
+          console.log(`Skipping old post from ${postDate.toISOString().split('T')[0]} (${authorHandle || sourceName})`);
+          continue;
+        }
+        
+        // Also check for dates mentioned in caption that indicate old events
+        const contentDate = extractDateFromContent(caption);
+        if (contentDate && (now - contentDate.getTime() > maxAgeMs)) {
+          console.log(`Skipping post referencing old event from ${contentDate.toISOString().split('T')[0]}`);
           continue;
         }
 
@@ -423,6 +439,46 @@ async function processSearch(
   }
 }
 
+// Extract date from content text (e.g., "January 28, 2020" or "on March 15, 2019")
+function extractDateFromContent(text: string): Date | null {
+  // Match patterns like "January 28, 2020" or "28 January 2020" or "Jan 2020"
+  const datePatterns = [
+    /(?:on\s+)?(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}/i,
+    /(?:on\s+)?\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December),?\s+20\d{2}/i,
+    /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+20\d{2}/i,
+    /(?:in\s+)?(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2}/i,
+    /\d{1,2}\/\d{1,2}\/20\d{2}/,
+    /20\d{2}-\d{2}-\d{2}/
+  ];
+  
+  for (const pattern of datePatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      try {
+        const parsed = new Date(match[0].replace(/^(?:on|in)\s+/i, ''));
+        if (!isNaN(parsed.getTime())) {
+          return parsed;
+        }
+      } catch {
+        // Continue to next pattern
+      }
+    }
+  }
+  
+  // Check for year mentions like "2020" or "2019" without month
+  const yearMatch = text.match(/\b20(1[0-9]|2[0-4])\b/);
+  if (yearMatch) {
+    const year = parseInt(yearMatch[0], 10);
+    const currentYear = new Date().getFullYear();
+    // If mentioning a year more than 1 year ago, flag as potentially old
+    if (currentYear - year > 1) {
+      return new Date(year, 0, 1); // Return Jan 1 of that year
+    }
+  }
+  
+  return null;
+}
+
 // Fetch actual Instagram post content by scraping the page
 async function fetchInstagramPost(url: string): Promise<{
   caption: string;
@@ -432,6 +488,7 @@ async function fetchInstagramPost(url: string): Promise<{
   comments: Array<{ author: string; text: string }>;
   engagement: { likes?: number; comments?: number; views?: number };
   postType: 'image' | 'video' | 'reel' | 'carousel';
+  postDate: Date | null;
 } | null> {
   try {
     const controller = new AbortController();
@@ -462,6 +519,7 @@ async function fetchInstagramPost(url: string): Promise<{
     const comments: Array<{ author: string; text: string }> = [];
     let engagement: { likes?: number; comments?: number; views?: number } = {};
     let postType: 'image' | 'video' | 'reel' | 'carousel' = 'image';
+    let postDate: Date | null = null;
 
     // Extract from og:description meta tag (contains caption)
     const descMatch = html.match(/<meta\s+(?:property|name)="og:description"\s+content="([^"]+)"/i) ||
@@ -562,6 +620,19 @@ async function fetchInstagramPost(url: string): Promise<{
       }
     }
 
+    // Try to extract post date from meta tags or page content
+    const dateTimeMatch = html.match(/<time[^>]*datetime="([^"]+)"/i) ||
+                          html.match(/"uploadDate":\s*"([^"]+)"/i) ||
+                          html.match(/"dateCreated":\s*"([^"]+)"/i);
+    if (dateTimeMatch) {
+      try {
+        postDate = new Date(dateTimeMatch[1]);
+        if (isNaN(postDate.getTime())) postDate = null;
+      } catch {
+        postDate = null;
+      }
+    }
+
     // Return null if we couldn't extract meaningful content
     if (!caption || caption.length < 10) {
       console.log('Could not extract caption from Instagram post');
@@ -575,7 +646,8 @@ async function fetchInstagramPost(url: string): Promise<{
       mediaUrls,
       comments,
       engagement,
-      postType
+      postType,
+      postDate
     };
 
   } catch (error) {
