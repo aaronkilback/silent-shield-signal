@@ -41,6 +41,8 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
   const [copiedAll, setCopiedAll] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const sendLockRef = useRef(false);
+  const loadLockRef = useRef(false);
+  const currentAgentIdRef = useRef<string | null>(null);
   const { user } = useAuth();
   const { selectedClientId } = useClientSelection();
   const { checkContent } = useContentModeration({
@@ -163,9 +165,22 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
 
   const loadConversation = useCallback(async () => {
     if (!user) return;
+    
+    // Prevent race condition with concurrent loads
+    if (loadLockRef.current) return;
+    loadLockRef.current = true;
+    
+    // Track which agent we're loading for
+    const loadingAgentId = agent.id;
+    currentAgentIdRef.current = loadingAgentId;
 
     setIsLoadingHistory(true);
     try {
+      // Check if agent changed during async operation
+      if (currentAgentIdRef.current !== loadingAgentId) {
+        return;
+      }
+      
       const { data: existingConv, error: convError } = await supabase
         .from("agent_conversations")
         .select("id")
@@ -177,6 +192,11 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
         .maybeSingle();
 
       if (convError) throw convError;
+      
+      // Check again if agent changed
+      if (currentAgentIdRef.current !== loadingAgentId) {
+        return;
+      }
 
       if (existingConv) {
         setConversationId(existingConv.id);
@@ -188,12 +208,18 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
           .order("created_at", { ascending: true });
 
         if (msgsError) throw msgsError;
+        
+        // Final check before setting state
+        if (currentAgentIdRef.current !== loadingAgentId) {
+          return;
+        }
 
         setMessages(msgs?.map(m => ({
           role: m.role as "user" | "assistant",
           content: m.content
         })) || []);
       } else {
+        // Use upsert-like pattern to prevent duplicates
         const { data: newConv, error: newConvError } = await supabase
           .from("agent_conversations")
           .insert({
@@ -206,6 +232,12 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
           .single();
 
         if (newConvError) throw newConvError;
+        
+        // Final check before setting state
+        if (currentAgentIdRef.current !== loadingAgentId) {
+          return;
+        }
+        
         setConversationId(newConv.id);
         setMessages([]);
       }
@@ -214,6 +246,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
       toast.error("Failed to load chat history");
       setMessages([]);
     } finally {
+      loadLockRef.current = false;
       setIsLoadingHistory(false);
     }
   }, [agent.id, agent.call_sign, user]);

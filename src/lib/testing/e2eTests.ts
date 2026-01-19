@@ -1395,6 +1395,65 @@ export const aiAgentsTests = {
         }
       },
     },
+    {
+      name: 'No duplicate conversations within 1 second (race condition)',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('agent_conversations')
+          .select('id, agent_id, user_id, created_at')
+          .order('created_at', { ascending: false })
+          .limit(500);
+        
+        if (error) throw error;
+        
+        // Group by agent_id + user_id and check for duplicates within 1 second
+        const grouped = new Map<string, Array<{ id: string; created_at: string }>>();
+        
+        for (const conv of data || []) {
+          const key = `${conv.agent_id}-${conv.user_id}`;
+          if (!grouped.has(key)) {
+            grouped.set(key, []);
+          }
+          grouped.get(key)!.push({ id: conv.id, created_at: conv.created_at });
+        }
+        
+        const duplicates: string[] = [];
+        
+        for (const [key, convs] of grouped) {
+          for (let i = 0; i < convs.length; i++) {
+            for (let j = i + 1; j < convs.length; j++) {
+              const time1 = new Date(convs[i].created_at).getTime();
+              const time2 = new Date(convs[j].created_at).getTime();
+              const diffSeconds = Math.abs(time1 - time2) / 1000;
+              
+              if (diffSeconds < 1) {
+                duplicates.push(`Duplicate conversation for ${key}: ${convs[i].id} and ${convs[j].id} (${diffSeconds.toFixed(2)}s apart)`);
+              }
+            }
+          }
+        }
+        
+        if (duplicates.length > 0) {
+          throw new Error(`Found ${duplicates.length} duplicate conversation(s):\n${duplicates.slice(0, 3).join('\n')}`);
+        }
+      },
+    },
+    {
+      name: 'No empty AI assistant messages',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('ai_assistant_messages')
+          .select('id, role, content')
+          .or('content.is.null,content.eq.')
+          .limit(10);
+        
+        if (error) throw error;
+        
+        if (data && data.length > 0) {
+          throw new Error(`Found ${data.length} empty AI assistant message(s): ${data.map(m => m.id).join(', ')}`);
+        }
+      },
+    },
   ],
 };
 
