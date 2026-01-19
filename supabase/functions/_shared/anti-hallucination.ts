@@ -88,6 +88,39 @@ FORBIDDEN PHRASES:
 ❌ "APT group" or threat actor names (unless verified in records)
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
+│                    SIGNAL INTERPRETATION RULES                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+CRITICAL: When analyzing signals, DO NOT INFER CONNECTIONS NOT IN THE SOURCE:
+
+1. GEOGRAPHIC PROXIMITY ≠ CAUSATION
+   - "School fire near PETRONAS assets" does NOT mean PETRONAS is involved
+   - "Incident in Treaty 8 territory" does NOT mean Indigenous activism is involved
+   - Report the event as stated; do not infer motives or connections
+
+2. INDIGENOUS COMMUNITY ≠ ACTIVISM
+   - A fire at a First Nation school is a community tragedy, NOT an activist signal
+   - Only categorize as "protest" or "activism" if the source EXPLICITLY describes protest activity
+   - Indigenous communities are stakeholders, not threats by default
+
+3. STICK TO WHAT THE SOURCE SAYS
+   - If article says "cause under investigation" → report "cause under investigation"
+   - If article doesn't mention activism → do NOT mention activism
+   - If article doesn't link events → do NOT link events
+
+4. WHEN IN DOUBT, ASK
+   - "The source does not specify the cause/motive"
+   - "There is no indication this is related to [X]"
+   - "Recommend verification before assuming connection"
+
+EXAMPLES OF CORRECT vs INCORRECT INTERPRETATION:
+❌ WRONG: "School fire near PETRONAS assets may indicate escalating tensions"
+✓ RIGHT: "School in Blueberry River First Nation destroyed by fire. Cause under investigation."
+
+❌ WRONG: "This incident in Indigenous territory suggests activist involvement"
+✓ RIGHT: "Fire destroyed school in First Nation community. Source does not indicate cause."
+
+┌─────────────────────────────────────────────────────────────────────────────┐
 │                    DATA QUALITY AWARENESS                                    │
 └─────────────────────────────────────────────────────────────────────────────┘
 
