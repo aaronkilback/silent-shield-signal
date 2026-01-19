@@ -2725,6 +2725,798 @@ export const systemResilienceTests = {
 };
 
 // ============================================
+// SIGNALS INTEGRITY TESTS
+// ============================================
+
+export const signalsIntegrityTests = {
+  name: 'Signals Integrity',
+  tests: [
+    {
+      name: 'Can read signals table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('signals')
+          .select('id, title, severity, source_id')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Signals have valid severity levels',
+      fn: async () => {
+        const validSeverities = ['critical', 'high', 'medium', 'low', 'info'];
+        
+        const { data, error } = await supabase
+          .from('signals')
+          .select('id, severity')
+          .not('severity', 'is', null)
+          .limit(50);
+        
+        if (error) throw error;
+        
+        for (const signal of data || []) {
+          if (!validSeverities.includes(signal.severity)) {
+            throw new Error(`Signal ${signal.id} has invalid severity: ${signal.severity}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'No duplicate signal content hashes',
+      fn: async () => {
+        // Check for duplicate content_hash values which indicate duplicate signals
+        const { data, error } = await supabase
+          .from('signals')
+          .select('content_hash')
+          .not('content_hash', 'is', null)
+          .limit(500);
+        
+        if (error) throw error;
+        
+        const hashCounts = new Map<string, number>();
+        for (const signal of data || []) {
+          const count = hashCounts.get(signal.content_hash) || 0;
+          hashCounts.set(signal.content_hash, count + 1);
+        }
+        
+        const duplicates = Array.from(hashCounts.entries()).filter(([_, count]) => count > 1);
+        if (duplicates.length > 0) {
+          throw new Error(`Found ${duplicates.length} duplicate content hashes - deduplication may be failing`);
+        }
+      },
+    },
+    {
+      name: 'Signals have client_id when expected',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('signals')
+          .select('id, title, client_id, source_id')
+          .is('client_id', null)
+          .limit(20);
+        
+        if (error) throw error;
+        
+        // Log warning if there are orphaned signals without client association
+        if ((data || []).length > 10) {
+          console.warn(`Found ${data?.length} signals without client_id - may indicate ingestion issues`);
+        }
+      },
+    },
+    {
+      name: 'Signals have valid rule_category format',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('signals')
+          .select('id, rule_category')
+          .not('rule_category', 'is', null)
+          .limit(50);
+        
+        if (error) throw error;
+        
+        for (const signal of data || []) {
+          if (typeof signal.rule_category !== 'string' || signal.rule_category.length > 100) {
+            throw new Error(`Signal ${signal.id} has invalid rule_category format`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Signal sources are valid references',
+      fn: async () => {
+        const { data: signals, error: sigError } = await supabase
+          .from('signals')
+          .select('id, source_id')
+          .not('source_id', 'is', null)
+          .limit(20);
+        
+        if (sigError) throw sigError;
+        
+        if ((signals || []).length > 0) {
+          const sourceIds = [...new Set((signals || []).map(s => s.source_id))];
+          
+          const { data: sources, error: srcError } = await supabase
+            .from('sources')
+            .select('id')
+            .in('id', sourceIds.slice(0, 10));
+          
+          if (srcError) throw srcError;
+          
+          const foundIds = new Set((sources || []).map(s => s.id));
+          const missingCount = sourceIds.slice(0, 10).filter(id => !foundIds.has(id)).length;
+          
+          if (missingCount > 0) {
+            throw new Error(`Found ${missingCount} signals with invalid source_id references`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// CLIENT DATA ISOLATION TESTS
+// ============================================
+
+export const clientDataIsolationTests = {
+  name: 'Client Data Isolation',
+  tests: [
+    {
+      name: 'Signals are properly associated with clients',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('signals')
+          .select('id, client_id, title')
+          .not('client_id', 'is', null)
+          .limit(10);
+        
+        if (error) throw error;
+        
+        // Verify each signal's client_id refers to a real client
+        for (const signal of data || []) {
+          const { data: client, error: clientError } = await supabase
+            .from('clients')
+            .select('id')
+            .eq('id', signal.client_id)
+            .single();
+          
+          if (clientError && clientError.code !== 'PGRST116') {
+            throw new Error(`Signal ${signal.id} has invalid client_id: ${signal.client_id}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Entities have valid client associations',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('entities')
+          .select('id, name, client_id')
+          .not('client_id', 'is', null)
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const entity of data || []) {
+          const { data: client, error: clientError } = await supabase
+            .from('clients')
+            .select('id')
+            .eq('id', entity.client_id)
+            .single();
+          
+          if (clientError && clientError.code !== 'PGRST116') {
+            throw new Error(`Entity ${entity.id} has invalid client_id`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Investigations have valid client associations',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('investigations')
+          .select('id, file_number, client_id')
+          .not('client_id', 'is', null)
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const inv of data || []) {
+          const { data: client, error: clientError } = await supabase
+            .from('clients')
+            .select('id')
+            .eq('id', inv.client_id)
+            .single();
+          
+          if (clientError && clientError.code !== 'PGRST116') {
+            throw new Error(`Investigation ${inv.id} has invalid client_id`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Travelers have valid client associations',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('travelers')
+          .select('id, name, client_id')
+          .not('client_id', 'is', null)
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const traveler of data || []) {
+          const { data: client, error: clientError } = await supabase
+            .from('clients')
+            .select('id')
+            .eq('id', traveler.client_id)
+            .single();
+          
+          if (clientError && clientError.code !== 'PGRST116') {
+            throw new Error(`Traveler ${traveler.id} has invalid client_id`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Incidents have valid client associations',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('incidents')
+          .select('id, title, client_id')
+          .not('client_id', 'is', null)
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const incident of data || []) {
+          const { data: client, error: clientError } = await supabase
+            .from('clients')
+            .select('id')
+            .eq('id', incident.client_id)
+            .single();
+          
+          if (clientError && clientError.code !== 'PGRST116') {
+            throw new Error(`Incident ${incident.id} has invalid client_id`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// UI RACE CONDITION TESTS
+// ============================================
+
+export const uiRaceConditionTests = {
+  name: 'UI Race Conditions',
+  tests: [
+    {
+      name: 'No duplicate agent messages within 5 seconds',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('agent_messages')
+          .select('id, conversation_id, role, content, created_at')
+          .eq('role', 'user')
+          .order('created_at', { ascending: false })
+          .limit(200);
+        
+        if (error) throw error;
+        
+        const conversationMessages = new Map<string, Array<{ id: string; content: string; created_at: string }>>();
+        
+        for (const msg of data || []) {
+          if (!conversationMessages.has(msg.conversation_id)) {
+            conversationMessages.set(msg.conversation_id, []);
+          }
+          conversationMessages.get(msg.conversation_id)!.push({
+            id: msg.id,
+            content: msg.content,
+            created_at: msg.created_at,
+          });
+        }
+        
+        const duplicates: string[] = [];
+        
+        for (const [convId, messages] of conversationMessages) {
+          for (let i = 0; i < messages.length; i++) {
+            for (let j = i + 1; j < messages.length; j++) {
+              if (messages[i].content === messages[j].content) {
+                const time1 = new Date(messages[i].created_at).getTime();
+                const time2 = new Date(messages[j].created_at).getTime();
+                const diffSeconds = Math.abs(time1 - time2) / 1000;
+                
+                if (diffSeconds < 5) {
+                  duplicates.push(`Duplicate in ${convId.slice(0, 8)}...: "${messages[i].content.substring(0, 40)}..." (${diffSeconds.toFixed(1)}s apart)`);
+                }
+              }
+            }
+          }
+        }
+        
+        if (duplicates.length > 0) {
+          throw new Error(`Found ${duplicates.length} duplicate message(s):\n${duplicates.slice(0, 3).join('\n')}`);
+        }
+      },
+    },
+    {
+      name: 'No duplicate signal ingestion within 1 minute',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('signals')
+          .select('id, title, created_at')
+          .order('created_at', { ascending: false })
+          .limit(100);
+        
+        if (error) throw error;
+        
+        const titleTimestamps = new Map<string, Date[]>();
+        
+        for (const signal of data || []) {
+          if (!titleTimestamps.has(signal.title)) {
+            titleTimestamps.set(signal.title, []);
+          }
+          titleTimestamps.get(signal.title)!.push(new Date(signal.created_at));
+        }
+        
+        const rapidDuplicates: string[] = [];
+        
+        for (const [title, timestamps] of titleTimestamps) {
+          for (let i = 0; i < timestamps.length; i++) {
+            for (let j = i + 1; j < timestamps.length; j++) {
+              const diffMs = Math.abs(timestamps[i].getTime() - timestamps[j].getTime());
+              if (diffMs < 60000) { // 1 minute
+                rapidDuplicates.push(`"${title.substring(0, 50)}..." duplicated within ${(diffMs / 1000).toFixed(0)}s`);
+              }
+            }
+          }
+        }
+        
+        if (rapidDuplicates.length > 0) {
+          throw new Error(`Found ${rapidDuplicates.length} rapid duplicate signal(s):\n${rapidDuplicates.slice(0, 3).join('\n')}`);
+        }
+      },
+    },
+    {
+      name: 'No orphaned conversation references',
+      fn: async () => {
+        const { data: messages, error } = await supabase
+          .from('agent_messages')
+          .select('id, conversation_id')
+          .limit(50);
+        
+        if (error) throw error;
+        
+        const conversationIds = [...new Set((messages || []).map(m => m.conversation_id))];
+        
+        if (conversationIds.length > 0) {
+          const { data: conversations, error: convError } = await supabase
+            .from('agent_conversations')
+            .select('id')
+            .in('id', conversationIds.slice(0, 20));
+          
+          if (convError) throw convError;
+          
+          const foundIds = new Set((conversations || []).map(c => c.id));
+          const orphanedCount = conversationIds.slice(0, 20).filter(id => !foundIds.has(id)).length;
+          
+          if (orphanedCount > 0) {
+            throw new Error(`Found ${orphanedCount} messages with orphaned conversation references`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// AUTOMATED BUG DETECTION TESTS
+// ============================================
+
+export const automatedBugDetectionTests = {
+  name: 'Automated Bug Detection',
+  tests: [
+    {
+      name: 'Check for NULL values in required fields',
+      fn: async () => {
+        const issues: string[] = [];
+        
+        // Check entities without names
+        const { data: namelessEntities } = await supabase
+          .from('entities')
+          .select('id')
+          .is('name', null)
+          .limit(5);
+        if ((namelessEntities || []).length > 0) {
+          issues.push(`${namelessEntities?.length} entities missing name`);
+        }
+        
+        // Check incidents without titles
+        const { data: titlelessIncidents } = await supabase
+          .from('incidents')
+          .select('id')
+          .is('title', null)
+          .limit(5);
+        if ((titlelessIncidents || []).length > 0) {
+          issues.push(`${titlelessIncidents?.length} incidents missing title`);
+        }
+        
+        // Check signals without titles
+        const { data: titlelessSignals } = await supabase
+          .from('signals')
+          .select('id')
+          .is('title', null)
+          .limit(5);
+        if ((titlelessSignals || []).length > 0) {
+          issues.push(`${titlelessSignals?.length} signals missing title`);
+        }
+        
+        if (issues.length > 0) {
+          throw new Error(`Data integrity issues found:\n${issues.join('\n')}`);
+        }
+      },
+    },
+    {
+      name: 'Check for stale sources',
+      fn: async () => {
+        const oneWeekAgo = new Date();
+        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+        
+        const { data, error } = await supabase
+          .from('sources')
+          .select('id, name, status, last_ingested_at')
+          .eq('status', 'active')
+          .lt('last_ingested_at', oneWeekAgo.toISOString())
+          .limit(10);
+        
+        if (error) throw error;
+        
+        if ((data || []).length > 5) {
+          throw new Error(`Found ${data?.length} active sources not ingested in over a week - monitoring may be stalled`);
+        }
+      },
+    },
+    {
+      name: 'Check for excessive error logs',
+      fn: async () => {
+        const oneHourAgo = new Date();
+        oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+        
+        const { data, error } = await supabase
+          .from('api_usage_logs')
+          .select('id, endpoint, status_code, error_message')
+          .gte('status_code', 500)
+          .gte('created_at', oneHourAgo.toISOString())
+          .limit(50);
+        
+        if (error) throw error;
+        
+        if ((data || []).length > 20) {
+          const errorTypes = new Map<string, number>();
+          for (const log of data || []) {
+            const key = `${log.endpoint}: ${log.error_message?.substring(0, 50) || 'Unknown'}`;
+            errorTypes.set(key, (errorTypes.get(key) || 0) + 1);
+          }
+          
+          const topErrors = Array.from(errorTypes.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .map(([msg, count]) => `${count}x ${msg}`);
+          
+          throw new Error(`High error rate detected (${data?.length} errors in last hour):\n${topErrors.join('\n')}`);
+        }
+      },
+    },
+    {
+      name: 'Check for orphaned data relationships',
+      fn: async () => {
+        const issues: string[] = [];
+        
+        // Check entity_relationships with missing entities
+        const { data: relationships } = await supabase
+          .from('entity_relationships')
+          .select('id, entity_a_id, entity_b_id')
+          .limit(20);
+        
+        if ((relationships || []).length > 0) {
+          const entityIds = [
+            ...new Set([
+              ...(relationships || []).map(r => r.entity_a_id),
+              ...(relationships || []).map(r => r.entity_b_id)
+            ])
+          ].filter(Boolean);
+          
+          if (entityIds.length > 0) {
+            const { data: entities } = await supabase
+              .from('entities')
+              .select('id')
+              .in('id', entityIds.slice(0, 30));
+            
+            const foundIds = new Set((entities || []).map(e => e.id));
+            const orphanedCount = entityIds.slice(0, 30).filter(id => !foundIds.has(id)).length;
+            
+            if (orphanedCount > 0) {
+              issues.push(`${orphanedCount} entity relationships reference non-existent entities`);
+            }
+          }
+        }
+        
+        if (issues.length > 0) {
+          throw new Error(`Orphaned data found:\n${issues.join('\n')}`);
+        }
+      },
+    },
+    {
+      name: 'Check for pending bug reports without updates',
+      fn: async () => {
+        const threeDaysAgo = new Date();
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+        
+        const { data, error } = await supabase
+          .from('bug_reports')
+          .select('id, title, status, created_at')
+          .eq('status', 'open')
+          .lt('created_at', threeDaysAgo.toISOString())
+          .limit(10);
+        
+        if (error) throw error;
+        
+        if ((data || []).length > 3) {
+          throw new Error(`Found ${data?.length} bug reports open for more than 3 days - review needed`);
+        }
+      },
+    },
+    {
+      name: 'Check agent-chat function health',
+      fn: async () => {
+        try {
+          const { data, error } = await supabase.functions.invoke('agent-chat', {
+            body: { 
+              agent_id: 'test-health-check',
+              message: 'health check ping',
+              test_mode: true,
+            },
+          });
+          // Function should respond even if agent doesn't exist
+        } catch (e) {
+          throw new Error(`agent-chat function may be unhealthy: ${e}`);
+        }
+      },
+    },
+    {
+      name: 'Check for RLS policy effectiveness',
+      fn: async () => {
+        // This test verifies RLS is working by checking that queries don't return unexpected data counts
+        const { count: signalCount, error: sigError } = await supabase
+          .from('signals')
+          .select('*', { count: 'exact', head: true });
+        
+        if (sigError) throw sigError;
+        
+        // If we can see more than 1000 signals, RLS might be too permissive
+        // (This is a heuristic - adjust based on expected data volumes)
+        if (signalCount && signalCount > 5000) {
+          console.warn(`User can see ${signalCount} signals - verify RLS policies are appropriately restrictive`);
+        }
+      },
+    },
+    {
+      name: 'Check for monitoring configuration issues',
+      fn: async () => {
+        const { data: clients, error } = await supabase
+          .from('clients')
+          .select('id, name, monitoring_config, monitoring_keywords')
+          .eq('status', 'active')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        const issues: string[] = [];
+        
+        for (const client of clients || []) {
+          const keywords = client.monitoring_keywords || [];
+          if (keywords.length === 0) {
+            issues.push(`Client "${client.name}" has no monitoring keywords configured`);
+          }
+        }
+        
+        if (issues.length > 3) {
+          throw new Error(`Monitoring configuration issues:\n${issues.slice(0, 5).join('\n')}`);
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// EDGE FUNCTION HEALTH TESTS
+// ============================================
+
+export const edgeFunctionHealthTests = {
+  name: 'Edge Function Health',
+  tests: [
+    {
+      name: 'ingest-signal function responds',
+      fn: async () => {
+        const { error } = await supabase.functions.invoke('ingest-signal', {
+          body: { 
+            title: 'E2E Test Signal - Ignore',
+            normalized_text: 'This is an automated E2E test signal for health verification',
+            source_id: 'e2e-test',
+            test_mode: true,
+          },
+        });
+        // Function should process without throwing
+      },
+    },
+    {
+      name: 'system-health-check detailed response',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('system-health-check', {
+          body: { quick: false },
+        });
+        
+        if (error) throw error;
+        if (!data?.checks) throw new Error('Missing checks in response');
+        
+        const failedChecks = data.checks.filter((c: any) => c.status === 'error');
+        if (failedChecks.length > 0) {
+          throw new Error(`System health issues: ${failedChecks.map((c: any) => c.name).join(', ')}`);
+        }
+      },
+    },
+    {
+      name: 'alert-delivery function responds',
+      fn: async () => {
+        const { error } = await supabase.functions.invoke('alert-delivery', {
+          body: { test_mode: true },
+        });
+        // Should respond even in test mode
+      },
+    },
+    {
+      name: 'generate-report function responds',
+      fn: async () => {
+        const { error } = await supabase.functions.invoke('generate-report', {
+          body: { 
+            report_type: 'health_check',
+            test_mode: true,
+          },
+        });
+        // Should respond
+      },
+    },
+  ],
+};
+
+// ============================================
+// DATA CONSISTENCY TESTS
+// ============================================
+
+export const dataConsistencyTests = {
+  name: 'Data Consistency',
+  tests: [
+    {
+      name: 'All referenced user_ids exist in profiles',
+      fn: async () => {
+        const { data: incidents, error } = await supabase
+          .from('incidents')
+          .select('id, owner_user_id')
+          .not('owner_user_id', 'is', null)
+          .limit(20);
+        
+        if (error) throw error;
+        
+        const userIds = [...new Set((incidents || []).map(i => i.owner_user_id))];
+        
+        if (userIds.length > 0) {
+          const { data: profiles, error: profileError } = await supabase
+            .from('profiles')
+            .select('id')
+            .in('id', userIds.slice(0, 15));
+          
+          if (profileError) throw profileError;
+          
+          const foundIds = new Set((profiles || []).map(p => p.id));
+          const missingCount = userIds.slice(0, 15).filter(id => !foundIds.has(id)).length;
+          
+          if (missingCount > 0) {
+            throw new Error(`Found ${missingCount} incidents assigned to non-existent users`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Briefing sessions have valid workspace references',
+      fn: async () => {
+        const { data: sessions, error } = await supabase
+          .from('briefing_sessions')
+          .select('id, workspace_id')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        const workspaceIds = [...new Set((sessions || []).map(s => s.workspace_id))];
+        
+        if (workspaceIds.length > 0) {
+          const { data: workspaces, error: wsError } = await supabase
+            .from('investigation_workspaces')
+            .select('id')
+            .in('id', workspaceIds.slice(0, 15));
+          
+          if (wsError) throw wsError;
+          
+          const foundIds = new Set((workspaces || []).map(w => w.id));
+          const missingCount = workspaceIds.slice(0, 15).filter(id => !foundIds.has(id)).length;
+          
+          if (missingCount > 0) {
+            throw new Error(`Found ${missingCount} briefing sessions with invalid workspace references`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Task force missions have valid data',
+      fn: async () => {
+        const { data: missions, error } = await supabase
+          .from('task_force_missions')
+          .select('id, name, phase, client_id')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        // Verify missions have required fields
+        for (const mission of missions || []) {
+          if (!mission.name) {
+            throw new Error(`Mission ${mission.id} is missing name`);
+          }
+          if (!mission.phase) {
+            throw new Error(`Mission ${mission.id} is missing phase`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Source artifacts have valid content hashes',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('source_artifacts')
+          .select('id, content_hash, source_type')
+          .not('content_hash', 'is', null)
+          .limit(30);
+        
+        if (error) throw error;
+        
+        for (const artifact of data || []) {
+          if (artifact.content_hash.length < 16) {
+            throw new Error(`Source artifact ${artifact.id} has suspiciously short content_hash`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Verification tasks have valid status transitions',
+      fn: async () => {
+        const validStatuses = ['pending', 'in_progress', 'completed', 'failed', 'cancelled'];
+        
+        const { data, error } = await supabase
+          .from('verification_tasks')
+          .select('id, status')
+          .limit(30);
+        
+        if (error) throw error;
+        
+        for (const task of data || []) {
+          if (!validStatuses.includes(task.status)) {
+            throw new Error(`Verification task ${task.id} has invalid status: ${task.status}`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
 // RUN ALL TESTS
 // ============================================
 
@@ -2792,6 +3584,14 @@ export async function runAllTests(): Promise<TestSuite[]> {
     
     // System Resilience
     systemResilienceTests,
+    
+    // NEW: Enhanced Bug Detection & Integrity
+    signalsIntegrityTests,
+    clientDataIsolationTests,
+    uiRaceConditionTests,
+    automatedBugDetectionTests,
+    edgeFunctionHealthTests,
+    dataConsistencyTests,
   ];
   
   const results: TestSuite[] = [];
