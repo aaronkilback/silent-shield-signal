@@ -5971,12 +5971,29 @@ Be thorough and include every piece of visible text and data.`,
       // Resolve client_id if name is provided
       let resolvedClientId = client_id;
       if (client_id && !client_id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
-        const { data: client } = await supabaseClient
+        // Try exact match first, then fuzzy match
+        const { data: exactClient } = await supabaseClient
           .from("clients")
           .select("id")
           .ilike("name", client_id)
-          .single();
-        resolvedClientId = client?.id;
+          .limit(1)
+          .maybeSingle();
+        
+        if (exactClient) {
+          resolvedClientId = exactClient.id;
+        } else {
+          // Fuzzy search with wildcards
+          const { data: fuzzyClient } = await supabaseClient
+            .from("clients")
+            .select("id, name")
+            .ilike("name", `%${client_id}%`)
+            .limit(1)
+            .maybeSingle();
+          resolvedClientId = fuzzyClient?.id;
+          if (fuzzyClient) {
+            console.log(`Resolved client name "${client_id}" to "${fuzzyClient.name}" (${fuzzyClient.id})`);
+          }
+        }
       }
 
       if (!resolvedClientId) {
