@@ -6,20 +6,226 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+interface BugReport {
+  title: string;
+  description: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  steps_to_reproduce?: string;
+  expected_behavior?: string;
+  actual_behavior?: string;
+}
+
+// Detect if user is reporting a bug in conversation
+function detectBugReport(messages: any[]): boolean {
+  if (!messages || messages.length === 0) return false;
+  const lastUserMessage = messages.filter((m: any) => m.role === 'user').pop();
+  if (!lastUserMessage) return false;
+  
+  const content = typeof lastUserMessage.content === 'string' 
+    ? lastUserMessage.content.toLowerCase() 
+    : '';
+  
+  const bugPatterns = [
+    /\bbug\b/i,
+    /\bissue\b/i,
+    /\berror\b/i,
+    /\bbroken\b/i,
+    /\bdoesn'?t work/i,
+    /\bnot working/i,
+    /\bcrash/i,
+    /\bfail/i,
+    /\bproblem\b/i,
+    /\bglitch/i,
+    /\bwrong\b/i,
+    /\bincorrect/i,
+    /\bsomething'?s off/i,
+    /\bweird behavior/i,
+    /\bunexpected/i,
+  ];
+  
+  return bugPatterns.some(pattern => pattern.test(content));
+}
+
+// Extract bug details from conversation using AI
+async function extractBugDetails(messages: any[], apiKey: string): Promise<BugReport | null> {
+  try {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash-lite",
+        messages: [
+          {
+            role: "system",
+            content: `Extract bug report details from the conversation. Return a JSON object with:
+{
+  "title": "Brief title (max 100 chars)",
+  "description": "Full description of the issue",
+  "severity": "low|medium|high|critical",
+  "steps_to_reproduce": "Steps if mentioned",
+  "expected_behavior": "What should happen",
+  "actual_behavior": "What actually happens",
+  "is_complete": true/false (whether enough info to create bug report)
+}
+
+Severity guide:
+- critical: System unusable, data loss, security issue
+- high: Major feature broken, blocking work
+- medium: Feature partially broken, workaround exists
+- low: Minor issue, cosmetic, annoyance
+
+If user hasn't provided enough details, set is_complete to false.
+Return ONLY valid JSON, no markdown.`
+          },
+          ...messages.slice(-10),
+        ],
+        response_format: { type: "json_object" },
+      }),
+    });
+
+    if (!response.ok) return null;
+    
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) return null;
+    
+    const parsed = JSON.parse(content);
+    if (!parsed.is_complete) return null;
+    
+    return {
+      title: parsed.title || "Bug report from chat",
+      description: parsed.description || "",
+      severity: parsed.severity || "medium",
+      steps_to_reproduce: parsed.steps_to_reproduce,
+      expected_behavior: parsed.expected_behavior,
+      actual_behavior: parsed.actual_behavior,
+    };
+  } catch (error) {
+    console.error("Error extracting bug details:", error);
+    return null;
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { messages, action } = await req.json();
+    const { messages, action, bugData } = await req.json();
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    // Detect simple acknowledgment messages that don't need full processing
+    // Initialize Supabase client
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Get user from auth header if available
+    let userId: string | null = null;
+    let userEmail: string | null = null;
+    const authHeader = req.headers.get('Authorization');
+    if (authHeader) {
+      const token = authHeader.replace('Bearer ', '');
+      // Skip if it's just the anon key
+      const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+      if (token !== anonKey) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser(token);
+          if (user) {
+            userId = user.id;
+            userEmail = user.email || null;
+          }
+        } catch {}
+      }
+    }
+
+    // Handle explicit bug submission from chat
+    if (action === 'submit_bug') {
+      if (!bugData) {
+        return new Response(
+          JSON.stringify({ error: "Bug data required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Build full description with details
+      let fullDescription = bugData.description || '';
+      if (bugData.steps_to_reproduce) {
+        fullDescription += `\n\n**Steps to Reproduce:**\n${bugData.steps_to_reproduce}`;
+      }
+      if (bugData.expected_behavior) {
+        fullDescription += `\n\n**Expected Behavior:**\n${bugData.expected_behavior}`;
+      }
+      if (bugData.actual_behavior) {
+        fullDescription += `\n\n**Actual Behavior:**\n${bugData.actual_behavior}`;
+      }
+
+      const { data: bug, error: bugError } = await supabase
+        .from('bug_reports')
+        .insert({
+          user_id: userId,
+          reporter_email: userEmail || bugData.email,
+          title: bugData.title,
+          description: fullDescription,
+          severity: bugData.severity || 'medium',
+          page_url: bugData.page_url,
+          browser_info: bugData.browser_info,
+          conversation_log: messages,
+          workflow_stage: 'reported',
+          status: 'open',
+        })
+        .select('id')
+        .single();
+
+      if (bugError) {
+        console.error("Bug submission error:", bugError);
+        return new Response(
+          JSON.stringify({ error: "Failed to submit bug report" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          bug_id: bug.id,
+          message: "Bug report submitted successfully. You'll be notified when it's fixed." 
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Handle bug status check
+    if (action === 'check_bug_status') {
+      const { bug_id } = await req.json();
+      
+      const { data: bug, error } = await supabase
+        .from('bug_reports')
+        .select('id, title, status, workflow_stage, fix_status, created_at, resolved_at')
+        .eq('id', bug_id)
+        .single();
+
+      if (error || !bug) {
+        return new Response(
+          JSON.stringify({ error: "Bug not found" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ bug }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Detect simple acknowledgment messages for fast path
     const isSimpleAcknowledgment = (msgs: any[]): boolean => {
       if (!msgs || msgs.length === 0) return false;
       const lastUserMessage = msgs.filter((m: any) => m.role === 'user').pop();
@@ -47,8 +253,8 @@ serve(async (req) => {
       return acknowledgmentPatterns.some(pattern => pattern.test(content));
     };
 
-    // Fast path for simple acknowledgments (before action handling)
-    if (!action && isSimpleAcknowledgment(messages)) {
+    // Fast path for simple acknowledgments
+    if (isSimpleAcknowledgment(messages)) {
       console.log("Detected simple acknowledgment in support chat, using fast response path");
       
       const ackResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -88,57 +294,40 @@ Respond naturally and briefly.`
       console.log("Fast acknowledgment response failed, falling back to normal processing");
     }
 
-    // Initialize Supabase client
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    // Check if this looks like a bug report
+    const isBugReport = detectBugReport(messages);
+    let bugReportContext = '';
+    
+    if (isBugReport) {
+      // Try to extract bug details
+      const bugDetails = await extractBugDetails(messages, LOVABLE_API_KEY);
+      
+      if (bugDetails) {
+        bugReportContext = `
 
-    // Handle bug submission
-    if (action === 'submit_bug') {
-      const authHeader = req.headers.get('Authorization')!;
-      const token = authHeader.replace('Bearer ', '');
-      const { data: { user } } = await supabase.auth.getUser(token);
+**BUG DETECTION ACTIVE**
+You've detected enough information to create a bug report. Here's what you extracted:
+- Title: ${bugDetails.title}
+- Severity: ${bugDetails.severity}
+- Description: ${bugDetails.description}
 
-      if (!user) {
-        return new Response(
-          JSON.stringify({ error: "Authentication required" }),
-          {
-            status: 401,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
+Tell the user you have enough info and will create a ticket. Ask if they want to add anything else, or if they're ready to submit.
+If they confirm, respond with: "I'll create this bug report now. [BUG_READY]"
+`;
+      } else {
+        bugReportContext = `
+
+**BUG DETECTION ACTIVE**
+The user seems to be reporting an issue but hasn't provided complete details. 
+Ask clarifying questions to gather:
+1. What exactly isn't working?
+2. What were they trying to do?
+3. What happened instead of what they expected?
+4. Can they reproduce it consistently?
+
+Be conversational and helpful while gathering these details.
+`;
       }
-
-      const bugData = await req.json();
-      const { error: bugError } = await supabase
-        .from('bug_reports')
-        .insert({
-          user_id: user.id,
-          title: bugData.title,
-          description: bugData.description,
-          severity: bugData.severity,
-          page_url: bugData.pageUrl,
-          browser_info: bugData.browserInfo,
-        });
-
-      if (bugError) {
-        console.error("Bug submission error:", bugError);
-        return new Response(
-          JSON.stringify({ error: "Failed to submit bug report" }),
-          {
-            status: 500,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      }
-
-      return new Response(
-        JSON.stringify({ success: true, message: "Bug report submitted successfully" }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
     }
 
     // Fetch knowledge base articles for context
@@ -148,7 +337,6 @@ Respond naturally and briefly.`
       .eq('is_published', true)
       .limit(50);
 
-    // Build knowledge base context
     const kbContext = kbArticles?.map(article => 
       `## ${article.title}\n${article.summary}\nTags: ${article.tags?.join(', ')}`
     ).join('\n\n') || '';
@@ -219,9 +407,14 @@ This is an autonomous security operations platform that helps organizations moni
 
 9. **Knowledge Base**: Comprehensive documentation and guides (you have access to this)
 
-10. **Bug Reporting**: Users can report issues they encounter
+10. **Bug Reporting**: Users can report issues conversationally in this chat. When they describe a bug:
+    - Gather complete details through conversation
+    - Ask about: what happened, expected behavior, steps to reproduce
+    - Assess severity based on impact
+    - When you have enough info, confirm and create the report
+    - Track: Bug reports are automatically tracked and users are notified when fixed
 
-11. **Intelligence Documents**: Users can upload security reports, threat assessments, and other documents. These are processed and available for reference.
+11. **Intelligence Documents**: Users can upload security reports, threat assessments, and other documents.
 
 **Knowledge Base Articles:**
 
@@ -230,22 +423,26 @@ ${kbContext}
 **Uploaded Intelligence Documents:**
 ${docContext}
 
+${bugReportContext}
+
 **Your Capabilities:**
 
 1. **Answer Questions**: Use the knowledge base articles above to provide accurate, detailed answers
 2. **Guide Users**: Provide step-by-step instructions for common tasks
-3. **Bug Reporting**: If a user reports a bug or issue:
-   - Acknowledge the problem
-   - Ask for details: title, description, severity (low/medium/high/critical), and what page/feature
-   - Tell them you'll help them submit a bug report
-   - Let them know to click "Submit Bug Report" button that will appear
+3. **Bug Reporting Workflow**: If a user reports a bug or issue:
+   - Engage conversationally to understand the problem
+   - Ask for: what they were doing, what happened, what they expected
+   - Determine severity based on impact
+   - When you have enough details, confirm and offer to create the report
+   - If they confirm, include [BUG_READY] at the end of your message
+   - Tell them they'll receive updates as the bug is fixed and tested
 
 **Your Role:**
 - Answer questions clearly and concisely using knowledge base information
 - Guide users through features with step-by-step instructions
 - Explain security concepts when needed
 - Reference specific knowledge base articles when helpful
-- Help users report bugs they encounter
+- Help users report bugs through natural conversation
 - Be friendly, professional, and helpful
 
 **When answering:**
@@ -253,12 +450,7 @@ ${docContext}
 - Cite article titles when referencing them
 - Provide practical, actionable guidance
 - Keep responses focused and concise
-- If something isn't in the knowledge base, use your general platform knowledge
-
-**For bug reports:**
-- If user mentions a bug, error, or problem, acknowledge it and offer to help them file a report
-- Gather: title, description, severity, and location of the issue
-- Let them know they can submit it via the chat interface`;
+- If something isn't in the knowledge base, use your general platform knowledge`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -280,29 +472,20 @@ ${docContext}
       if (response.status === 429) {
         return new Response(
           JSON.stringify({ error: "Rate limits exceeded, please try again later." }),
-          {
-            status: 429,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
       if (response.status === 402) {
         return new Response(
           JSON.stringify({ error: "Payment required, please add credits to your Lovable AI workspace." }),
-          {
-            status: 402,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
+          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
       const errorText = await response.text();
       console.error("AI gateway error:", response.status, errorText);
       return new Response(
         JSON.stringify({ error: "AI gateway error" }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
@@ -313,10 +496,7 @@ ${docContext}
     console.error("Support chat error:", error);
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });

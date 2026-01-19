@@ -1446,59 +1446,86 @@ export type Database = {
         Row: {
           approved_at: string | null
           approved_by: string | null
+          assigned_to: string | null
           browser_info: string | null
+          conversation_log: Json | null
           created_at: string | null
           description: string
           fix_proposal: Json | null
           fix_status: string | null
+          fix_verified: boolean | null
           id: string
           implemented_at: string | null
+          notification_sent_at: string | null
           page_url: string | null
+          reporter_email: string | null
           resolved_at: string | null
           screenshots: string[] | null
           severity: string
           status: string
+          test_results: Json | null
           title: string
           updated_at: string | null
           user_id: string | null
+          verification_status: string | null
+          verified_at: string | null
+          workflow_stage: string | null
         }
         Insert: {
           approved_at?: string | null
           approved_by?: string | null
+          assigned_to?: string | null
           browser_info?: string | null
+          conversation_log?: Json | null
           created_at?: string | null
           description: string
           fix_proposal?: Json | null
           fix_status?: string | null
+          fix_verified?: boolean | null
           id?: string
           implemented_at?: string | null
+          notification_sent_at?: string | null
           page_url?: string | null
+          reporter_email?: string | null
           resolved_at?: string | null
           screenshots?: string[] | null
           severity: string
           status?: string
+          test_results?: Json | null
           title: string
           updated_at?: string | null
           user_id?: string | null
+          verification_status?: string | null
+          verified_at?: string | null
+          workflow_stage?: string | null
         }
         Update: {
           approved_at?: string | null
           approved_by?: string | null
+          assigned_to?: string | null
           browser_info?: string | null
+          conversation_log?: Json | null
           created_at?: string | null
           description?: string
           fix_proposal?: Json | null
           fix_status?: string | null
+          fix_verified?: boolean | null
           id?: string
           implemented_at?: string | null
+          notification_sent_at?: string | null
           page_url?: string | null
+          reporter_email?: string | null
           resolved_at?: string | null
           screenshots?: string[] | null
           severity?: string
           status?: string
+          test_results?: Json | null
           title?: string
           updated_at?: string | null
           user_id?: string | null
+          verification_status?: string | null
+          verified_at?: string | null
+          workflow_stage?: string | null
         }
         Relationships: [
           {
