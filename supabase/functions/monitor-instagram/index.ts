@@ -6,6 +6,14 @@ import {
   createMediaAttachments,
   detectMediaType 
 } from '../_shared/media-capture.ts';
+import {
+  extractMentions,
+  extractHashtags,
+  extractEventDetails,
+  parseEngagement,
+  isHighPriorityContent,
+  detectPostType
+} from '../_shared/social-media-parser.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -300,28 +308,41 @@ async function processSearch(
             category = 'protest_activity';
           }
 
+          // Extract structured social media data
+          const mentions = extractMentions(cleanText);
+          const hashtags = extractHashtags(cleanText);
+          const engagement = parseEngagement(cleanText);
+          const eventDetails = extractEventDetails(cleanText);
+          const isHighPriority = isHighPriorityContent(cleanText);
+          
+          // Extract author handle from URL
+          const authorMatch = instagramUrl?.match(/instagram\.com\/([a-zA-Z0-9_\.]+)/);
+          const authorHandle = authorMatch ? authorMatch[1] : sourceName;
+
           // Extract media URLs from content and Instagram URL
           const mediaUrls = extractMediaUrls(cleanText);
           if (instagramUrl) {
             mediaUrls.push(instagramUrl);
           }
           
-          // Determine media type - Instagram posts are typically images/videos
-          const isVideoContent = instagramUrl?.includes('/reel/') || 
-                                 instagramUrl?.includes('/tv/') ||
-                                 lowerText.includes('video') ||
-                                 lowerText.includes('reel');
-          const mediaType = isVideoContent ? 'video' : 'image';
+          // Determine media type
+          const postType = instagramUrl ? detectPostType(instagramUrl, cleanText) : 'image';
 
-          // Create ingested document for AI analysis
+          // Create ingested document with full post data
           const { data: doc, error: docError } = await supabase
             .from('ingested_documents')
             .insert({
               title: `Instagram ${category}: ${sourceName}`,
               raw_text: cleanText,
               source_url: instagramUrl,
+              post_caption: cleanText, // Store full caption
               media_urls: mediaUrls,
-              media_type: mediaType,
+              media_type: postType,
+              author_handle: authorHandle,
+              author_name: sourceName,
+              mentions: mentions,
+              hashtags: hashtags,
+              engagement_metrics: engagement,
               metadata: {
                 source: 'instagram',
                 source_type: 'social_media',
@@ -333,8 +354,12 @@ async function processSearch(
                 category: category,
                 has_media: mediaUrls.length > 0,
                 media_count: mediaUrls.length,
+                is_high_priority: isHighPriority,
+                event_details: eventDetails,
                 detected_keywords: ACTIVISM_KEYWORDS.filter(k => lowerText.includes(k.toLowerCase())),
-                detected_organizations: ACTIVIST_ORGANIZATIONS.filter(org => lowerText.includes(org.toLowerCase()))
+                detected_organizations: ACTIVIST_ORGANIZATIONS.filter(org => lowerText.includes(org.toLowerCase())),
+                mentioned_accounts: mentions,
+                hashtag_count: hashtags.length
               }
             })
             .select()

@@ -563,15 +563,24 @@ Extract all entities, signals, and their relationships.`
             status: 'new',
             is_test: false,
             client_id: clientMatch.clientId,
-            // Propagate media from document to signal
+            // Propagate media and social data from document to signal
             media_urls: document.media_urls || [],
             thumbnail_url: document.thumbnail_url,
+            post_caption: document.post_caption,
+            mentions: document.mentions || [],
+            hashtags: document.hashtags || [],
+            engagement_metrics: document.engagement_metrics || {},
+            comments: document.comments || [],
             raw_json: {
               matched_keywords: clientMatch.matchedKeywords,
               client_name: clientMatch.clientName,
               source_metadata: document.metadata,
               has_media: (document.media_urls?.length || 0) > 0,
-              media_type: document.media_type
+              media_type: document.media_type,
+              author_handle: document.author_handle,
+              author_name: document.author_name,
+              is_high_priority: document.metadata?.is_high_priority,
+              event_details: document.metadata?.event_details
             }
           })
           .select('id')

@@ -3379,16 +3379,24 @@ export type Database = {
       }
       ingested_documents: {
         Row: {
+          author_handle: string | null
+          author_name: string | null
           chunk_index: number | null
+          comments: Json | null
           content_hash: string | null
           created_at: string | null
+          engagement_metrics: Json | null
           error_message: string | null
+          hashtags: string[] | null
           id: string
           ingested_at: string | null
           media_type: string | null
           media_urls: string[] | null
+          mentions: string[] | null
           metadata: Json | null
           parent_document_id: string | null
+          post_caption: string | null
+          post_date: string | null
           processed_at: string | null
           processing_status: string | null
           raw_text: string | null
@@ -3399,16 +3407,24 @@ export type Database = {
           total_chunks: number | null
         }
         Insert: {
+          author_handle?: string | null
+          author_name?: string | null
           chunk_index?: number | null
+          comments?: Json | null
           content_hash?: string | null
           created_at?: string | null
+          engagement_metrics?: Json | null
           error_message?: string | null
+          hashtags?: string[] | null
           id?: string
           ingested_at?: string | null
           media_type?: string | null
           media_urls?: string[] | null
+          mentions?: string[] | null
           metadata?: Json | null
           parent_document_id?: string | null
+          post_caption?: string | null
+          post_date?: string | null
           processed_at?: string | null
           processing_status?: string | null
           raw_text?: string | null
@@ -3419,16 +3435,24 @@ export type Database = {
           total_chunks?: number | null
         }
         Update: {
+          author_handle?: string | null
+          author_name?: string | null
           chunk_index?: number | null
+          comments?: Json | null
           content_hash?: string | null
           created_at?: string | null
+          engagement_metrics?: Json | null
           error_message?: string | null
+          hashtags?: string[] | null
           id?: string
           ingested_at?: string | null
           media_type?: string | null
           media_urls?: string[] | null
+          mentions?: string[] | null
           metadata?: Json | null
           parent_document_id?: string | null
+          post_caption?: string | null
+          post_date?: string | null
           processed_at?: string | null
           processing_status?: string | null
           raw_text?: string | null
@@ -5256,6 +5280,7 @@ export type Database = {
           auto_correlated_entities: string[] | null
           category: string | null
           client_id: string | null
+          comments: Json | null
           confidence: number | null
           content_hash: string | null
           correlated_count: number | null
@@ -5263,7 +5288,9 @@ export type Database = {
           correlation_group_id: string | null
           created_at: string
           description: string | null
+          engagement_metrics: Json | null
           entity_tags: string[] | null
+          hashtags: string[] | null
           id: string
           information_accuracy: string | null
           is_primary_signal: boolean | null
@@ -5271,8 +5298,10 @@ export type Database = {
           is_test: boolean | null
           location: string | null
           media_urls: string[] | null
+          mentions: string[] | null
           momentum: number | null
           normalized_text: string | null
+          post_caption: string | null
           proximity: number | null
           raw_json: Json | null
           received_at: string
@@ -5297,6 +5326,7 @@ export type Database = {
           auto_correlated_entities?: string[] | null
           category?: string | null
           client_id?: string | null
+          comments?: Json | null
           confidence?: number | null
           content_hash?: string | null
           correlated_count?: number | null
@@ -5304,7 +5334,9 @@ export type Database = {
           correlation_group_id?: string | null
           created_at?: string
           description?: string | null
+          engagement_metrics?: Json | null
           entity_tags?: string[] | null
+          hashtags?: string[] | null
           id?: string
           information_accuracy?: string | null
           is_primary_signal?: boolean | null
@@ -5312,8 +5344,10 @@ export type Database = {
           is_test?: boolean | null
           location?: string | null
           media_urls?: string[] | null
+          mentions?: string[] | null
           momentum?: number | null
           normalized_text?: string | null
+          post_caption?: string | null
           proximity?: number | null
           raw_json?: Json | null
           received_at?: string
@@ -5338,6 +5372,7 @@ export type Database = {
           auto_correlated_entities?: string[] | null
           category?: string | null
           client_id?: string | null
+          comments?: Json | null
           confidence?: number | null
           content_hash?: string | null
           correlated_count?: number | null
@@ -5345,7 +5380,9 @@ export type Database = {
           correlation_group_id?: string | null
           created_at?: string
           description?: string | null
+          engagement_metrics?: Json | null
           entity_tags?: string[] | null
+          hashtags?: string[] | null
           id?: string
           information_accuracy?: string | null
           is_primary_signal?: boolean | null
@@ -5353,8 +5390,10 @@ export type Database = {
           is_test?: boolean | null
           location?: string | null
           media_urls?: string[] | null
+          mentions?: string[] | null
           momentum?: number | null
           normalized_text?: string | null
+          post_caption?: string | null
           proximity?: number | null
           raw_json?: Json | null
           received_at?: string
