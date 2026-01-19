@@ -66,7 +66,7 @@ export const Header = () => {
   const operationsItems = [
     { path: "/command-center", icon: Bot, label: "Agents" },
     { path: "/task-force", icon: Swords, label: "Task Force" },
-    { path: "/vip-deep-scan", icon: ScanEye, label: "VIP Deep Scan" },
+    ...(isSuperAdmin ? [{ path: "/vip-deep-scan", icon: ScanEye, label: "VIP Deep Scan" }] : []),
     { path: "/travel", icon: Plane, label: "Travel" },
     { path: "/clients", icon: Building2, label: "Clients" },
   ];
