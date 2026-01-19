@@ -1081,14 +1081,12 @@ Returns: Summarized search results with source URLs and publication dates.`,
             })),
           };
           
-          // Simple instruction that won't leak into output
+          // Minimal meta to avoid instruction/prompt leakage into the model output
           const briefingMeta = {
-            _internal: true,
             source: 'Fortress Database',
             signals_count: signals.length,
             incidents_count: incidents.length,
             external_intel: false,
-            rules: 'Use only briefing_data. No geopolitical news. No HUMINT. No speculation.'
           };
           
           toolResults.push({ 
@@ -1655,7 +1653,42 @@ Returns: Summarized search results with source URLs and publication dates.`,
     // ════════════════════════════════════════════════════════════════════════
     // POST-PROCESSING SANITIZATION: AGGRESSIVE defense against hallucinations
     // ════════════════════════════════════════════════════════════════════════
-    
+
+    // Remove accidental prompt/instruction leakage from briefings (models sometimes echo rules)
+    const stripPromptLeakage = (text: string): { cleaned: string; removed: string[] } => {
+      const removed: string[] = [];
+      let cleaned = text;
+
+      const leakagePatterns: { pattern: RegExp; label: string }[] = [
+        { pattern: /"[^\n\r\"]*(briefing template|cite sources|\[S\d+\]|do not invent|humint|24-?hour window|do not mention other clients)[^\n\r\"]*"/gi, label: 'quoted instruction block' },
+        { pattern: /\b(or\s+)?web\s+search\.?\s*Cite\s+sources\s+as\s*\[S1\][^\n\r]*$/gim, label: 'cite-sources instruction line' },
+        { pattern: /\bCite\s+sources\b[^\n\r]*$/gim, label: 'cite-sources instruction' },
+        { pattern: /\bUse\s+(the\s+)?(mandatory|provided)\s+briefing\s+template\b[^\n\r]*\.?/gim, label: 'briefing-template instruction' },
+        { pattern: /\bDo\s+not\s+invent\b[^\n\r]*\.?/gim, label: 'do-not-invent instruction' },
+        { pattern: /\bDo\s+not\s+mention\s+other\s+clients\b[^\n\r]*\.?/gim, label: 'no-other-clients instruction' },
+        { pattern: /\bStick\s+to\s+the\s+24-?hour\s+window\b[^\n\r]*\.?/gim, label: '24h-window instruction' },
+      ];
+
+      for (const { pattern, label } of leakagePatterns) {
+        if (pattern.test(cleaned)) {
+          removed.push(label);
+          cleaned = cleaned.replace(pattern, '');
+        }
+      }
+
+      cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+      return { cleaned, removed };
+    };
+
+    const isBriefingResponse = toolResults.some(t => t.tool === 'generate_intelligence_summary') || /\bINTELLIGENCE\s+BRIEFING\b/i.test(agentResponse);
+    if (isBriefingResponse) {
+      const { cleaned, removed } = stripPromptLeakage(agentResponse);
+      if (removed.length > 0) {
+        console.warn('[PromptLeakage] Removed instruction text from briefing output:', removed);
+        agentResponse = cleaned;
+      }
+    }
+
     // CRITICAL: Patterns that indicate SEVERE fabrication requiring complete rejection
     const SEVERE_FABRICATION_PATTERNS = [
       /\[UNVERIFIED\]\s*Reports/gi,
