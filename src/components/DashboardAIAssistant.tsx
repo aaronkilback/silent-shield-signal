@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
+import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
 import { useTenant } from "@/hooks/useTenant";
@@ -913,7 +914,20 @@ If not visible, try: **Ctrl+Shift+R** (hard refresh)`,
               : "bg-muted"
           }`}
         >
-          <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
+          <div className={cn(
+            "text-sm prose prose-sm max-w-none dark:prose-invert",
+            // Briefing section headers styling
+            "[&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_h3]:pb-1 [&_h3]:border-b [&_h3]:border-border/50",
+            "[&_h4]:text-xs [&_h4]:font-medium [&_h4]:mt-3 [&_h4]:mb-1.5 [&_h4]:text-muted-foreground",
+            // Clean list formatting
+            "[&_ul]:my-1.5 [&_ul]:pl-4 [&_li]:my-0.5",
+            // Horizontal rules as section dividers
+            "[&_hr]:my-3 [&_hr]:border-border/30",
+            // Strong/bold text
+            "[&_strong]:font-semibold",
+            // Paragraphs
+            "[&_p]:my-1.5 [&_p]:leading-relaxed"
+          )}>
             <ReactMarkdown
               components={{
                 a: ({ node, href, children, ...props }) => {
@@ -1238,7 +1252,15 @@ How can I help you now?`,
                     {streamingContent && (
                       <div className="flex justify-start animate-fade-in">
                         <div className="max-w-[80%] rounded-lg p-3 bg-muted min-h-[40px]">
-                          <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
+                          <div className={cn(
+                            "text-sm prose prose-sm max-w-none dark:prose-invert",
+                            "[&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_h3]:pb-1 [&_h3]:border-b [&_h3]:border-border/50",
+                            "[&_h4]:text-xs [&_h4]:font-medium [&_h4]:mt-3 [&_h4]:mb-1.5 [&_h4]:text-muted-foreground",
+                            "[&_ul]:my-1.5 [&_ul]:pl-4 [&_li]:my-0.5",
+                            "[&_hr]:my-3 [&_hr]:border-border/30",
+                            "[&_strong]:font-semibold",
+                            "[&_p]:my-1.5 [&_p]:leading-relaxed"
+                          )}>
                             <ReactMarkdown
                               components={{
                                 a: ({ node, href, children, ...props }) => {
