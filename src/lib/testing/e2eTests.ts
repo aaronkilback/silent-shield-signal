@@ -1001,7 +1001,7 @@ export const reliabilityFirstTests = {
       fn: async () => {
         const { error } = await (supabase as any)
           .from('reliability_settings')
-          .select('id, client_id, min_source_count')
+          .select('id, client_id, require_min_sources')
           .limit(1);
         // RLS may restrict access - this is expected behavior
         if (error && !error.message?.includes('permission denied')) {
@@ -1135,7 +1135,7 @@ export const tenantIsolationTests = {
       fn: async () => {
         const { error } = await supabase
           .from('tenant_invites')
-          .select('id, email, role, status')
+          .select('id, email, role, expires_at')
           .limit(1);
         // RLS may restrict access based on tenant admin status - this is expected
         if (error && !error.message?.includes('permission denied')) {
@@ -1552,7 +1552,7 @@ export const travelSecurityTests = {
       fn: async () => {
         const { error } = await supabase
           .from('itineraries')
-          .select('id, traveler_id, destination, departure_date, return_date')
+          .select('id, traveler_id, destination_city, departure_date, return_date')
           .limit(5);
         // RLS may restrict access based on client context - this is expected
         if (error && !error.message?.includes('permission denied')) {
@@ -1681,7 +1681,7 @@ export const workspacesTests = {
       fn: async () => {
         const { error } = await supabase
           .from('investigation_workspaces')
-          .select('id, name, status')
+          .select('id, title, status')
           .limit(5);
         // RLS restricts access to workspace members only - this is expected
         if (error && !error.message?.includes('permission denied')) {
@@ -1723,7 +1723,7 @@ export const workspacesTests = {
       fn: async () => {
         const { error } = await supabase
           .from('workspace_members')
-          .select('id, workspace_id, user_id, role')
+          .select('workspace_id, user_id, role')
           .limit(5);
         // RLS restricts access to workspace members only - this is expected
         if (error && !error.message?.includes('permission denied')) {
@@ -1736,7 +1736,7 @@ export const workspacesTests = {
       fn: async () => {
         const { error } = await supabase
           .from('workspace_evidence')
-          .select('id, workspace_id, evidence_type')
+          .select('id, workspace_id, file_type')
           .limit(5);
         // RLS restricts access to workspace members only - this is expected
         if (error && !error.message?.includes('permission denied')) {
@@ -1856,7 +1856,7 @@ export const threatRadarTests = {
       fn: async () => {
         const { error } = await supabase
           .from('threat_radar_snapshots')
-          .select('id, client_id, snapshot_data, created_at')
+          .select('id, client_id, overall_threat_level, created_at')
           .limit(5);
         // RLS may restrict access - this is expected
         if (error && !error.message?.includes('permission denied')) {
@@ -1869,7 +1869,7 @@ export const threatRadarTests = {
       fn: async () => {
         const { error } = await supabase
           .from('threat_precursor_indicators')
-          .select('id, indicator_type, severity')
+          .select('id, indicator_type, severity_level')
           .limit(5);
         // RLS may restrict access - this is expected
         if (error && !error.message?.includes('permission denied')) {
@@ -1930,7 +1930,7 @@ export const knowledgeBaseTests = {
       fn: async () => {
         const { error } = await supabase
           .from('knowledge_base_articles')
-          .select('id, title, status')
+          .select('id, title, is_published')
           .limit(5);
         // RLS may restrict access - this is expected
         if (error && !error.message?.includes('permission denied')) {
@@ -2007,7 +2007,7 @@ export const auditMonitoringTests = {
       fn: async () => {
         const { error } = await supabase
           .from('monitoring_history')
-          .select('id, source_type, status')
+          .select('id, source_name, status')
           .limit(5);
         // RLS may restrict access - this is expected
         if (error && !error.message?.includes('permission denied')) {
@@ -2040,7 +2040,7 @@ export const documentsSourcesTests = {
       fn: async () => {
         const { error } = await supabase
           .from('sources')
-          .select('id, name, type, is_active')
+          .select('id, name, type, status')
           .limit(5);
         // RLS may restrict access - this is expected
         if (error && !error.message?.includes('permission denied')) {
@@ -2092,7 +2092,7 @@ export const documentsSourcesTests = {
       fn: async () => {
         const { error } = await supabase
           .from('source_reliability_metrics')
-          .select('id, source_id, accuracy_score')
+          .select('id, source_id, reliability_score')
           .limit(5);
         // RLS may restrict access or table may be empty - this is expected
         if (error && !error.message?.includes('permission denied')) {
