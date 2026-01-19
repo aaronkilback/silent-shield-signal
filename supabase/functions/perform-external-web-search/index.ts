@@ -236,12 +236,97 @@ async function performRealGoogleSearch(
   const data = await response.json();
   const items = data.items || [];
   
-  return items.map((item: any) => ({
-    title: item.title || "Untitled",
-    url: item.link || "",
-    snippet: item.snippet || "",
-    published_date: item.pagemap?.metatags?.[0]?.["article:published_time"] || undefined,
-  }));
+  // Extract publication date from multiple possible sources
+  const extractPublishedDate = (item: any): string | undefined => {
+    // Try various metadata fields for publication date
+    const metatags = item.pagemap?.metatags?.[0] || {};
+    
+    // Common date fields in order of reliability
+    const dateFields = [
+      metatags["article:published_time"],
+      metatags["og:article:published_time"],
+      metatags["datePublished"],
+      metatags["date"],
+      metatags["pubdate"],
+      metatags["DC.date"],
+      metatags["sailthru.date"],
+    ];
+    
+    for (const dateStr of dateFields) {
+      if (dateStr) {
+        try {
+          const parsed = new Date(dateStr);
+          if (!isNaN(parsed.getTime())) {
+            return parsed.toISOString().split('T')[0]; // Return YYYY-MM-DD
+          }
+        } catch { /* continue */ }
+      }
+    }
+    
+    // Try to extract date from URL patterns like /2025/01/15/ or -2025-01-15
+    const urlDateMatch = item.link?.match(/\/(\d{4})\/(\d{1,2})\/(\d{1,2})\/|[-_](\d{4})[-_](\d{1,2})[-_](\d{1,2})/);
+    if (urlDateMatch) {
+      const year = urlDateMatch[1] || urlDateMatch[4];
+      const month = (urlDateMatch[2] || urlDateMatch[5])?.padStart(2, '0');
+      const day = (urlDateMatch[3] || urlDateMatch[6])?.padStart(2, '0');
+      if (year && month && day) {
+        return `${year}-${month}-${day}`;
+      }
+    }
+    
+    // Try to extract from snippet text patterns like "Jan 15, 2025" or "2025-01-15"
+    const snippetDatePatterns = [
+      /(\d{4}-\d{2}-\d{2})/,
+      /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2}),?\s+(\d{4})/i,
+      /(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/i,
+    ];
+    
+    for (const pattern of snippetDatePatterns) {
+      const match = item.snippet?.match(pattern);
+      if (match) {
+        try {
+          const parsed = new Date(match[0]);
+          if (!isNaN(parsed.getTime())) {
+            return parsed.toISOString().split('T')[0];
+          }
+        } catch { /* continue */ }
+      }
+    }
+    
+    return undefined;
+  };
+  
+  // Calculate age classification
+  const classifyAge = (dateStr: string | undefined): 'current' | 'historical' | 'dated' | 'unknown' => {
+    if (!dateStr) return 'unknown';
+    try {
+      const pubDate = new Date(dateStr);
+      const now = new Date();
+      const daysDiff = Math.floor((now.getTime() - pubDate.getTime()) / (1000 * 60 * 60 * 24));
+      
+      if (daysDiff <= 7) return 'current';
+      if (daysDiff <= 30) return 'historical';
+      return 'dated';
+    } catch {
+      return 'unknown';
+    }
+  };
+  
+  return items.map((item: any) => {
+    const publishedDate = extractPublishedDate(item);
+    const ageClass = classifyAge(publishedDate);
+    
+    return {
+      title: item.title || "Untitled",
+      url: item.link || "",
+      snippet: item.snippet || "",
+      published_date: publishedDate,
+      age_classification: ageClass,
+      date_warning: ageClass === 'dated' ? '⚠️ DATED: Content may be outdated' :
+                    ageClass === 'historical' ? '📜 HISTORICAL: Not recent news' :
+                    ageClass === 'unknown' ? '❓ DATE UNKNOWN: Treat as historical' : null,
+    };
+  });
 }
 
 function buildSummaryFromRealData(
@@ -264,7 +349,25 @@ function buildSummaryFromRealData(
   }
   
   if (externalResults.length > 0) {
-    parts.push(`${externalResults.length} external web sources found.`);
+    // Categorize by age
+    const current = externalResults.filter(r => (r as any).age_classification === 'current');
+    const historical = externalResults.filter(r => (r as any).age_classification === 'historical');
+    const dated = externalResults.filter(r => (r as any).age_classification === 'dated');
+    const unknown = externalResults.filter(r => (r as any).age_classification === 'unknown');
+    
+    const summary: string[] = [];
+    if (current.length > 0) summary.push(`${current.length} current (≤7 days)`);
+    if (historical.length > 0) summary.push(`${historical.length} historical (7-30 days)`);
+    if (dated.length > 0) summary.push(`${dated.length} dated (>30 days)`);
+    if (unknown.length > 0) summary.push(`${unknown.length} unknown date`);
+    
+    parts.push(`${externalResults.length} external web sources found: ${summary.join(', ')}.`);
+    
+    // Add warning if mostly old content
+    const oldCount = historical.length + dated.length + unknown.length;
+    if (oldCount > current.length) {
+      parts.push("⚠️ NOTE: Most results are historical - may not reflect current situation.");
+    }
   }
   
   if (parts.length === 0) {

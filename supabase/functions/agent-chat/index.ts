@@ -587,17 +587,29 @@ When generating intelligence briefings, follow this professional structure:
    - Note any escalation concerns
 
 5. **EXTERNAL INTELLIGENCE** (If web search performed):
-   - Relevant news/developments from verified sources
-   - Each item must cite [S#] source with date
+   - MANDATORY: Every external source MUST show its ACTUAL publication date
+   - Format: "Title (SOURCE, published DATE)" - e.g., "LNG Canada begins exports (Reuters, 2025-11-15)"
+   - Mark sources older than 7 days with 📜 HISTORICAL prefix
+   - Mark sources older than 30 days with ⚠️ DATED prefix and note context may be outdated
+   - NEVER present old news as current - always show the actual date
 
 6. **SOURCES** (Always include):
    - List all database and external sources used
-   - Format: [S#] Source Name | Type | Date
+   - Format: [S#] Source Name | Type | PUBLISHED Date (not retrieval date)
+   - If no publication date available, mark as "Date Unknown - treat as historical"
+
+CRITICAL DATE VERIFICATION:
+- Current date is ${currentDate}
+- News/articles from >7 days ago = HISTORICAL context, not current intel
+- News/articles from >30 days ago = Potentially STALE, note explicitly
+- NEVER say "reports indicate" without the actual date of the report
+- Web search retrieval date ≠ publication date - always use publication date
 
 FORMATTING RULES:
 - Use severity badges: 🔴 CRITICAL, 🟠 HIGH, 🟡 MEDIUM
 - Use priority badges: [P1], [P2], [P3]
 - Include timestamps in relative format (e.g., "2h ago")
+- For external sources: ALWAYS include publication date, not just retrieval date
 - Keep paragraphs short and scannable
 - Use tables for metrics when appropriate
 - Bold key numbers and entity names
@@ -608,6 +620,7 @@ COMMUNICATION GUIDELINES:
 - Focus on business impact, not just technical details
 - Use professional security terminology
 - ALWAYS cite exact numbers from tool results
+- ALWAYS show publication dates for external sources
 - When data is sparse, state "Limited data available" - do not embellish`;
 
     // Define comprehensive tools matching dashboard-ai-assistant
@@ -845,15 +858,24 @@ COMMUNICATION GUIDELINES:
         type: "function",
         function: {
           name: "perform_external_web_search",
-          description: `OSINT WEB SEARCH: Search the external web for current news, events, and intelligence. Use this for:
+          description: `OSINT WEB SEARCH: Search the external web for current news, events, and intelligence.
+
+CRITICAL DATE HANDLING:
+- Results include source_urls with published_date field
+- You MUST display the ACTUAL publication date, not the retrieval date
+- Articles older than 7 days = HISTORICAL (prefix with 📜)
+- Articles older than 30 days = DATED (prefix with ⚠️)
+- If published_date is null/missing, treat as historical and note "Date Unknown"
+
+Use this for:
 - Current events and breaking news NOT in the Fortress database
 - Geopolitical developments and global news
 - Researching entities, organizations, or incidents from external sources
 - Verifying claims with external sources
 
-CRITICAL: You MUST use this tool before including ANY geopolitical news, current events, or external information in briefings. DO NOT fabricate or invent news - either search for it or state "No external intelligence available."
+NEVER present old articles as current intelligence. Always show: "Title (Source, published YYYY-MM-DD)"
 
-Returns: Summarized search results with source URLs and publication dates.`,
+Returns: source_urls array with title, url, snippet, and published_date fields.`,
           parameters: {
             type: "object",
             properties: {
