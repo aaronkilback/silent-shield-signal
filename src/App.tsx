@@ -37,6 +37,7 @@ import AcceptInvite from "./pages/AcceptInvite";
 import TenantAdmin from "./pages/TenantAdmin";
 import Welcome from "./pages/Welcome";
 import SuperAdminDashboard from "./pages/SuperAdminDashboard";
+import VIPDeepScan from "./pages/VIPDeepScan";
 import { EnsureDefaultRole } from "@/components/EnsureDefaultRole";
 import { TenantProvider } from "@/hooks/useTenant";
 
@@ -83,6 +84,7 @@ const App = () => (
                 <Route path="/benchmark" element={<Benchmark />} />
                 <Route path="/matching-dashboard" element={<MatchingDashboard />} />
                 <Route path="/workspace/:id" element={<Workspace />} />
+                <Route path="/vip-deep-scan" element={<VIPDeepScan />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
