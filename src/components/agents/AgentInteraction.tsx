@@ -498,8 +498,22 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
                       )}
                     </div>
                     <div className={cn(
-                      "prose prose-sm max-w-none break-words overflow-wrap-anywhere [&>*]:max-w-full [&_pre]:overflow-x-auto [&_code]:break-all pr-6",
-                      message.role === "assistant" ? "dark:prose-invert" : "prose-invert [&_p]:text-primary-foreground [&_strong]:text-primary-foreground [&_a]:text-primary-foreground"
+                      "prose prose-sm max-w-none break-words overflow-wrap-anywhere pr-6",
+                      "[&>*]:max-w-full [&_pre]:overflow-x-auto [&_code]:break-all",
+                      // Briefing section headers styling
+                      "[&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_h3]:pb-1 [&_h3]:border-b [&_h3]:border-border/50",
+                      "[&_h4]:text-xs [&_h4]:font-medium [&_h4]:mt-3 [&_h4]:mb-1.5 [&_h4]:text-muted-foreground",
+                      // Clean list formatting
+                      "[&_ul]:my-1.5 [&_ul]:pl-4 [&_li]:my-0.5 [&_li]:text-sm",
+                      // Horizontal rules as section dividers
+                      "[&_hr]:my-3 [&_hr]:border-border/30",
+                      // Strong/bold text
+                      "[&_strong]:font-semibold",
+                      // Paragraphs
+                      "[&_p]:my-1.5 [&_p]:text-sm [&_p]:leading-relaxed",
+                      message.role === "assistant" 
+                        ? "dark:prose-invert [&_h3]:text-foreground" 
+                        : "prose-invert [&_p]:text-primary-foreground [&_strong]:text-primary-foreground [&_a]:text-primary-foreground [&_h3]:text-primary-foreground"
                     )}>
                       <ReactMarkdown>{message.content}</ReactMarkdown>
                     </div>
