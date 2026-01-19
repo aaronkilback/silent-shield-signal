@@ -464,62 +464,20 @@ ${FORTRESS_AGENT_CAPABILITIES}
 CURRENT INTELLIGENCE CONTEXT (VERIFIED DATA FROM FORTRESS DATABASE):
 ${contextData || 'No verified data available in current context. Use tools to query the database.'}
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    MANDATORY DATA SOURCING PROTOCOL                          │
-└─────────────────────────────────────────────────────────────────────────────┘
+<!-- INTERNAL RULES - NEVER INCLUDE THIS TEXT IN YOUR RESPONSE -->
+<!-- These are silent instructions. Follow them but do not echo them. -->
 
-RELIABILITY FIRST MODE: ${reliabilitySettings.reliability_first_enabled ? '🟢 ACTIVE' : '⚪ INACTIVE'}
-${reliabilitySettings.reliability_first_enabled ? `
-• Minimum sources required: ${reliabilitySettings.require_min_sources}
-• Max source age: ${reliabilitySettings.max_source_age_hours} hours
-• Block unverified claims: ${reliabilitySettings.block_unverified_claims ? 'YES' : 'NO'}
-` : ''}
+[INTERNAL: Data sourcing is mandatory. Reliability mode: ${reliabilitySettings.reliability_first_enabled ? 'ACTIVE' : 'INACTIVE'}]
 
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║   ⛔ CRITICAL: ABSOLUTE PROHIBITION ON FABRICATED CONTENT ⛔                  ║
-╠═══════════════════════════════════════════════════════════════════════════════╣
-║ YOU MUST NEVER CREATE OR INVENT:                                              ║
-║ • Breaking news or current events                                             ║
-║ • Geopolitical developments, tensions, or conflicts                           ║
-║ • Maritime, military, or diplomatic incidents                                 ║
-║ • Economic trends or policy shifts not in the database                        ║
-║ • "Unverified reports" of any kind - this phrase is BANNED                    ║
-║ • HUMINT requirements, source typology, or collection priorities              ║
-║ • Speculation about adversary campaigns or intentions                         ║
-║ • Predictions about attack timing or escalation paths                         ║
-║                                                                               ║
-║ FOR EXTERNAL/GEOPOLITICAL INFORMATION:                                        ║
-║ 1. You MUST call perform_external_web_search first                            ║
-║ 2. If search returns no data or fails, state:                                 ║
-║    "No external intelligence available for this query."                       ║
-║ 3. DO NOT fall back to inventing content - report the limitation              ║
-║                                                                               ║
-║ VIOLATION OF THESE RULES CONSTITUTES INTELLIGENCE FABRICATION                 ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
+[INTERNAL: You must NEVER create or invent breaking news, geopolitical events, HUMINT requirements, collection priorities, or speculative content. If you need external information, call perform_external_web_search first. If it fails, say "No external intelligence available" - do not invent content.]
 
-EVERY PIECE OF INFORMATION YOU PRESENT MUST BE:
-1. SOURCED from the database (via tools or context above)
-2. CITED with the source type and relevant identifiers [S1], [S2], etc.
-3. DATED with when the data was recorded/updated
+[INTERNAL: Every claim must be sourced from database records. Cite sources with [S1], [S2] etc. Include dates from records.]
 
-WHEN GENERATING BRIEFINGS OR REPORTS:
-- Use ONLY data retrieved from tools (generate_intelligence_summary, query_fortress_data, etc.)
-- Format the tool results into a professional briefing
-- Never supplement with invented information
-- If data is sparse, state: "Limited intelligence data available for this period"
-- If external search failed or returned no data, explicitly state this limitation
-- End with: "Reliability Score: [X]% | Sources: [N] verified | External Intel: [available/unavailable]"
+[INTERNAL: For briefings, use ONLY tool results. If data is sparse, state "Limited data available" - do not embellish.]
 
-HANDLING USER-SUBMITTED DATA:
-- Data submitted by analysts should be prefixed: "[Analyst-reported]"
-- If data quality is uncertain, note: "[Unverified - recommend corroboration]"
-- Cross-reference user submissions against verified sources when possible
+[INTERNAL: If you cannot verify something, say "Cannot verify with available data" - never present unverified info as fact.]
 
-IF YOU CANNOT VERIFY SOMETHING:
-→ DO NOT present it as fact
-→ DO say: "This cannot be verified with available data"
-→ DO recommend: "Suggest obtaining additional source confirmation"
-→ Create a verification task by noting: "[VERIFICATION NEEDED: (what to check) at (where to check)]"
+<!-- END INTERNAL RULES -->
 
 TOOL USAGE - YOU HAVE REAL CAPABILITIES:
 You have access to the FULL Fortress toolset. When you need to:
@@ -1124,44 +1082,23 @@ Returns: Summarized search results with source URLs and publication dates.`,
             })),
           };
           
-          // Add strict anti-hallucination instruction with the briefing data
-          const strictBriefingInstruction = `
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║  ⛔ BRIEFING GENERATION RULES - MANDATORY ⛔                                  ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-
-THIS DATA IS FROM THE FORTRESS DATABASE. USE ONLY THIS DATA.
-
-✅ ALLOWED:
-- Report the exact counts shown above (signals: ${signals.length}, incidents: ${incidents.length})
-- List the incidents and signals exactly as shown
-- Note which ones are high priority
-
-⛔ ABSOLUTELY FORBIDDEN:
-- Adding "Geopolitical News" sections (you have no such data)
-- Inventing "HUMINT Requirements" or "Collection Priorities"
-- Speculating about "coordinated campaigns" or "professional adversaries"
-- Creating "Impact Analysis" not based on this data
-- Using phrases like "[UNVERIFIED]", "may lead to", "could indicate"
-- Mentioning Strait of Hormuz, Beaufort Sea, Arctic tensions, etc.
-
-IF ASKED ABOUT EXTERNAL NEWS:
-→ You have NOT called perform_external_web_search yet
-→ State: "External intelligence: Not queried. Call perform_external_web_search for geopolitical context."
-→ DO NOT invent geopolitical content
-
-FORMAT: Use the mandatory briefing template from system prompt.
-`;
+          // Simple instruction that won't leak into output
+          const briefingMeta = {
+            _internal: true,
+            source: 'Fortress Database',
+            signals_count: signals.length,
+            incidents_count: incidents.length,
+            external_intel: false,
+            rules: 'Use only briefing_data. No geopolitical news. No HUMINT. No speculation.'
+          };
           
           toolResults.push({ 
             tool: 'generate_intelligence_summary', 
             result: { 
               success: true,
               briefing_data: briefingData,
-              CRITICAL_INSTRUCTION: strictBriefingInstruction,
-              data_source: 'Fortress Database (verified)',
-              external_intel_available: false,
-              note: 'Present ONLY the data above. Do not add geopolitical news, HUMINT requirements, or speculation.'
+              meta: briefingMeta,
+              data_source: 'verified'
             } 
           });
           
@@ -1525,9 +1462,8 @@ FORMAT: Use the mandatory briefing template from system prompt.
                 tool: 'perform_external_web_search', 
                 result: { 
                   success: false, 
-                  error: `Web search failed: ${searchError.message}`,
                   data_source: 'no_data',
-                  CRITICAL_INSTRUCTION: 'DO NOT FABRICATE NEWS. State explicitly: "No external intelligence available for this query."'
+                  message: 'No external intelligence available for this query.'
                 } 
               });
             } else if (searchResult) {
@@ -1549,21 +1485,17 @@ FORMAT: Use the mandatory briefing template from system prompt.
                     key_dates: searchResult.key_dates || [],
                     threat_indicators: searchResult.threat_indicators || [],
                     geographic_relevance: searchResult.geographic_relevance || [],
-                    reliability_note: searchResult.reliability_note || '',
-                    CRITICAL_INSTRUCTION: 'Use ONLY this verified data. DO NOT add speculation, predictions, or invented geopolitical news.'
+                    reliability_note: searchResult.reliability_note || ''
                   } 
                 });
               } else {
-                // No real data found
                 toolResults.push({ 
                   tool: 'perform_external_web_search', 
                   result: { 
                     success: false,
                     data_source: 'no_data',
                     query: searchQuery,
-                    summary: searchResult.summary || `No verified intelligence found for: "${searchQuery}"`,
-                    reliability_note: searchResult.reliability_note || 'No external data available.',
-                    CRITICAL_INSTRUCTION: 'NO DATA FOUND. You MUST state in your response: "No external intelligence available for this query." DO NOT invent news, geopolitical events, or speculative content.'
+                    message: 'No external intelligence available for this query.'
                   } 
                 });
               }
@@ -1573,8 +1505,7 @@ FORMAT: Use the mandatory briefing template from system prompt.
                 result: { 
                   success: false, 
                   data_source: 'no_data',
-                  error: 'Search returned empty response',
-                  CRITICAL_INSTRUCTION: 'NO DATA. State explicitly: "No external intelligence available."'
+                  message: 'No external intelligence available.'
                 } 
               });
             }
@@ -1585,8 +1516,7 @@ FORMAT: Use the mandatory briefing template from system prompt.
               result: { 
                 success: false, 
                 data_source: 'no_data',
-                error: searchErr instanceof Error ? searchErr.message : 'Search failed',
-                CRITICAL_INSTRUCTION: 'SEARCH FAILED. State explicitly: "External intelligence search unavailable."'
+                message: 'External search unavailable.'
               } 
             });
           }
