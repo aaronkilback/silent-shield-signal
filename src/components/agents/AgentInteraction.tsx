@@ -458,15 +458,12 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
                         />
                       )}
                     </div>
-                    {message.role === "assistant" ? (
-                      <div className="prose prose-sm dark:prose-invert max-w-none break-words overflow-wrap-anywhere [&>*]:max-w-full [&_pre]:overflow-x-auto [&_code]:break-all pr-6">
-                        <ReactMarkdown>{message.content}</ReactMarkdown>
-                      </div>
-                    ) : (
-                      <p className="text-sm whitespace-pre-wrap break-words pr-6">
-                        {message.content}
-                      </p>
-                    )}
+                    <div className={cn(
+                      "prose prose-sm max-w-none break-words overflow-wrap-anywhere [&>*]:max-w-full [&_pre]:overflow-x-auto [&_code]:break-all pr-6",
+                      message.role === "assistant" ? "dark:prose-invert" : "prose-invert [&_p]:text-primary-foreground [&_strong]:text-primary-foreground [&_a]:text-primary-foreground"
+                    )}>
+                      <ReactMarkdown>{message.content}</ReactMarkdown>
+                    </div>
                   </div>
                   {message.role === "user" && (
                     <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
