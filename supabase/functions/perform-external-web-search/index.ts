@@ -9,8 +9,8 @@ const corsHeaders = {
 interface WebSearchParams {
   query: string;
   time_range?: {
-    start?: string; // YYYY-MM-DD
-    end?: string;   // YYYY-MM-DD
+    start?: string;
+    end?: string;
   };
   language?: string;
   geographic_focus?: string;
@@ -38,6 +38,8 @@ interface WebSearchResponse {
     geographic_focus: string;
     search_timestamp: string;
   };
+  data_source: "verified" | "internal_only" | "no_data";
+  reliability_note: string;
 }
 
 serve(async (req) => {
@@ -46,7 +48,7 @@ serve(async (req) => {
   }
 
   try {
-    const { query, time_range, language, geographic_focus, max_results } = await req.json() as WebSearchParams;
+    const { query, time_range, geographic_focus, max_results } = await req.json() as WebSearchParams;
     
     if (!query) {
       return new Response(
@@ -55,119 +57,141 @@ serve(async (req) => {
       );
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const GOOGLE_SEARCH_API_KEY = Deno.env.get("GOOGLE_SEARCH_API_KEY");
+    const GOOGLE_SEARCH_ENGINE_ID = Deno.env.get("GOOGLE_SEARCH_ENGINE_ID");
     
-    if (!LOVABLE_API_KEY) {
-      return new Response(
-        JSON.stringify({ error: "LOVABLE_API_KEY not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
     const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
 
     console.log(`[perform-external-web-search] Query: "${query}", Geographic focus: ${geographic_focus || 'global'}`);
 
-    // Build enhanced search query with context
-    const enhancedQuery = buildEnhancedQuery(query, time_range, geographic_focus, language);
+    // Step 1: ALWAYS search internal Fortress data first (this is REAL data)
+    const internalResults = await searchInternalFortressData(supabase, query, geographic_focus, max_results || 10);
     
-    // Step 1: Search for relevant existing signals, entities, and documents in Fortress
-    const internalContext = await gatherInternalContext(supabase, query, geographic_focus);
-    
-    // Step 2: Use AI to simulate web search based on query patterns and internal knowledge
-    // This generates a structured OSINT report based on the query parameters
-    const osintReport = await generateOSINTReport(
-      LOVABLE_API_KEY,
-      query,
-      enhancedQuery,
-      time_range,
-      geographic_focus,
-      language,
-      max_results || 5,
-      internalContext
-    );
+    // Step 2: Try real Google search if API keys are configured
+    let externalResults: SearchResult[] = [];
+    let dataSource: "verified" | "internal_only" | "no_data" = "internal_only";
+    let reliabilityNote = "Results from Fortress internal database only. No external web search available.";
 
-    // Step 3: Store the search results as a signal for future reference
-    await storeSearchAsSignal(supabase, query, osintReport);
+    if (GOOGLE_SEARCH_API_KEY && GOOGLE_SEARCH_ENGINE_ID) {
+      try {
+        externalResults = await performRealGoogleSearch(
+          GOOGLE_SEARCH_API_KEY,
+          GOOGLE_SEARCH_ENGINE_ID,
+          query,
+          geographic_focus,
+          max_results || 5
+        );
+        if (externalResults.length > 0) {
+          dataSource = "verified";
+          reliabilityNote = "Results include verified external web sources via Google Search API.";
+        }
+      } catch (searchError) {
+        console.error("[perform-external-web-search] Google Search error:", searchError);
+        reliabilityNote = "External search failed. Results from Fortress internal database only.";
+      }
+    } else {
+      console.log("[perform-external-web-search] No Google Search API configured - using internal data only");
+    }
 
-    console.log(`[perform-external-web-search] Generated report with ${osintReport.source_urls.length} sources`);
+    // Build response from REAL data only
+    const response: WebSearchResponse = {
+      summary: buildSummaryFromRealData(internalResults, externalResults, query),
+      source_urls: externalResults,
+      key_entities: internalResults.entities.map(e => e.name),
+      key_dates: internalResults.signals
+        .filter(s => s.created_at)
+        .slice(0, 5)
+        .map(s => `${s.title}: ${new Date(s.created_at).toLocaleDateString()}`),
+      threat_indicators: internalResults.entities
+        .flatMap(e => e.threat_indicators || [])
+        .filter(Boolean)
+        .slice(0, 10),
+      geographic_relevance: internalResults.entities
+        .map(e => e.current_location)
+        .filter(Boolean)
+        .slice(0, 5),
+      query_metadata: {
+        original_query: query,
+        enhanced_query: `${query} ${geographic_focus || ""}`.trim(),
+        time_range: time_range ? `${time_range.start || 'any'} - ${time_range.end || 'present'}` : 'Last 12 months',
+        geographic_focus: geographic_focus || 'Global',
+        search_timestamp: new Date().toISOString(),
+      },
+      data_source: dataSource,
+      reliability_note: reliabilityNote,
+    };
+
+    // If no real data found at all, return explicit no-data response
+    if (internalResults.signals.length === 0 && 
+        internalResults.entities.length === 0 && 
+        externalResults.length === 0) {
+      response.data_source = "no_data";
+      response.summary = `No verified intelligence found for query: "${query}". External web search is not available. Only Fortress internal database was searched.`;
+      response.reliability_note = "NO DATA AVAILABLE. Do not fabricate or invent information.";
+    }
+
+    console.log(`[perform-external-web-search] Response: ${response.data_source}, ${internalResults.signals.length} internal signals, ${externalResults.length} external sources`);
 
     return new Response(
-      JSON.stringify(osintReport),
+      JSON.stringify(response),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
     console.error("[perform-external-web-search] Error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({ 
+        error: error instanceof Error ? error.message : "Unknown error",
+        data_source: "no_data",
+        reliability_note: "Search failed. Do not fabricate information."
+      }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });
 
-function buildEnhancedQuery(
-  query: string,
-  time_range?: { start?: string; end?: string },
-  geographic_focus?: string,
-  language?: string
-): string {
-  let enhanced = query;
-  
-  if (geographic_focus) {
-    enhanced += ` ${geographic_focus}`;
-  }
-  
-  if (time_range?.start || time_range?.end) {
-    if (time_range.start && time_range.end) {
-      enhanced += ` between ${time_range.start} and ${time_range.end}`;
-    } else if (time_range.start) {
-      enhanced += ` after ${time_range.start}`;
-    } else if (time_range.end) {
-      enhanced += ` before ${time_range.end}`;
-    }
-  }
-  
-  return enhanced;
-}
-
-async function gatherInternalContext(
+async function searchInternalFortressData(
   supabase: any,
   query: string,
-  geographic_focus?: string
-): Promise<any> {
+  geographic_focus?: string,
+  maxResults: number = 10
+): Promise<{ signals: any[]; entities: any[]; documents: any[] }> {
   const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  
+  // Search signals
+  let signalsQuery = supabase
+    .from("signals")
+    .select("id, title, description, source_type, severity, created_at, source_url")
+    .order("created_at", { ascending: false })
+    .limit(maxResults);
+  
+  if (keywords.length > 0) {
+    const orConditions = keywords.map(k => `title.ilike.%${k}%,description.ilike.%${k}%`).join(",");
+    signalsQuery = signalsQuery.or(orConditions);
+  }
+  
+  const { data: signals, error: signalsError } = await signalsQuery;
+  if (signalsError) console.error("[perform-external-web-search] Signals query error:", signalsError);
   
   // Search entities
   let entitiesQuery = supabase
     .from("entities")
     .select("id, name, type, description, threat_indicators, current_location, risk_level")
     .eq("is_active", true)
-    .limit(10);
+    .limit(maxResults);
   
   if (keywords.length > 0) {
-    entitiesQuery = entitiesQuery.or(
-      keywords.map(k => `name.ilike.%${k}%,description.ilike.%${k}%`).join(",")
-    );
+    const orConditions = keywords.map(k => `name.ilike.%${k}%,description.ilike.%${k}%`).join(",");
+    entitiesQuery = entitiesQuery.or(orConditions);
   }
   
-  const { data: entities } = await entitiesQuery;
-  
-  // Search signals
-  let signalsQuery = supabase
-    .from("signals")
-    .select("id, title, description, source_type, severity, created_at")
-    .order("created_at", { ascending: false })
-    .limit(10);
-  
-  if (keywords.length > 0) {
-    signalsQuery = signalsQuery.or(
-      keywords.map(k => `title.ilike.%${k}%,description.ilike.%${k}%`).join(",")
-    );
+  if (geographic_focus) {
+    entitiesQuery = entitiesQuery.ilike("current_location", `%${geographic_focus}%`);
   }
   
-  const { data: signals } = await signalsQuery;
+  const { data: entities, error: entitiesError } = await entitiesQuery;
+  if (entitiesError) console.error("[perform-external-web-search] Entities query error:", entitiesError);
   
   // Search archival documents
   let docsQuery = supabase
@@ -176,165 +200,76 @@ async function gatherInternalContext(
     .limit(5);
   
   if (keywords.length > 0) {
-    docsQuery = docsQuery.or(
-      keywords.map(k => `filename.ilike.%${k}%,summary.ilike.%${k}%`).join(",")
-    );
+    const orConditions = keywords.map(k => `filename.ilike.%${k}%,summary.ilike.%${k}%`).join(",");
+    docsQuery = docsQuery.or(orConditions);
   }
   
-  const { data: documents } = await docsQuery;
+  const { data: documents, error: docsError } = await docsQuery;
+  if (docsError) console.error("[perform-external-web-search] Documents query error:", docsError);
   
   return {
-    entities: entities || [],
     signals: signals || [],
+    entities: entities || [],
     documents: documents || [],
   };
 }
 
-async function generateOSINTReport(
+async function performRealGoogleSearch(
   apiKey: string,
-  originalQuery: string,
-  enhancedQuery: string,
-  time_range?: { start?: string; end?: string },
+  engineId: string,
+  query: string,
   geographic_focus?: string,
-  language?: string,
-  max_results?: number,
-  internalContext?: any
-): Promise<WebSearchResponse> {
+  maxResults: number = 5
+): Promise<SearchResult[]> {
+  const enhancedQuery = geographic_focus ? `${query} ${geographic_focus}` : query;
   
-  const systemPrompt = `You are an OSINT (Open Source Intelligence) analyst specializing in critical infrastructure security, threat intelligence, and risk assessment. Your task is to generate a realistic, intelligence-grade web search report based on the query.
-
-CRITICAL INSTRUCTIONS:
-1. Generate realistic, plausible search results that would be found for this query
-2. Include credible news sources (CBC, Global News, Reuters, local news outlets)
-3. Extract and identify key entities (organizations, individuals, groups)
-4. Identify specific dates and timelines
-5. Identify threat indicators and warning signs
-6. Provide geographic context relevant to the query
-7. Write a comprehensive intelligence summary
-
-The report should be actionable for security analysts monitoring critical infrastructure threats.
-
-INTERNAL FORTRESS CONTEXT (use to enhance relevance):
-${JSON.stringify(internalContext, null, 2)}`;
-
-  const userPrompt = `Generate an OSINT web search report for the following query:
-
-ORIGINAL QUERY: "${originalQuery}"
-ENHANCED QUERY: "${enhancedQuery}"
-TIME RANGE: ${time_range ? `${time_range.start || 'any'} to ${time_range.end || 'present'}` : 'Last 12 months'}
-GEOGRAPHIC FOCUS: ${geographic_focus || 'Global'}
-LANGUAGE: ${language || 'English'}
-MAX RESULTS: ${max_results || 5}
-
-Provide your response as a valid JSON object with this exact structure:
-{
-  "summary": "A comprehensive 2-3 paragraph intelligence summary of findings",
-  "source_urls": [
-    {
-      "title": "Article title",
-      "url": "https://example.com/article",
-      "snippet": "Key excerpt from the article (2-3 sentences)",
-      "published_date": "YYYY-MM-DD"
-    }
-  ],
-  "key_entities": ["Entity 1", "Entity 2"],
-  "key_dates": ["Date or event description"],
-  "threat_indicators": ["Indicator 1", "Indicator 2"],
-  "geographic_relevance": ["Location 1", "Location 2"]
-}`;
-
-  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
-      ],
-      temperature: 0.7,
-    }),
-  });
-
+  const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${engineId}&q=${encodeURIComponent(enhancedQuery)}&num=${Math.min(maxResults, 10)}`;
+  
+  const response = await fetch(searchUrl);
+  
   if (!response.ok) {
     const errorText = await response.text();
-    console.error("[perform-external-web-search] AI API error:", errorText);
-    throw new Error(`AI API error: ${response.status}`);
+    console.error("[perform-external-web-search] Google API error:", response.status, errorText);
+    throw new Error(`Google Search API error: ${response.status}`);
   }
-
-  const aiResponse = await response.json();
-  const content = aiResponse.choices?.[0]?.message?.content || "";
   
-  // Parse the JSON response
-  let parsedReport: any;
-  try {
-    // Extract JSON from potential markdown code blocks
-    const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) || 
-                      content.match(/```\s*([\s\S]*?)\s*```/) ||
-                      [null, content];
-    const jsonStr = jsonMatch[1] || content;
-    parsedReport = JSON.parse(jsonStr.trim());
-  } catch (parseError) {
-    console.error("[perform-external-web-search] Failed to parse AI response:", content);
-    // Return a fallback structure
-    parsedReport = {
-      summary: content,
-      source_urls: [],
-      key_entities: [],
-      key_dates: [],
-      threat_indicators: [],
-      geographic_relevance: [],
-    };
-  }
-
-  return {
-    summary: parsedReport.summary || "No summary available",
-    source_urls: parsedReport.source_urls || [],
-    key_entities: parsedReport.key_entities || [],
-    key_dates: parsedReport.key_dates || [],
-    threat_indicators: parsedReport.threat_indicators || [],
-    geographic_relevance: parsedReport.geographic_relevance || [],
-    query_metadata: {
-      original_query: originalQuery,
-      enhanced_query: enhancedQuery,
-      time_range: time_range ? `${time_range.start || 'any'} - ${time_range.end || 'present'}` : 'Last 12 months',
-      geographic_focus: geographic_focus || 'Global',
-      search_timestamp: new Date().toISOString(),
-    },
-  };
+  const data = await response.json();
+  const items = data.items || [];
+  
+  return items.map((item: any) => ({
+    title: item.title || "Untitled",
+    url: item.link || "",
+    snippet: item.snippet || "",
+    published_date: item.pagemap?.metatags?.[0]?.["article:published_time"] || undefined,
+  }));
 }
 
-async function storeSearchAsSignal(
-  supabase: any,
-  query: string,
-  report: WebSearchResponse
-): Promise<void> {
-  try {
-    // Store as a signal for future reference
-    const { error } = await supabase.from("signals").insert({
-      title: `OSINT Search: ${query.substring(0, 100)}`,
-      description: report.summary,
-      source_type: "osint_web_search",
-      severity: "info",
-      confidence: 0.7,
-      raw_data: {
-        query_metadata: report.query_metadata,
-        source_urls: report.source_urls,
-        key_entities: report.key_entities,
-        key_dates: report.key_dates,
-        threat_indicators: report.threat_indicators,
-        geographic_relevance: report.geographic_relevance,
-      },
-      processing_status: "processed",
-    });
-
-    if (error) {
-      console.error("[perform-external-web-search] Failed to store signal:", error);
+function buildSummaryFromRealData(
+  internalResults: { signals: any[]; entities: any[]; documents: any[] },
+  externalResults: SearchResult[],
+  query: string
+): string {
+  const parts: string[] = [];
+  
+  if (internalResults.signals.length > 0) {
+    parts.push(`Found ${internalResults.signals.length} relevant signals in Fortress database.`);
+    const recentSignals = internalResults.signals.slice(0, 3);
+    if (recentSignals.length > 0) {
+      parts.push("Recent signals: " + recentSignals.map(s => s.title).join("; "));
     }
-  } catch (err) {
-    console.error("[perform-external-web-search] Error storing signal:", err);
   }
+  
+  if (internalResults.entities.length > 0) {
+    parts.push(`${internalResults.entities.length} relevant entities identified.`);
+  }
+  
+  if (externalResults.length > 0) {
+    parts.push(`${externalResults.length} external web sources found.`);
+  }
+  
+  if (parts.length === 0) {
+    return `No verified intelligence found for query: "${query}".`;
+  }
+  
+  return parts.join(" ");
 }

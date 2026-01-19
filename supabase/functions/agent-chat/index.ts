@@ -475,6 +475,28 @@ ${reliabilitySettings.reliability_first_enabled ? `
 • Block unverified claims: ${reliabilitySettings.block_unverified_claims ? 'YES' : 'NO'}
 ` : ''}
 
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║   ⛔ CRITICAL: ABSOLUTE PROHIBITION ON FABRICATED CONTENT ⛔                  ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║ YOU MUST NEVER CREATE OR INVENT:                                              ║
+║ • Breaking news or current events                                             ║
+║ • Geopolitical developments, tensions, or conflicts                           ║
+║ • Maritime, military, or diplomatic incidents                                 ║
+║ • Economic trends or policy shifts not in the database                        ║
+║ • "Unverified reports" of any kind - this phrase is BANNED                    ║
+║ • HUMINT requirements, source typology, or collection priorities              ║
+║ • Speculation about adversary campaigns or intentions                         ║
+║ • Predictions about attack timing or escalation paths                         ║
+║                                                                               ║
+║ FOR EXTERNAL/GEOPOLITICAL INFORMATION:                                        ║
+║ 1. You MUST call perform_external_web_search first                            ║
+║ 2. If search returns no data or fails, state:                                 ║
+║    "No external intelligence available for this query."                       ║
+║ 3. DO NOT fall back to inventing content - report the limitation              ║
+║                                                                               ║
+║ VIOLATION OF THESE RULES CONSTITUTES INTELLIGENCE FABRICATION                 ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
 EVERY PIECE OF INFORMATION YOU PRESENT MUST BE:
 1. SOURCED from the database (via tools or context above)
 2. CITED with the source type and relevant identifiers [S1], [S2], etc.
@@ -484,8 +506,9 @@ WHEN GENERATING BRIEFINGS OR REPORTS:
 - Use ONLY data retrieved from tools (generate_intelligence_summary, query_fortress_data, etc.)
 - Format the tool results into a professional briefing
 - Never supplement with invented information
-- If data is sparse, state: "Limited data available for this period"
-- End with: "Reliability Score: [X]% | Sources: [N] verified"
+- If data is sparse, state: "Limited intelligence data available for this period"
+- If external search failed or returned no data, explicitly state this limitation
+- End with: "Reliability Score: [X]% | Sources: [N] verified | External Intel: [available/unavailable]"
 
 HANDLING USER-SUBMITTED DATA:
 - Data submitted by analysts should be prefixed: "[Analyst-reported]"
@@ -1436,9 +1459,21 @@ Returns: Summarized search results with source URLs and publication dates.`,
         } else if (funcName === 'perform_external_web_search') {
           // Call the dedicated web search edge function
           const searchQuery = args.query;
-          const timeRange = args.time_range || '7d';
           const geoFocus = args.geographic_focus || '';
           const maxResults = args.max_results || 10;
+          
+          // Convert time_range string to date range
+          const now = new Date();
+          let timeRangeObj: { start?: string; end?: string } | undefined;
+          if (args.time_range) {
+            const rangeMap: Record<string, number> = { '24h': 1, '7d': 7, '30d': 30, '90d': 90 };
+            const days = rangeMap[args.time_range] || 7;
+            const startDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+            timeRangeObj = {
+              start: startDate.toISOString().split('T')[0],
+              end: now.toISOString().split('T')[0]
+            };
+          }
           
           console.log(`[perform_external_web_search] Executing search for: "${searchQuery}"`);
           
@@ -1446,41 +1481,68 @@ Returns: Summarized search results with source URLs and publication dates.`,
             const { data: searchResult, error: searchError } = await supabase.functions.invoke('perform-external-web-search', {
               body: { 
                 query: searchQuery,
-                time_range: timeRange,
+                time_range: timeRangeObj,
                 geographic_focus: geoFocus,
                 max_results: maxResults
               }
             });
             
             if (searchError) {
+              console.error('[perform_external_web_search] Invoke error:', searchError);
               toolResults.push({ 
                 tool: 'perform_external_web_search', 
                 result: { 
                   success: false, 
                   error: `Web search failed: ${searchError.message}`,
-                  note: 'If external search is unavailable, clearly state "No external intelligence available" rather than fabricating news.'
+                  data_source: 'no_data',
+                  CRITICAL_INSTRUCTION: 'DO NOT FABRICATE NEWS. State explicitly: "No external intelligence available for this query."'
                 } 
               });
-            } else if (searchResult?.success) {
-              toolResults.push({ 
-                tool: 'perform_external_web_search', 
-                result: { 
-                  success: true, 
-                  query: searchQuery,
-                  results_count: searchResult.results?.length || 0,
-                  results: searchResult.results || [],
-                  summary: searchResult.summary || 'No results found',
-                  sources: searchResult.sources || [],
-                  note: 'Use ONLY this verified external data. Do not supplement with invented information.'
-                } 
-              });
+            } else if (searchResult) {
+              // Handle the new response format with data_source field
+              const dataSource = searchResult.data_source || 'unknown';
+              const hasRealData = dataSource === 'verified' || 
+                                  (dataSource === 'internal_only' && (searchResult.key_entities?.length > 0 || searchResult.source_urls?.length > 0));
+              
+              if (hasRealData) {
+                toolResults.push({ 
+                  tool: 'perform_external_web_search', 
+                  result: { 
+                    success: true,
+                    data_source: dataSource,
+                    query: searchQuery,
+                    summary: searchResult.summary || 'No summary available',
+                    source_urls: searchResult.source_urls || [],
+                    key_entities: searchResult.key_entities || [],
+                    key_dates: searchResult.key_dates || [],
+                    threat_indicators: searchResult.threat_indicators || [],
+                    geographic_relevance: searchResult.geographic_relevance || [],
+                    reliability_note: searchResult.reliability_note || '',
+                    CRITICAL_INSTRUCTION: 'Use ONLY this verified data. DO NOT add speculation, predictions, or invented geopolitical news.'
+                  } 
+                });
+              } else {
+                // No real data found
+                toolResults.push({ 
+                  tool: 'perform_external_web_search', 
+                  result: { 
+                    success: false,
+                    data_source: 'no_data',
+                    query: searchQuery,
+                    summary: searchResult.summary || `No verified intelligence found for: "${searchQuery}"`,
+                    reliability_note: searchResult.reliability_note || 'No external data available.',
+                    CRITICAL_INSTRUCTION: 'NO DATA FOUND. You MUST state in your response: "No external intelligence available for this query." DO NOT invent news, geopolitical events, or speculative content.'
+                  } 
+                });
+              }
             } else {
               toolResults.push({ 
                 tool: 'perform_external_web_search', 
                 result: { 
                   success: false, 
-                  error: searchResult?.error || 'Search returned no results',
-                  note: 'External search unavailable. State "No external intelligence available" in your response.'
+                  data_source: 'no_data',
+                  error: 'Search returned empty response',
+                  CRITICAL_INSTRUCTION: 'NO DATA. State explicitly: "No external intelligence available."'
                 } 
               });
             }
@@ -1490,8 +1552,9 @@ Returns: Summarized search results with source URLs and publication dates.`,
               tool: 'perform_external_web_search', 
               result: { 
                 success: false, 
+                data_source: 'no_data',
                 error: searchErr instanceof Error ? searchErr.message : 'Search failed',
-                note: 'External search unavailable. State "No external intelligence available" in your response.'
+                CRITICAL_INSTRUCTION: 'SEARCH FAILED. State explicitly: "External intelligence search unavailable."'
               } 
             });
           }
@@ -1637,15 +1700,51 @@ Returns: Summarized search results with source URLs and publication dates.`,
       
       // Patterns that indicate fabricated geopolitical/news content
       const fabricationPatterns = [
+        // Unverified claims
         { pattern: /\[UNVERIFIED\][^\n]+/gi, label: 'unverified claim' },
-        { pattern: /BREAKING GEOPOLITICAL NEWS[^]*?(?=\n\d\.|\n##|\n\*\*\d|$)/gi, label: 'fabricated geopolitical section' },
-        { pattern: /GEOPOLITICAL.*?IMPACTS?:[^]*?(?=\n\d\.|\n##|\n\*\*\d|$)/gi, label: 'fabricated impact section' },
-        { pattern: /HUMINT REQUIREMENT[^]*?(?=\n\d\.|\n##|\n\*\*\d|$)/gi, label: 'fabricated HUMINT section' },
-        { pattern: /STRATEGIC HUMINT[^]*?(?=\n\d\.|\n##|\n\*\*\d|$)/gi, label: 'fabricated HUMINT section' },
-        { pattern: /Collection Priorities \(PIRs?\)[^]*?(?=\n\d\.|\n##|\n\*\*\d|$)/gi, label: 'fabricated PIR section' },
+        { pattern: /\(UNVERIFIED\)[^\n]+/gi, label: 'unverified claim' },
+        
+        // Fabricated geopolitical sections
+        { pattern: /BREAKING GEOPOLITICAL NEWS[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated geopolitical section' },
+        { pattern: /GEOPOLITICAL.*?IMPACTS?:[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated impact section' },
+        { pattern: /\d+\.\s*BREAKING GEOPOLITICAL NEWS[^]*?(?=\n\d+\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated news section' },
+        { pattern: /CURRENT GEOPOLITICAL CONTEXT[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated context' },
+        
+        // Maritime/military fabrications
+        { pattern: /maritime friction in the Strait[^\n]+/gi, label: 'fabricated maritime claim' },
+        { pattern: /naval activity in the (Beaufort|Arctic|Pacific)[^\n]+/gi, label: 'fabricated naval claim' },
+        { pattern: /Arctic Sovereignty Tensions[^]*?(?=\n\d\.|\n##|\n\*\*|\n---|$)/gi, label: 'fabricated arctic section' },
+        { pattern: /Middle East Supply Chain Volatility[^]*?(?=\n\d\.|\n##|\n\*\*|\n---|$)/gi, label: 'fabricated supply chain section' },
+        
+        // Fabricated HUMINT/intelligence sections
+        { pattern: /HUMINT REQUIREMENT[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated HUMINT section' },
+        { pattern: /STRATEGIC HUMINT[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated HUMINT section' },
+        { pattern: /Collection Priorities \(PIRs?\)[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated PIR section' },
         { pattern: /Source Typology:[^\n]+/gi, label: 'fabricated source typology' },
-        { pattern: /GEOPOLITICAL \/ MACRO TRENDS:[^]*?(?=\n\d\.|\n##|\n\*\*\d|$)/gi, label: 'fabricated macro trends' },
+        { pattern: /PIR \d+:[^\n]+/gi, label: 'fabricated PIR' },
+        { pattern: /Access Vectors? within[^\n]+/gi, label: 'fabricated access vectors' },
+        
+        // Fabricated macro/geopolitical trends
+        { pattern: /GEOPOLITICAL \/ MACRO TRENDS:[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated macro trends' },
         { pattern: /Resource Nationalism:[^\n]+/gi, label: 'fabricated resource nationalism claim' },
+        { pattern: /Global Energy Policy Shift[^]*?(?=\n\d\.|\n##|\n\*\*|\n---|$)/gi, label: 'fabricated energy policy section' },
+        
+        // Fabricated adversary claims
+        { pattern: /professional adversary[^\n]+/gi, label: 'fabricated adversary claim' },
+        { pattern: /sustained.*?multi-site campaign[^\n]+/gi, label: 'fabricated campaign claim' },
+        { pattern: /coordinated campaign targeting[^\n]+/gi, label: 'fabricated targeting claim' },
+        { pattern: /"?dry runs?"? for a larger[^\n]+/gi, label: 'fabricated dry run speculation' },
+        { pattern: /high-tempo operational environment[^\n]+/gi, label: 'fabricated tempo claim' },
+        
+        // Speculative impacts
+        { pattern: /Impact: Could lead to[^\n]+/gi, label: 'fabricated impact speculation' },
+        { pattern: /Impact: May lead to[^\n]+/gi, label: 'fabricated impact speculation' },
+        { pattern: /may exacerbate local tensions[^\n]+/gi, label: 'fabricated tension speculation' },
+        { pattern: /foreign influence operations[^\n]+/gi, label: 'fabricated influence claim' },
+        
+        // Activist speculation
+        { pattern: /likely being used as social cover[^\n]+/gi, label: 'fabricated social cover claim' },
+        { pattern: /more radical elements to operate[^\n]+/gi, label: 'fabricated radical claim' },
       ];
       
       for (const { pattern, label } of fabricationPatterns) {
