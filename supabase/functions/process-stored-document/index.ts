@@ -170,20 +170,26 @@ serve(async (req) => {
           // Check file size - limit to 25MB to avoid memory issues
           const maxDocxSize = 25 * 1024 * 1024;
           if (fileData.size > maxDocxSize) {
-            console.log(`DOCX too large (${(fileData.size / 1024 / 1024).toFixed(1)}MB), skipping full extraction`);
-            textContent = `[Large Word document: ${document.filename} (${(fileData.size / 1024 / 1024).toFixed(1)}MB). Please use archival upload for full processing.]`;
+            console.log(
+              `DOCX too large (${(fileData.size / 1024 / 1024).toFixed(1)}MB), skipping full extraction`
+            );
+            textContent = `[Large Word document: ${document.filename} (${(
+              fileData.size /
+              1024 /
+              1024
+            ).toFixed(1)}MB). Please use archival upload for full processing.]`;
           } else {
             // Read the ENTIRE file to preserve ZIP structure
             const arrayBuffer = await fileData.arrayBuffer();
             console.log(`Loading DOCX file: ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(2)}MB`);
-            
+
             // Import JSZip for unzipping .docx
             const JSZip = (await import('https://esm.sh/jszip@3.10.1')).default;
             const zip = await JSZip.loadAsync(arrayBuffer);
-            
+
             // Extract document.xml which contains the text content
             const documentXml = await zip.file('word/document.xml')?.async('string');
-            
+
             if (documentXml) {
               // Extract text with paragraph preservation
               textContent = documentXml
@@ -203,7 +209,7 @@ serve(async (req) => {
                 .replace(/\n\s*\n/g, '\n\n')
                 .trim()
                 .slice(0, 200000); // Allow up to 200K chars for large docs
-              
+
               console.log(`Extracted ${textContent.length} characters from Word document`);
             } else {
               console.warn('No document.xml found in DOCX');
@@ -212,7 +218,95 @@ serve(async (req) => {
           }
         } catch (error) {
           console.error('Error extracting Word document:', error);
-          textContent = `[Word document extraction failed: ${error instanceof Error ? error.message : 'Unknown error'}]`;
+          textContent = `[Word document extraction failed: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }]`;
+        }
+
+        // Some DOCX uploads are effectively scanned documents embedded as images.
+        // If we extracted little/no text, fall back to AI-based extraction using a signed URL (or base64 for smaller files).
+        if (textContent.length < 50) {
+          try {
+            console.log('DOCX text extraction produced minimal content; attempting AI-based extraction...');
+
+            const candidateBucketsForDocx = Array.from(
+              new Set([
+                resolvedBucket,
+                (document.metadata as any)?.storage_bucket,
+                'ai-chat-attachments',
+                'archival-documents',
+              ].filter(Boolean))
+            ) as string[];
+
+            let signedDocUrl: string | null = null;
+            for (const bucket of candidateBucketsForDocx) {
+              const { data: signedData, error: signedError } = await supabase.storage
+                .from(bucket)
+                .createSignedUrl(document.storage_path, 60 * 10);
+              if (!signedError && signedData?.signedUrl) {
+                signedDocUrl = signedData.signedUrl;
+                console.log(`Created signed URL for DOCX from bucket: ${bucket}`);
+                break;
+              }
+            }
+
+            // If signed URL creation fails, fall back to base64 for smaller files.
+            const useBase64Fallback = !signedDocUrl && fileData.size <= 20 * 1024 * 1024;
+            let docxRef: string | null = signedDocUrl;
+            if (useBase64Fallback) {
+              const docxBytes = await fileData.arrayBuffer();
+              const base64Docx = base64Encode(new Uint8Array(docxBytes).buffer);
+              docxRef = `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${base64Docx}`;
+              console.log(`Sending DOCX as base64 (${(base64Docx.length / 1024 / 1024).toFixed(2)}MB)`);
+            }
+
+            if (docxRef) {
+              const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  model: 'google/gemini-2.5-flash',
+                  messages: [
+                    {
+                      role: 'user',
+                      content: [
+                        {
+                          type: 'text',
+                          text: `Extract the full readable text from this Word document (DOCX): "${document.filename}".\n\nIf the pages are images/scans, perform OCR. Preserve headings and paragraph breaks. Return ONLY the extracted text.`,
+                        },
+                        {
+                          type: 'image_url',
+                          image_url: { url: docxRef },
+                        },
+                      ],
+                    },
+                  ],
+                  max_tokens: 8000,
+                }),
+              });
+
+              if (visionResponse.ok) {
+                const visionData = await visionResponse.json();
+                const extracted = visionData.choices?.[0]?.message?.content;
+                if (typeof extracted === 'string' && extracted.trim().length > 100) {
+                  textContent = extracted.trim().slice(0, 200000);
+                  console.log(`AI-based DOCX extraction successful: ${textContent.length} characters`);
+                } else {
+                  console.warn('AI-based DOCX extraction returned minimal content');
+                }
+              } else {
+                const errText = await visionResponse.text();
+                console.error(`AI DOCX extraction error ${visionResponse.status}: ${errText}`);
+              }
+            } else {
+              console.warn('Could not create signed URL for DOCX and file too large for base64 fallback');
+            }
+          } catch (fallbackError) {
+            console.error('AI-based DOCX extraction failed:', fallbackError);
+          }
         }
       } else {
         // For older .doc files, try basic text extraction (slice is OK for binary .doc)
