@@ -159,10 +159,10 @@ async function searchInternalFortressData(
 ): Promise<{ signals: any[]; entities: any[]; documents: any[] }> {
   const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
   
-  // Search signals
+  // Search signals - using correct column names from schema
   let signalsQuery = supabase
     .from("signals")
-    .select("id, title, description, source_type, severity, created_at, source_url")
+    .select("id, title, description, signal_type, severity, created_at, source_id")
     .order("created_at", { ascending: false })
     .limit(maxResults);
   
