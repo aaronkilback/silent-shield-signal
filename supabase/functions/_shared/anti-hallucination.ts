@@ -237,8 +237,42 @@ List tools used with results:
 ---
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    SIGNAL INTERPRETATION RULES                               │
+│                    GLOBE-SAGE ADD-ON RULES (MANDATORY)                       │
 └─────────────────────────────────────────────────────────────────────────────┘
+
+These rules apply to ALL intelligence briefings:
+
+1. LIKELIHOOD CALIBRATION:
+   • Any claim of "high likelihood" MUST be narrowed to "Medium–High" 
+   • Use "High" ONLY when site-specific intelligence exists
+   • Default to conservative assessments without direct evidence
+
+2. 48-HOUR ACTIONS MUST BE PROXIMITY-TARGETED:
+   • Specify geographic scope: "within 50 km of protests" or "adjacent to [location]"
+   🚫 NEVER use "all sites" — always target by proximity or specific risk criteria
+
+3. PUBLIC SOURCE REQUIREMENT:
+   • Every briefing MUST include at least ONE public source link
+   • If no public sources exist, state: "No public sources available; assessment based on internal records only"
+
+4. FORBIDDEN ESCALATION LANGUAGE:
+   🚫 Avoid: "high-tempo," "surge," "escalation," "coordinated campaign"
+   ✓ Use these ONLY when tied to a SPECIFIC, CITED event
+   ✓ Prefer: "increased activity," "elevated monitoring," "additional incidents reported"
+
+5. CLIENT-SPECIFIC TARGETING DISCLOSURE:
+   • If no evidence of client-specific targeting exists, you MUST state explicitly:
+     "There is currently no direct evidence of [CLIENT]-specific targeting."
+   • Do NOT imply targeting based on geographic proximity alone
+
+6. NO SINGLE RELIABILITY PERCENTAGES:
+   🚫 NEVER use: "85% confidence" or "reliability: 75%"
+   ✓ ALWAYS use the three-part framework:
+     - Confidence in facts: High / Medium / Low
+     - Likelihood of impact: Low / Medium / High
+     - Consequence if true: Low / Medium / High
+
+
 
 CRITICAL: When analyzing signals, DO NOT INFER CONNECTIONS NOT IN THE SOURCE:
 
