@@ -17,12 +17,13 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Activism and protest-related keywords
+// Activism and threat-related keywords
 const ACTIVISM_KEYWORDS = [
   'protest', 'pipeline', 'activist', 'demonstration', 'blockade',
   'environmental', 'climate', 'indigenous rights', 'first nation',
   'stop', 'oppose', 'rally', 'march', 'occupation', 'resistance',
-  'campaign', 'PRGT', 'LNG', 'Coastal GasLink', 'CGL'
+  'campaign', 'PRGT', 'LNG', 'Coastal GasLink', 'CGL', 'shutdown',
+  'strike', 'boycott', 'divest', 'fossil fuel', 'tar sands'
 ];
 
 serve(async (req) => {
@@ -36,7 +37,7 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    console.log('Starting Facebook monitoring scan...');
+    console.log('Starting Twitter/X monitoring scan...');
 
     // Fetch clients with monitoring keywords
     const { data: clients, error: clientsError } = await supabase
@@ -45,7 +46,7 @@ serve(async (req) => {
 
     if (clientsError) throw clientsError;
 
-    // Fetch entities with active monitoring and facebook handles
+    // Fetch entities with active monitoring and twitter handles
     const { data: watchedEntities, error: entitiesError } = await supabase
       .from('entities')
       .select('id, name, type, aliases, risk_level, attributes, active_monitoring_enabled')
@@ -55,31 +56,77 @@ serve(async (req) => {
       console.error('Error fetching entities:', entitiesError);
     }
 
-    console.log(`Monitoring Facebook for ${clients?.length || 0} clients and ${watchedEntities?.length || 0} watched entities`);
-
-    // Filter entities that have facebook handles
-    const facebookEntities = (watchedEntities || []).filter(e => 
-      e.attributes?.facebook_page || 
-      e.attributes?.facebook_handle
+    // Filter entities that have twitter handles
+    const twitterEntities = (watchedEntities || []).filter(e => 
+      e.attributes?.twitter_handle || 
+      e.attributes?.x_handle ||
+      e.aliases?.some((a: string) => a.startsWith('@'))
     );
+
+    console.log(`Monitoring Twitter/X for ${clients?.length || 0} clients and ${twitterEntities.length} entities with Twitter handles`);
 
     let signalsCreated = 0;
     let mediaCaptures = 0;
     let totalSearches = 0;
     const processedUrls = new Set<string>();
 
-    // PART 1: Client-focused searches
+    // PART 1: Entity-focused searches (activist groups with Twitter presence)
+    for (const entity of twitterEntities) {
+      try {
+        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
+        
+        const searchQueries: string[] = [];
+        const twitterHandle = entity.attributes?.twitter_handle || 
+                              entity.attributes?.x_handle ||
+                              entity.aliases?.find((a: string) => a.startsWith('@'));
+        
+        if (twitterHandle) {
+          const cleanHandle = twitterHandle.replace('@', '');
+          
+          // Direct profile search on X/Twitter
+          searchQueries.push(`site:x.com/${cleanHandle}`);
+          searchQueries.push(`site:twitter.com/${cleanHandle}`);
+          
+          // Entity's recent tweets with media
+          searchQueries.push(`site:x.com from:${cleanHandle} (pic OR video OR photo)`);
+          
+          // Entity + relevant topics
+          const focusAreas = entity.attributes?.focus_areas || [];
+          if (focusAreas.length > 0) {
+            const topics = focusAreas.slice(0, 2).join(' OR ');
+            searchQueries.push(`site:x.com "${entity.name}" (${topics})`);
+          }
+        }
+        
+        // Entity name searches
+        searchQueries.push(`site:x.com "${entity.name}" (protest OR action OR pipeline OR LNG)`);
+
+        for (const query of searchQueries) {
+          totalSearches++;
+          const result = await processTwitterSearch(
+            supabase, query, null, entity.name, 'entity', processedUrls, entity.id
+          );
+          signalsCreated += result.signals;
+          mediaCaptures += result.media;
+        }
+
+        console.log(`Processed Twitter/X for entity: ${entity.name}`);
+
+      } catch (error) {
+        console.error(`Error monitoring Twitter/X for entity ${entity.name}:`, error);
+      }
+    }
+
+    // PART 2: Client-focused searches
     for (const client of clients || []) {
       try {
         await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
         
         const searchQueries: string[] = [];
         
-        // Client name + activism/protest terms
-        searchQueries.push(`site:facebook.com "${client.name}" (protest OR pipeline OR activist OR blockade OR demonstration)`);
-        
-        // Client name + security threats
-        searchQueries.push(`site:facebook.com "${client.name}" (breach OR hack OR security OR scam OR threat)`);
+        // Client name + activism terms
+        searchQueries.push(`site:x.com "${client.name}" (protest OR pipeline OR activist OR blockade)`);
+        searchQueries.push(`site:twitter.com "${client.name}" (protest OR threat OR boycott)`);
         
         // Use client's monitoring keywords
         const clientKeywords = client.monitoring_keywords || [];
@@ -91,104 +138,42 @@ serve(async (req) => {
         
         if (priorityKeywords.length > 0) {
           const keywordTerms = priorityKeywords.slice(0, 3).map((k: string) => `"${k}"`).join(' OR ');
-          searchQueries.push(`site:facebook.com (protest OR activist) (${keywordTerms})`);
+          searchQueries.push(`site:x.com (protest OR activist) (${keywordTerms})`);
         }
 
         for (const query of searchQueries) {
           totalSearches++;
-          const result = await processSearch(supabase, query, client.id, client.name, 'client', processedUrls);
+          const result = await processTwitterSearch(
+            supabase, query, client.id, client.name, 'client', processedUrls
+          );
           signalsCreated += result.signals;
           mediaCaptures += result.media;
         }
 
-        console.log(`Processed Facebook mentions for ${client.name}`);
+        console.log(`Processed Twitter/X mentions for ${client.name}`);
 
       } catch (error) {
-        if (error instanceof Error && error.name === 'AbortError') {
-          console.log(`Facebook search timeout for ${client.name}`);
-        } else {
-          console.error(`Error monitoring Facebook for ${client.name}:`, error);
-        }
+        console.error(`Error monitoring Twitter/X for ${client.name}:`, error);
       }
     }
 
-    // PART 2: Entity-focused searches (entities with Facebook presence)
-    for (const entity of facebookEntities) {
-      try {
-        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
-        
-        const searchQueries: string[] = [];
-        const fbPage = entity.attributes?.facebook_page || entity.attributes?.facebook_handle;
-        
-        if (fbPage) {
-          // Direct page search
-          searchQueries.push(`site:facebook.com/${fbPage}`);
-          // Page posts
-          searchQueries.push(`site:facebook.com/${fbPage}/posts`);
-        }
-        
-        // Entity name + pipeline/energy project terms
-        searchQueries.push(`site:facebook.com "${entity.name}" (pipeline OR LNG OR "Coastal GasLink" OR PRGT OR protest)`);
-        
-        // Include aliases in search
-        if (entity.aliases && entity.aliases.length > 0) {
-          for (const alias of entity.aliases.slice(0, 2)) {
-            searchQueries.push(`site:facebook.com "${alias}" (pipeline OR protest OR blockade)`);
-          }
-        }
-
-        for (const query of searchQueries) {
-          totalSearches++;
-          const result = await processSearch(supabase, query, null, entity.name, 'entity', processedUrls, entity.id);
-          signalsCreated += result.signals;
-          mediaCaptures += result.media;
-        }
-
-        console.log(`Processed Facebook mentions for entity: ${entity.name}`);
-
-      } catch (error) {
-        console.error(`Error monitoring Facebook for entity ${entity.name}:`, error);
-      }
-    }
-
-    // PART 3: Also check other high-risk entities without FB handles
-    const otherEntities = (watchedEntities || []).filter(e => 
-      !e.attributes?.facebook_page && 
-      !e.attributes?.facebook_handle &&
-      (e.risk_level === 'high' || e.risk_level === 'critical')
-    );
-
-    for (const entity of otherEntities.slice(0, 10)) {
-      try {
-        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
-        
-        const query = `site:facebook.com "${entity.name}" (protest OR pipeline OR activist)`;
-        totalSearches++;
-        const result = await processSearch(supabase, query, null, entity.name, 'entity', processedUrls, entity.id);
-        signalsCreated += result.signals;
-        mediaCaptures += result.media;
-      } catch (error) {
-        console.error(`Error monitoring Facebook for entity ${entity.name}:`, error);
-      }
-    }
-
-    console.log(`Facebook monitoring complete. Ran ${totalSearches} searches. Created ${signalsCreated} signals. Captured ${mediaCaptures} media files.`);
+    console.log(`Twitter/X monitoring complete. Ran ${totalSearches} searches. Created ${signalsCreated} signals. Captured ${mediaCaptures} media files.`);
 
     return new Response(
       JSON.stringify({
         success: true,
         clients_scanned: clients?.length || 0,
-        entities_scanned: facebookEntities.length + otherEntities.length,
+        entities_scanned: twitterEntities.length,
         searches_executed: totalSearches,
         signals_created: signalsCreated,
         media_captured: mediaCaptures,
-        source: 'facebook'
+        source: 'twitter'
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
-    console.error('Error in Facebook monitoring:', error);
+    console.error('Error in Twitter/X monitoring:', error);
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -196,7 +181,7 @@ serve(async (req) => {
   }
 });
 
-async function processSearch(
+async function processTwitterSearch(
   supabase: any,
   query: string,
   clientId: string | null,
@@ -211,10 +196,10 @@ async function processSearch(
   let mediaCount = 0;
 
   try {
-    console.log(`Facebook search: ${query.substring(0, 80)}...`);
+    console.log(`Twitter/X search: ${query.substring(0, 80)}...`);
     
     const response = await fetch(
-      `https://www.google.com/search?q=${encodeURIComponent(query)}&num=10`,
+      `https://www.google.com/search?q=${encodeURIComponent(query)}&num=15`,
       {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -226,7 +211,7 @@ async function processSearch(
     ).finally(() => clearTimeout(timeout));
 
     if (!response.ok) {
-      console.log(`Facebook search failed: ${response.status}`);
+      console.log(`Twitter/X search failed: ${response.status}`);
       if (response.status === 429) {
         await new Promise(resolve => setTimeout(resolve, 30000));
       }
@@ -234,30 +219,54 @@ async function processSearch(
     }
 
     const html = await response.text();
+    
+    // Extract search results
     const resultMatches = html.matchAll(/<div class="g"[^>]*>(.*?)<\/div>/gs);
+    const altMatches = html.matchAll(/href="(https?:\/\/(?:x|twitter)\.com\/[^"]+)"[^>]*>([^<]*)<\/a>/gs);
 
-    for (const match of Array.from(resultMatches).slice(0, 5)) {
+    const results: Array<{ url: string; text: string }> = [];
+
+    // Parse main results
+    for (const match of Array.from(resultMatches).slice(0, 10)) {
       const text = match[1]
         .replace(/<[^>]+>/g, ' ')
         .replace(/&[^;]+;/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
 
-      // Extract Facebook URL if present
-      const urlMatch = text.match(/facebook\.com\/[^\s"'<>]+/);
-      const facebookUrl = urlMatch ? `https://${urlMatch[0]}` : null;
+      const urlMatch = text.match(/(x|twitter)\.com\/[^\s"'<>]+/);
+      if (urlMatch) {
+        results.push({
+          url: `https://${urlMatch[0]}`,
+          text
+        });
+      }
+    }
+
+    // Also capture from direct links
+    for (const match of Array.from(altMatches).slice(0, 5)) {
+      if (!results.some(r => r.url === match[1])) {
+        results.push({
+          url: match[1],
+          text: match[2] || ''
+        });
+      }
+    }
+
+    for (const result of results) {
+      const { url: twitterUrl, text } = result;
 
       // Skip duplicates
-      if (facebookUrl && processedUrls.has(facebookUrl)) continue;
-      if (facebookUrl) processedUrls.add(facebookUrl);
+      if (processedUrls.has(twitterUrl)) continue;
+      processedUrls.add(twitterUrl);
 
       // Extract social media metadata
       const mentions = extractMentions(text);
       const hashtags = extractHashtags(text);
       const engagement = parseEngagement(text);
-      const postType = detectPostType(facebookUrl || '', text);
+      const postType = detectPostType(twitterUrl, text);
       const eventDetails = extractEventDetails(text);
-      const authorHandle = extractAuthorFromUrl(facebookUrl || '', 'facebook');
+      const authorHandle = extractAuthorFromUrl(twitterUrl, 'twitter');
 
       // Check for relevance
       const lowerText = text.toLowerCase();
@@ -266,17 +275,17 @@ async function processSearch(
         lowerText.includes(sourceName.toLowerCase()) ||
         isHighPriorityContent(text);
 
-      if (text.length > 30 && isRelevant) {
+      if (text.length > 20 && isRelevant) {
         // Check for duplicates in DB
         const { data: existing } = await supabase
           .from('ingested_documents')
           .select('id')
-          .eq('metadata->>source', 'facebook')
+          .or(`source_url.eq.${twitterUrl},metadata->>source.eq.twitter`)
           .ilike('raw_text', `%${text.substring(0, 50)}%`)
           .limit(1);
 
         if (existing && existing.length > 0) {
-          console.log('Skipping duplicate Facebook content');
+          console.log('Skipping duplicate Twitter/X content');
           continue;
         }
 
@@ -286,10 +295,12 @@ async function processSearch(
           category = 'protest_activity';
         } else if (ACTIVISM_KEYWORDS.some(k => lowerText.includes(k.toLowerCase()))) {
           category = 'activism';
+        } else if (lowerText.includes('threat') || lowerText.includes('warning')) {
+          category = 'threat_indication';
         }
 
         // Capture media from the content
-        const mediaResult = await captureMediaFromContent(supabase, text, 'facebook', 5);
+        const mediaResult = await captureMediaFromContent(supabase, text, 'twitter', 5);
         if (mediaResult.storedMedia.length > 0) {
           mediaCount += mediaResult.storedMedia.length;
         }
@@ -298,9 +309,9 @@ async function processSearch(
         const { data: doc, error: docError } = await supabase
           .from('ingested_documents')
           .insert({
-            title: `Facebook ${postType}: ${sourceName}`,
+            title: `Twitter/X ${postType}: ${sourceName}`,
             raw_text: text,
-            source_url: facebookUrl,
+            source_url: twitterUrl,
             post_caption: text,
             author_handle: authorHandle,
             author_name: sourceName,
@@ -310,8 +321,9 @@ async function processSearch(
             media_urls: mediaResult.storedMedia.map((m: any) => m.storageUrl),
             thumbnail_url: mediaResult.storedMedia[0]?.storageUrl || null,
             metadata: {
-              source: 'facebook',
+              source: 'twitter',
               source_type: 'social_media',
+              platform: twitterUrl.includes('x.com') ? 'x' : 'twitter',
               client_id: clientId,
               entity_id: entityId,
               source_name: sourceName,
@@ -350,13 +362,13 @@ async function processSearch(
             body: { documentId: doc.id }
           });
           signalsCreated++;
-          console.log(`Ingested Facebook ${category}: ${sourceName} - ${text.substring(0, 60)}... (${mediaResult.storedMedia.length} media)`);
+          console.log(`Ingested Twitter/X ${category}: ${sourceName} - ${text.substring(0, 60)}... (${mediaResult.storedMedia.length} media)`);
         }
       }
     }
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      console.log(`Facebook search timeout`);
+      console.log(`Twitter/X search timeout`);
     } else {
       throw error;
     }
