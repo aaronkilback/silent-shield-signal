@@ -1124,12 +1124,44 @@ Returns: Summarized search results with source URLs and publication dates.`,
             })),
           };
           
+          // Add strict anti-hallucination instruction with the briefing data
+          const strictBriefingInstruction = `
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║  ⛔ BRIEFING GENERATION RULES - MANDATORY ⛔                                  ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+THIS DATA IS FROM THE FORTRESS DATABASE. USE ONLY THIS DATA.
+
+✅ ALLOWED:
+- Report the exact counts shown above (signals: ${signals.length}, incidents: ${incidents.length})
+- List the incidents and signals exactly as shown
+- Note which ones are high priority
+
+⛔ ABSOLUTELY FORBIDDEN:
+- Adding "Geopolitical News" sections (you have no such data)
+- Inventing "HUMINT Requirements" or "Collection Priorities"
+- Speculating about "coordinated campaigns" or "professional adversaries"
+- Creating "Impact Analysis" not based on this data
+- Using phrases like "[UNVERIFIED]", "may lead to", "could indicate"
+- Mentioning Strait of Hormuz, Beaufort Sea, Arctic tensions, etc.
+
+IF ASKED ABOUT EXTERNAL NEWS:
+→ You have NOT called perform_external_web_search yet
+→ State: "External intelligence: Not queried. Call perform_external_web_search for geopolitical context."
+→ DO NOT invent geopolitical content
+
+FORMAT: Use the mandatory briefing template from system prompt.
+`;
+          
           toolResults.push({ 
             tool: 'generate_intelligence_summary', 
             result: { 
               success: true,
               briefing_data: briefingData,
-              instruction: 'Use the briefing_data above to generate a formatted intelligence brief. Present ALL the data in a clear, professional format appropriate for the requested format type.'
+              CRITICAL_INSTRUCTION: strictBriefingInstruction,
+              data_source: 'Fortress Database (verified)',
+              external_intel_available: false,
+              note: 'Present ONLY the data above. Do not add geopolitical news, HUMINT requirements, or speculation.'
             } 
           });
           
@@ -1692,79 +1724,126 @@ Returns: Summarized search results with source URLs and publication dates.`,
     }
     
     // ════════════════════════════════════════════════════════════════════════
-    // POST-PROCESSING SANITIZATION: Last line of defense against hallucinations
+    // POST-PROCESSING SANITIZATION: AGGRESSIVE defense against hallucinations
     // ════════════════════════════════════════════════════════════════════════
-    const sanitizeFabricatedContent = (text: string): { sanitized: string; redactions: string[] } => {
-      const redactions: string[] = [];
-      let sanitized = text;
-      
-      // Patterns that indicate fabricated geopolitical/news content
-      const fabricationPatterns = [
-        // Unverified claims
-        { pattern: /\[UNVERIFIED\][^\n]+/gi, label: 'unverified claim' },
-        { pattern: /\(UNVERIFIED\)[^\n]+/gi, label: 'unverified claim' },
-        
-        // Fabricated geopolitical sections
-        { pattern: /BREAKING GEOPOLITICAL NEWS[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated geopolitical section' },
-        { pattern: /GEOPOLITICAL.*?IMPACTS?:[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated impact section' },
-        { pattern: /\d+\.\s*BREAKING GEOPOLITICAL NEWS[^]*?(?=\n\d+\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated news section' },
-        { pattern: /CURRENT GEOPOLITICAL CONTEXT[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated context' },
-        
-        // Maritime/military fabrications
-        { pattern: /maritime friction in the Strait[^\n]+/gi, label: 'fabricated maritime claim' },
-        { pattern: /naval activity in the (Beaufort|Arctic|Pacific)[^\n]+/gi, label: 'fabricated naval claim' },
-        { pattern: /Arctic Sovereignty Tensions[^]*?(?=\n\d\.|\n##|\n\*\*|\n---|$)/gi, label: 'fabricated arctic section' },
-        { pattern: /Middle East Supply Chain Volatility[^]*?(?=\n\d\.|\n##|\n\*\*|\n---|$)/gi, label: 'fabricated supply chain section' },
-        
-        // Fabricated HUMINT/intelligence sections
-        { pattern: /HUMINT REQUIREMENT[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated HUMINT section' },
-        { pattern: /STRATEGIC HUMINT[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated HUMINT section' },
-        { pattern: /Collection Priorities \(PIRs?\)[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated PIR section' },
-        { pattern: /Source Typology:[^\n]+/gi, label: 'fabricated source typology' },
-        { pattern: /PIR \d+:[^\n]+/gi, label: 'fabricated PIR' },
-        { pattern: /Access Vectors? within[^\n]+/gi, label: 'fabricated access vectors' },
-        
-        // Fabricated macro/geopolitical trends
-        { pattern: /GEOPOLITICAL \/ MACRO TRENDS:[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated macro trends' },
-        { pattern: /Resource Nationalism:[^\n]+/gi, label: 'fabricated resource nationalism claim' },
-        { pattern: /Global Energy Policy Shift[^]*?(?=\n\d\.|\n##|\n\*\*|\n---|$)/gi, label: 'fabricated energy policy section' },
-        
-        // Fabricated adversary claims
-        { pattern: /professional adversary[^\n]+/gi, label: 'fabricated adversary claim' },
-        { pattern: /sustained.*?multi-site campaign[^\n]+/gi, label: 'fabricated campaign claim' },
-        { pattern: /coordinated campaign targeting[^\n]+/gi, label: 'fabricated targeting claim' },
-        { pattern: /"?dry runs?"? for a larger[^\n]+/gi, label: 'fabricated dry run speculation' },
-        { pattern: /high-tempo operational environment[^\n]+/gi, label: 'fabricated tempo claim' },
-        
-        // Speculative impacts
-        { pattern: /Impact: Could lead to[^\n]+/gi, label: 'fabricated impact speculation' },
-        { pattern: /Impact: May lead to[^\n]+/gi, label: 'fabricated impact speculation' },
-        { pattern: /may exacerbate local tensions[^\n]+/gi, label: 'fabricated tension speculation' },
-        { pattern: /foreign influence operations[^\n]+/gi, label: 'fabricated influence claim' },
-        
-        // Activist speculation
-        { pattern: /likely being used as social cover[^\n]+/gi, label: 'fabricated social cover claim' },
-        { pattern: /more radical elements to operate[^\n]+/gi, label: 'fabricated radical claim' },
-      ];
-      
-      for (const { pattern, label } of fabricationPatterns) {
-        const matches = sanitized.match(pattern);
-        if (matches) {
-          matches.forEach(m => {
-            redactions.push(`[REDACTED: ${label}]`);
-          });
-          sanitized = sanitized.replace(pattern, `\n⚠️ *[Content removed: ${label} - no verified source]*\n`);
-        }
-      }
-      
-      return { sanitized, redactions };
-    };
     
-    // Apply sanitization to final response
-    const { sanitized, redactions } = sanitizeFabricatedContent(agentResponse);
-    if (redactions.length > 0) {
-      console.warn(`⛔ SANITIZATION: Removed ${redactions.length} fabricated content sections:`, redactions);
-      agentResponse = sanitized;
+    // CRITICAL: Patterns that indicate SEVERE fabrication requiring complete rejection
+    const SEVERE_FABRICATION_PATTERNS = [
+      /\[UNVERIFIED\]\s*Reports/gi,
+      /HUMINT\s+REQUIREMENT/gi,
+      /STRATEGIC\s+HUMINT/gi,
+      /Collection\s+Priorities?\s*\(PIR/gi,
+      /Source\s+Typology/gi,
+      /PIR\s+\d+:/gi,
+      /Strait\s+of\s+Hormuz/gi,
+      /Beaufort\s+Sea.*?activity/gi,
+      /Arctic\s+Sovereignty\s+Tensions/gi,
+      /maritime\s+friction/gi,
+      /Middle\s+East\s+Supply\s+Chain/gi,
+      /Global\s+Energy\s+Policy\s+Shift/gi,
+      /Resource\s+Nationalism/gi,
+      /professional\s+adversary/gi,
+      /dry\s+runs?\s+for\s+a\s+larger/gi,
+      /high-tempo\s+operational\s+environment/gi,
+      /foreign\s+influence\s+operations/gi,
+    ];
+    
+    // Check for severe fabrication FIRST
+    let hasSevereFabrication = false;
+    const severeFabricationsFound: string[] = [];
+    
+    for (const pattern of SEVERE_FABRICATION_PATTERNS) {
+      if (pattern.test(agentResponse)) {
+        hasSevereFabrication = true;
+        const match = agentResponse.match(pattern);
+        if (match) severeFabricationsFound.push(match[0]);
+      }
+    }
+    
+    if (hasSevereFabrication) {
+      console.error(`⛔⛔⛔ SEVERE FABRICATION DETECTED: ${severeFabricationsFound.join(', ')}`);
+      
+      // Generate a safe fallback response from actual tool results
+      const safeBriefingData = toolResults.find(t => t.tool === 'generate_intelligence_summary')?.result?.briefing_data;
+      
+      if (safeBriefingData) {
+        // Build a clean, facts-only response
+        const currentDate = new Date().toISOString().split('T')[0];
+        agentResponse = `**INTELLIGENCE BRIEFING | ${currentDate}**
+
+**Summary (from Fortress Database):**
+- Signals (last ${safeBriefingData.time_range_hours}h): ${safeBriefingData.summary?.total_signals || 0}
+- New Incidents: ${safeBriefingData.summary?.total_new_incidents || 0}  
+- High Priority Open: ${safeBriefingData.summary?.high_priority_open || 0}
+
+**Active Incidents:**
+${(safeBriefingData.high_priority_open_incidents || []).length > 0 
+  ? safeBriefingData.high_priority_open_incidents.map((i: any) => 
+      `- [${i.priority?.toUpperCase()}/${i.status || 'open'}] ${i.title} (${i.opened_at?.split('T')[0] || 'No date'})`
+    ).join('\n')
+  : 'No high-priority open incidents in database.'}
+
+**External Intelligence:** Not available. No external web search was performed for geopolitical context.
+
+---
+*Reliability: 100% | Sources: Fortress Database | External Intel: unavailable*
+
+⚠️ *Note: A previous response contained unverified content and was replaced with verified database records only.*`;
+      } else {
+        // Minimal safe response
+        agentResponse = `**Intelligence Update**
+
+I can only report verified information from the Fortress database. No external intelligence search was performed.
+
+To include geopolitical or external news context, please ask me to perform an external web search first.
+
+*Reliability: 100% verified from database*`;
+      }
+    } else {
+      // Standard sanitization for less severe patterns
+      const sanitizeFabricatedContent = (text: string): { sanitized: string; redactions: string[] } => {
+        const redactions: string[] = [];
+        let sanitized = text;
+        
+        const fabricationPatterns = [
+          { pattern: /\[UNVERIFIED\][^\n]+/gi, label: 'unverified claim' },
+          { pattern: /\(UNVERIFIED\)[^\n]+/gi, label: 'unverified claim' },
+          { pattern: /BREAKING GEOPOLITICAL NEWS[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated geopolitical section' },
+          { pattern: /GEOPOLITICAL.*?IMPACTS?:[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated impact section' },
+          { pattern: /\d+\.\s*BREAKING GEOPOLITICAL NEWS[^]*?(?=\n\d+\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated news section' },
+          { pattern: /CURRENT GEOPOLITICAL CONTEXT[^]*?(?=\n\d\.|\n##|\n\*\*\d|\n---|\n═|$)/gi, label: 'fabricated context' },
+          { pattern: /naval activity in the (Beaufort|Arctic|Pacific)[^\n]+/gi, label: 'fabricated naval claim' },
+          { pattern: /sustained.*?multi-site campaign[^\n]+/gi, label: 'fabricated campaign claim' },
+          { pattern: /coordinated campaign targeting[^\n]+/gi, label: 'fabricated targeting claim' },
+          { pattern: /Impact: Could lead to[^\n]+/gi, label: 'fabricated impact speculation' },
+          { pattern: /Impact: May lead to[^\n]+/gi, label: 'fabricated impact speculation' },
+          { pattern: /may exacerbate local tensions[^\n]+/gi, label: 'fabricated tension speculation' },
+          { pattern: /likely being used as social cover[^\n]+/gi, label: 'fabricated social cover claim' },
+          { pattern: /more radical elements to operate[^\n]+/gi, label: 'fabricated radical claim' },
+          { pattern: /Access Vectors? within[^\n]+/gi, label: 'fabricated access vectors' },
+        ];
+        
+        for (const { pattern, label } of fabricationPatterns) {
+          const matches = sanitized.match(pattern);
+          if (matches) {
+            matches.forEach(() => {
+              redactions.push(`[REDACTED: ${label}]`);
+            });
+            sanitized = sanitized.replace(pattern, '');
+          }
+        }
+        
+        // Clean up extra whitespace from removals
+        sanitized = sanitized.replace(/\n{3,}/g, '\n\n').trim();
+        
+        return { sanitized, redactions };
+      };
+      
+      const { sanitized, redactions } = sanitizeFabricatedContent(agentResponse);
+      if (redactions.length > 0) {
+        console.warn(`⛔ SANITIZATION: Removed ${redactions.length} fabricated content sections:`, redactions);
+        agentResponse = sanitized;
+      }
     }
 
     console.log('Agent response generated successfully', { 
