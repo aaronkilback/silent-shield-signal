@@ -276,8 +276,10 @@ export const ArchivalDocumentUpload = () => {
             )}
             <div className="bg-muted/50 border border-primary/20 rounded-lg p-3 mb-2">
               <p className="text-sm text-muted-foreground">
-                📁 <strong>File Size Limit:</strong> Maximum 100MB per file
+                📁 <strong>Supported formats:</strong> PDF, DOC, DOCX, TXT, CSV, JPG, JPEG, PNG, GIF, EML, MSG
                 <br />
+                <span className="text-xs">Maximum file size: 100MB per file</span>
+                <br /><br />
                 • All files use direct storage upload for reliability
                 <br />
                 • Entity extraction happens in the background after upload
