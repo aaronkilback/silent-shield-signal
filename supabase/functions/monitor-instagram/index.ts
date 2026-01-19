@@ -293,20 +293,24 @@ async function processSearch(
           continue;
         }
 
-        // Check if content is too old (reject posts older than 90 days)
+        // Check if content is historical (older than 90 days) - flag but don't skip
         const maxAgeMs = 90 * 24 * 60 * 60 * 1000; // 90 days
         const now = Date.now();
+        let isHistorical = false;
+        let historicalDate: Date | null = null;
         
         if (postDate && (now - postDate.getTime() > maxAgeMs)) {
-          console.log(`Skipping old post from ${postDate.toISOString().split('T')[0]} (${authorHandle || sourceName})`);
-          continue;
+          isHistorical = true;
+          historicalDate = postDate;
+          console.log(`Flagging as historical: post from ${postDate.toISOString().split('T')[0]} (${authorHandle || sourceName})`);
         }
         
         // Also check for dates mentioned in caption that indicate old events
         const contentDate = extractDateFromContent(caption);
         if (contentDate && (now - contentDate.getTime() > maxAgeMs)) {
-          console.log(`Skipping post referencing old event from ${contentDate.toISOString().split('T')[0]}`);
-          continue;
+          isHistorical = true;
+          historicalDate = contentDate;
+          console.log(`Flagging as historical: references event from ${contentDate.toISOString().split('T')[0]}`);
         }
 
         // Check for duplicates
@@ -364,6 +368,8 @@ async function processSearch(
               media_count: mediaUrls.length,
               comment_count: comments.length,
               is_high_priority: isHighPriority,
+              is_historical: isHistorical,
+              historical_date: historicalDate?.toISOString() || null,
               event_details: eventDetails,
               detected_keywords: ACTIVISM_KEYWORDS.filter(k => lowerCaption.includes(k.toLowerCase())),
               detected_organizations: ACTIVIST_ORGANIZATIONS.filter(org => lowerCaption.includes(org.toLowerCase())),
