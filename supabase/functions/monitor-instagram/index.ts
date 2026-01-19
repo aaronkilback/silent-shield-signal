@@ -231,7 +231,7 @@ async function processSearch(
     console.log(`Instagram search: ${query.substring(0, 80)}...`);
     
     const response = await fetch(
-      `https://www.google.com/search?q=${encodeURIComponent(query)}&num=10&tbm=vid`,
+      `https://www.google.com/search?q=${encodeURIComponent(query)}&num=15`,
       {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -253,169 +253,167 @@ async function processSearch(
 
     const html = await response.text();
 
-    // Parse search results - look for video results and regular results
-    const resultPatterns = [
-      /<div class="g"[^>]*>(.*?)<\/div>/gs,
-      /<a href="[^"]*instagram\.com[^"]*"[^>]*>(.*?)<\/a>/gs,
-    ];
-
-    for (const pattern of resultPatterns) {
-      const matches = html.matchAll(pattern);
-
-      for (const match of Array.from(matches).slice(0, 5)) {
-        const text = match[1] || match[0];
-        const cleanText = text
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/&[^;]+;/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-
-        // Extract Instagram URL if present
-        const urlMatch = text.match(/instagram\.com\/(?:p|reel|tv)\/([a-zA-Z0-9_-]+)/);
-        const instagramUrl = urlMatch ? `https://instagram.com/${urlMatch[0]}` : null;
-
-        // Skip if we've already processed this URL
-        if (instagramUrl && processedUrls.has(instagramUrl)) continue;
-        if (instagramUrl) processedUrls.add(instagramUrl);
-
-        // Check for relevance
-        const lowerText = cleanText.toLowerCase();
-        const isRelevant = 
-          ACTIVISM_KEYWORDS.some(k => lowerText.includes(k.toLowerCase())) ||
-          ACTIVIST_ORGANIZATIONS.some(org => lowerText.includes(org.toLowerCase())) ||
-          lowerText.includes(sourceName.toLowerCase());
-
-        if (cleanText.length > 30 && isRelevant) {
-          // Check for duplicates before inserting
-          const { data: existing } = await supabase
-            .from('ingested_documents')
-            .select('id')
-            .eq('metadata->>source', 'instagram')
-            .ilike('raw_text', `%${cleanText.substring(0, 50)}%`)
-            .limit(1);
-
-          if (existing && existing.length > 0) {
-            console.log('Skipping duplicate Instagram content');
-            continue;
-          }
-
-          // Determine category based on content
-          let category = 'social_media';
-          if (ACTIVISM_KEYWORDS.some(k => lowerText.includes(k.toLowerCase()))) {
-            category = 'activism';
-          }
-          if (lowerText.includes('protest') || lowerText.includes('blockade') || lowerText.includes('demonstration')) {
-            category = 'protest_activity';
-          }
-
-          // Extract structured social media data
-          const mentions = extractMentions(cleanText);
-          const hashtags = extractHashtags(cleanText);
-          const engagement = parseEngagement(cleanText);
-          const eventDetails = extractEventDetails(cleanText);
-          const isHighPriority = isHighPriorityContent(cleanText);
-          
-          // Extract author handle from URL
-          const authorMatch = instagramUrl?.match(/instagram\.com\/([a-zA-Z0-9_\.]+)/);
-          const authorHandle = authorMatch ? authorMatch[1] : sourceName;
-
-          // Extract media URLs from content and Instagram URL
-          const mediaUrls = extractMediaUrls(cleanText);
-          if (instagramUrl) {
-            mediaUrls.push(instagramUrl);
-          }
-          
-          // Determine media type
-          const postType = instagramUrl ? detectPostType(instagramUrl, cleanText) : 'image';
-
-          // Create ingested document with full post data
-          const { data: doc, error: docError } = await supabase
-            .from('ingested_documents')
-            .insert({
-              title: `Instagram ${category}: ${sourceName}`,
-              raw_text: cleanText,
-              source_url: instagramUrl,
-              post_caption: cleanText, // Store full caption
-              media_urls: mediaUrls,
-              media_type: postType,
-              author_handle: authorHandle,
-              author_name: sourceName,
-              mentions: mentions,
-              hashtags: hashtags,
-              engagement_metrics: engagement,
-              metadata: {
-                source: 'instagram',
-                source_type: 'social_media',
-                client_id: clientId,
-                entity_id: entityId,
-                source_name: sourceName,
-                search_type: sourceType,
-                search_query: query,
-                category: category,
-                has_media: mediaUrls.length > 0,
-                media_count: mediaUrls.length,
-                is_high_priority: isHighPriority,
-                event_details: eventDetails,
-                detected_keywords: ACTIVISM_KEYWORDS.filter(k => lowerText.includes(k.toLowerCase())),
-                detected_organizations: ACTIVIST_ORGANIZATIONS.filter(org => lowerText.includes(org.toLowerCase())),
-                mentioned_accounts: mentions,
-                hashtag_count: hashtags.length
-              }
-            })
-            .select()
-            .single();
-
-          if (!docError && doc) {
-            // Try to download and store media files
-            let storedMediaCount = 0;
-            for (const mediaUrl of mediaUrls.slice(0, 3)) { // Limit to 3 media files per post
-              try {
-                const mediaFile = await downloadAndStoreMedia(supabase, mediaUrl, 'instagram');
-                if (mediaFile) {
-                  storedMediaCount++;
-                  // Create attachment record
-                  await createMediaAttachments(supabase, 'document', doc.id, [mediaFile]);
-                  
-                  // Set thumbnail if this is the first image
-                  if (mediaFile.type === 'image' && !doc.thumbnail_url) {
-                    await supabase
-                      .from('ingested_documents')
-                      .update({ thumbnail_url: mediaFile.storageUrl })
-                      .eq('id', doc.id);
-                  }
-                }
-              } catch (mediaError) {
-                console.log(`Failed to download media: ${mediaError}`);
-              }
-            }
-            
-            if (storedMediaCount > 0) {
-              onMediaDownloaded(storedMediaCount);
-              console.log(`Downloaded ${storedMediaCount} media files for document`);
-            }
-            
-            // Link to entity if applicable
-            if (entityId) {
-              await supabase
-                .from('document_entity_mentions')
-                .insert({
-                  document_id: doc.id,
-                  entity_id: entityId,
-                  confidence: 0.85,
-                  mention_text: sourceName
-                });
-            }
-
-            // Invoke intelligence processing
-            await supabase.functions.invoke('process-intelligence-document', {
-              body: { documentId: doc.id }
-            });
-            onSignalCreated(1);
-            console.log(`Ingested Instagram ${category} content: ${sourceName} - ${cleanText.substring(0, 60)}...`);
-          }
-        }
+    // Extract all Instagram URLs from search results
+    const instagramUrls: string[] = [];
+    const urlPattern = /https?:\/\/(?:www\.)?instagram\.com\/(?:p|reel|tv)\/([a-zA-Z0-9_-]+)/g;
+    let urlMatch;
+    while ((urlMatch = urlPattern.exec(html)) !== null) {
+      const fullUrl = urlMatch[0];
+      if (!instagramUrls.includes(fullUrl) && !processedUrls.has(fullUrl)) {
+        instagramUrls.push(fullUrl);
       }
     }
+
+    console.log(`Found ${instagramUrls.length} Instagram URLs to fetch`);
+
+    // Process each Instagram URL - fetch actual page content
+    for (const instagramUrl of instagramUrls.slice(0, 5)) {
+      processedUrls.add(instagramUrl);
+      
+      try {
+        // Fetch the actual Instagram page to get post content
+        const postData = await fetchInstagramPost(instagramUrl);
+        
+        if (!postData || !postData.caption) {
+          console.log(`No content extracted from ${instagramUrl}`);
+          continue;
+        }
+
+        const { caption, authorHandle, authorName, mediaUrls, comments, engagement, postType } = postData;
+
+        // Check for relevance
+        const lowerCaption = caption.toLowerCase();
+        const isRelevant = 
+          ACTIVISM_KEYWORDS.some(k => lowerCaption.includes(k.toLowerCase())) ||
+          ACTIVIST_ORGANIZATIONS.some(org => lowerCaption.includes(org.toLowerCase())) ||
+          lowerCaption.includes(sourceName.toLowerCase());
+
+        if (!isRelevant) {
+          console.log(`Content not relevant, skipping`);
+          continue;
+        }
+
+        // Check for duplicates
+        const { data: existing } = await supabase
+          .from('ingested_documents')
+          .select('id')
+          .eq('source_url', instagramUrl)
+          .limit(1);
+
+        if (existing && existing.length > 0) {
+          console.log('Skipping duplicate Instagram post');
+          continue;
+        }
+
+        // Extract structured data
+        const mentions = extractMentions(caption);
+        const hashtags = extractHashtags(caption);
+        const eventDetails = extractEventDetails(caption);
+        const isHighPriority = isHighPriorityContent(caption);
+
+        // Determine category
+        let category = 'social_media';
+        if (lowerCaption.includes('protest') || lowerCaption.includes('blockade') || lowerCaption.includes('demonstration')) {
+          category = 'protest_activity';
+        } else if (ACTIVISM_KEYWORDS.some(k => lowerCaption.includes(k.toLowerCase()))) {
+          category = 'activism';
+        }
+
+        // Create ingested document with FULL post data
+        const { data: doc, error: docError } = await supabase
+          .from('ingested_documents')
+          .insert({
+            title: `Instagram ${postType}: ${authorHandle || sourceName}`,
+            raw_text: caption,
+            source_url: instagramUrl,
+            post_caption: caption,
+            author_handle: authorHandle,
+            author_name: authorName || sourceName,
+            mentions: mentions,
+            hashtags: hashtags,
+            engagement_metrics: engagement,
+            comments: comments.slice(0, 20), // Store top 20 comments
+            media_urls: mediaUrls,
+            media_type: postType,
+            metadata: {
+              source: 'instagram',
+              source_type: 'social_media',
+              client_id: clientId,
+              entity_id: entityId,
+              source_name: sourceName,
+              search_type: sourceType,
+              search_query: query,
+              category: category,
+              has_media: mediaUrls.length > 0,
+              media_count: mediaUrls.length,
+              comment_count: comments.length,
+              is_high_priority: isHighPriority,
+              event_details: eventDetails,
+              detected_keywords: ACTIVISM_KEYWORDS.filter(k => lowerCaption.includes(k.toLowerCase())),
+              detected_organizations: ACTIVIST_ORGANIZATIONS.filter(org => lowerCaption.includes(org.toLowerCase())),
+              mentioned_accounts: mentions,
+              hashtag_count: hashtags.length
+            }
+          })
+          .select()
+          .single();
+
+        if (!docError && doc) {
+          // Download and store media files
+          let storedMediaCount = 0;
+          for (const mediaUrl of mediaUrls.slice(0, 5)) {
+            try {
+              const mediaFile = await downloadAndStoreMedia(supabase, mediaUrl, 'instagram');
+              if (mediaFile) {
+                storedMediaCount++;
+                await createMediaAttachments(supabase, 'document', doc.id, [mediaFile]);
+                
+                // Set thumbnail
+                if (mediaFile.type === 'image' && storedMediaCount === 1) {
+                  await supabase
+                    .from('ingested_documents')
+                    .update({ thumbnail_url: mediaFile.storageUrl })
+                    .eq('id', doc.id);
+                }
+              }
+            } catch (mediaError) {
+              console.log(`Failed to download media: ${mediaError}`);
+            }
+          }
+          
+          if (storedMediaCount > 0) {
+            onMediaDownloaded(storedMediaCount);
+          }
+          
+          // Link to entity
+          if (entityId) {
+            await supabase
+              .from('document_entity_mentions')
+              .insert({
+                document_id: doc.id,
+                entity_id: entityId,
+                confidence: 0.85,
+                mention_text: sourceName
+              });
+          }
+
+          // Invoke intelligence processing
+          await supabase.functions.invoke('process-intelligence-document', {
+            body: { documentId: doc.id }
+          });
+          
+          onSignalCreated(1);
+          console.log(`✓ Ingested Instagram ${postType}: @${authorHandle} - "${caption.substring(0, 80)}..." (${comments.length} comments, ${mediaUrls.length} media)`);
+        }
+
+      } catch (postError) {
+        console.error(`Error processing Instagram post ${instagramUrl}:`, postError);
+      }
+
+      // Small delay between posts
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       console.log(`Instagram search timeout`);
@@ -423,4 +421,177 @@ async function processSearch(
       throw error;
     }
   }
+}
+
+// Fetch actual Instagram post content by scraping the page
+async function fetchInstagramPost(url: string): Promise<{
+  caption: string;
+  authorHandle: string;
+  authorName: string;
+  mediaUrls: string[];
+  comments: Array<{ author: string; text: string }>;
+  engagement: { likes?: number; comments?: number; views?: number };
+  postType: 'image' | 'video' | 'reel' | 'carousel';
+} | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
+    // Use a mobile user agent for better content access
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
+
+    if (!response.ok) {
+      console.log(`Failed to fetch Instagram post: ${response.status}`);
+      return null;
+    }
+
+    const html = await response.text();
+    
+    // Extract data from Instagram's embedded JSON (meta tags and script data)
+    let caption = '';
+    let authorHandle = '';
+    let authorName = '';
+    const mediaUrls: string[] = [];
+    const comments: Array<{ author: string; text: string }> = [];
+    let engagement: { likes?: number; comments?: number; views?: number } = {};
+    let postType: 'image' | 'video' | 'reel' | 'carousel' = 'image';
+
+    // Extract from og:description meta tag (contains caption)
+    const descMatch = html.match(/<meta\s+(?:property|name)="og:description"\s+content="([^"]+)"/i) ||
+                      html.match(/<meta\s+content="([^"]+)"\s+(?:property|name)="og:description"/i);
+    if (descMatch) {
+      caption = descMatch[1]
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&#x27;/g, "'")
+        .replace(/&nbsp;/g, ' ');
+    }
+
+    // Extract from title tag as backup
+    if (!caption) {
+      const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
+      if (titleMatch) {
+        caption = titleMatch[1]
+          .replace(/ on Instagram:?\s*"?/i, '')
+          .replace(/"?\s*•\s*Instagram.*$/i, '')
+          .trim();
+      }
+    }
+
+    // Extract author from URL or meta tags
+    const authorUrlMatch = url.match(/instagram\.com\/([a-zA-Z0-9_\.]+)\//);
+    if (authorUrlMatch) {
+      authorHandle = authorUrlMatch[1];
+    }
+    
+    // Try to get author from caption (usually at start)
+    const authorCaptionMatch = caption.match(/^@?([a-zA-Z0-9_\.]+):/);
+    if (authorCaptionMatch) {
+      authorHandle = authorCaptionMatch[1];
+    }
+
+    // Get author name from og:title
+    const titleAuthorMatch = html.match(/<meta\s+(?:property|name)="og:title"\s+content="([^"]+)"/i);
+    if (titleAuthorMatch) {
+      const parts = titleAuthorMatch[1].split(/\s+on\s+Instagram/i);
+      if (parts[0]) {
+        authorName = parts[0].trim();
+      }
+    }
+
+    // Extract media URLs from og:image and og:video
+    const imageMatch = html.match(/<meta\s+(?:property|name)="og:image"\s+content="([^"]+)"/gi);
+    if (imageMatch) {
+      for (const match of imageMatch) {
+        const urlMatch = match.match(/content="([^"]+)"/);
+        if (urlMatch && urlMatch[1]) {
+          mediaUrls.push(urlMatch[1].replace(/&amp;/g, '&'));
+        }
+      }
+    }
+
+    const videoMatch = html.match(/<meta\s+(?:property|name)="og:video"\s+content="([^"]+)"/i);
+    if (videoMatch) {
+      mediaUrls.push(videoMatch[1].replace(/&amp;/g, '&'));
+      postType = 'video';
+    }
+
+    // Detect post type from URL
+    if (url.includes('/reel/')) {
+      postType = 'reel';
+    } else if (url.includes('/tv/')) {
+      postType = 'video';
+    }
+
+    // Try to extract engagement from page text
+    const likesMatch = caption.match(/(\d+(?:,\d+)?(?:\.\d+)?[KkMm]?)\s*likes?/i) ||
+                       html.match(/(\d+(?:,\d+)?(?:\.\d+)?[KkMm]?)\s*likes?/i);
+    if (likesMatch) {
+      engagement.likes = parseEngagementNumber(likesMatch[1]);
+    }
+
+    const commentsMatch = html.match(/(\d+(?:,\d+)?)\s*comments?/i);
+    if (commentsMatch) {
+      engagement.comments = parseInt(commentsMatch[1].replace(/,/g, ''), 10);
+    }
+
+    const viewsMatch = html.match(/(\d+(?:,\d+)?(?:\.\d+)?[KkMm]?)\s*views?/i);
+    if (viewsMatch) {
+      engagement.views = parseEngagementNumber(viewsMatch[1]);
+    }
+
+    // Try to extract comments from page (limited visibility without auth)
+    const commentPattern = /@([a-zA-Z0-9_\.]+)\s+([^@]+?)(?=@[a-zA-Z0-9_\.]|$)/g;
+    let commentMatch;
+    while ((commentMatch = commentPattern.exec(html)) !== null && comments.length < 10) {
+      const text = commentMatch[2].replace(/<[^>]+>/g, '').trim();
+      if (text.length > 5 && text.length < 500) {
+        comments.push({
+          author: commentMatch[1],
+          text: text
+        });
+      }
+    }
+
+    // Return null if we couldn't extract meaningful content
+    if (!caption || caption.length < 10) {
+      console.log('Could not extract caption from Instagram post');
+      return null;
+    }
+
+    return {
+      caption,
+      authorHandle,
+      authorName,
+      mediaUrls,
+      comments,
+      engagement,
+      postType
+    };
+
+  } catch (error) {
+    console.error('Error fetching Instagram post:', error);
+    return null;
+  }
+}
+
+function parseEngagementNumber(str: string): number {
+  const cleaned = str.replace(/,/g, '');
+  const multiplier = cleaned.match(/[KkMm]$/);
+  const num = parseFloat(cleaned.replace(/[KkMm]$/, ''));
+  
+  if (multiplier) {
+    if (multiplier[0].toLowerCase() === 'k') return Math.round(num * 1000);
+    if (multiplier[0].toLowerCase() === 'm') return Math.round(num * 1000000);
+  }
+  return Math.round(num);
 }
