@@ -142,17 +142,42 @@ function validateResponse(response: string, context: { hasBriefingTool: boolean 
     }
   }
   
-  // For briefings, check required sections
+  // For briefings, check required Standard Fortress Intelligence Format sections
   if (context.hasBriefingTool) {
     const hasSource = lowerResponse.includes('source:') || 
                       lowerResponse.includes('database') || 
-                      lowerResponse.includes('according to');
+                      lowerResponse.includes('according to') ||
+                      lowerResponse.includes('fortress record');
     if (!hasSource) {
       issues.push('Briefing missing source citations');
       suggestions.push('Include source citations for all data');
     }
     
-    // NEW: Check for invented geopolitical sections in briefings
+    // Check for mandatory SFIF sections
+    const hasExecutiveSummary = lowerResponse.includes('executive summary') ||
+                                 lowerResponse.includes('what changed') ||
+                                 lowerResponse.includes('section 1');
+    const hasVerifiedFacts = lowerResponse.includes('verified facts') ||
+                              lowerResponse.includes('provable events');
+    const hasAnalyticJudgment = lowerResponse.includes('we assess') ||
+                                 lowerResponse.includes('confidence in facts') ||
+                                 lowerResponse.includes('likelihood of impact');
+    const hasRiskChannels = lowerResponse.includes('legal risk') ||
+                            lowerResponse.includes('reputational risk') ||
+                            lowerResponse.includes('investor') ||
+                            lowerResponse.includes('esg risk');
+    const hasDecisionQuestion = lowerResponse.includes('decision required') ||
+                                 lowerResponse.includes('choose one of these options');
+    
+    if (!hasExecutiveSummary && !hasVerifiedFacts) {
+      suggestions.push('Consider adding Executive Summary and Verified Facts sections per SFIF');
+    }
+    
+    if (!hasDecisionQuestion) {
+      suggestions.push('End briefings with "Decision Required: Choose one of these options..."');
+    }
+    
+    // Check for invented geopolitical sections in briefings
     const hasGeopolitical = lowerResponse.includes('geopolitical') || 
                             lowerResponse.includes('global news') ||
                             lowerResponse.includes('breaking news');
@@ -163,6 +188,15 @@ function validateResponse(response: string, context: { hasBriefingTool: boolean 
     if (hasGeopolitical && !hasWebSearchEvidence) {
       issues.push('⛔ Geopolitical content without web search evidence');
       suggestions.push('Either call perform_external_web_search or state "No external intelligence available"');
+    }
+    
+    // Check for forbidden dramatic labels
+    const dramaticLabels = ['critical threat', 'imminent danger', 'grave concern', 'existential risk'];
+    for (const label of dramaticLabels) {
+      if (lowerResponse.includes(label)) {
+        issues.push(`⛔ Forbidden dramatic label: "${label}"`);
+        suggestions.push('Use neutral vulnerability naming per SFIF guidelines');
+      }
     }
   }
   
