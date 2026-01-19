@@ -1005,7 +1005,7 @@ Returns: Summarized search results with source URLs and publication dates.`,
               .order('created_at', { ascending: false })
               .limit(25),
             supabase.from('incidents')
-              .select('id, title, priority, status, incident_type, description, opened_at, location')
+              .select('id, title, priority, status, incident_type, summary, opened_at')
               .gte('opened_at', cutoff)
               .order('opened_at', { ascending: false })
               .limit(20),
@@ -1018,7 +1018,7 @@ Returns: Summarized search results with source URLs and publication dates.`,
           // Also fetch recent high-priority items regardless of time range
           const { data: highPriorityIncidents } = await supabase
             .from('incidents')
-            .select('id, title, priority, status, incident_type, opened_at, location')
+            .select('id, title, priority, status, incident_type, summary, opened_at')
             .in('priority', ['p1', 'p2'])
             .eq('status', 'open')
             .order('opened_at', { ascending: false })
@@ -1063,16 +1063,15 @@ Returns: Summarized search results with source URLs and publication dates.`,
               priority: i.priority,
               status: i.status,
               type: i.incident_type,
-              location: i.location,
               opened_at: i.opened_at,
-              description: i.description?.substring(0, 200),
+              summary: i.summary?.substring(0, 300) || null,
             })),
             high_priority_open_incidents: (highPriorityIncidents || []).map(i => ({
               title: i.title || 'Untitled',
               priority: i.priority,
               type: i.incident_type,
-              location: i.location,
               opened_at: i.opened_at,
+              summary: i.summary?.substring(0, 300) || null,
             })),
             high_risk_entities: entities.filter(e => e.risk_level === 'critical' || e.risk_level === 'high').map(e => ({
               name: e.name,
