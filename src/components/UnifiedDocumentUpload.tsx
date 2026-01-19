@@ -306,6 +306,15 @@ export const UnifiedDocumentUpload = () => {
                 • Click the <strong>Brain 🧠 icon</strong> after upload to process intelligence
               </AlertDescription>
             </Alert>
+            
+            <div className="flex items-start gap-2 p-3 bg-muted/50 border border-border rounded-lg text-sm">
+              <Info className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+              <div className="text-muted-foreground">
+                <strong className="text-foreground">Supported formats:</strong> PDF, DOC, DOCX, TXT, CSV, JPG, JPEG, PNG
+                <br />
+                <span className="text-xs">Maximum file size: 100MB per file</span>
+              </div>
+            </div>
 
             {uploading && progress > 0 && (
               <div className="space-y-2 p-4 bg-muted rounded-lg">
@@ -431,6 +440,15 @@ export const UnifiedDocumentUpload = () => {
                 • No storage - processes and discards file
               </AlertDescription>
             </Alert>
+            
+            <div className="flex items-start gap-2 p-3 bg-muted/50 border border-border rounded-lg text-sm">
+              <Info className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+              <div className="text-muted-foreground">
+                <strong className="text-foreground">Supported formats:</strong> PDF, DOC, DOCX, TXT, CSV, JPG, JPEG, PNG
+                <br />
+                <span className="text-xs">Maximum file size: 10MB per file</span>
+              </div>
+            </div>
 
             <div className="grid gap-4">
               <div className="space-y-2">

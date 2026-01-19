@@ -227,7 +227,11 @@ export const SignalIngestForm = () => {
       <CardHeader>
         <CardTitle>Ingest Signal</CardTitle>
         <CardDescription>
-          Submit a signal manually, scan a website URL, upload documents (PDF, DOCX, TXT), or upload JSON file
+          Submit a signal manually, scan a website URL, upload documents, or upload JSON file
+          <br />
+          <span className="text-xs text-muted-foreground">
+            📄 <strong>Supported document formats:</strong> PDF (up to 10MB), DOC, DOCX, TXT, CSV, MD (up to 8MB) | 📋 <strong>Data:</strong> JSON
+          </span>
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
