@@ -174,55 +174,115 @@ function validateResponse(response: string, context: { hasBriefingTool: boolean 
 }
 
 // Generate fallback response from tool results when AI fails
+// Uses CTI best practices: inverted pyramid, executive summary first
 function generateFallbackResponse(toolResults: { tool: string; result: any }[]): string {
   if (toolResults.length === 0) {
     return 'I was unable to process your request. Please try again or rephrase your question.';
   }
   
-  let fallback = '**Intelligence Report** *(Auto-generated from database)*\n\n';
   const currentDate = new Date().toISOString().split('T')[0];
-  fallback += `*Generated: ${currentDate}*\n\n`;
+  const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+  
+  let fallback = '';
   
   for (const tr of toolResults) {
     if (tr.tool === 'generate_intelligence_summary' && tr.result.success && tr.result.briefing_data) {
       const bd = tr.result.briefing_data;
+      const es = bd.executive_summary;
       
-      fallback += `## Summary\n`;
-      fallback += `- **Signals (last ${bd.time_range_hours}h):** ${bd.summary.total_signals}\n`;
-      fallback += `- **New Incidents:** ${bd.summary.total_new_incidents}\n`;
-      fallback += `- **High Priority Open:** ${bd.summary.high_priority_open}\n\n`;
+      // HEADER
+      fallback += `# 📊 INTELLIGENCE BRIEFING\n`;
+      fallback += `**Generated:** ${currentDate} ${currentTime} UTC\n\n`;
       
+      // EXECUTIVE SUMMARY - Most important, leads the report
+      fallback += `## 📌 EXECUTIVE SUMMARY\n\n`;
+      fallback += `${es?.situation_overview || `${bd.summary.total_signals} signals collected. ${bd.summary.total_new_incidents} incidents reported. ${bd.summary.high_priority_open} high-priority incidents open.`}\n\n`;
+      
+      if (es?.key_concerns?.length > 0) {
+        fallback += `**Key Concerns:**\n`;
+        es.key_concerns.forEach((concern: string) => {
+          fallback += `- ⚠️ ${concern}\n`;
+        });
+        fallback += '\n';
+      }
+      
+      if (es?.threat_trend) {
+        fallback += `**Threat Trend:** ${es.threat_trend}\n\n`;
+      }
+      
+      // QUICK METRICS TABLE
+      fallback += `### Metrics Summary\n`;
+      fallback += `| Metric | Count |\n`;
+      fallback += `|--------|-------|\n`;
+      fallback += `| Total Signals (${bd.time_range_hours}h) | **${bd.summary.total_signals}** |\n`;
+      fallback += `| New Incidents | **${bd.summary.total_new_incidents}** |\n`;
+      fallback += `| Open High Priority | **${bd.summary.high_priority_open}** |\n\n`;
+      
+      // PRIORITY INTELLIGENCE - Critical/High signals
       if (bd.critical_signals?.length > 0) {
-        fallback += `## Critical/High Signals\n`;
-          for (const sig of bd.critical_signals.slice(0, 5)) {
-            fallback += `- **[${sig.severity?.toUpperCase()}]** ${sig.title}\n`;
-            fallback += `  - Category: ${sig.category || 'n/a'}\n`;
-            fallback += `  - Time: ${sig.timestamp}\n`;
+        fallback += `## 🔴 PRIORITY INTELLIGENCE\n\n`;
+        for (const sig of bd.critical_signals.slice(0, 5)) {
+          const severityEmoji = sig.severity === 'critical' ? '🔴' : '🟠';
+          fallback += `### ${severityEmoji} ${sig.title}\n`;
+          fallback += `- **Severity:** ${sig.severity?.toUpperCase()} • **Type:** ${sig.signal_type || 'N/A'} • **Time:** ${sig.time_ago || sig.timestamp}\n`;
+          if (sig.details) {
+            fallback += `- ${sig.details.substring(0, 200)}${sig.details.length > 200 ? '...' : ''}\n`;
           }
-        fallback += '\n';
+          fallback += '\n';
+        }
+      } else {
+        fallback += `## 🟢 PRIORITY INTELLIGENCE\n\n`;
+        fallback += `No critical or high-severity signals in the last ${bd.time_range_hours} hours.\n\n`;
       }
       
+      // ACTIVE INCIDENTS
       if (bd.high_priority_open_incidents?.length > 0) {
-        fallback += `## Open High Priority Incidents\n`;
+        fallback += `## 🚨 ACTIVE INCIDENTS (Open P1/P2)\n\n`;
         for (const inc of bd.high_priority_open_incidents.slice(0, 5)) {
-          fallback += `- **[${inc.priority?.toUpperCase()}]** ${inc.title}\n`;
-          fallback += `  - Type: ${inc.type} | Opened: ${inc.opened_at}\n`;
+          const priBadge = inc.priority === 'p1' ? '**[P1]**' : '**[P2]**';
+          fallback += `### ${priBadge} ${inc.title}\n`;
+          fallback += `- **Status:** ${inc.status} • **Type:** ${inc.type || 'N/A'} • **Open:** ${inc.time_open || inc.opened_at}\n`;
+          if (inc.location) fallback += `- **Location:** ${inc.location}\n`;
+          if (inc.summary) fallback += `- ${inc.summary.substring(0, 200)}${inc.summary.length > 200 ? '...' : ''}\n`;
+          fallback += '\n';
+        }
+      }
+      
+      // THREAT PATTERNS
+      if (bd.threat_patterns?.length > 0) {
+        fallback += `## 📈 THREAT PATTERNS\n\n`;
+        for (const pattern of bd.threat_patterns) {
+          fallback += `- **${pattern.category}:** ${pattern.count} signals`;
+          if (pattern.examples?.length > 0) {
+            fallback += ` (e.g., "${pattern.examples[0]}")`;
+          }
+          fallback += '\n';
         }
         fallback += '\n';
       }
       
+      // HIGH RISK ENTITIES
       if (bd.high_risk_entities?.length > 0) {
-        fallback += `## High Risk Entities\n`;
+        fallback += `## 👤 HIGH RISK ENTITIES\n\n`;
         for (const ent of bd.high_risk_entities.slice(0, 5)) {
-          fallback += `- **${ent.name}** (${ent.type}) - Risk: ${ent.risk_level}\n`;
+          const riskEmoji = ent.risk_level === 'critical' ? '🔴' : '🟠';
+          fallback += `- ${riskEmoji} **${ent.name}** (${ent.type}) - Threat Score: ${ent.threat_score || 'N/A'}\n`;
         }
         fallback += '\n';
       }
       
-      fallback += `---\n*Source: Fortress Database | Retrieved: ${currentDate}*\n`;
+      // SOURCES FOOTER
+      fallback += `---\n`;
+      fallback += `**Sources:**\n`;
+      fallback += `- [S1] Fortress Signals Database | Retrieved ${currentDate}\n`;
+      fallback += `- [S2] Fortress Incidents Database | Retrieved ${currentDate}\n`;
+      if (bd.meta?.external_intel) {
+        fallback += `- [S3] External Intelligence Sources | Retrieved ${currentDate}\n`;
+      }
+      
     } else if (tr.tool === 'query_fortress_data' && tr.result.success) {
       fallback += `## Query Results\n`;
-      fallback += `Found ${tr.result.count} records matching your criteria.\n\n`;
+      fallback += `Found **${tr.result.count}** records matching your criteria.\n\n`;
       
       if (tr.result.data?.length > 0) {
         for (const item of tr.result.data.slice(0, 10)) {
@@ -233,7 +293,7 @@ function generateFallbackResponse(toolResults: { tool: string; result: any }[]):
     }
   }
   
-  return fallback;
+  return fallback || 'No data available for the requested briefing.';
 }
 
 serve(async (req) => {
@@ -503,23 +563,52 @@ CLIENT ISOLATION RULES (CRITICAL):
 - If data from multiple clients appears in your context, ONLY use data relevant to the current conversation
 - NEVER cross-reference incidents, entities, or data from one client to another
 
-RESPONSE FORMAT GUIDELINES:
-- Use clear paragraph breaks with blank lines between sections
-- Start with a brief situational summary (1-2 sentences)
-- Follow with analysis organized by key points
-- End with recommendations or next steps
-- Use bullet points for lists of 3+ items
-- ALWAYS include source citations (e.g., "[S1] signals database, retrieved ${currentDate}")
-- End briefings with a Sources section listing all citations
+BRIEFING FORMAT (CTI BEST PRACTICES - INVERTED PYRAMID):
+When generating intelligence briefings, follow this professional structure:
+
+1. **EXECUTIVE SUMMARY** (Lead with most critical info):
+   - Overall threat posture in ONE sentence
+   - Key concerns that require immediate attention
+   - Metrics: signals count, incident count, open high-priority
+
+2. **PRIORITY INTELLIGENCE** (What needs action):
+   - List CRITICAL and HIGH severity signals first
+   - For each: [REF] Title • Severity • Type • Time
+   - Brief context on why it matters
+
+3. **ACTIVE INCIDENTS** (What's happening now):
+   - Open P1/P2 incidents with status
+   - For each: Priority badge, title, location, time open
+   - Brief summary of situation
+
+4. **THREAT PATTERNS** (Analysis):
+   - Group similar signals by type/category
+   - Identify emerging patterns or trends
+   - Note any escalation concerns
+
+5. **EXTERNAL INTELLIGENCE** (If web search performed):
+   - Relevant news/developments from verified sources
+   - Each item must cite [S#] source with date
+
+6. **SOURCES** (Always include):
+   - List all database and external sources used
+   - Format: [S#] Source Name | Type | Date
+
+FORMATTING RULES:
+- Use severity badges: 🔴 CRITICAL, 🟠 HIGH, 🟡 MEDIUM
+- Use priority badges: [P1], [P2], [P3]
+- Include timestamps in relative format (e.g., "2h ago")
+- Keep paragraphs short and scannable
+- Use tables for metrics when appropriate
+- Bold key numbers and entity names
 
 COMMUNICATION GUIDELINES:
-- Maintain your persona at all times
-- Be concise but thorough
-- Focus on actionable intelligence
+- Lead with "what" before "why"
+- Be direct and actionable - executives skim
+- Focus on business impact, not just technical details
 - Use professional security terminology
-- Never break character
-- ALWAYS cite exact numbers and dates from the provided data
-- When uncertain, acknowledge it rather than assert false confidence`;
+- ALWAYS cite exact numbers from tool results
+- When data is sparse, state "Limited data available" - do not embellish`;
 
     // Define comprehensive tools matching dashboard-ai-assistant
     const tools = [
@@ -1002,15 +1091,20 @@ Returns: Summarized search results with source URLs and publication dates.`,
           toolResults.push({ tool: 'perform_impact_analysis', result: { success: true, ...impactResult } });
           
         } else if (funcName === 'generate_intelligence_summary') {
-          // Generate comprehensive summary from recent data with full details
+          // ═══════════════════════════════════════════════════════════════
+          // PROFESSIONAL INTELLIGENCE BRIEFING GENERATOR
+          // Based on CTI best practices: inverted pyramid structure,
+          // actionable intelligence, proper source attribution
+          // ═══════════════════════════════════════════════════════════════
+          
           const hoursBack = args.time_range_hours || 24;
           const cutoff = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString();
           const focusAreas = args.focus_areas || [];
+          const currentDate = new Date().toISOString().split('T')[0];
           
           console.log('[Briefing] Generating intelligence summary:', { hoursBack, cutoff, client_id, focusAreas });
           
-          // Build signals query - optionally filter by client_id if provided
-          // Note: signals table has source_id (UUID FK), not source (string)
+          // Build signals query - FIXED: proper client_id filtering
           let signalsQuery = supabase.from('signals')
             .select('id, title, severity, source_id, created_at, rule_category, normalized_text, client_id, description, signal_type')
             .gte('created_at', cutoff)
@@ -1019,19 +1113,27 @@ Returns: Summarized search results with source URLs and publication dates.`,
           
           // If client_id is provided, filter signals for that client OR unassigned signals
           if (client_id) {
+            // Use proper filter syntax: multiple eq/is filters combined with or
             signalsQuery = signalsQuery.or(`client_id.eq.${client_id},client_id.is.null`);
+          }
+          
+          // Build incidents query with client_id filter
+          let incidentsQuery = supabase.from('incidents')
+            .select('id, title, priority, status, incident_type, summary, opened_at, client_id, location, acknowledged_at, resolved_at')
+            .gte('opened_at', cutoff)
+            .order('opened_at', { ascending: false })
+            .limit(20);
+          
+          if (client_id) {
+            incidentsQuery = incidentsQuery.or(`client_id.eq.${client_id},client_id.is.null`);
           }
           
           // Fetch detailed data for the briefing
           const [signalsResult, incidentsResult, entitiesResult] = await Promise.all([
             signalsQuery,
-            supabase.from('incidents')
-              .select('id, title, priority, status, incident_type, summary, opened_at, client_id')
-              .gte('opened_at', cutoff)
-              .order('opened_at', { ascending: false })
-              .limit(20),
+            incidentsQuery,
             supabase.from('entities')
-              .select('id, name, type, risk_level, threat_score, description')
+              .select('id, name, type, risk_level, threat_score, description, last_checked')
               .order('threat_score', { ascending: false })
               .limit(15),
           ]);
@@ -1044,14 +1146,20 @@ Returns: Summarized search results with source URLs and publication dates.`,
             entitiesCount: entitiesResult.data?.length || 0
           });
           
-          // Also fetch recent high-priority items regardless of time range
-          const { data: highPriorityIncidents } = await supabase
+          // Also fetch ALL open high-priority incidents (regardless of time range)
+          let highPriorityQuery = supabase
             .from('incidents')
-            .select('id, title, priority, status, incident_type, summary, opened_at')
+            .select('id, title, priority, status, incident_type, summary, opened_at, location')
             .in('priority', ['p1', 'p2'])
             .eq('status', 'open')
             .order('opened_at', { ascending: false })
             .limit(10);
+          
+          if (client_id) {
+            highPriorityQuery = highPriorityQuery.or(`client_id.eq.${client_id},client_id.is.null`);
+          }
+          
+          const { data: highPriorityIncidents } = await highPriorityQuery;
           
           // Build detailed briefing data
           const signals = signalsResult.data || [];
@@ -1059,23 +1167,68 @@ Returns: Summarized search results with source URLs and publication dates.`,
           const entities = entitiesResult.data || [];
           
           console.log('[Briefing] Final data for briefing:', {
+            signalCount: signals.length,
             signalTitles: signals.slice(0, 5).map(s => s.title),
+            incidentCount: incidents.length,
             incidentTitles: incidents.slice(0, 3).map(i => i.title)
           });
           
-          // Group signals by severity
+          // Group signals by severity and type for analysis
           const signalsBySeverity: Record<string, any[]> = {};
+          const signalsByType: Record<string, any[]> = {};
+          
           signals.forEach(s => {
             const sev = s.severity || 'unknown';
+            const sigType = s.signal_type || 'unclassified';
             if (!signalsBySeverity[sev]) signalsBySeverity[sev] = [];
+            if (!signalsByType[sigType]) signalsByType[sigType] = [];
             signalsBySeverity[sev].push(s);
+            signalsByType[sigType].push(s);
           });
           
-          // Build the formatted briefing content
+          // Group incidents by priority for analysis
+          const incidentsByPriority: Record<string, any[]> = {};
+          incidents.forEach(inc => {
+            const pri = inc.priority || 'unknown';
+            if (!incidentsByPriority[pri]) incidentsByPriority[pri] = [];
+            incidentsByPriority[pri].push(inc);
+          });
+          
+          // Calculate key metrics for executive summary
+          const criticalSignals = signalsBySeverity['critical']?.length || 0;
+          const highSignals = signalsBySeverity['high']?.length || 0;
+          const p1Incidents = incidentsByPriority['p1']?.length || 0;
+          const p2Incidents = incidentsByPriority['p2']?.length || 0;
+          
+          // Identify top threats by type
+          const topThreats = Object.entries(signalsByType)
+            .map(([type, sigs]) => ({ type, count: sigs.length, samples: sigs.slice(0, 2) }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 3);
+          
+          // Build the enhanced briefing data structure following CTI best practices
           const briefingData = {
+            // META
             time_range_hours: hoursBack,
             generated_at: new Date().toISOString(),
             focus_areas: focusAreas,
+            client_id: client_id,
+            
+            // EXECUTIVE SUMMARY (most important - what they need to know NOW)
+            executive_summary: {
+              situation_overview: `${signals.length} intelligence signals collected in the last ${hoursBack} hours. ${incidents.length} incidents reported. ${highPriorityIncidents?.length || 0} high-priority incidents remain open.`,
+              key_concerns: [
+                ...(criticalSignals > 0 ? [`${criticalSignals} CRITICAL severity signals require immediate attention`] : []),
+                ...(highSignals > 0 ? [`${highSignals} HIGH severity signals detected`] : []),
+                ...(p1Incidents > 0 ? [`${p1Incidents} P1 incidents currently open`] : []),
+                ...(p2Incidents > 0 ? [`${p2Incidents} P2 incidents currently open`] : []),
+              ],
+              threat_trend: topThreats.length > 0 
+                ? `Primary activity: ${topThreats.map(t => `${t.type} (${t.count})`).join(', ')}`
+                : 'No significant threat patterns identified',
+            },
+            
+            // METRICS
             summary: {
               total_signals: signals.length,
               total_new_incidents: incidents.length,
@@ -1083,44 +1236,103 @@ Returns: Summarized search results with source URLs and publication dates.`,
               signals_by_severity: Object.fromEntries(
                 Object.entries(signalsBySeverity).map(([k, v]) => [k, v.length])
               ),
+              signals_by_type: Object.fromEntries(
+                Object.entries(signalsByType).map(([k, v]) => [k, v.length])
+              ),
+              incidents_by_priority: Object.fromEntries(
+                Object.entries(incidentsByPriority).map(([k, v]) => [k, v.length])
+              ),
             },
-            critical_signals: signals.filter(s => s.severity === 'critical' || s.severity === 'high').map(s => ({
-              title: s.title || s.description?.substring(0, 100) || 'Signal',
-              severity: s.severity,
-              signal_type: s.signal_type,
-              category: s.rule_category,
-              timestamp: s.created_at,
-              details: s.normalized_text?.substring(0, 300) || s.description?.substring(0, 300),
-            })),
-            recent_incidents: incidents.map(i => ({
+            
+            // PRIORITY INTELLIGENCE - sorted by importance
+            critical_signals: signals
+              .filter(s => s.severity === 'critical' || s.severity === 'high')
+              .sort((a, b) => {
+                // Critical before high
+                if (a.severity === 'critical' && b.severity !== 'critical') return -1;
+                if (b.severity === 'critical' && a.severity !== 'critical') return 1;
+                // Then by recency
+                return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+              })
+              .slice(0, 10)
+              .map((s, idx) => ({
+                ref: `SIG-${idx + 1}`,
+                title: s.title || s.description?.substring(0, 100) || 'Untitled Signal',
+                severity: s.severity,
+                signal_type: s.signal_type || 'unclassified',
+                category: s.rule_category,
+                timestamp: s.created_at,
+                time_ago: getTimeAgo(s.created_at),
+                details: s.normalized_text?.substring(0, 400) || s.description?.substring(0, 400),
+              })),
+            
+            // OPEN INCIDENTS
+            high_priority_open_incidents: (highPriorityIncidents || []).map((i, idx) => ({
+              ref: `INC-${idx + 1}`,
               title: i.title || 'Untitled',
               priority: i.priority,
               status: i.status,
               type: i.incident_type,
+              location: i.location,
               opened_at: i.opened_at,
-              summary: i.summary?.substring(0, 300) || null,
+              time_open: getTimeAgo(i.opened_at),
+              summary: i.summary?.substring(0, 400) || null,
             })),
-            high_priority_open_incidents: (highPriorityIncidents || []).map(i => ({
+            
+            // RECENT INCIDENTS (last 24-48h)
+            recent_incidents: incidents.map((i, idx) => ({
+              ref: `INC-R${idx + 1}`,
               title: i.title || 'Untitled',
               priority: i.priority,
+              status: i.status,
               type: i.incident_type,
+              location: i.location,
               opened_at: i.opened_at,
               summary: i.summary?.substring(0, 300) || null,
             })),
-            high_risk_entities: entities.filter(e => e.risk_level === 'critical' || e.risk_level === 'high').map(e => ({
-              name: e.name,
-              type: e.type,
-              risk_level: e.risk_level,
-              threat_score: e.threat_score,
+            
+            // HIGH RISK ENTITIES
+            high_risk_entities: entities
+              .filter(e => e.risk_level === 'critical' || e.risk_level === 'high')
+              .slice(0, 5)
+              .map(e => ({
+                name: e.name,
+                type: e.type,
+                risk_level: e.risk_level,
+                threat_score: e.threat_score,
+                last_activity: e.last_checked,
+              })),
+            
+            // THREAT PATTERNS
+            threat_patterns: topThreats.map(t => ({
+              category: t.type,
+              count: t.count,
+              examples: t.samples.map(s => s.title || 'Untitled').slice(0, 2),
             })),
           };
           
-          // Minimal meta to avoid instruction/prompt leakage into the model output
+          // Helper function for time formatting
+          function getTimeAgo(dateStr: string): string {
+            const date = new Date(dateStr);
+            const now = new Date();
+            const diffMs = now.getTime() - date.getTime();
+            const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+            const diffDays = Math.floor(diffHours / 24);
+            
+            if (diffDays > 0) return `${diffDays}d ago`;
+            if (diffHours > 0) return `${diffHours}h ago`;
+            return 'just now';
+          }
+          
+          // Build briefing meta with source tracking
           const briefingMeta = {
             source: 'Fortress Database',
             signals_count: signals.length,
             incidents_count: incidents.length,
+            high_priority_count: highPriorityIncidents?.length || 0,
             external_intel: false,
+            retrieval_timestamp: new Date().toISOString(),
+            client_id_used: client_id || 'all',
           };
           
           toolResults.push({ 
