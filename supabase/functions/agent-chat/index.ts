@@ -194,11 +194,11 @@ function generateFallbackResponse(toolResults: { tool: string; result: any }[]):
       
       if (bd.critical_signals?.length > 0) {
         fallback += `## Critical/High Signals\n`;
-        for (const sig of bd.critical_signals.slice(0, 5)) {
-          fallback += `- **[${sig.severity?.toUpperCase()}]** ${sig.title}\n`;
-          fallback += `  - Source: ${sig.source} | Category: ${sig.category}\n`;
-          fallback += `  - Time: ${sig.timestamp}\n`;
-        }
+          for (const sig of bd.critical_signals.slice(0, 5)) {
+            fallback += `- **[${sig.severity?.toUpperCase()}]** ${sig.title}\n`;
+            fallback += `  - Category: ${sig.category || 'n/a'}\n`;
+            fallback += `  - Time: ${sig.timestamp}\n`;
+          }
         fallback += '\n';
       }
       
@@ -344,7 +344,7 @@ Respond naturally and briefly.`
     if (agent.input_sources.includes('signals')) {
       const { data: signals } = await supabase
         .from('signals')
-        .select('title, source, severity, created_at, rule_category')
+        .select('title, source_id, severity, created_at, rule_category')
         .order('created_at', { ascending: false })
         .limit(10);
       
@@ -938,12 +938,22 @@ Returns: Summarized search results with source URLs and publication dates.`,
           const cutoffDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
           
           if (args.query_type === 'signals' || args.query_type === 'comprehensive') {
-            let query = supabase.from('signals').select('id, title, severity, source, created_at, rule_category').gte('created_at', cutoffDate).order('created_at', { ascending: false }).limit(limit);
+            let query = supabase
+              .from('signals')
+              .select('id, title, severity, source_id, created_at, rule_category')
+              .gte('created_at', cutoffDate)
+              .order('created_at', { ascending: false })
+              .limit(limit);
             if (args.severity_filter && args.severity_filter !== 'all') {
               query = query.eq('severity', args.severity_filter);
             }
-            const { data } = await query;
-            results = data || [];
+            const { data, error } = await query;
+            if (error) {
+              console.warn('[query_fortress_data] signals query error:', error.message);
+              results = [];
+            } else {
+              results = data || [];
+            }
           }
           
           toolResults.push({ tool: 'query_fortress_data', result: { success: true, count: results.length, data: results } });

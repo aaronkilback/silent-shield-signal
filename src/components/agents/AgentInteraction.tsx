@@ -5,6 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Send, Loader2, Bot, User, Trash2, Copy, Check, Flag, Mic, MicOff } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useClientSelection } from "@/hooks/useClientSelection";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
@@ -41,6 +42,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const sendLockRef = useRef(false);
   const { user } = useAuth();
+  const { selectedClientId } = useClientSelection();
   const { checkContent } = useContentModeration({
     contentType: 'chat_message',
     actionType: 'agent_message'
@@ -262,6 +264,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
       const { data, error } = await supabase.functions.invoke("agent-chat", {
         body: {
           agent_id: agent.id,
+          client_id: selectedClientId,
           message: userMessage,
           conversation_history: messages,
         },
