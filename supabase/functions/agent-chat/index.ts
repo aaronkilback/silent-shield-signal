@@ -777,7 +777,7 @@ COMMUNICATION GUIDELINES:
         type: "function",
         function: {
           name: "generate_intelligence_summary",
-          description: "Generate a summary intelligence report from recent data.",
+          description: "Generate a formal intelligence briefing report. ONLY use this when the user EXPLICITLY requests a briefing, summary, report, sitrep, or intelligence overview. Do NOT use for general questions, vulnerability searches, entity lookups, or conversational queries.",
           parameters: {
             type: "object",
             properties: {

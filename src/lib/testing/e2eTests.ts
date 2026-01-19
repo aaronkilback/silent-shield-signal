@@ -1345,6 +1345,56 @@ export const aiAgentsTests = {
         }
       },
     },
+    {
+      name: 'No duplicate agent messages within 5 seconds',
+      fn: async () => {
+        // Check for duplicate user messages submitted within 5 seconds (race condition detection)
+        const { data, error } = await supabase
+          .from('agent_messages')
+          .select('id, conversation_id, role, content, created_at')
+          .eq('role', 'user')
+          .order('created_at', { ascending: false })
+          .limit(200);
+        
+        if (error) throw error;
+        
+        // Group messages by conversation and check for duplicates within 5 seconds
+        const conversationMessages = new Map<string, Array<{ id: string; content: string; created_at: string }>>();
+        
+        for (const msg of data || []) {
+          if (!conversationMessages.has(msg.conversation_id)) {
+            conversationMessages.set(msg.conversation_id, []);
+          }
+          conversationMessages.get(msg.conversation_id)!.push({
+            id: msg.id,
+            content: msg.content,
+            created_at: msg.created_at,
+          });
+        }
+        
+        const duplicates: string[] = [];
+        
+        for (const [convId, messages] of conversationMessages) {
+          for (let i = 0; i < messages.length; i++) {
+            for (let j = i + 1; j < messages.length; j++) {
+              if (messages[i].content === messages[j].content) {
+                const time1 = new Date(messages[i].created_at).getTime();
+                const time2 = new Date(messages[j].created_at).getTime();
+                const diffSeconds = Math.abs(time1 - time2) / 1000;
+                
+                if (diffSeconds < 5) {
+                  duplicates.push(`Duplicate in ${convId}: "${messages[i].content.substring(0, 50)}..." (${diffSeconds.toFixed(1)}s apart)`);
+                }
+              }
+            }
+          }
+        }
+        
+        if (duplicates.length > 0) {
+          throw new Error(`Found ${duplicates.length} duplicate message(s):\n${duplicates.slice(0, 3).join('\n')}`);
+        }
+      },
+    },
   ],
 };
 
