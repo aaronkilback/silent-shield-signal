@@ -1,5 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { 
+  extractMediaUrls, 
+  downloadAndStoreMedia, 
+  createMediaAttachments,
+  detectMediaType 
+} from '../_shared/media-capture.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -63,6 +69,7 @@ serve(async (req) => {
 
     let signalsCreated = 0;
     let totalSearches = 0;
+    let mediaDownloaded = 0;
     const processedUrls = new Set<string>();
 
     // PART 1: Client-focused searches
@@ -101,7 +108,7 @@ serve(async (req) => {
 
         for (const query of searchQueries) {
           totalSearches++;
-          await processSearch(supabase, query, client.id, client.name, 'client', processedUrls, (count) => signalsCreated += count);
+          await processSearch(supabase, query, client.id, client.name, 'client', processedUrls, (count) => signalsCreated += count, (count) => mediaDownloaded += count);
         }
 
         console.log(`Processed Instagram mentions for ${client.name}`);
@@ -161,7 +168,7 @@ serve(async (req) => {
 
         for (const query of searchQueries) {
           totalSearches++;
-          await processSearch(supabase, query, null, entity.name, 'entity', processedUrls, (count) => signalsCreated += count, entity.id);
+          await processSearch(supabase, query, null, entity.name, 'entity', processedUrls, (count) => signalsCreated += count, (count) => mediaDownloaded += count, entity.id);
         }
 
         console.log(`Processed Instagram mentions for entity: ${entity.name}`);
@@ -171,7 +178,7 @@ serve(async (req) => {
       }
     }
 
-    console.log(`Instagram monitoring complete. Ran ${totalSearches} searches. Created ${signalsCreated} signals.`);
+    console.log(`Instagram monitoring complete. Ran ${totalSearches} searches. Created ${signalsCreated} signals. Downloaded ${mediaDownloaded} media files.`);
 
     return new Response(
       JSON.stringify({
@@ -180,6 +187,7 @@ serve(async (req) => {
         entities_scanned: watchedEntities?.length || 0,
         searches_executed: totalSearches,
         signals_created: signalsCreated,
+        media_downloaded: mediaDownloaded,
         source: 'instagram'
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -202,6 +210,7 @@ async function processSearch(
   sourceType: 'client' | 'entity',
   processedUrls: Set<string>,
   onSignalCreated: (count: number) => void,
+  onMediaDownloaded: (count: number) => void,
   entityId?: string
 ) {
   // Rate limiting between searches
@@ -291,6 +300,19 @@ async function processSearch(
             category = 'protest_activity';
           }
 
+          // Extract media URLs from content and Instagram URL
+          const mediaUrls = extractMediaUrls(cleanText);
+          if (instagramUrl) {
+            mediaUrls.push(instagramUrl);
+          }
+          
+          // Determine media type - Instagram posts are typically images/videos
+          const isVideoContent = instagramUrl?.includes('/reel/') || 
+                                 instagramUrl?.includes('/tv/') ||
+                                 lowerText.includes('video') ||
+                                 lowerText.includes('reel');
+          const mediaType = isVideoContent ? 'video' : 'image';
+
           // Create ingested document for AI analysis
           const { data: doc, error: docError } = await supabase
             .from('ingested_documents')
@@ -298,6 +320,8 @@ async function processSearch(
               title: `Instagram ${category}: ${sourceName}`,
               raw_text: cleanText,
               source_url: instagramUrl,
+              media_urls: mediaUrls,
+              media_type: mediaType,
               metadata: {
                 source: 'instagram',
                 source_type: 'social_media',
@@ -307,6 +331,8 @@ async function processSearch(
                 search_type: sourceType,
                 search_query: query,
                 category: category,
+                has_media: mediaUrls.length > 0,
+                media_count: mediaUrls.length,
                 detected_keywords: ACTIVISM_KEYWORDS.filter(k => lowerText.includes(k.toLowerCase())),
                 detected_organizations: ACTIVIST_ORGANIZATIONS.filter(org => lowerText.includes(org.toLowerCase()))
               }
@@ -315,6 +341,34 @@ async function processSearch(
             .single();
 
           if (!docError && doc) {
+            // Try to download and store media files
+            let storedMediaCount = 0;
+            for (const mediaUrl of mediaUrls.slice(0, 3)) { // Limit to 3 media files per post
+              try {
+                const mediaFile = await downloadAndStoreMedia(supabase, mediaUrl, 'instagram');
+                if (mediaFile) {
+                  storedMediaCount++;
+                  // Create attachment record
+                  await createMediaAttachments(supabase, 'document', doc.id, [mediaFile]);
+                  
+                  // Set thumbnail if this is the first image
+                  if (mediaFile.type === 'image' && !doc.thumbnail_url) {
+                    await supabase
+                      .from('ingested_documents')
+                      .update({ thumbnail_url: mediaFile.storageUrl })
+                      .eq('id', doc.id);
+                  }
+                }
+              } catch (mediaError) {
+                console.log(`Failed to download media: ${mediaError}`);
+              }
+            }
+            
+            if (storedMediaCount > 0) {
+              onMediaDownloaded(storedMediaCount);
+              console.log(`Downloaded ${storedMediaCount} media files for document`);
+            }
+            
             // Link to entity if applicable
             if (entityId) {
               await supabase

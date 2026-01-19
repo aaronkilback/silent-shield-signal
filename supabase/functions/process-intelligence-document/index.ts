@@ -563,10 +563,15 @@ Extract all entities, signals, and their relationships.`
             status: 'new',
             is_test: false,
             client_id: clientMatch.clientId,
+            // Propagate media from document to signal
+            media_urls: document.media_urls || [],
+            thumbnail_url: document.thumbnail_url,
             raw_json: {
               matched_keywords: clientMatch.matchedKeywords,
               client_name: clientMatch.clientName,
-              source_metadata: document.metadata
+              source_metadata: document.metadata,
+              has_media: (document.media_urls?.length || 0) > 0,
+              media_type: document.media_type
             }
           })
           .select('id')
@@ -582,6 +587,26 @@ Extract all entities, signals, and their relationships.`
               signal_id: newSignal.id,
               document_id: documentId
             });
+          
+          // Copy attachments from document to signal
+          const { data: docAttachments } = await supabase
+            .from('attachments')
+            .select('*')
+            .eq('parent_type', 'document')
+            .eq('parent_id', documentId);
+          
+          if (docAttachments && docAttachments.length > 0) {
+            for (const attachment of docAttachments) {
+              await supabase.from('attachments').insert({
+                parent_type: 'signal',
+                parent_id: newSignal.id,
+                filename: attachment.filename,
+                mime: attachment.mime,
+                storage_url: attachment.storage_url
+              });
+            }
+            console.log(`Linked ${docAttachments.length} media files to signal`);
+          }
 
           // Link signal to entities
           if (signal.related_entity_names) {
