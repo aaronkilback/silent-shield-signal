@@ -454,6 +454,7 @@ Respond naturally and briefly.`
       const { data: incidents } = await supabase
         .from('incidents')
         .select('title, priority, status, opened_at, incident_type')
+        .is('deleted_at', null) // Exclude soft-deleted incidents
         .order('opened_at', { ascending: false })
         .limit(10);
       
@@ -1173,9 +1174,10 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
             signalsQuery = signalsQuery.or(`client_id.eq.${client_id},client_id.is.null`);
           }
           
-          // Build incidents query with client_id filter
+          // Build incidents query with client_id filter (exclude soft-deleted)
           let incidentsQuery = supabase.from('incidents')
             .select('id, title, priority, status, incident_type, summary, opened_at, client_id, location, acknowledged_at, resolved_at')
+            .is('deleted_at', null) // Exclude soft-deleted incidents
             .gte('opened_at', cutoff)
             .order('opened_at', { ascending: false })
             .limit(20);
