@@ -238,16 +238,22 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
   const handleSend = async () => {
     if (!input.trim() || isLoading || !conversationId) return;
     if (sendLockRef.current) return;
+    
+    // Lock immediately to prevent double submission
+    sendLockRef.current = true;
 
     const userMessage = input.trim();
+    setInput("");
+    setIsLoading(true);
 
     const moderationResult = await checkContent(userMessage);
-    if (!moderationResult.allowed) return;
+    if (!moderationResult.allowed) {
+      sendLockRef.current = false;
+      setIsLoading(false);
+      return;
+    }
 
-    sendLockRef.current = true;
-    setInput("");
     setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
-    setIsLoading(true);
 
     try {
       await supabase.from("agent_messages").insert({
