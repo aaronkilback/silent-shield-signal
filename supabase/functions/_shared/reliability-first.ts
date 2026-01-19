@@ -99,6 +99,48 @@ const FORBIDDEN_PATTERNS = [
   /test\s+scenario/gi,
 ];
 
+// NEW: Geopolitical/News fabrication patterns - CRITICAL
+const FABRICATED_NEWS_PATTERNS = [
+  // Fabricated geopolitical claims
+  /\[UNVERIFIED\]\s*(Reports|Sources|Intelligence)/gi,
+  /unverified.*?reports\s+(of|indicate|suggest)/gi,
+  /reports\s+of\s+renewed\s+maritime\s+friction/gi,
+  /increased\s+naval\s+activity\s+in\s+the/gi,
+  /tensions\s+in\s+the\s+(strait|sea|gulf)/gi,
+  /sovereignty\s+tensions/gi,
+  /global\s+energy\s+policy\s+shift/gi,
+  /rumors\s+of\s+a\s+major/gi,
+  
+  // Fabricated threat assessments
+  /professional\s+adversary/gi,
+  /coordinated\s+campaign/gi,
+  /sustained\s+.*?\s+multi-site\s+campaign/gi,
+  /dry\s+runs?\s+for\s+a\s+larger/gi,
+  /high-tempo\s+operational\s+environment/gi,
+  
+  // Fabricated HUMINT/collection requirements
+  /humint\s+requirement/gi,
+  /source\s+typology/gi,
+  /collection\s+priorities?\s*\(PIR/gi,
+  /priority\s+intelligence\s+requirements?/gi,
+  /access\s+vectors?\s+within/gi,
+  /identified?\s+"access\s+vectors"/gi,
+  
+  // Speculative language
+  /may\s+lead\s+to\s+(a\s+)?spike/gi,
+  /could\s+exacerbate/gi,
+  /likely\s+being\s+used\s+as\s+social\s+cover/gi,
+  /more\s+radical\s+elements\s+to\s+operate/gi,
+  /foreign\s+influence\s+operations/gi,
+  /state\s+or\s+non-state\s+actor/gi,
+  
+  // Invented impacts
+  /impact:\s+could\s+lead/gi,
+  /impact:\s+may\s+lead/gi,
+  /impact:\s+directly\s+threatens/gi,
+  /increasing\s+the\s+strategic\s+value.*?target\s+profile/gi,
+];
+
 const VAGUE_QUANTIFIERS = [
   /several\s+(incidents?|signals?|threats?|entities?)/gi,
   /numerous\s+(incidents?|signals?|threats?|entities?)/gi,
@@ -125,6 +167,14 @@ export function runQAChecks(content: string, knownIds: {
     const matches = content.match(pattern);
     if (matches) {
       issues.push(`Forbidden pattern detected: "${matches[0]}"`);
+    }
+  }
+  
+  // NEW: Check for fabricated news/geopolitical patterns - CRITICAL
+  for (const pattern of FABRICATED_NEWS_PATTERNS) {
+    const matches = content.match(pattern);
+    if (matches) {
+      issues.push(`⛔ FABRICATED CONTENT DETECTED: "${matches[0]}" - This appears to be invented geopolitical/news content`);
     }
   }
   
@@ -169,6 +219,23 @@ export function runQAChecks(content: string, knownIds: {
     if (isFactual && !hasCitation) {
       const preview = sentence.trim().substring(0, 80);
       issues.push(`Factual claim without citation: "${preview}..."`);
+    }
+  }
+  
+  // NEW: Check for "Breaking" news without web search evidence
+  const breakingNewsPatterns = [
+    /breaking.*?geopolitical/gi,
+    /breaking.*?news/gi,
+    /global.*?instability/gi,
+    /maritime\s+friction/gi,
+    /arctic.*?tensions/gi,
+    /resource\s+nationalism/gi,
+  ];
+  
+  for (const pattern of breakingNewsPatterns) {
+    const matches = content.match(pattern);
+    if (matches) {
+      issues.push(`⛔ EXTERNAL NEWS WITHOUT SOURCE: "${matches[0]}" - Must use perform_external_web_search first`);
     }
   }
   
@@ -404,28 +471,40 @@ CONFIDENCE RULES (MANDATORY):
 • LOW: Weak source or partial evidence
 • UNVERIFIED: No source artifacts → CANNOT state as fact
 
-ABSOLUTE PROHIBITIONS:
-❌ "Example external link" or any placeholder
-❌ Invented names, IDs, quotes, numbers, dates, or events
+════════════════════════════════════════════════════════════════════════════════
+                    ⛔ ABSOLUTE PROHIBITIONS (ZERO TOLERANCE) ⛔
+════════════════════════════════════════════════════════════════════════════════
+
+❌ INVENTED GEOPOLITICAL NEWS (e.g., "Strait of Hormuz tensions", "Arctic sovereignty")
+❌ FABRICATED BREAKING NEWS or "reports indicate" without web search results
+❌ INVENTED HUMINT REQUIREMENTS or "collection priorities (PIRs)"  
+❌ SPECULATIVE THREAT NARRATIVES ("professional adversary", "coordinated campaign")
+❌ EMBELLISHED INCIDENT DESCRIPTIONS - report exactly what the database says
+❌ "[UNVERIFIED] Reports of..." - if unverified, DO NOT REPORT IT
+❌ "May lead to..." / "Could exacerbate..." - NO SPECULATION
 ❌ Generic cyber threats (0-day exploits, APT groups) without DB evidence
-❌ "Several incidents" → Use exact count from database
+❌ Invented names, IDs, quotes, numbers, dates, or events
 ❌ Simulated/hypothetical/demo language
 
-IF DATA IS MISSING:
-• Say: "This information is not available in verified records"
-• Or: "[UNVERIFIED] Claim pending verification"
-• Create implicit verification task by noting what needs confirmation
+FOR GEOPOLITICAL/EXTERNAL NEWS:
+→ You MUST call perform_external_web_search FIRST
+→ If tool unavailable or returns no results: State "No external intelligence available"
+→ NEVER invent news - this is a production system with real consequences
+
+IF INCIDENT DATA IS SPARSE:
+→ Report the incident title and dates EXACTLY as stored
+→ State: "Additional details not available in incident record"
+→ DO NOT invent breach narratives, damage assessments, or attack vectors
 
 BRIEFING SCHEMA (REQUIRED):
 1. Executive Flash Banner (1-2 sentences, highest priority only)
 2. Key Developments (bullet points with citations)
 3. Incidents with IDs and evidence links
 4. Impact Assessment (only if evidence supports)
-5. Action Items (owner from roster, deadline)
-6. Noise Control (what to ignore)
-7. Sources (full list with timestamps)
+5. External Intelligence (only if web search was performed)
+6. Sources (full list with timestamps)
 
-At the end, state: "Reliability Score: [X]% | Sources: [N] verified"
+At the end, state: "Reliability Score: [X]% | Sources: [N] verified | External Intel: [YES/NO]"
 `;
 }
 
@@ -438,8 +517,8 @@ export const DEFAULT_RELIABILITY_SETTINGS: ReliabilitySettings = {
   require_min_sources: 1,
   require_snapshot_for_external: true,
   auto_create_verification_tasks: true,
-  block_unverified_claims: false, // Start with warnings, not blocking
-  max_source_age_hours: 72,
+  block_unverified_claims: true, // CHANGED: Now blocking unverified claims by default
+  max_source_age_hours: 48, // CHANGED: Stricter - 48 hours instead of 72
 };
 
 export async function getReliabilitySettings(

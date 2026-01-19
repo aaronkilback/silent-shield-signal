@@ -59,7 +59,7 @@ async function withRetry<T>(
   throw lastError || new Error('All retry attempts failed');
 }
 
-// Validate AI response meets quality standards
+// Validate AI response meets quality standards - ENHANCED for anti-hallucination
 function validateResponse(response: string, context: { hasBriefingTool: boolean }): { 
   valid: boolean; 
   issues: string[];
@@ -92,7 +92,49 @@ function validateResponse(response: string, context: { hasBriefingTool: boolean 
     'threat actor group'
   ];
   
+  // NEW: Fabricated news/geopolitical content detection - CRITICAL
+  const fabricatedNewsPatterns = [
+    /\[unverified\]\s*reports/gi,
+    /unverified.*?reports\s+(of|indicate|suggest)/gi,
+    /reports\s+of\s+renewed\s+maritime\s+friction/gi,
+    /increased\s+naval\s+activity\s+in\s+the/gi,
+    /tensions\s+in\s+the\s+(strait|sea|gulf)/gi,
+    /sovereignty\s+tensions/gi,
+    /global\s+energy\s+policy\s+shift/gi,
+    /rumors\s+of\s+a\s+major/gi,
+    /professional\s+adversary/gi,
+    /coordinated\s+campaign/gi,
+    /sustained\s+.*?multi-site\s+campaign/gi,
+    /dry\s+runs?\s+for\s+a\s+larger/gi,
+    /high-tempo\s+operational\s+environment/gi,
+    /humint\s+requirement/gi,
+    /source\s+typology/gi,
+    /collection\s+priorities?\s*\(PIR/gi,
+    /priority\s+intelligence\s+requirements?/gi,
+    /access\s+vectors?\s+within/gi,
+    /may\s+lead\s+to\s+(a\s+)?spike/gi,
+    /could\s+exacerbate/gi,
+    /likely\s+being\s+used\s+as\s+social\s+cover/gi,
+    /more\s+radical\s+elements\s+to\s+operate/gi,
+    /foreign\s+influence\s+operations/gi,
+    /breaking\s+geopolitical\s+news/gi,
+    /arctic\s+sovereignty/gi,
+    /maritime\s+friction/gi,
+    /resource\s+nationalism/gi,
+    /strait\s+of\s+hormuz/gi,
+    /beaufort\s+sea.*?activity/gi,
+  ];
+  
   const lowerResponse = response.toLowerCase();
+  
+  // Check for fabricated news patterns FIRST - most critical
+  for (const pattern of fabricatedNewsPatterns) {
+    if (pattern.test(response)) {
+      issues.push(`⛔ FABRICATED CONTENT: Pattern matches invented geopolitical/news content`);
+      suggestions.push('Remove fabricated content. Use only database records or perform_external_web_search results.');
+    }
+  }
+  
   for (const phrase of forbiddenPhrases) {
     if (lowerResponse.includes(phrase)) {
       issues.push(`Contains forbidden phrase: "${phrase}"`);
@@ -108,6 +150,19 @@ function validateResponse(response: string, context: { hasBriefingTool: boolean 
     if (!hasSource) {
       issues.push('Briefing missing source citations');
       suggestions.push('Include source citations for all data');
+    }
+    
+    // NEW: Check for invented geopolitical sections in briefings
+    const hasGeopolitical = lowerResponse.includes('geopolitical') || 
+                            lowerResponse.includes('global news') ||
+                            lowerResponse.includes('breaking news');
+    const hasWebSearchEvidence = lowerResponse.includes('web search') ||
+                                  lowerResponse.includes('external search') ||
+                                  lowerResponse.includes('no external intelligence');
+    
+    if (hasGeopolitical && !hasWebSearchEvidence) {
+      issues.push('⛔ Geopolitical content without web search evidence');
+      suggestions.push('Either call perform_external_web_search or state "No external intelligence available"');
     }
   }
   
@@ -1571,6 +1626,46 @@ Returns: Summarized search results with source URLs and publication dates.`,
     // If we still have no response but have tool results, use fallback
     if (!agentResponse && toolResults.length > 0) {
       agentResponse = generateFallbackResponse(toolResults);
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // POST-PROCESSING SANITIZATION: Last line of defense against hallucinations
+    // ════════════════════════════════════════════════════════════════════════
+    const sanitizeFabricatedContent = (text: string): { sanitized: string; redactions: string[] } => {
+      const redactions: string[] = [];
+      let sanitized = text;
+      
+      // Patterns that indicate fabricated geopolitical/news content
+      const fabricationPatterns = [
+        { pattern: /\[UNVERIFIED\][^\n]+/gi, label: 'unverified claim' },
+        { pattern: /BREAKING GEOPOLITICAL NEWS[^]*?(?=\n\d\.|\n##|\n\*\*\d|$)/gi, label: 'fabricated geopolitical section' },
+        { pattern: /GEOPOLITICAL.*?IMPACTS?:[^]*?(?=\n\d\.|\n##|\n\*\*\d|$)/gi, label: 'fabricated impact section' },
+        { pattern: /HUMINT REQUIREMENT[^]*?(?=\n\d\.|\n##|\n\*\*\d|$)/gi, label: 'fabricated HUMINT section' },
+        { pattern: /STRATEGIC HUMINT[^]*?(?=\n\d\.|\n##|\n\*\*\d|$)/gi, label: 'fabricated HUMINT section' },
+        { pattern: /Collection Priorities \(PIRs?\)[^]*?(?=\n\d\.|\n##|\n\*\*\d|$)/gi, label: 'fabricated PIR section' },
+        { pattern: /Source Typology:[^\n]+/gi, label: 'fabricated source typology' },
+        { pattern: /GEOPOLITICAL \/ MACRO TRENDS:[^]*?(?=\n\d\.|\n##|\n\*\*\d|$)/gi, label: 'fabricated macro trends' },
+        { pattern: /Resource Nationalism:[^\n]+/gi, label: 'fabricated resource nationalism claim' },
+      ];
+      
+      for (const { pattern, label } of fabricationPatterns) {
+        const matches = sanitized.match(pattern);
+        if (matches) {
+          matches.forEach(m => {
+            redactions.push(`[REDACTED: ${label}]`);
+          });
+          sanitized = sanitized.replace(pattern, `\n⚠️ *[Content removed: ${label} - no verified source]*\n`);
+        }
+      }
+      
+      return { sanitized, redactions };
+    };
+    
+    // Apply sanitization to final response
+    const { sanitized, redactions } = sanitizeFabricatedContent(agentResponse);
+    if (redactions.length > 0) {
+      console.warn(`⛔ SANITIZATION: Removed ${redactions.length} fabricated content sections:`, redactions);
+      agentResponse = sanitized;
     }
 
     console.log('Agent response generated successfully', { 
