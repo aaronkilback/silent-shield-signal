@@ -32,7 +32,7 @@ import { useEffect } from "react";
 export default function Entities() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
-  const { selectedClientId } = useClientSelection();
+  const { selectedClientId, isContextReady } = useClientSelection();
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -53,6 +53,7 @@ export default function Entities() {
   // Filter entities by the selected client
   const { data: entities = [], refetch } = useQuery({
     queryKey: ['entities', searchTerm, selectedType, selectedClientId],
+    enabled: !!user && isContextReady,
     queryFn: async () => {
       let query = supabase
         .from('entities')
@@ -82,6 +83,7 @@ export default function Entities() {
   // Get entity count for selected client
   const { data: totalCount = 0 } = useQuery({
     queryKey: ['entities-total-count', selectedClientId],
+    enabled: !!user && isContextReady,
     queryFn: async () => {
       let query = supabase
         .from('entities')

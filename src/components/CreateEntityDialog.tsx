@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { Upload, Sparkles, ThumbsUp, ThumbsDown } from "lucide-react";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 interface CreateEntityDialogProps {
   open: boolean;
@@ -65,6 +66,7 @@ export const CreateEntityDialog = ({
 }: CreateEntityDialogProps) => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { selectedClientId } = useClientSelection();
   const [loading, setLoading] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [enrichedContactInfo, setEnrichedContactInfo] = useState<any>(null);
@@ -236,6 +238,7 @@ export const CreateEntityDialog = ({
           threat_indicators: threatIndicatorsArray.length > 0 ? threatIndicatorsArray : null,
           associations: associationsArray.length > 0 ? associationsArray : null,
           created_by: user.id,
+          client_id: selectedClientId || null,
           attributes: Object.keys(attributes).length > 0 ? attributes : null,
           active_monitoring_enabled: formData.active_monitoring_enabled,
           current_location: formData.current_location || null,
