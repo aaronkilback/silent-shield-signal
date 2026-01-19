@@ -3385,12 +3385,16 @@ export type Database = {
           error_message: string | null
           id: string
           ingested_at: string | null
+          media_type: string | null
+          media_urls: string[] | null
           metadata: Json | null
           parent_document_id: string | null
           processed_at: string | null
           processing_status: string | null
           raw_text: string | null
           source_id: string | null
+          source_url: string | null
+          thumbnail_url: string | null
           title: string | null
           total_chunks: number | null
         }
@@ -3401,12 +3405,16 @@ export type Database = {
           error_message?: string | null
           id?: string
           ingested_at?: string | null
+          media_type?: string | null
+          media_urls?: string[] | null
           metadata?: Json | null
           parent_document_id?: string | null
           processed_at?: string | null
           processing_status?: string | null
           raw_text?: string | null
           source_id?: string | null
+          source_url?: string | null
+          thumbnail_url?: string | null
           title?: string | null
           total_chunks?: number | null
         }
@@ -3417,12 +3425,16 @@ export type Database = {
           error_message?: string | null
           id?: string
           ingested_at?: string | null
+          media_type?: string | null
+          media_urls?: string[] | null
           metadata?: Json | null
           parent_document_id?: string | null
           processed_at?: string | null
           processing_status?: string | null
           raw_text?: string | null
           source_id?: string | null
+          source_url?: string | null
+          thumbnail_url?: string | null
           title?: string | null
           total_chunks?: number | null
         }
@@ -5258,6 +5270,7 @@ export type Database = {
           is_read: boolean | null
           is_test: boolean | null
           location: string | null
+          media_urls: string[] | null
           momentum: number | null
           normalized_text: string | null
           proximity: number | null
@@ -5275,6 +5288,7 @@ export type Database = {
           source_reliability: string | null
           status: Database["public"]["Enums"]["signal_status"]
           tenant_id: string | null
+          thumbnail_url: string | null
           title: string | null
           updated_at: string
         }
@@ -5297,6 +5311,7 @@ export type Database = {
           is_read?: boolean | null
           is_test?: boolean | null
           location?: string | null
+          media_urls?: string[] | null
           momentum?: number | null
           normalized_text?: string | null
           proximity?: number | null
@@ -5314,6 +5329,7 @@ export type Database = {
           source_reliability?: string | null
           status?: Database["public"]["Enums"]["signal_status"]
           tenant_id?: string | null
+          thumbnail_url?: string | null
           title?: string | null
           updated_at?: string
         }
@@ -5336,6 +5352,7 @@ export type Database = {
           is_read?: boolean | null
           is_test?: boolean | null
           location?: string | null
+          media_urls?: string[] | null
           momentum?: number | null
           normalized_text?: string | null
           proximity?: number | null
@@ -5353,6 +5370,7 @@ export type Database = {
           source_reliability?: string | null
           status?: Database["public"]["Enums"]["signal_status"]
           tenant_id?: string | null
+          thumbnail_url?: string | null
           title?: string | null
           updated_at?: string
         }
