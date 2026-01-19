@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
-import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon, Copy, Check, FileWarning, ExternalLink, Shield } from "lucide-react";
+import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon, Copy, Check, FileWarning, ExternalLink, Shield, MessageCircle, Heart, Share2, Hash, AtSign, Image } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState, useEffect } from "react";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
@@ -298,7 +298,98 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                 Signal Overview
               </h3>
               <div className="bg-muted p-4 rounded-lg space-y-3">
-                <p className="font-medium">{decodedText}</p>
+                {/* Title */}
+                {signal.title && (
+                  <h4 className="font-semibold text-lg">{decodeHtmlEntities(signal.title)}</h4>
+                )}
+                
+                {/* Description */}
+                {signal.description && (
+                  <p className="text-sm text-muted-foreground">{decodeHtmlEntities(signal.description)}</p>
+                )}
+                
+                {/* Post Caption */}
+                {signal.post_caption && signal.post_caption !== signal.description && (
+                  <div className="bg-background p-3 rounded border">
+                    <p className="text-sm italic">"{decodeHtmlEntities(signal.post_caption)}"</p>
+                  </div>
+                )}
+                
+                {/* Fallback to normalized text */}
+                {!signal.title && !signal.description && decodedText && (
+                  <p className="font-medium">{decodedText}</p>
+                )}
+                
+                {/* Thumbnail/Media */}
+                {signal.thumbnail_url && (
+                  <div className="flex gap-2 pt-2">
+                    <img 
+                      src={signal.thumbnail_url} 
+                      alt="Signal media" 
+                      className="h-32 w-auto rounded-lg object-cover border"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                    />
+                  </div>
+                )}
+                
+                {/* Engagement Metrics */}
+                {signal.engagement_metrics && (signal.engagement_metrics.likes || signal.engagement_metrics.comments || signal.engagement_metrics.shares) && (
+                  <div className="flex gap-4 text-sm pt-2 border-t border-border">
+                    {signal.engagement_metrics.likes != null && (
+                      <div className="flex items-center gap-1.5 text-pink-600">
+                        <Heart className="w-4 h-4" />
+                        <span>{signal.engagement_metrics.likes.toLocaleString()}</span>
+                      </div>
+                    )}
+                    {signal.engagement_metrics.comments != null && (
+                      <div className="flex items-center gap-1.5 text-blue-600">
+                        <MessageCircle className="w-4 h-4" />
+                        <span>{signal.engagement_metrics.comments.toLocaleString()}</span>
+                      </div>
+                    )}
+                    {signal.engagement_metrics.shares != null && (
+                      <div className="flex items-center gap-1.5 text-green-600">
+                        <Share2 className="w-4 h-4" />
+                        <span>{signal.engagement_metrics.shares.toLocaleString()}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                {/* Hashtags */}
+                {signal.hashtags && signal.hashtags.length > 0 && (
+                  <div className="pt-2 border-t border-border">
+                    <div className="flex items-center gap-1.5 mb-2 text-sm text-muted-foreground">
+                      <Hash className="w-3.5 h-3.5" />
+                      <span>Hashtags</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {signal.hashtags.map((tag: string, idx: number) => (
+                        <Badge key={idx} variant="outline" className="text-xs text-blue-600">
+                          #{tag}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {/* Mentions */}
+                {signal.mentions && signal.mentions.length > 0 && (
+                  <div className="pt-2 border-t border-border">
+                    <div className="flex items-center gap-1.5 mb-2 text-sm text-muted-foreground">
+                      <AtSign className="w-3.5 h-3.5" />
+                      <span>Mentions</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {signal.mentions.map((mention: string, idx: number) => (
+                        <Badge key={idx} variant="secondary" className="text-xs">
+                          @{mention}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex flex-wrap gap-2 mt-2">
                   <Badge variant={getSeverityColor(signal.severity) as any}>
                     {signal.severity?.toUpperCase()}
@@ -362,6 +453,32 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                 </div>
               </div>
             </div>
+            
+            {/* Comments Section */}
+            {signal.comments && signal.comments.length > 0 && (
+              <>
+                <Separator />
+                <div>
+                  <h3 className="font-semibold mb-2 flex items-center gap-2">
+                    <MessageCircle className="w-4 h-4" />
+                    Comments ({signal.comments.length})
+                  </h3>
+                  <div className="space-y-2">
+                    {signal.comments.slice(0, 10).map((comment: any, idx: number) => (
+                      <div key={idx} className="bg-muted/50 p-3 rounded-lg text-sm">
+                        <span className="font-medium text-primary">@{comment.author || comment.authorHandle}</span>
+                        <p className="text-muted-foreground mt-1">{comment.text}</p>
+                      </div>
+                    ))}
+                    {signal.comments.length > 10 && (
+                      <p className="text-xs text-muted-foreground text-center">
+                        +{signal.comments.length - 10} more comments
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Signal Correlation */}
             {signal.correlation_group_id && correlationData && (
