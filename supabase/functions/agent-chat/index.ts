@@ -1000,8 +1000,9 @@ Returns: Summarized search results with source URLs and publication dates.`,
           console.log('[Briefing] Generating intelligence summary:', { hoursBack, cutoff, client_id, focusAreas });
           
           // Build signals query - optionally filter by client_id if provided
+          // Note: signals table has source_id (UUID FK), not source (string)
           let signalsQuery = supabase.from('signals')
-            .select('id, title, severity, source, created_at, rule_category, normalized_text, client_id')
+            .select('id, title, severity, source_id, created_at, rule_category, normalized_text, client_id, description, signal_type')
             .gte('created_at', cutoff)
             .order('created_at', { ascending: false })
             .limit(50);
@@ -1074,12 +1075,12 @@ Returns: Summarized search results with source URLs and publication dates.`,
               ),
             },
             critical_signals: signals.filter(s => s.severity === 'critical' || s.severity === 'high').map(s => ({
-              title: s.title,
+              title: s.title || s.description?.substring(0, 100) || 'Signal',
               severity: s.severity,
-              source: s.source,
+              signal_type: s.signal_type,
               category: s.rule_category,
               timestamp: s.created_at,
-              details: s.normalized_text?.substring(0, 300),
+              details: s.normalized_text?.substring(0, 300) || s.description?.substring(0, 300),
             })),
             recent_incidents: incidents.map(i => ({
               title: i.title || 'Untitled',
