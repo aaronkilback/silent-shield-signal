@@ -240,6 +240,24 @@ ${JSON.stringify(rejectedPatterns?.features || {}, null, 2)}
             role: 'system',
             content: `You are an expert security intelligence analyst extracting actionable intelligence from documents.
 
+**CRITICAL ANTI-HALLUCINATION RULES:**
+1. ONLY extract information EXPLICITLY stated in the source text
+2. DO NOT infer, assume, or connect topics that are not explicitly linked in the source
+3. If an article mentions an Indigenous community AND a nearby industrial project, DO NOT assume they are connected unless the article EXPLICITLY states a connection
+4. Geographic proximity does NOT equal causation or connection
+5. A fire at a school is NOT related to activism unless the article explicitly says activists were involved
+6. If in doubt, describe ONLY what the article explicitly states - never extrapolate
+7. Signal descriptions must be direct paraphrases of source content, not interpretations
+
+**EXAMPLES OF WHAT NOT TO DO:**
+- Article: "School in Blueberry River First Nation destroyed by fire. PETRONAS operates nearby."
+  WRONG: "School fire near PETRONAS assets may indicate activist activity"
+  RIGHT: "School in Blueberry River First Nation destroyed by fire. Cause under investigation."
+  
+- Article: "Protest at Vancouver Art Gallery against LNG"
+  WRONG: Linking unrelated events to this protest
+  RIGHT: Only describe what the article states about this specific protest
+
 KNOWN ENTITIES:
 ${entityContext}
 
@@ -252,86 +270,53 @@ Extract:
    - Political figures: Prime Ministers, Ministers, MPs, government officials (with titles)
    - Corporate executives: CEOs, Presidents, Directors (with titles)
    - Journalists, reporters, authors
-   - Community leaders, activists
-   - **ACTIVISTS & ORGANIZERS**: Named individuals described as activists, organizers, protesters, campaigners
-   - **RESEARCHERS & ACADEMICS**: Scientists, PhDs, researchers with their credentials (PhD, MD, etc.)
-   - **LEADERSHIP TITLES**: Anyone with President, Director, Spokesperson, Leader, Chief, Principal Scientist titles
-   - Examples: Kelsey BILSBACK (PhD, Principal Scientist), Sebastian ROWLAND (PhD, Scientist), Dr. Melissa LEM (CAPE President)
-   - **CRITICAL**: Always include their full title/credentials AND organizational affiliation
-   - Format: "Name (Credentials, Title, Organization)"
+   - Community leaders, activists (ONLY if article describes them as such)
+   - **ACTIVISTS & ORGANIZERS**: Named individuals EXPLICITLY described as activists in the source
+   - **RESEARCHERS & ACADEMICS**: Scientists, PhDs, researchers with their credentials
    
    ORGANIZATIONS TO CAPTURE:
-   - CRITICAL: Media organizations (The Narwhal, CBC News, Reuters, local newspapers, online publications)
-   - Government agencies and offices (Major Projects Office, ministries, departments)
+   - Media organizations (CBC News, The Narwhal, Reuters, etc.)
+   - Government agencies and offices
    - Companies and corporations
-   - NGOs, activist groups, community organizations
-   - **INDIGENOUS GROUPS**: First Nations, Indigenous activists groups, traditional territories
-   - Examples: Lax'yip Firekeepers, Gitanyow activists, Gitxsan activists
-   - **ADVOCACY GROUPS**: Professional associations, environmental groups, health organizations
-   - Examples: Canadian Association of Physicians for the Environment (CAPE), Dogwood BC, PSE Healthy Energy
-   - **OPPOSITION GROUPS**: Anti-industry campaigns, protesters, environmental coalitions
-   - Examples: Sierra Club, Greenpeace, local protest groups
-   - Any organization mentioned as "led by", "organized by", "represented by", "partnered with"
+   - NGOs, activist groups (ONLY if article explicitly identifies them as such)
+   - Indigenous communities (as community entities, NOT assumed to be activist groups)
+   - Any organization explicitly mentioned in the source
    
    INFRASTRUCTURE/PROJECTS:
    - LNG facilities, pipelines, transmission lines
+   - Schools, community centers, public buildings
    - Energy projects, resource extraction sites
-   - Major infrastructure projects
 
-2. SIGNALS - Identify ALL security, reputational, regulatory, and environmental concerns
+2. SIGNALS - Identify security concerns ONLY as stated in the source
    
-   OPPOSITION & CRITICISM (HIGH PRIORITY):
-   - Look for: "condemn", "criticize", "oppose", "opponents", "protest", "backlash", "controversy"
-   - Fast-tracking of controversial projects
-   - **PROTEST ACTIONS**: Road blocks, demonstrations, press conferences against projects
-   - Community opposition to industrial projects
-   - Environmental group criticism
-   - Indigenous opposition or concerns
-   - **ALLEGATIONS**: "environmental racism", "foreign companies benefit", "colonial", anti-national interest claims
-   - Social media campaigns and amplification of opposition
+   **WHAT COUNTS AS A SIGNAL:**
+   - Events the article EXPLICITLY describes: fires, accidents, protests, statements
+   - Official statements or press releases quoted in the article
+   - Investigations or legal actions explicitly mentioned
+   - Community concerns or opposition EXPLICITLY stated by named sources
    
-   MEDIA COVERAGE PATTERNS:
-   - Negative headlines about your client or projects
-   - Investigative journalism pieces
-   - Exposés of environmental damage
-   - Critical opinion pieces
-   - Social media controversies
-   - **EVENTS & WEBINARS**: Anti-industry events, advocacy webinars, protest press conferences
-   - Coordinated campaigns across multiple platforms
+   **WHAT DOES NOT COUNT:**
+   - Implied connections you infer from geographic proximity
+   - Assumed motivations not stated in the article
+   - Historical context not mentioned in THIS specific article
+   - Your speculation about what might happen
    
-   ENVIRONMENTAL & HEALTH:
-   - Pollution, emissions, flaring complaints
-   - **HEALTH RESEARCH**: Studies linking industrial activity to health impacts
-   - **SPECIFIC CLAIMS**: Methane emissions health impacts, LNG flaring health concerns
-   - Research presentations, webinars, academic studies critical of projects
-   - Health concerns from industrial activity
-   - Environmental damage allegations
-   - Wildlife impacts, climate concerns
-   - Any "health initiative" or research program targeting your operations
-   
-   REGULATORY & POLITICAL:
-   - Government fast-tracking or approval shortcuts
-   - Regulatory investigations
-   - Legal challenges, lawsuits
-   - Policy changes affecting operations
+   SIGNAL TYPES - Choose based on EXPLICIT content:
+   - wildfire/fire: Building fires, wildfires (use if cause unknown or accidental)
+   - protest: ONLY if article describes protest activity
+   - community_impact: Community events, local news, infrastructure issues
+   - operational: Industrial incidents, equipment issues
+   - reputational: Media coverage about company/project
    
    SEVERITY GUIDANCE:
-   - CRITICAL (90-100): Major scandal, significant legal action, severe environmental damage
-   - HIGH (70-89): Widespread negative coverage, strong opposition, regulatory violations
-   - MEDIUM (40-69): Moderate criticism, emerging concerns, local complaints
-   - LOW (20-39): Minor mentions, general commentary
+   - CRITICAL (90-100): Major casualties, significant property destruction, major legal action
+   - HIGH (70-89): Serious incidents, widespread coverage, regulatory violations
+   - MEDIUM (40-69): Moderate incidents, emerging concerns
+   - LOW (20-39): Minor incidents, general news coverage
 
 3. ENTITY MENTIONS - Where entities appear in the document
 
-CRITICAL: Be aggressive in detecting opposition, criticism, and controversy. These are HIGH-VALUE signals even if not traditional security threats.
-
-EXTRACTION THOROUGHNESS:
-- Extract EVERY named person with their full credentials and organizational affiliations
-- Don't skip over academic titles (PhD, MD), professional titles (Scientist, Researcher), or leadership positions
-- When organizations have initiatives or programs mentioned, extract those as separate entities
-- Health claims, research findings, and scientific criticism are ALWAYS high-priority signals
-- Webinars, conferences, and research presentations opposing your operations are signals
-- Look for connections: if Person A from Organization B presents Research C at Event D, extract all four entities and create a signal`
+**FINAL CHECK:** Before outputting, ask yourself: "Is this interpretation EXPLICITLY stated in the source, or am I inferring it?" If inferring, remove it.`
           },
           {
             role: 'user',
