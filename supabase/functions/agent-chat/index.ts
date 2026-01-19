@@ -716,6 +716,31 @@ COMMUNICATION GUIDELINES:
           }
         }
       },
+      {
+        type: "function",
+        function: {
+          name: "perform_external_web_search",
+          description: `OSINT WEB SEARCH: Search the external web for current news, events, and intelligence. Use this for:
+- Current events and breaking news NOT in the Fortress database
+- Geopolitical developments and global news
+- Researching entities, organizations, or incidents from external sources
+- Verifying claims with external sources
+
+CRITICAL: You MUST use this tool before including ANY geopolitical news, current events, or external information in briefings. DO NOT fabricate or invent news - either search for it or state "No external intelligence available."
+
+Returns: Summarized search results with source URLs and publication dates.`,
+          parameters: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "Search query (be specific with dates, locations, topics)" },
+              time_range: { type: "string", enum: ["24h", "7d", "30d", "90d", "all"], description: "Time range for results (default: 7d)" },
+              geographic_focus: { type: "string", description: "Geographic focus (e.g., 'Canada', 'BC', 'global')" },
+              max_results: { type: "number", description: "Maximum results to return (default: 10)" },
+            },
+            required: ["query"],
+          }
+        }
+      },
     ];
 
     // Build messages array
@@ -1352,6 +1377,69 @@ COMMUNICATION GUIDELINES:
               note: `Message queued for ${recipientInfo}. It will be delivered on their ${triggerEvent === 'first_login' ? 'first login' : 'next login'}.`
             } 
           });
+          
+        } else if (funcName === 'perform_external_web_search') {
+          // Call the dedicated web search edge function
+          const searchQuery = args.query;
+          const timeRange = args.time_range || '7d';
+          const geoFocus = args.geographic_focus || '';
+          const maxResults = args.max_results || 10;
+          
+          console.log(`[perform_external_web_search] Executing search for: "${searchQuery}"`);
+          
+          try {
+            const { data: searchResult, error: searchError } = await supabase.functions.invoke('perform-external-web-search', {
+              body: { 
+                query: searchQuery,
+                time_range: timeRange,
+                geographic_focus: geoFocus,
+                max_results: maxResults
+              }
+            });
+            
+            if (searchError) {
+              toolResults.push({ 
+                tool: 'perform_external_web_search', 
+                result: { 
+                  success: false, 
+                  error: `Web search failed: ${searchError.message}`,
+                  note: 'If external search is unavailable, clearly state "No external intelligence available" rather than fabricating news.'
+                } 
+              });
+            } else if (searchResult?.success) {
+              toolResults.push({ 
+                tool: 'perform_external_web_search', 
+                result: { 
+                  success: true, 
+                  query: searchQuery,
+                  results_count: searchResult.results?.length || 0,
+                  results: searchResult.results || [],
+                  summary: searchResult.summary || 'No results found',
+                  sources: searchResult.sources || [],
+                  note: 'Use ONLY this verified external data. Do not supplement with invented information.'
+                } 
+              });
+            } else {
+              toolResults.push({ 
+                tool: 'perform_external_web_search', 
+                result: { 
+                  success: false, 
+                  error: searchResult?.error || 'Search returned no results',
+                  note: 'External search unavailable. State "No external intelligence available" in your response.'
+                } 
+              });
+            }
+          } catch (searchErr) {
+            console.error('[perform_external_web_search] Error:', searchErr);
+            toolResults.push({ 
+              tool: 'perform_external_web_search', 
+              result: { 
+                success: false, 
+                error: searchErr instanceof Error ? searchErr.message : 'Search failed',
+                note: 'External search unavailable. State "No external intelligence available" in your response.'
+              } 
+            });
+          }
           
         } else {
           toolResults.push({ tool: funcName, result: { success: false, error: `Unknown tool: ${funcName}` } });
