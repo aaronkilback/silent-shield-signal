@@ -997,15 +997,25 @@ Returns: Summarized search results with source URLs and publication dates.`,
           const cutoff = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString();
           const focusAreas = args.focus_areas || [];
           
+          console.log('[Briefing] Generating intelligence summary:', { hoursBack, cutoff, client_id, focusAreas });
+          
+          // Build signals query - optionally filter by client_id if provided
+          let signalsQuery = supabase.from('signals')
+            .select('id, title, severity, source, created_at, rule_category, normalized_text, client_id')
+            .gte('created_at', cutoff)
+            .order('created_at', { ascending: false })
+            .limit(50);
+          
+          // If client_id is provided, filter signals for that client OR unassigned signals
+          if (client_id) {
+            signalsQuery = signalsQuery.or(`client_id.eq.${client_id},client_id.is.null`);
+          }
+          
           // Fetch detailed data for the briefing
           const [signalsResult, incidentsResult, entitiesResult] = await Promise.all([
-            supabase.from('signals')
-              .select('id, title, severity, source, created_at, rule_category, normalized_text')
-              .gte('created_at', cutoff)
-              .order('created_at', { ascending: false })
-              .limit(25),
+            signalsQuery,
             supabase.from('incidents')
-              .select('id, title, priority, status, incident_type, summary, opened_at')
+              .select('id, title, priority, status, incident_type, summary, opened_at, client_id')
               .gte('opened_at', cutoff)
               .order('opened_at', { ascending: false })
               .limit(20),
@@ -1014,6 +1024,14 @@ Returns: Summarized search results with source URLs and publication dates.`,
               .order('threat_score', { ascending: false })
               .limit(15),
           ]);
+          
+          console.log('[Briefing] Query results:', { 
+            signalsCount: signalsResult.data?.length || 0,
+            signalsError: signalsResult.error?.message,
+            incidentsCount: incidentsResult.data?.length || 0,
+            incidentsError: incidentsResult.error?.message,
+            entitiesCount: entitiesResult.data?.length || 0
+          });
           
           // Also fetch recent high-priority items regardless of time range
           const { data: highPriorityIncidents } = await supabase
@@ -1028,6 +1046,11 @@ Returns: Summarized search results with source URLs and publication dates.`,
           const signals = signalsResult.data || [];
           const incidents = incidentsResult.data || [];
           const entities = entitiesResult.data || [];
+          
+          console.log('[Briefing] Final data for briefing:', {
+            signalTitles: signals.slice(0, 5).map(s => s.title),
+            incidentTitles: incidents.slice(0, 3).map(i => i.title)
+          });
           
           // Group signals by severity
           const signalsBySeverity: Record<string, any[]> = {};
