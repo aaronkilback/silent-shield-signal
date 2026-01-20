@@ -11,6 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { Upload, Sparkles, ThumbsUp, ThumbsDown } from "lucide-react";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { ImageLightbox } from "@/components/ui/image-lightbox";
 
 interface CreateEntityDialogProps {
   open: boolean;
@@ -729,7 +730,7 @@ export const CreateEntityDialog = ({
                   />
                 </div>
                 {uploadedImage && (
-                  <img src={uploadedImage} alt="Vehicle" className="w-full h-48 object-cover rounded-md mt-2" />
+                  <ImageLightbox src={uploadedImage} alt="Vehicle" className="w-full h-48 object-cover rounded-md mt-2" />
                 )}
               </div>
 
@@ -760,7 +761,7 @@ export const CreateEntityDialog = ({
 
                     {generatedImageUrl && (
                       <div className="space-y-3">
-                        <img src={generatedImageUrl} alt="Generated Vehicle" className="w-full h-96 object-contain rounded-md" />
+                        <ImageLightbox src={generatedImageUrl} alt="Generated Vehicle" className="w-full h-96 object-contain rounded-md" />
                         
                         {/* Feedback Section */}
                         <div className="space-y-2">

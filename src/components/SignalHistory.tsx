@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { History, Clock, AlertCircle, Trash2, ExternalLink } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { ImageLightbox } from "@/components/ui/image-lightbox";
 
 import { SignalDetailDialog } from "./SignalDetailDialog";
 import { SignalFeedback } from "./SignalFeedback";
@@ -508,11 +509,10 @@ export const SignalHistory = () => {
                       {/* Thumbnail */}
                       {signal.thumbnail_url && (
                         <div className="mb-2">
-                          <img 
+                          <ImageLightbox 
                             src={signal.thumbnail_url} 
                             alt="Signal media" 
                             className="h-20 w-auto rounded object-cover"
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                           />
                         </div>
                       )}

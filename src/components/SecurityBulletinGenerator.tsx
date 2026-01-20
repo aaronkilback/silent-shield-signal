@@ -14,6 +14,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { Checkbox } from "@/components/ui/checkbox";
 import DOMPurify from 'dompurify';
+import { ImageLightbox, ImageLightboxTrigger } from "@/components/ui/image-lightbox";
 
 // Configure DOMPurify for safe HTML rendering in reports
 const sanitizeHtml = (html: string): string => {
@@ -454,7 +455,7 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
                   {uploadedImages.map((img, index) => (
                     <div key={index} className="relative group">
-                      <img
+                      <ImageLightbox
                         src={img.preview}
                         alt={`Upload ${index + 1}`}
                         className="w-full h-24 object-cover rounded-md border"
@@ -462,7 +463,7 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
                       <Button
                         variant="destructive"
                         size="icon"
-                        className="absolute top-1 right-1 w-6 h-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="absolute top-1 right-1 w-6 h-6 opacity-0 group-hover:opacity-100 transition-opacity z-10"
                         onClick={() => removeUploadedImage(index)}
                       >
                         <X className="w-3 h-3" />
@@ -495,7 +496,12 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
                           alt={photo.caption || 'Entity photo'}
                           className="w-full h-24 object-cover"
                         />
-                        <div className="absolute top-1 right-1">
+                        <div className="absolute top-1 right-1 flex gap-1">
+                          <ImageLightboxTrigger 
+                            src={photo.url} 
+                            alt={photo.caption || 'Entity photo'}
+                            className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                          />
                           <Checkbox
                             checked={isSelected}
                             className="bg-background"

@@ -12,6 +12,7 @@ import { CreateIncidentFromSignalDialog } from "@/components/signals/CreateIncid
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
+import { ImageLightbox } from "@/components/ui/image-lightbox";
 
 interface SignalDetailDialogProps {
   signal: any;
@@ -323,11 +324,10 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                 {/* Thumbnail/Media */}
                 {signal.thumbnail_url && (
                   <div className="flex gap-2 pt-2">
-                    <img 
+                    <ImageLightbox 
                       src={signal.thumbnail_url} 
                       alt="Signal media" 
                       className="h-32 w-auto rounded-lg object-cover border"
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                     />
                   </div>
                 )}
