@@ -254,10 +254,45 @@ export default function SuperAdminDashboard() {
       });
     }
 
+    // Format activity descriptions to be human-readable
+    const formatActivityDescription = (activityType: string, resourceType: string, resourceName?: string): string => {
+      const actionMap: Record<string, Record<string, string>> = {
+        create: {
+          chat: 'Sent message to AI assistant',
+          agent_chat: 'Interacted with AI agent',
+          signal: 'Created a signal',
+          incident: 'Created an incident',
+          entity: 'Created an entity',
+          document: 'Uploaded a document',
+          report: 'Generated a report',
+        },
+        update: {
+          signal: 'Updated signal status',
+          incident: 'Updated an incident',
+          entity: 'Updated an entity',
+        },
+        view: {
+          page: `Viewed ${resourceName || 'page'}`,
+        },
+        search: {
+          default: 'Performed a search',
+        },
+        feedback: {
+          signal: 'Provided signal feedback',
+        },
+      };
+
+      const typeActions = actionMap[activityType];
+      if (typeActions) {
+        return typeActions[resourceType] || typeActions.default || `${activityType} on ${resourceType}`;
+      }
+      return resourceName ? `${activityType}: ${resourceName}` : `${activityType} on ${resourceType}`;
+    };
+
     const activities: RecentActivity[] = (data || []).map(event => ({
       id: event.id,
-      action: event.activity_type,
-      resource: event.resource_type,
+      action: formatActivityDescription(event.activity_type, event.resource_type, event.resource_name || undefined),
+      resource: event.resource_name || event.resource_type,
       tenant_name: event.tenant_id ? tenantNames[event.tenant_id] || "Unknown" : "System",
       user_email: event.user_id ? userEmails[event.user_id] || null : null,
       created_at: event.created_at
