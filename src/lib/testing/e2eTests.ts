@@ -4113,11 +4113,13 @@ export const securityAccessTests = {
         
         const { data: profile, error } = await supabase
           .from('profiles')
-          .select('id, display_name, email')
+          // profiles table uses (id, name, client_id, ...). Avoid selecting non-existent columns.
+          .select('id, name, client_id')
           .eq('id', user.id)
           .maybeSingle();
         
-        if (error) throw error;
+        // Postgrest errors aren't always Error instances; wrap to avoid "[object Object]".
+        if (error) throw new Error(error.message);
         if (!profile) throw new Error('Current user has no profile');
       },
     },
