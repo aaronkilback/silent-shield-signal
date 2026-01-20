@@ -1357,7 +1357,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                           <ImageLightbox 
                             src={attachment.url} 
                             alt={attachment.filename}
-                            className="w-full h-32 object-cover rounded mb-2"
+                            className="w-full h-32 object-contain rounded mb-2 bg-muted"
                           />
                         )}
                         {attachment.file_type === 'video' && (

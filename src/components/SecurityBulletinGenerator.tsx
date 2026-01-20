@@ -458,7 +458,7 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
                       <ImageLightbox
                         src={img.preview}
                         alt={`Upload ${index + 1}`}
-                        className="w-full h-24 object-cover rounded-md border"
+                        className="w-full h-24 object-contain rounded-md border bg-muted"
                       />
                       <Button
                         variant="destructive"
@@ -494,7 +494,7 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
                         <img
                           src={photo.url}
                           alt={photo.caption || 'Entity photo'}
-                          className="w-full h-24 object-cover"
+                          className="w-full h-24 object-contain bg-muted"
                         />
                         <div className="absolute top-1 right-1 flex gap-1">
                           <ImageLightboxTrigger 

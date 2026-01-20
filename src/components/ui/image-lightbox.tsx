@@ -46,7 +46,7 @@ export function ImageLightbox({ src, alt = "Image", className, containerClassNam
   return (
     <>
       <div 
-        className={cn("cursor-pointer group relative inline-block", containerClassName)}
+        className={cn("cursor-pointer group relative block", containerClassName)}
         onClick={() => setOpen(true)}
       >
         <img 

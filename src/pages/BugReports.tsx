@@ -337,7 +337,7 @@ const BugReports = () => {
                             key={idx}
                             src={screenshot} 
                             alt={`Screenshot ${idx + 1}`}
-                            className="w-32 h-32 object-cover rounded border"
+                            className="w-32 h-32 object-contain rounded border bg-muted"
                           />
                         ))}
                       </div>

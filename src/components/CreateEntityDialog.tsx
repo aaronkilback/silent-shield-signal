@@ -730,7 +730,7 @@ export const CreateEntityDialog = ({
                   />
                 </div>
                 {uploadedImage && (
-                  <ImageLightbox src={uploadedImage} alt="Vehicle" className="w-full h-48 object-cover rounded-md mt-2" />
+                  <ImageLightbox src={uploadedImage} alt="Vehicle" className="w-full h-48 object-contain rounded-md mt-2 bg-muted" />
                 )}
               </div>
 
