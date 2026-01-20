@@ -11,11 +11,12 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus, Brain, Search, Trash2, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus, Brain, Search, Trash2, ThumbsUp, ThumbsDown, ZoomIn } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
 import { CreateRelationshipDialog } from "./CreateRelationshipDialog";
 import { LocationsMap } from "./LocationsMap";
+import { ImageLightboxTrigger } from "@/components/ui/image-lightbox";
 
 interface EntityDetailDialogProps {
   entityId: string | null;
@@ -1153,6 +1154,10 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                         className="w-full h-40 object-cover"
                       />
                       <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <ImageLightboxTrigger 
+                          src={data.publicUrl} 
+                          alt={photo.caption || 'Entity photo'}
+                        />
                         <Button
                           variant={photo.feedback_rating === 1 ? "default" : "secondary"}
                           size="icon"

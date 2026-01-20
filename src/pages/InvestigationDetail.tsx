@@ -23,6 +23,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { LocationsMap } from "@/components/LocationsMap";
 import DOMPurify from 'dompurify';
+import { ImageLightbox } from "@/components/ui/image-lightbox";
 
 // Configure DOMPurify for safe HTML rendering in reports
 const sanitizeHtml = (html: string): string => {
@@ -1353,7 +1354,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                           </div>
                         </div>
                         {attachment.file_type === 'image' && (
-                          <img 
+                          <ImageLightbox 
                             src={attachment.url} 
                             alt={attachment.filename}
                             className="w-full h-32 object-cover rounded mb-2"

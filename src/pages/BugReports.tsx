@@ -14,6 +14,7 @@ import { useUserRole } from "@/hooks/useUserRole";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { ErrorMonitoringDashboard, SystemTestRunner } from "@/components/monitoring";
+import { ImageLightbox } from "@/components/ui/image-lightbox";
 
 type FixProposal = {
   root_cause: string;
@@ -332,19 +333,12 @@ const BugReports = () => {
                       <p className="text-sm font-medium mb-2">Screenshots:</p>
                       <div className="flex gap-2 flex-wrap">
                         {report.screenshots.map((screenshot, idx) => (
-                          <a 
+                          <ImageLightbox 
                             key={idx}
-                            href={screenshot}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block"
-                          >
-                            <img 
-                              src={screenshot} 
-                              alt={`Screenshot ${idx + 1}`}
-                              className="w-32 h-32 object-cover rounded border hover:opacity-80 transition-opacity cursor-pointer"
-                            />
-                          </a>
+                            src={screenshot} 
+                            alt={`Screenshot ${idx + 1}`}
+                            className="w-32 h-32 object-cover rounded border"
+                          />
                         ))}
                       </div>
                     </div>
