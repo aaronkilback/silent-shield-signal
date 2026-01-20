@@ -171,13 +171,13 @@ function ImageLightboxDialog({
 }: ImageLightboxDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[95vw] max-h-[95vh] w-auto h-auto p-0 bg-black/95 border-none overflow-hidden">
+      <DialogContent className="max-w-[100vw] max-h-[100vh] w-[100vw] h-[100vh] p-0 bg-black/95 border-none overflow-hidden [&>button]:hidden">
         <VisuallyHidden>
           <DialogTitle>{alt}</DialogTitle>
         </VisuallyHidden>
         
         {/* Toolbar */}
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-black/70 backdrop-blur-sm rounded-full px-4 py-2">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 sm:gap-2 bg-black/70 backdrop-blur-sm rounded-full px-3 sm:px-4 py-2">
           <Button 
             variant="ghost" 
             size="icon" 
@@ -212,27 +212,26 @@ function ImageLightboxDialog({
           >
             <Download className="h-4 w-4" />
           </Button>
+          <div className="w-px h-4 bg-white/30" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-white hover:bg-white/20"
+            onClick={() => onOpenChange(false)}
+          >
+            <X className="h-4 w-4" />
+          </Button>
         </div>
-
-        {/* Close button */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="absolute top-4 right-4 z-50 h-8 w-8 text-white hover:bg-white/20 rounded-full"
-          onClick={() => onOpenChange(false)}
-        >
-          <X className="h-5 w-5" />
-        </Button>
 
         {/* Image container */}
         <div 
-          className="w-full h-full min-h-[50vh] flex items-center justify-center p-8 overflow-auto"
+          className="w-full h-full flex items-center justify-center p-4 pt-16 overflow-auto"
           onClick={(e) => { if (e.target === e.currentTarget) onOpenChange(false); }}
         >
           <img
             src={src}
             alt={alt}
-            className="max-w-full max-h-[85vh] object-contain transition-transform duration-200"
+            className="max-w-full max-h-full object-contain transition-transform duration-200"
             style={{ 
               transform: `scale(${zoom}) rotate(${rotation}deg)`,
             }}
