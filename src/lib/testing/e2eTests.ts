@@ -3647,7 +3647,7 @@ export const assetManagementTests = {
     {
       name: 'Internal assets have valid criticality levels',
       fn: async () => {
-        const validLevels = ['low', 'medium', 'high', 'critical'];
+        const validLevels = ['low', 'medium', 'high', 'mission_critical'];
         const { data, error } = await supabase
           .from('internal_assets')
           .select('id, asset_name, business_criticality')
@@ -3909,7 +3909,7 @@ export const conversationMemoryTests = {
     {
       name: 'Conversation memory has valid memory types',
       fn: async () => {
-        const validTypes = ['preference', 'fact', 'context', 'instruction', 'pattern'];
+        const validTypes = ['preference', 'fact', 'context', 'instruction', 'pattern', 'key_fact', 'decision'];
         const { data, error } = await supabase
           .from('conversation_memory')
           .select('id, memory_type, content')
