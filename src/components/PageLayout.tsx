@@ -1,6 +1,7 @@
-import { ReactNode } from "react";
+import { ReactNode, useEffect } from "react";
 import { Header } from "@/components/Header";
 import { Loader2 } from "lucide-react";
+import { useActivityTracking } from "@/hooks/useActivityTracking";
 
 interface PageLayoutProps {
   children: ReactNode;
@@ -9,6 +10,7 @@ interface PageLayoutProps {
   description?: string;
   headerContent?: ReactNode;
   fullWidth?: boolean;
+  pageName?: string;
 }
 
 /**
@@ -16,6 +18,7 @@ interface PageLayoutProps {
  * - Fixed header with sticky positioning
  * - Main content area with min-height to prevent jumping
  * - Consistent loading state that reserves space
+ * - Automatic page view tracking (excludes super_admin)
  */
 export const PageLayout = ({
   children,
@@ -24,7 +27,16 @@ export const PageLayout = ({
   description,
   headerContent,
   fullWidth = false,
+  pageName,
 }: PageLayoutProps) => {
+  const { trackPageView, isTracking } = useActivityTracking();
+
+  // Track page view when component mounts (excludes super_admin)
+  useEffect(() => {
+    if (isTracking && (pageName || title)) {
+      trackPageView(pageName || title || 'Unknown Page');
+    }
+  }, [isTracking, pageName, title, trackPageView]);
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Header />
