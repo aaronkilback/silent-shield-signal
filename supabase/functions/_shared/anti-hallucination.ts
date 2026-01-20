@@ -4,23 +4,63 @@
 /**
  * Generate critical date context for injection into AI prompts
  * This ensures AI always has accurate temporal awareness
+ * Uses Mountain Standard Time (MST/MDT) and 24-hour clock format
  */
 export function getCriticalDateContext(): {
   currentDateISO: string;
   currentDateTimeISO: string;
   currentDateFormatted: string;
+  currentTime24h: string;
+  currentTimezone: string;
+  currentDateTimeLocal: string;
   timestamp: number;
 } {
   const now = new Date();
+  
+  // Format for Mountain Time (America/Edmonton covers MST/MDT with automatic DST)
+  const timezone = 'America/Edmonton';
+  const timezoneName = now.toLocaleString('en-US', { timeZone: timezone, timeZoneName: 'short' }).split(' ').pop() || 'MST';
+  
+  // 24-hour format time
+  const time24h = now.toLocaleString('en-CA', { 
+    timeZone: timezone,
+    hour: '2-digit', 
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false 
+  });
+  
+  // Full local datetime string
+  const localDateTime = now.toLocaleString('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  
+  // Formatted date for display
+  const formattedDate = now.toLocaleDateString('en-US', {
+    timeZone: timezone,
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+  
+  // Local date in ISO format
+  const localDate = now.toLocaleDateString('en-CA', { timeZone: timezone });
+  
   return {
-    currentDateISO: now.toISOString().split('T')[0],
+    currentDateISO: localDate,
     currentDateTimeISO: now.toISOString(),
-    currentDateFormatted: now.toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    }),
+    currentDateFormatted: formattedDate,
+    currentTime24h: time24h,
+    currentTimezone: timezoneName,
+    currentDateTimeLocal: `${localDateTime} ${timezoneName}`,
     timestamp: now.getTime()
   };
 }
@@ -40,8 +80,9 @@ export function getAntiHallucinationPrompt(): string {
 
 SYSTEM STATUS: OPERATIONAL | ENVIRONMENT: PRODUCTION | MODE: REAL-WORLD
 
-CURRENT DATE: ${dateContext.currentDateISO}
-CURRENT TIME: ${dateContext.currentDateTimeISO}
+CURRENT DATE: ${dateContext.currentDateISO} (${dateContext.currentDateFormatted})
+CURRENT TIME: ${dateContext.currentTime24h} ${dateContext.currentTimezone} (24-hour format)
+LOCAL DATETIME: ${dateContext.currentDateTimeLocal}
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    ABSOLUTE DATA INTEGRITY REQUIREMENTS                     │
