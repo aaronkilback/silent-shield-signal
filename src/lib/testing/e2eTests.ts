@@ -4281,6 +4281,107 @@ export const signalFeedbackTests = {
 };
 
 // ============================================
+// ACTIVITY TRACKING TESTS
+// ============================================
+
+export const activityTrackingTests = {
+  name: 'Activity Tracking & Engagement',
+  tests: [
+    {
+      name: 'Tenant activity table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('tenant_activity')
+          .select('id, activity_type, resource_type')
+          .limit(1);
+        if (error) throw new Error(`Cannot access tenant_activity: ${error.message}`);
+      },
+    },
+    {
+      name: 'Activity events have valid structure',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('tenant_activity')
+          .select('id, tenant_id, user_id, activity_type, resource_type, created_at')
+          .limit(10);
+        
+        if (error) throw new Error(`Query failed: ${error.message}`);
+        
+        if (data && data.length > 0) {
+          const invalidEvents = data.filter(e => 
+            !e.tenant_id || !e.activity_type || !e.resource_type
+          );
+          
+          if (invalidEvents.length > 0) {
+            throw new Error(`Found ${invalidEvents.length} activity events missing required fields`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Super admin activity excluded',
+      fn: async () => {
+        // Get super admin user IDs
+        const { data: superAdmins } = await supabase
+          .from('user_roles')
+          .select('user_id')
+          .eq('role', 'super_admin');
+        
+        if (superAdmins && superAdmins.length > 0) {
+          const superAdminIds = superAdmins.map(sa => sa.user_id);
+          
+          const { data: activity } = await supabase
+            .from('tenant_activity')
+            .select('id, user_id')
+            .in('user_id', superAdminIds)
+            .limit(10);
+          
+          if (activity && activity.length > 0) {
+            throw new Error(`Found ${activity.length} activity events from super_admin users (should be excluded)`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Activity types are valid',
+      fn: async () => {
+        const validTypes = ['view', 'create', 'update', 'delete', 'interact', 'search', 'export'];
+        
+        const { data } = await supabase
+          .from('tenant_activity')
+          .select('activity_type')
+          .limit(100);
+        
+        if (data && data.length > 0) {
+          const invalidTypes = data.filter(a => !validTypes.includes(a.activity_type));
+          if (invalidTypes.length > 0) {
+            throw new Error(`Found ${invalidTypes.length} activities with invalid activity_type`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Resource types are valid',
+      fn: async () => {
+        const validResources = ['page', 'signal', 'incident', 'entity', 'document', 'ai_chat', 'agent', 'report', 'investigation', 'briefing'];
+        
+        const { data } = await supabase
+          .from('tenant_activity')
+          .select('resource_type')
+          .limit(100);
+        
+        if (data && data.length > 0) {
+          const invalidResources = data.filter(a => !validResources.includes(a.resource_type));
+          if (invalidResources.length > 0) {
+            throw new Error(`Found ${invalidResources.length} activities with invalid resource_type`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
 // RUN ALL TESTS
 // ============================================
 
@@ -4367,6 +4468,7 @@ export async function runAllTests(): Promise<TestSuite[]> {
     geospatialMapsTests,
     securityAccessTests,
     signalFeedbackTests,
+    activityTrackingTests,
   ];
   
   const results: TestSuite[] = [];

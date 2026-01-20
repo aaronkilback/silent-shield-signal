@@ -19,6 +19,7 @@ import { IncidentFeedbackDialog } from "./incidents/IncidentFeedbackDialog";
 import { AIAnalysisTimeline } from "./incidents/AIAnalysisTimeline";
 import { WorkspaceButton } from "./workspace";
 import { useNavigate } from "react-router-dom";
+import { useActivityTracking } from "@/hooks/useActivityTracking";
 
 interface Incident {
   id: string;
@@ -58,6 +59,7 @@ export const IncidentActionDialog = ({
 }: IncidentActionDialogProps) => {
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { trackIncidentAction } = useActivityTracking();
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState("");
   const [signalLocation, setSignalLocation] = useState<string | null>(null);
@@ -129,6 +131,10 @@ export const IncidentActionDialog = ({
         title: "Success",
         description: `Incident ${action}d successfully`,
       });
+
+      // Track incident action (excludes super_admin)
+      const trackAction = action === 'acknowledge' ? 'update' : action === 'contain' ? 'update' : 'resolve';
+      trackIncidentAction(incident.id, trackAction, fullIncident.title);
 
       setNote("");
       

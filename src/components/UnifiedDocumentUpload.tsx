@@ -17,6 +17,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { extractFunctionInvokeErrorBodyAsync, formatFunctionInvokeErrorAsync } from "@/lib/functionInvokeError";
 import { toast } from "sonner";
+import { useActivityTracking } from "@/hooks/useActivityTracking";
 
 interface FileWithPreview {
   file: File;
@@ -27,6 +28,7 @@ interface FileWithPreview {
 
 export const UnifiedDocumentUpload = () => {
   const { user } = useAuth();
+  const { trackDocumentAction } = useActivityTracking();
   const [files, setFiles] = useState<FileWithPreview[]>([]);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -251,6 +253,11 @@ export const UnifiedDocumentUpload = () => {
     setProgress(100);
     
     if (successCount > 0) {
+      // Track document uploads (excludes super_admin)
+      files.filter(f => f.status === 'success').forEach(f => {
+        trackDocumentAction(f.id, 'upload', f.file.name);
+      });
+
       toast.success(
         `✅ Uploaded ${successCount} document(s)! Click the Brain 🧠 icon in the list below to extract intelligence.`,
         { duration: 8000 }
