@@ -610,13 +610,36 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
       );
     }
 
-    // Insert signal WITH content_hash from the start
+    // Generate title from normalized_text (first sentence or first 100 chars)
+    const generateTitle = (text: string): string => {
+      if (!text || text.length === 0) return 'Signal - ' + new Date().toISOString().slice(0, 16);
+      
+      // Find first sentence end
+      const sentenceEndMatch = text.match(/[.!?]/);
+      const firstSentenceEnd = sentenceEndMatch ? (sentenceEndMatch.index ?? 99) + 1 : 100;
+      
+      // Take first sentence or first 100 chars, whichever is shorter
+      const titleLength = Math.min(firstSentenceEnd, 100);
+      let title = text.substring(0, titleLength).trim();
+      
+      // Add ellipsis if truncated mid-sentence
+      if (titleLength === 100 && text.length > 100) {
+        title = title.replace(/\s+\S*$/, '') + '...';
+      }
+      
+      return title || 'Signal - ' + new Date().toISOString().slice(0, 16);
+    };
+    
+    const signalTitle = generateTitle(classification.normalized_text || signalText);
+    
+    // Insert signal WITH content_hash and title from the start
     // Include match metadata for audit trail and potential re-assignment
     const { data: signal, error: insertError } = await supabase
       .from('signals')
       .insert({
         source_id: sourceId,
         client_id: clientId,
+        title: signalTitle,  // ADDED: Generate title for all signals
         raw_json: {
           ...signalRaw,
           matched_keywords: matchedKeywords.length > 0 ? matchedKeywords : undefined,
