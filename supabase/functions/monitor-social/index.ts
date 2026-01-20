@@ -21,8 +21,8 @@ const ACTIVIST_KEYWORDS = [
   'climate', 'fossil fuel', 'oil spill', 'environmental', 'indigenous',
   'stand.earth', 'stand', 'greenpeace', 'extinction rebellion', '350.org',
   'pipeline protest', 'blockade', 'occupation', 'lawsuit', 'litigation',
-  // Visual propaganda & viral content
-  'flaring', 'video', 'viral', 'expose', 'footage', 'documentary',
+  // Visual propaganda & viral content (avoid broad standalone triggers)
+  'flaring', 'viral', 'expose', 'footage', 'documentary',
   'instagram', 'tiktok', 'youtube', 'social media campaign',
   // Activist hashtags
   'stoppetrochemical', 'protecttheclimate', 'fossilfree', 'keepitintheground',
@@ -55,6 +55,28 @@ const INDUSTRY_THREATS: Record<string, string[]> = {
   'retail': ['pos', 'e-commerce', 'payment card', 'retail'],
   'manufacturing': ['factory', 'production', 'supply chain', 'industrial']
 };
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function includesKeyword(text: string, keyword: string): boolean {
+  const t = text.toLowerCase();
+  const k = keyword.toLowerCase().trim();
+  if (!k) return false;
+
+  // Multi-word phrases (and anything with punctuation) stay as substring matches.
+  if (k.includes(' ') || /[^a-z0-9]/i.test(k)) {
+    return t.includes(k);
+  }
+
+  // Short acronyms like "ics" should never match inside other words (e.g., "graph-ICS").
+  const needsWordBoundary = k.length <= 3 || k === 'ics';
+  if (!needsWordBoundary) return t.includes(k);
+
+  const re = new RegExp(`(^|[^a-z0-9])${escapeRegExp(k)}([^a-z0-9]|$)`, 'i');
+  return re.test(t);
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -121,20 +143,20 @@ serve(async (req) => {
           const combinedText = `${title} ${selftext}`;
 
           // Check if security-related, activist-related, physical threat, or deal-related
-          const isSecurityRelated = SECURITY_KEYWORDS.some(keyword => 
-            combinedText.includes(keyword)
+          const isSecurityRelated = SECURITY_KEYWORDS.some((keyword) =>
+            includesKeyword(combinedText, keyword)
           );
           
-          const isActivistRelated = ACTIVIST_KEYWORDS.some(keyword => 
-            combinedText.includes(keyword)
+          const isActivistRelated = ACTIVIST_KEYWORDS.some((keyword) =>
+            includesKeyword(combinedText, keyword)
           );
           
-          const isPhysicalThreat = PHYSICAL_THREAT_KEYWORDS.some(keyword => 
-            combinedText.includes(keyword)
+          const isPhysicalThreat = PHYSICAL_THREAT_KEYWORDS.some((keyword) =>
+            includesKeyword(combinedText, keyword)
           );
           
-          const isDealRelated = DEAL_KEYWORDS.some(keyword => 
-            combinedText.includes(keyword)
+          const isDealRelated = DEAL_KEYWORDS.some((keyword) =>
+            includesKeyword(combinedText, keyword)
           );
 
           if (!isSecurityRelated && !isActivistRelated && !isPhysicalThreat && !isDealRelated) continue;
@@ -188,7 +210,7 @@ serve(async (req) => {
                 (clientOrgLower && combinedText.includes(clientOrgLower));
               
               const hasIndustryMatch = client.industry && INDUSTRY_THREATS[client.industry.toLowerCase()]?.some(
-                (term: string) => combinedText.includes(term)
+                (term: string) => includesKeyword(combinedText, term)
               );
               
               const isRelevant = hasNameMatch || hasIndustryMatch;
@@ -281,20 +303,20 @@ serve(async (req) => {
             const title = story.title.toLowerCase();
             
             // Check if security-related, activist-related, physical threat, or deal-related
-            const isSecurityRelated = SECURITY_KEYWORDS.some(keyword => 
-              title.includes(keyword)
+            const isSecurityRelated = SECURITY_KEYWORDS.some((keyword) =>
+              includesKeyword(title, keyword)
             );
             
-            const isActivistRelated = ACTIVIST_KEYWORDS.some(keyword => 
-              title.includes(keyword)
+            const isActivistRelated = ACTIVIST_KEYWORDS.some((keyword) =>
+              includesKeyword(title, keyword)
             );
             
-            const isPhysicalThreat = PHYSICAL_THREAT_KEYWORDS.some(keyword => 
-              title.includes(keyword)
+            const isPhysicalThreat = PHYSICAL_THREAT_KEYWORDS.some((keyword) =>
+              includesKeyword(title, keyword)
             );
             
-            const isDealRelated = DEAL_KEYWORDS.some(keyword => 
-              title.includes(keyword)
+            const isDealRelated = DEAL_KEYWORDS.some((keyword) =>
+              includesKeyword(title, keyword)
             );
             
             if (!isSecurityRelated && !isActivistRelated && !isPhysicalThreat && !isDealRelated) continue;
@@ -343,7 +365,7 @@ serve(async (req) => {
                 (clientOrgLower && title.includes(clientOrgLower));
               
               const hasIndustryMatch = client.industry && INDUSTRY_THREATS[client.industry.toLowerCase()]?.some(
-                (term: string) => title.includes(term)
+                (term: string) => includesKeyword(title, term)
               );
               
               if (hasNameMatch || hasIndustryMatch) {
