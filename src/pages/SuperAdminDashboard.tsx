@@ -205,11 +205,13 @@ export default function SuperAdminDashboard() {
 
   const loadRecentActivity = async () => {
     const { data, error } = await supabase
-      .from("audit_events")
+      .from("tenant_activity")
       .select(`
         id,
-        action,
-        resource,
+        activity_type,
+        resource_type,
+        resource_name,
+        description,
         tenant_id,
         user_id,
         created_at
@@ -254,8 +256,8 @@ export default function SuperAdminDashboard() {
 
     const activities: RecentActivity[] = (data || []).map(event => ({
       id: event.id,
-      action: event.action,
-      resource: event.resource,
+      action: event.activity_type,
+      resource: event.resource_type,
       tenant_name: event.tenant_id ? tenantNames[event.tenant_id] || "Unknown" : "System",
       user_email: event.user_id ? userEmails[event.user_id] || null : null,
       created_at: event.created_at
