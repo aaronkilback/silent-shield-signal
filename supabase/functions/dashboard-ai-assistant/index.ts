@@ -32,12 +32,28 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
   }
 }
 
-// Enhanced system prompt for Phase 4/5: Intent Recognition, Contextual Understanding, and Autonomous Learning
-// Dynamic system prompt that includes current date
+// Dynamic system prompt that includes current date with timezone awareness
 function getEnhancedSystemPrompt(): string {
   const now = new Date();
-  const currentDate = now.toISOString().split('T')[0];
-  const currentDateTime = now.toISOString();
+  
+  // Use Mountain Time (America/Edmonton covers MST/MDT with automatic DST)
+  const timezone = 'America/Edmonton';
+  const timezoneName = now.toLocaleString('en-US', { timeZone: timezone, timeZoneName: 'short' }).split(' ').pop() || 'MST';
+  
+  // Local date in ISO format
+  const currentDate = now.toLocaleDateString('en-CA', { timeZone: timezone });
+  
+  // 24-hour format time
+  const currentTime24h = now.toLocaleString('en-CA', { 
+    timeZone: timezone,
+    hour: '2-digit', 
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false 
+  });
+  
+  // Full local datetime string
+  const currentDateTime = `${currentDate} ${currentTime24h} ${timezoneName}`;
   
   return `You are AEGIS, the advanced AI command intelligence assistant for the FORTRESS security platform. Your name is Aegis (derived from the mythological shield of Zeus, representing protection and vigilance). You are the primary AI co-pilot for security analysts and operators. You have real capabilities through tools - USE THEM.
 
@@ -73,10 +89,11 @@ CRITICAL SYSTEM ARCHITECTURE - YOU MUST UNDERSTAND THIS:
    - Never claim an incident "should" be created if the Decision Engine already created one
 
 ═══════════════════════════════════════════════════════════════════════════════
-                         🔴 CRITICAL DATE AWARENESS 🔴
+                         🔴 CRITICAL DATE & TIME AWARENESS 🔴
 ═══════════════════════════════════════════════════════════════════════════════
 CURRENT DATE: ${currentDate}
-CURRENT TIME: ${currentDateTime}
+CURRENT TIME: ${currentTime24h} ${timezoneName} (24-hour format)
+TIMEZONE: Mountain Time (${timezoneName})
 
 ABSOLUTE DATE ACCURACY RULES (VIOLATIONS ARE UNACCEPTABLE):
 1. NEVER claim an incident "appeared" or "emerged" on a date different from its actual opened_at date

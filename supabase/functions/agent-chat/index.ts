@@ -214,8 +214,16 @@ function generateFallbackResponse(toolResults: { tool: string; result: any }[]):
     return 'I was unable to process your request. Please try again or rephrase your question.';
   }
   
-  const currentDate = new Date().toISOString().split('T')[0];
-  const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const now = new Date();
+  const timezone = 'America/Edmonton';
+  const timezoneName = now.toLocaleString('en-US', { timeZone: timezone, timeZoneName: 'short' }).split(' ').pop() || 'MST';
+  const currentDate = now.toLocaleDateString('en-CA', { timeZone: timezone });
+  const currentTime = now.toLocaleString('en-CA', { 
+    timeZone: timezone,
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: false 
+  });
   
   let fallback = '';
   
@@ -226,7 +234,7 @@ function generateFallbackResponse(toolResults: { tool: string; result: any }[]):
       
       // HEADER
       fallback += `# 📊 INTELLIGENCE BRIEFING\n`;
-      fallback += `**Generated:** ${currentDate} ${currentTime} UTC\n\n`;
+      fallback += `**Generated:** ${currentDate} ${currentTime} ${timezoneName}\n\n`;
       
       // EXECUTIVE SUMMARY - Most important, leads the report
       fallback += `## 📌 EXECUTIVE SUMMARY\n\n`;
