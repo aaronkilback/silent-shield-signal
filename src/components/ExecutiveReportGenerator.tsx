@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import DOMPurify from 'dompurify';
+import { useActivityTracking } from "@/hooks/useActivityTracking";
 
 // Configure DOMPurify for safe HTML rendering in reports
 const sanitizeHtml = (html: string): string => {
@@ -23,6 +24,7 @@ const sanitizeHtml = (html: string): string => {
 
 export const ExecutiveReportGenerator = () => {
   const { toast } = useToast();
+  const { trackReportGeneration } = useActivityTracking();
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [periodDays, setPeriodDays] = useState<string>("7");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -67,6 +69,10 @@ export const ExecutiveReportGenerator = () => {
 
       if (data.success) {
         setReportHtml(data.html);
+        
+        // Track report generation (excludes super_admin)
+        trackReportGeneration('executive', data.metadata?.client || 'Unknown');
+        
         toast({
           title: "Report Generated",
           description: `Executive intelligence report for ${data.metadata.client} is ready.`,

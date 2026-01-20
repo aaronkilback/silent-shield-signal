@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { useContentModeration } from "@/hooks/useContentModeration";
 import { ReportViolationDialog } from "@/components/ReportViolationDialog";
 import { useOpenAIRealtime } from "@/components/voice/useOpenAIRealtime";
+import { useActivityTracking } from "@/hooks/useActivityTracking";
 
 interface AIAgent {
   id: string;
@@ -45,6 +46,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
   const currentAgentIdRef = useRef<string | null>(null);
   const { user } = useAuth();
   const { selectedClientId } = useClientSelection();
+  const { trackAgentInteraction } = useActivityTracking();
   const { checkContent } = useContentModeration({
     contentType: 'chat_message',
     actionType: 'agent_message'
@@ -324,6 +326,9 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
         role: "assistant",
         content: assistantMessage,
       });
+
+      // Track agent interaction (excludes super_admin)
+      trackAgentInteraction(agent.codename, agent.id, 'chat');
     } catch (error) {
       console.error("Agent chat error:", error);
       toast.error("Failed to get response from agent");

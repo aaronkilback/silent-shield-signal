@@ -12,6 +12,7 @@ import { z } from "zod";
 import { Upload, Sparkles, ThumbsUp, ThumbsDown } from "lucide-react";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
+import { useActivityTracking } from "@/hooks/useActivityTracking";
 
 interface CreateEntityDialogProps {
   open: boolean;
@@ -68,6 +69,7 @@ export const CreateEntityDialog = ({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { selectedClientId } = useClientSelection();
+  const { trackEntityAction } = useActivityTracking();
   const [loading, setLoading] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [enrichedContactInfo, setEnrichedContactInfo] = useState<any>(null);
@@ -273,6 +275,9 @@ export const CreateEntityDialog = ({
         title: "Entity Created",
         description: `${formData.name} has been added to entity tracking.`
       });
+
+      // Track entity creation (excludes super_admin)
+      trackEntityAction(entity.id, 'create', formData.name);
 
       queryClient.invalidateQueries({ queryKey: ['entities'] });
       onOpenChange(false);
