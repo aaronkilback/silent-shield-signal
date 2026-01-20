@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useTenant } from "@/hooks/useTenant";
+import { useIsSuperAdmin } from "@/hooks/useIsSuperAdmin";
 import { useQuery } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 
@@ -53,30 +54,38 @@ const getActivityColor = (type: string) => {
 
 export function TenantActivityFeed() {
   const { currentTenant } = useTenant();
+  const { isSuperAdmin } = useIsSuperAdmin();
   const [realtimeActivities, setRealtimeActivities] = useState<TenantActivityItem[]>([]);
 
   const { data: activities = [], isLoading } = useQuery({
-    queryKey: ['tenant-activity', currentTenant?.id],
+    queryKey: ['tenant-activity', currentTenant?.id, isSuperAdmin],
     queryFn: async () => {
-      if (!currentTenant?.id) return [];
-
-      const { data, error } = await supabase
+      let query = supabase
         .from('tenant_activity')
         .select('*')
-        .eq('tenant_id', currentTenant.id)
         .order('created_at', { ascending: false })
         .limit(50);
+      
+      // Super admins see all activity, others filter by tenant
+      if (!isSuperAdmin && currentTenant?.id) {
+        query = query.eq('tenant_id', currentTenant.id);
+      }
 
+      const { data, error } = await query;
       if (error) throw error;
       return (data || []) as TenantActivityItem[];
     },
-    enabled: !!currentTenant?.id,
+    enabled: isSuperAdmin || !!currentTenant?.id,
     refetchInterval: 30000,
   });
 
   // Subscribe to realtime updates
   useEffect(() => {
-    if (!currentTenant?.id) return;
+    // For super admins without tenant, subscribe to all activity
+    // For regular users, subscribe to their tenant's activity
+    const filter = !isSuperAdmin && currentTenant?.id 
+      ? `tenant_id=eq.${currentTenant.id}` 
+      : undefined;
 
     const channel = supabase
       .channel('tenant-activity')
@@ -86,7 +95,7 @@ export function TenantActivityFeed() {
           event: 'INSERT',
           schema: 'public',
           table: 'tenant_activity',
-          filter: `tenant_id=eq.${currentTenant.id}`,
+          ...(filter ? { filter } : {}),
         },
         (payload) => {
           setRealtimeActivities(prev => [payload.new as TenantActivityItem, ...prev].slice(0, 10));
@@ -97,11 +106,12 @@ export function TenantActivityFeed() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentTenant?.id]);
+  }, [currentTenant?.id, isSuperAdmin]);
 
   const allActivities = [...realtimeActivities, ...activities].slice(0, 50);
 
-  if (!currentTenant) {
+  // Show for super admins OR users with a tenant
+  if (!isSuperAdmin && !currentTenant) {
     return null;
   }
 
