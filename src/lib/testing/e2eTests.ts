@@ -4145,6 +4145,142 @@ export const securityAccessTests = {
 };
 
 // ============================================
+// SIGNAL FEEDBACK & LEARNING TESTS
+// ============================================
+
+export const signalFeedbackTests = {
+  name: 'Signal Feedback & Learning',
+  tests: [
+    {
+      name: 'Feedback events table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('feedback_events')
+          .select('id, object_type, feedback')
+          .limit(1);
+        if (error) throw new Error(`Cannot access feedback_events: ${error.message}`);
+      },
+    },
+    {
+      name: 'Learning profiles table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('learning_profiles')
+          .select('id, profile_type, sample_count')
+          .limit(1);
+        if (error) throw new Error(`Cannot access learning_profiles: ${error.message}`);
+      },
+    },
+    {
+      name: 'No orphaned feedback events',
+      fn: async () => {
+        const { data: feedbackEvents } = await supabase
+          .from('feedback_events')
+          .select('id, object_id')
+          .eq('object_type', 'signal')
+          .limit(50);
+        
+        if (feedbackEvents && feedbackEvents.length > 0) {
+          const signalIds = feedbackEvents.map(f => f.object_id);
+          const { data: signals } = await supabase
+            .from('signals')
+            .select('id')
+            .in('id', signalIds);
+          
+          const existingIds = new Set(signals?.map(s => s.id) || []);
+          const orphaned = feedbackEvents.filter(f => !existingIds.has(f.object_id));
+          
+          if (orphaned.length > 0) {
+            throw new Error(`Found ${orphaned.length} feedback events pointing to deleted signals`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Irrelevant signals marked as false_positive',
+      fn: async () => {
+        const { data: irrelevantFeedback } = await supabase
+          .from('feedback_events')
+          .select('object_id')
+          .eq('object_type', 'signal')
+          .eq('feedback', 'irrelevant')
+          .limit(20);
+        
+        if (irrelevantFeedback && irrelevantFeedback.length > 0) {
+          const signalIds = irrelevantFeedback.map(f => f.object_id);
+          const { data: signals } = await supabase
+            .from('signals')
+            .select('id, status, relevance_score')
+            .in('id', signalIds);
+          
+          const incorrectStatus = signals?.filter(s => 
+            s.status !== 'false_positive' && s.status !== 'resolved'
+          ) || [];
+          
+          if (incorrectStatus.length > 0) {
+            throw new Error(`${incorrectStatus.length} signals marked irrelevant but not status=false_positive`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Learning profiles updated from feedback',
+      fn: async () => {
+        const { data: profiles } = await supabase
+          .from('learning_profiles')
+          .select('profile_type, sample_count, features')
+          .in('profile_type', ['approved_signal_patterns', 'rejected_signal_patterns']);
+        
+        const { count: feedbackCount } = await supabase
+          .from('feedback_events')
+          .select('id', { count: 'exact', head: true })
+          .eq('object_type', 'signal');
+        
+        if (feedbackCount && feedbackCount > 5 && (!profiles || profiles.length === 0)) {
+          throw new Error(`${feedbackCount} feedback events exist but no learning profiles created`);
+        }
+      },
+    },
+    {
+      name: 'Feedback events have valid user_id',
+      fn: async () => {
+        const { data: feedback } = await supabase
+          .from('feedback_events')
+          .select('id, user_id')
+          .is('user_id', null)
+          .limit(10);
+        
+        if (feedback && feedback.length > 0) {
+          throw new Error(`Found ${feedback.length} feedback events with NULL user_id`);
+        }
+      },
+    },
+    {
+      name: 'No duplicate feedback per user per signal',
+      fn: async () => {
+        const { data: feedback } = await supabase
+          .from('feedback_events')
+          .select('object_id, user_id')
+          .eq('object_type', 'signal');
+        
+        if (feedback) {
+          const seen = new Map<string, number>();
+          for (const f of feedback) {
+            const key = `${f.object_id}:${f.user_id}`;
+            seen.set(key, (seen.get(key) || 0) + 1);
+          }
+          
+          const duplicates = Array.from(seen.entries()).filter(([_, count]) => count > 1);
+          if (duplicates.length > 0) {
+            throw new Error(`Found ${duplicates.length} signals with duplicate feedback from same user`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
 // RUN ALL TESTS
 // ============================================
 
@@ -4230,6 +4366,7 @@ export async function runAllTests(): Promise<TestSuite[]> {
     rateLimitTests,
     geospatialMapsTests,
     securityAccessTests,
+    signalFeedbackTests,
   ];
   
   const results: TestSuite[] = [];
