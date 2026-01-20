@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { ThumbsUp, ThumbsDown } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { useActivityTracking } from "@/hooks/useActivityTracking";
 
 interface SignalFeedbackProps {
   signalId: string;
@@ -16,6 +17,7 @@ export const SignalFeedback = ({
 }: SignalFeedbackProps) => {
   const { toast } = useToast();
   const { session } = useAuth();
+  const { trackSignalAction } = useActivityTracking();
   const [loading, setLoading] = useState(false);
   const [currentFeedback, setCurrentFeedback] = useState<'relevant' | 'irrelevant' | null>(null);
 
@@ -118,6 +120,10 @@ export const SignalFeedback = ({
         }
 
         setCurrentFeedback(feedback);
+        
+        // Track the feedback action (excludes super_admin)
+        trackSignalAction(signalId, 'feedback');
+        
         toast({
           title: feedback === 'relevant' ? "Marked as Relevant" : "Marked as Not Relevant",
           description: feedback === 'relevant' 

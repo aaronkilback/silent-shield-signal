@@ -17,6 +17,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useActivityTracking } from "@/hooks/useActivityTracking";
 
 type Message = {
   role: "user" | "assistant";
@@ -33,6 +34,7 @@ export const DashboardAIAssistant = () => {
   const { user, loading: authLoading } = useAuth();
   const { isAdmin, isSuperAdmin } = useUserRole();
   const { currentTenant } = useTenant();
+  const { trackAIInteraction } = useActivityTracking();
   const STORAGE_KEY = "fortress-ai-chat-history";
   
   const [messages, setMessages] = useState<Message[]>([]);
@@ -500,6 +502,9 @@ export const DashboardAIAssistant = () => {
         if (!assistantSaved && user) {
           toast.warning("AI response wasn't saved to history");
         }
+        
+        // Track AI interaction (excludes super_admin)
+        trackAIInteraction('Aegis AI', 'user', currentConversationId || undefined);
       } else {
         console.log("No content received from stream");
         const errorMsg = { role: "assistant" as const, content: "I'm having trouble generating a response. Please try again." };
