@@ -327,7 +327,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                     <ImageLightbox 
                       src={signal.thumbnail_url} 
                       alt="Signal media" 
-                      className="h-32 w-auto rounded-lg object-cover border"
+                      className="h-32 w-auto rounded-lg object-contain border bg-muted"
                     />
                   </div>
                 )}

@@ -512,7 +512,7 @@ export const SignalHistory = () => {
                           <ImageLightbox 
                             src={signal.thumbnail_url} 
                             alt="Signal media" 
-                            className="h-20 w-auto rounded object-cover"
+                            className="h-20 w-auto rounded object-contain bg-muted"
                           />
                         </div>
                       )}
