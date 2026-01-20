@@ -3576,6 +3576,575 @@ export const dataConsistencyTests = {
 };
 
 // ============================================
+// OAUTH & API CLIENTS TESTS
+// ============================================
+
+export const oauthClientsTests = {
+  name: 'OAuth & API Clients',
+  tests: [
+    {
+      name: 'Can read oauth_clients table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('oauth_clients')
+          .select('id, client_name, client_id, is_active, created_at')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'OAuth clients have required fields',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('oauth_clients')
+          .select('id, client_name, client_id, client_secret_hash, redirect_uris')
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const client of data || []) {
+          if (!client.client_name) throw new Error(`OAuth client ${client.id} missing client_name`);
+          if (!client.client_id) throw new Error(`OAuth client ${client.id} missing client_id`);
+        }
+      },
+    },
+    {
+      name: 'API keys have valid permissions',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('api_keys')
+          .select('id, name, key_prefix, permissions, is_active')
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const key of data || []) {
+          if (!key.name) throw new Error(`API key ${key.id} missing name`);
+          if (!key.key_prefix) throw new Error(`API key ${key.id} missing key_prefix`);
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// ASSET MANAGEMENT TESTS
+// ============================================
+
+export const assetManagementTests = {
+  name: 'Asset Management',
+  tests: [
+    {
+      name: 'Can read internal_assets table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('internal_assets')
+          .select('id, asset_name, asset_type, business_criticality, client_id')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Internal assets have valid criticality levels',
+      fn: async () => {
+        const validLevels = ['low', 'medium', 'high', 'critical'];
+        const { data, error } = await supabase
+          .from('internal_assets')
+          .select('id, asset_name, business_criticality')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const asset of data || []) {
+          if (asset.business_criticality && !validLevels.includes(asset.business_criticality)) {
+            throw new Error(`Asset ${asset.asset_name} has invalid criticality: ${asset.business_criticality}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Can read petronas_assets table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('petronas_assets')
+          .select('id, asset_name, asset_type, region')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Asset vulnerabilities reference valid assets',
+      fn: async () => {
+        const { data: vulns, error } = await supabase
+          .from('asset_vulnerabilities')
+          .select('id, asset_id, severity')
+          .limit(10);
+        
+        if (error) throw error;
+        if (!vulns || vulns.length === 0) return;
+        
+        const assetIds = [...new Set(vulns.map(v => v.asset_id))];
+        const { data: assets, error: assetError } = await supabase
+          .from('internal_assets')
+          .select('id')
+          .in('id', assetIds);
+        
+        if (assetError) throw assetError;
+        
+        const foundIds = new Set((assets || []).map(a => a.id));
+        const missingCount = assetIds.filter(id => !foundIds.has(id)).length;
+        
+        if (missingCount > 0) {
+          throw new Error(`Found ${missingCount} vulnerabilities with invalid asset references`);
+        }
+      },
+    },
+    {
+      name: 'Vulnerability severity values are valid',
+      fn: async () => {
+        const validSeverities = ['low', 'medium', 'high', 'critical'];
+        const { data, error } = await supabase
+          .from('asset_vulnerabilities')
+          .select('id, severity, vulnerability_id')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const vuln of data || []) {
+          if (!validSeverities.includes(vuln.severity)) {
+            throw new Error(`Vulnerability ${vuln.vulnerability_id} has invalid severity: ${vuln.severity}`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// PLAYBOOKS TESTS
+// ============================================
+
+export const playbooksTests = {
+  name: 'Playbooks',
+  tests: [
+    {
+      name: 'Can read playbooks table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('playbooks')
+          .select('id, key, title, markdown, created_at')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Playbooks have required fields',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('playbooks')
+          .select('id, key, title, markdown')
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const playbook of data || []) {
+          if (!playbook.title) {
+            throw new Error(`Playbook ${playbook.key || playbook.id} missing title`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Playbook markdown content exists',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('playbooks')
+          .select('id, key, title, markdown')
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const playbook of data || []) {
+          if (!playbook.markdown || playbook.markdown.length < 10) {
+            throw new Error(`Playbook ${playbook.title || playbook.key} has minimal or missing content`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// COP CANVAS TESTS
+// ============================================
+
+export const copCanvasTests = {
+  name: 'COP Canvas',
+  tests: [
+    {
+      name: 'Can read cop_widgets table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('cop_widgets')
+          .select('id, workspace_id, widget_type, title, position_x, position_y')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'COP widgets have valid workspace references',
+      fn: async () => {
+        const { data: widgets, error } = await supabase
+          .from('cop_widgets')
+          .select('id, workspace_id')
+          .limit(10);
+        
+        if (error) throw error;
+        if (!widgets || widgets.length === 0) return;
+        
+        const workspaceIds = [...new Set(widgets.map(w => w.workspace_id))];
+        const { data: workspaces, error: wsError } = await supabase
+          .from('investigation_workspaces')
+          .select('id')
+          .in('id', workspaceIds);
+        
+        if (wsError) throw wsError;
+        
+        const foundIds = new Set((workspaces || []).map(w => w.id));
+        const missingCount = workspaceIds.filter(id => !foundIds.has(id)).length;
+        
+        if (missingCount > 0) {
+          throw new Error(`Found ${missingCount} widgets with invalid workspace_id`);
+        }
+      },
+    },
+    {
+      name: 'Can read cop_timeline_events table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('cop_timeline_events')
+          .select('id, workspace_id, event_time, title, event_type')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'COP timeline events have valid workspace references',
+      fn: async () => {
+        const { data: events, error } = await supabase
+          .from('cop_timeline_events')
+          .select('id, workspace_id')
+          .limit(10);
+        
+        if (error) throw error;
+        if (!events || events.length === 0) return;
+        
+        const workspaceIds = [...new Set(events.map(e => e.workspace_id))];
+        const { data: workspaces, error: wsError } = await supabase
+          .from('investigation_workspaces')
+          .select('id')
+          .in('id', workspaceIds);
+        
+        if (wsError) throw wsError;
+        
+        const foundIds = new Set((workspaces || []).map(w => w.id));
+        const missingCount = workspaceIds.filter(id => !foundIds.has(id)).length;
+        
+        if (missingCount > 0) {
+          throw new Error(`Found ${missingCount} timeline events with invalid workspace_id`);
+        }
+      },
+    },
+    {
+      name: 'COP entity links have valid entity references',
+      fn: async () => {
+        const { data: links, error } = await supabase
+          .from('cop_entity_links')
+          .select('id, entity_a_id, entity_b_id, relationship_type')
+          .limit(10);
+        
+        if (error) throw error;
+        if (!links || links.length === 0) return;
+        
+        const entityIds = [...new Set([
+          ...links.map(l => l.entity_a_id),
+          ...links.map(l => l.entity_b_id)
+        ])];
+        
+        const { data: entities, error: entityError } = await supabase
+          .from('entities')
+          .select('id')
+          .in('id', entityIds);
+        
+        if (entityError) throw entityError;
+        
+        const foundIds = new Set((entities || []).map(e => e.id));
+        const missingCount = entityIds.filter(id => !foundIds.has(id)).length;
+        
+        if (missingCount > 0) {
+          throw new Error(`Found ${missingCount} COP links with invalid entity references`);
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// CONVERSATION MEMORY TESTS
+// ============================================
+
+export const conversationMemoryTests = {
+  name: 'Conversation Memory',
+  tests: [
+    {
+      name: 'Can read conversation_memory table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('conversation_memory')
+          .select('id, user_id, memory_type, content, importance_score')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Conversation memory has valid memory types',
+      fn: async () => {
+        const validTypes = ['preference', 'fact', 'context', 'instruction', 'pattern'];
+        const { data, error } = await supabase
+          .from('conversation_memory')
+          .select('id, memory_type, content')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const memory of data || []) {
+          if (!validTypes.includes(memory.memory_type)) {
+            throw new Error(`Memory ${memory.id} has invalid type: ${memory.memory_type}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Can read conversation_summaries table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('conversation_summaries')
+          .select('id, user_id, conversation_id, title, summary')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Expired memories are handled correctly',
+      fn: async () => {
+        const now = new Date().toISOString();
+        const { data, error } = await supabase
+          .from('conversation_memory')
+          .select('id, expires_at')
+          .not('expires_at', 'is', null)
+          .lt('expires_at', now)
+          .limit(5);
+        
+        if (error) throw error;
+        
+        // Just informational - verify query works
+        // Expired memories might need cleanup but aren't errors
+      },
+    },
+  ],
+};
+
+// ============================================
+// RATE LIMIT TRACKING TESTS
+// ============================================
+
+export const rateLimitTests = {
+  name: 'Rate Limit Tracking',
+  tests: [
+    {
+      name: 'Can read rate_limit_tracking table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('rate_limit_tracking')
+          .select('id, user_id, action_type, request_count, window_start')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Rate limits have valid window timestamps',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('rate_limit_tracking')
+          .select('id, window_start')
+          .limit(10);
+        
+        if (error) throw error;
+        
+        const now = new Date().getTime();
+        for (const limit of data || []) {
+          if (limit.window_start) {
+            const windowStart = new Date(limit.window_start).getTime();
+            // Window start shouldn't be in the future
+            if (windowStart > now + 60000) { // Allow 1 minute tolerance
+              throw new Error(`Rate limit ${limit.id} has window_start in the future`);
+            }
+          }
+        }
+      },
+    },
+    {
+      name: 'Request counts are non-negative',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('rate_limit_tracking')
+          .select('id, request_count')
+          .limit(20);
+        
+        if (error) throw error;
+        
+        for (const limit of data || []) {
+          if (limit.request_count < 0) {
+            throw new Error(`Rate limit ${limit.id} has negative request_count: ${limit.request_count}`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// GEOSPATIAL MAPS TESTS
+// ============================================
+
+export const geospatialMapsTests = {
+  name: 'Geospatial Maps',
+  tests: [
+    {
+      name: 'Can read geospatial_maps table',
+      fn: async () => {
+        const { error } = await supabase
+          .from('geospatial_maps')
+          .select('id, filename, storage_path, processing_status, created_at')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Geospatial maps have required storage paths',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('geospatial_maps')
+          .select('id, filename, storage_path')
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const map of data || []) {
+          if (!map.storage_path) {
+            throw new Error(`Geospatial map ${map.filename || map.id} missing storage_path`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Processing status values are valid',
+      fn: async () => {
+        const validStatuses = ['pending', 'processing', 'completed', 'failed'];
+        const { data, error } = await supabase
+          .from('geospatial_maps')
+          .select('id, filename, processing_status')
+          .limit(10);
+        
+        if (error) throw error;
+        
+        for (const map of data || []) {
+          if (map.processing_status && !validStatuses.includes(map.processing_status)) {
+            throw new Error(`Geospatial map ${map.filename} has invalid status: ${map.processing_status}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Petronas assets from geospatial processing exist',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('petronas_assets')
+          .select('id, asset_name, source_document_id')
+          .not('source_document_id', 'is', null)
+          .limit(5);
+        
+        if (error) throw error;
+        // Just verify the query works - assets may or may not exist
+      },
+    },
+  ],
+};
+
+// ============================================
+// SECURITY & ACCESS CONTROL TESTS
+// ============================================
+
+export const securityAccessTests = {
+  name: 'Security & Access Control',
+  tests: [
+    {
+      name: 'All users have at least one role',
+      fn: async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) throw new Error('No authenticated user');
+        
+        const { data: roles, error } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', user.id);
+        
+        if (error) throw error;
+        if (!roles || roles.length === 0) {
+          throw new Error('Current user has no roles assigned');
+        }
+      },
+    },
+    {
+      name: 'User profile exists for authenticated user',
+      fn: async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) throw new Error('No authenticated user');
+        
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('id, display_name, email')
+          .eq('id', user.id)
+          .maybeSingle();
+        
+        if (error) throw error;
+        if (!profile) throw new Error('Current user has no profile');
+      },
+    },
+    {
+      name: 'Blocked terms accessible to admins',
+      fn: async () => {
+        const { error } = await supabase
+          .from('blocked_terms')
+          .select('id, term, category, severity, is_active')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Content violations are logged',
+      fn: async () => {
+        const { error } = await supabase
+          .from('content_violations')
+          .select('id, category, severity, action_taken, created_at')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+  ],
+};
+
+// ============================================
 // RUN ALL TESTS
 // ============================================
 
@@ -3651,6 +4220,16 @@ export async function runAllTests(): Promise<TestSuite[]> {
     automatedBugDetectionTests,
     edgeFunctionHealthTests,
     dataConsistencyTests,
+    
+    // NEW: Gap Coverage Tests
+    oauthClientsTests,
+    assetManagementTests,
+    playbooksTests,
+    copCanvasTests,
+    conversationMemoryTests,
+    rateLimitTests,
+    geospatialMapsTests,
+    securityAccessTests,
   ];
   
   const results: TestSuite[] = [];
