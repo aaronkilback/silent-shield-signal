@@ -65,6 +65,15 @@ export const SignalFeedback = ({
 
         if (deleteError) throw deleteError;
 
+        // Reset signal status when feedback is removed
+        await supabase
+          .from('signals')
+          .update({ 
+            status: 'new',
+            relevance_score: null 
+          })
+          .eq('id', signalId);
+
         setCurrentFeedback(null);
         toast({
           title: "Feedback Removed",
@@ -79,27 +88,41 @@ export const SignalFeedback = ({
           .eq('object_type', 'signal')
           .eq('user_id', session.user.id);
 
-        // Insert new feedback
-        const { error: insertError } = await supabase
-          .from('feedback_events')
-          .insert({
-            object_id: signalId,
-            object_type: 'signal',
-            feedback,
-            user_id: session.user.id,
-            notes: feedback === 'relevant' 
-              ? 'Signal is relevant and useful' 
-              : 'Signal is not relevant or needs improvement'
-          });
+        // Call process-feedback edge function to update learning profiles
+        const notes = feedback === 'relevant' 
+          ? 'Signal is relevant and useful' 
+          : 'Signal is not relevant or needs improvement';
 
-        if (insertError) throw insertError;
+        const { error: processingError } = await supabase.functions.invoke('process-feedback', {
+          body: {
+            objectType: 'signal',
+            objectId: signalId,
+            feedback,
+            notes,
+            userId: session.user.id
+          }
+        });
+
+        if (processingError) {
+          console.error('Error processing feedback:', processingError);
+          // Fallback: insert feedback directly if edge function fails
+          await supabase
+            .from('feedback_events')
+            .insert({
+              object_id: signalId,
+              object_type: 'signal',
+              feedback,
+              user_id: session.user.id,
+              notes
+            });
+        }
 
         setCurrentFeedback(feedback);
         toast({
           title: feedback === 'relevant' ? "Marked as Relevant" : "Marked as Not Relevant",
           description: feedback === 'relevant' 
             ? "This helps improve signal detection accuracy" 
-            : "This signal will be used to improve filtering",
+            : "Signal marked as false positive - learning updated",
         });
       }
 
