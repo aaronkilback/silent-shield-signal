@@ -1,12 +1,13 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+import { executeVoiceMemoryTool } from "../_shared/voice-memory-tools.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -28,7 +29,17 @@ serve(async (req) => {
 
     let result: unknown;
 
-    switch (tool_name) {
+    // Memory tools are implemented separately to keep this function maintainable.
+    const memoryHandled = await executeVoiceMemoryTool({
+      req,
+      supabase,
+      toolName: tool_name,
+      toolArgs: toolArgs || {},
+    });
+
+    if (memoryHandled.handled) {
+      result = memoryHandled.result;
+    } else switch (tool_name) {
       case 'search_web': {
         // Use the perform-external-web-search function which supports real Google Search
         const query = toolArgs.query || '';
@@ -667,7 +678,8 @@ serve(async (req) => {
         result = { error: `Unknown tool: ${tool_name}`, available_tools: [
           'search_web', 'get_current_threats', 'get_entity_info', 'query_legal_database',
           'query_fortress_data', 'generate_intelligence_summary', 'analyze_threat_radar',
-          'get_client_info', 'get_knowledge_base', 'get_travel_status', 'get_investigation_status'
+          'get_client_info', 'get_knowledge_base', 'get_travel_status', 'get_investigation_status',
+          'get_user_memory', 'remember_this', 'update_user_preferences', 'manage_project_context'
         ]};
     }
     
