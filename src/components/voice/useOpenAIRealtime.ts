@@ -61,20 +61,30 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       
       // Send function result back to OpenAI
       if (dcRef.current?.readyState === 'open') {
+        console.log('[Voice] Sending function output back to OpenAI...');
+        
         // Create conversation item with function output
-        dcRef.current.send(JSON.stringify({
+        const outputEvent = {
           type: 'conversation.item.create',
           item: {
             type: 'function_call_output',
             call_id: callId,
             output: resultStr
           }
-        }));
+        };
+        console.log('[Voice] Output event:', JSON.stringify(outputEvent));
+        dcRef.current.send(JSON.stringify(outputEvent));
+        
+        // Small delay to ensure the item is created before requesting response
+        await new Promise(resolve => setTimeout(resolve, 100));
         
         // Trigger response generation
+        console.log('[Voice] Triggering response generation...');
         dcRef.current.send(JSON.stringify({
           type: 'response.create'
         }));
+      } else {
+        console.error('[Voice] Data channel not open, cannot send function output');
       }
     } catch (err) {
       console.error('[Voice] Tool execution error:', err);
@@ -136,17 +146,23 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       case 'response.function_call_arguments.done':
         {
           // Function call is complete, execute it
-          const callId = event.call_id as string;
-          const name = event.name as string;
-          const argsStr = event.arguments as string;
+          // Note: The event structure may have the call_id at different levels
+          const callId = (event.call_id || (event as any).item?.call_id) as string;
+          const name = (event.name || (event as any).item?.name) as string;
+          const argsStr = (event.arguments || (event as any).item?.arguments) as string;
           
-          console.log(`[Voice] Function call: ${name}`, argsStr);
+          console.log(`[Voice] Function call received - callId: ${callId}, name: ${name}, args: ${argsStr}`);
+          
+          if (!callId || !name) {
+            console.error('[Voice] Missing call_id or name in function call event:', event);
+            break;
+          }
           
           try {
             const args = JSON.parse(argsStr || '{}');
             executeToolCall(callId, name, args);
           } catch (e) {
-            console.error('Failed to parse function args:', e);
+            console.error('[Voice] Failed to parse function args:', e, argsStr);
           }
         }
         break;
