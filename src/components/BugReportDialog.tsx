@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,8 +7,80 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Loader2, Camera, X } from "lucide-react";
+import { Loader2, Camera, X, Mic, MicOff } from "lucide-react";
 import html2canvas from "html2canvas";
+
+// Voice dictation button component
+function VoiceDictationButton({ 
+  onResult, 
+  size = "default" 
+}: { 
+  onResult: (text: string) => void;
+  size?: "default" | "sm";
+}) {
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  const toggleListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      toast.error("Voice dictation not supported in this browser");
+      return;
+    }
+
+    const rec = new SpeechRecognition();
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec.lang = 'en-US';
+
+    rec.onresult = (event: any) => {
+      const result = event.results[event.results.length - 1];
+      if (result.isFinal) {
+        onResult(result[0].transcript);
+      }
+    };
+
+    rec.onerror = () => {
+      setIsListening(false);
+    };
+
+    rec.onend = () => {
+      setIsListening(false);
+    };
+
+    rec.start();
+    recognitionRef.current = rec;
+    setIsListening(true);
+  };
+
+  return (
+    <Button
+      type="button"
+      variant={isListening ? "destructive" : "outline"}
+      size={size === "sm" ? "sm" : "icon"}
+      onClick={toggleListening}
+      className={size === "sm" ? "gap-1" : ""}
+    >
+      {isListening ? (
+        <>
+          <MicOff className="h-4 w-4" />
+          {size === "sm" && "Stop"}
+        </>
+      ) : (
+        <>
+          <Mic className="h-4 w-4" />
+          {size === "sm" && "Dictate"}
+        </>
+      )}
+    </Button>
+  );
+}
 
 interface BugReportDialogProps {
   open: boolean;
@@ -131,20 +203,24 @@ export const BugReportDialog = ({ open, onOpenChange }: BugReportDialogProps) =>
         <DialogHeader>
           <DialogTitle>Report a Bug</DialogTitle>
           <DialogDescription>
-            Help us improve the platform by reporting issues you encounter
+            Help us improve the platform by reporting issues you encounter. Use the microphone buttons to dictate.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="title">Issue Title *</Label>
-            <Input
-              id="title"
-              placeholder="Brief description of the issue"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              required
-              maxLength={200}
-            />
+            <div className="flex gap-2">
+              <Input
+                id="title"
+                placeholder="Brief description of the issue"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                required
+                maxLength={200}
+                className="flex-1"
+              />
+              <VoiceDictationButton onResult={(text) => setTitle(prev => prev ? `${prev} ${text}` : text)} />
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -163,7 +239,13 @@ export const BugReportDialog = ({ open, onOpenChange }: BugReportDialogProps) =>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="description">Description *</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="description">Description *</Label>
+              <VoiceDictationButton 
+                onResult={(text) => setDescription(prev => prev ? `${prev} ${text}` : text)} 
+                size="sm"
+              />
+            </div>
             <Textarea
               id="description"
               placeholder="Detailed description of the issue, including steps to reproduce..."
