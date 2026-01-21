@@ -24,105 +24,67 @@ serve(async (req) => {
 
     switch (tool_name) {
       case 'search_web': {
-        // Use the perform-external-web-search function
-        const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+        // Use the perform-external-web-search function which supports real Google Search
         const query = toolArgs.query || '';
         const geographic_focus = toolArgs.geographic_focus || '';
         
-        // First search internal Fortress data
-        const internalResults: string[] = [];
-        
-        // Search signals
-        const { data: signals } = await supabase
-          .from('signals')
-          .select('title, description, severity, created_at, event_date')
-          .or(`title.ilike.%${query}%,description.ilike.%${query}%`)
-          .order('created_at', { ascending: false })
-          .limit(5);
-        
-        if (signals?.length) {
-          internalResults.push('**Recent Signals:**');
-          signals.forEach(s => {
-            const age = s.event_date ? `Event: ${s.event_date}` : `Ingested: ${s.created_at}`;
-            internalResults.push(`- [${s.severity?.toUpperCase() || 'MEDIUM'}] ${s.title} (${age})`);
+        try {
+          // Call the dedicated web search function
+          const searchResponse = await fetch(`${supabaseUrl}/functions/v1/perform-external-web-search`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify({
+              query,
+              geographic_focus,
+              max_results: 5,
+            }),
           });
-        }
-        
-        // Search incidents
-        const { data: incidents } = await supabase
-          .from('incidents')
-          .select('title, description, severity_level, status, created_at')
-          .or(`title.ilike.%${query}%,description.ilike.%${query}%`)
-          .order('created_at', { ascending: false })
-          .limit(5);
-        
-        if (incidents?.length) {
-          internalResults.push('\n**Active Incidents:**');
-          incidents.forEach(i => {
-            internalResults.push(`- [${i.severity_level || 'P3'}] ${i.title} - Status: ${i.status}`);
-          });
-        }
-        
-        // Search entities
-        const { data: entities } = await supabase
-          .from('entities')
-          .select('name, entity_type, risk_level, monitoring_status')
-          .or(`name.ilike.%${query}%,aliases.cs.{${query}}`)
-          .limit(5);
-        
-        if (entities?.length) {
-          internalResults.push('\n**Known Entities:**');
-          entities.forEach(e => {
-            internalResults.push(`- ${e.name} (${e.entity_type}) - Risk: ${e.risk_level || 'Unknown'}`);
-          });
-        }
-        
-        // Try external search via AI gateway if we have limited internal results
-        let externalSummary = '';
-        if (LOVABLE_API_KEY && internalResults.length < 3) {
-          try {
-            const searchPrompt = `Provide a brief, factual summary about: "${query}"${geographic_focus ? ` focusing on ${geographic_focus}` : ''}. 
-Keep it to 2-3 sentences. Focus on current, verified information. If you don't have current information, say so.`;
+          
+          if (searchResponse.ok) {
+            const searchData = await searchResponse.json();
             
-            const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                model: 'google/gemini-2.5-flash',
-                messages: [
-                  { role: 'system', content: 'You are a security intelligence research assistant. Provide brief, factual summaries. Always note if information may be outdated.' },
-                  { role: 'user', content: searchPrompt }
-                ],
-                max_tokens: 200,
-              }),
-            });
+            // Build a conversational summary from the search results
+            const summaryParts: string[] = [];
             
-            if (aiResponse.ok) {
-              const aiData = await aiResponse.json();
-              externalSummary = aiData.choices?.[0]?.message?.content || '';
+            // External sources
+            if (searchData.source_urls && searchData.source_urls.length > 0) {
+              summaryParts.push(`Found ${searchData.source_urls.length} web sources:`);
+              searchData.source_urls.slice(0, 3).forEach((source: any) => {
+                const dateInfo = source.published_date ? ` (${source.published_date})` : '';
+                const warning = source.date_warning ? ` ${source.date_warning}` : '';
+                summaryParts.push(`- ${source.title}${dateInfo}${warning}: ${source.snippet?.substring(0, 150)}...`);
+              });
             }
-          } catch (e) {
-            console.error('External search error:', e);
+            
+            // Internal data
+            if (searchData.key_entities && searchData.key_entities.length > 0) {
+              summaryParts.push(`\nRelated entities in Fortress: ${searchData.key_entities.slice(0, 5).join(', ')}`);
+            }
+            
+            if (searchData.key_dates && searchData.key_dates.length > 0) {
+              summaryParts.push(`\nRecent signals: ${searchData.key_dates.slice(0, 3).join('; ')}`);
+            }
+            
+            result = {
+              found: searchData.data_source !== 'no_data',
+              summary: searchData.summary,
+              details: summaryParts.join('\n'),
+              source_type: searchData.data_source,
+              reliability_note: searchData.reliability_note,
+              query: query
+            };
+          } else {
+            // Fallback to internal-only search if external search fails
+            console.log('[Voice Tool] External search failed, falling back to internal search');
+            result = await searchInternalOnly(supabase, query, geographic_focus);
           }
-        }
-        
-        // Compose result
-        if (internalResults.length > 0 || externalSummary) {
-          result = {
-            found: true,
-            internal_data: internalResults.join('\n'),
-            external_summary: externalSummary,
-            query: query
-          };
-        } else {
-          result = {
-            found: false,
-            message: `No relevant information found for "${query}" in Fortress database or external sources.`,
-            query: query
-          };
+        } catch (error) {
+          console.error('[Voice Tool] Search error:', error);
+          // Fallback to internal search
+          result = await searchInternalOnly(supabase, query, geographic_focus);
         }
         break;
       }
@@ -190,6 +152,54 @@ Keep it to 2-3 sentences. Focus on current, verified information. If you don't h
         break;
       }
       
+      case 'query_legal_database': {
+        // Call the legal database query function
+        const jurisdiction = toolArgs.jurisdiction || 'Canada';
+        const topic = toolArgs.topic || toolArgs.query || '';
+        
+        try {
+          const legalResponse = await fetch(`${supabaseUrl}/functions/v1/query-legal-database`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify({
+              jurisdiction,
+              topic,
+              keywords: toolArgs.keywords || [],
+              include_case_law: true,
+              include_statutes: true,
+              max_results: 5,
+            }),
+          });
+          
+          if (legalResponse.ok) {
+            const legalData = await legalResponse.json();
+            result = {
+              found: legalData.success,
+              results: legalData.results,
+              disclaimer: legalData.disclaimer,
+              query: { jurisdiction, topic }
+            };
+          } else {
+            result = {
+              found: false,
+              message: 'Legal database query failed. Please try a more specific query.',
+              query: { jurisdiction, topic }
+            };
+          }
+        } catch (error) {
+          console.error('[Voice Tool] Legal query error:', error);
+          result = {
+            found: false,
+            message: 'Unable to query legal database at this time.',
+            query: { jurisdiction, topic }
+          };
+        }
+        break;
+      }
+      
       default:
         result = { error: `Unknown tool: ${tool_name}` };
     }
@@ -209,3 +219,73 @@ Keep it to 2-3 sentences. Focus on current, verified information. If you don't h
     );
   }
 });
+
+// Fallback internal-only search when external search is unavailable
+async function searchInternalOnly(supabase: any, query: string, geographic_focus: string) {
+  const internalResults: string[] = [];
+  
+  // Search signals
+  const { data: signals } = await supabase
+    .from('signals')
+    .select('title, description, severity, created_at, event_date')
+    .or(`title.ilike.%${query}%,description.ilike.%${query}%`)
+    .order('created_at', { ascending: false })
+    .limit(5);
+  
+  if (signals?.length) {
+    internalResults.push('**Recent Signals:**');
+    signals.forEach((s: any) => {
+      const age = s.event_date ? `Event: ${s.event_date}` : `Ingested: ${s.created_at}`;
+      internalResults.push(`- [${s.severity?.toUpperCase() || 'MEDIUM'}] ${s.title} (${age})`);
+    });
+  }
+  
+  // Search incidents
+  const { data: incidents } = await supabase
+    .from('incidents')
+    .select('title, description, severity_level, status, created_at')
+    .or(`title.ilike.%${query}%,description.ilike.%${query}%`)
+    .order('created_at', { ascending: false })
+    .limit(5);
+  
+  if (incidents?.length) {
+    internalResults.push('\n**Active Incidents:**');
+    incidents.forEach((i: any) => {
+      internalResults.push(`- [${i.severity_level || 'P3'}] ${i.title} - Status: ${i.status}`);
+    });
+  }
+  
+  // Search entities
+  const { data: entities } = await supabase
+    .from('entities')
+    .select('name, entity_type, risk_level, monitoring_status')
+    .or(`name.ilike.%${query}%,aliases.cs.{${query}}`)
+    .limit(5);
+  
+  if (entities?.length) {
+    internalResults.push('\n**Known Entities:**');
+    entities.forEach((e: any) => {
+      internalResults.push(`- ${e.name} (${e.entity_type}) - Risk: ${e.risk_level || 'Unknown'}`);
+    });
+  }
+  
+  if (internalResults.length > 0) {
+    return {
+      found: true,
+      summary: `Found internal data matching "${query}"`,
+      details: internalResults.join('\n'),
+      source_type: 'internal_only',
+      reliability_note: 'Results from Fortress internal database only. External web search was not available.',
+      query: query
+    };
+  } else {
+    return {
+      found: false,
+      summary: `No information found for "${query}"`,
+      details: 'No matching data in Fortress database. External web search was not available for this query.',
+      source_type: 'no_data',
+      reliability_note: 'No data available. Cannot perform external web search.',
+      query: query
+    };
+  }
+}

@@ -87,23 +87,27 @@ CRITICAL CAPABILITIES - USE TOOLS PROACTIVELY:
 - When users ask about current events, threats, or need research: USE search_web
 - When users ask about threat status or active incidents: USE get_current_threats  
 - When users ask about specific people, organizations, or entities: USE get_entity_info
+- When users ask about legal topics, case law, regulations, or compliance: USE query_legal_database
 
 ALWAYS use tools when the user asks about:
 - Current news or events ("what's happening with...", "latest on...")
 - Threat assessments, security situations, or active incidents
 - Information about people, organizations, or locations
+- Legal matters, case law, regulations, statutes, or compliance requirements
 - Any topic requiring current or factual information
 
 AFTER getting tool results:
 - Summarize conversationally — don't read raw data
 - Include source attribution and dates when relevant
 - If data is historical, clearly mention when the event occurred
+- For legal information, always include the jurisdiction and add "this is not legal advice"
 - Distinguish between "current threats" and "historical context"
 
 ANTI-FABRICATION RULES (CRITICAL):
-- NEVER invent news, threats, or incidents
+- NEVER invent news, threats, incidents, or legal information
 - If search returns nothing, say "I don't have current information on that"
 - Report only what the tools return — no speculation or embellishment
+- For legal queries with no results, recommend consulting a legal professional
 
 Structure responses as: What's happening → What matters → Recommendation → Next step. Never dramatize. Never ramble.`;
 
@@ -159,6 +163,30 @@ Structure responses as: What's happening → What matters → Recommendation →
             }
           },
           required: ['entity_name']
+        }
+      },
+      {
+        type: 'function',
+        name: 'query_legal_database',
+        description: 'Query for legal information including case law, statutes, regulations, and compliance requirements. Useful for questions about laws, legal precedents, regulatory frameworks, and compliance obligations.',
+        parameters: {
+          type: 'object',
+          properties: {
+            topic: {
+              type: 'string',
+              description: 'The legal topic or subject to research (e.g., "corporate security liability", "negligence in security services")'
+            },
+            jurisdiction: {
+              type: 'string',
+              description: 'The legal jurisdiction (e.g., "British Columbia", "Alberta", "Canada federal")'
+            },
+            keywords: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Additional keywords to refine the search'
+            }
+          },
+          required: ['topic']
         }
       }
     ];
