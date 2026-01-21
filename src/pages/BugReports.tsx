@@ -13,8 +13,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { useUserRole } from "@/hooks/useUserRole";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
-import { ErrorMonitoringDashboard, SystemTestRunner } from "@/components/monitoring";
+import { ErrorMonitoringDashboard, SystemTestRunner, BugScanVoiceAssistant } from "@/components/monitoring";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
+import { getTestSummary } from "@/lib/testing/e2eTests";
+import { useSystemTestRun } from "@/hooks/useSystemTestRun";
 
 type FixProposal = {
   root_cause: string;
@@ -39,6 +41,9 @@ const BugReports = () => {
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [activeTab, setActiveTab] = useState<string>("reports");
   const queryClient = useQueryClient();
+  const { results: testResults } = useSystemTestRun();
+  
+  const testSummary = testResults ? getTestSummary(testResults) : null;
 
   useEffect(() => {
     if (!loading && !user) {
@@ -374,6 +379,12 @@ const BugReports = () => {
             </div>
           </TabsContent>
         </Tabs>
+
+        <BugScanVoiceAssistant 
+          activeTab={activeTab}
+          bugReportCount={bugReports?.length ?? 0}
+          testResults={testSummary}
+        />
       </main>
     </div>
   );
