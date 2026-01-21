@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,8 +15,10 @@ import { useQuery } from "@tanstack/react-query";
 import { 
   Shield, User, Home, Users, Smartphone, Plane, AlertTriangle, 
   CheckCircle, ChevronRight, ChevronLeft, Clock, Zap, FileText,
-  Plus, Trash2, MapPin, Car, Building, Globe
+  Plus, Trash2, MapPin, Car, Building, Globe, Mic
 } from "lucide-react";
+import { VoiceAssistantPanel } from "./VoiceAssistantPanel";
+import { VoiceDictationInput } from "./VoiceDictationInput";
 
 interface FamilyMember {
   name: string;
@@ -353,19 +355,33 @@ export function VIPDeepScanWizard() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Full Legal Name *</Label>
-                <Input 
-                  value={formData.fullLegalName}
-                  onChange={(e) => updateFormData("fullLegalName", e.target.value)}
-                  placeholder="As appears on government ID"
-                />
+                <div className="flex gap-2">
+                  <Input 
+                    value={formData.fullLegalName}
+                    onChange={(e) => updateFormData("fullLegalName", e.target.value)}
+                    placeholder="As appears on government ID"
+                    className="flex-1"
+                  />
+                  <VoiceDictationInput 
+                    onTranscript={(text) => updateFormData("fullLegalName", text)}
+                    placeholder="Dictate name"
+                  />
+                </div>
               </div>
               <div className="space-y-2">
                 <Label>Known Aliases / Nicknames</Label>
-                <Input 
-                  value={formData.knownAliases}
-                  onChange={(e) => updateFormData("knownAliases", e.target.value)}
-                  placeholder="Separate with commas"
-                />
+                <div className="flex gap-2">
+                  <Input 
+                    value={formData.knownAliases}
+                    onChange={(e) => updateFormData("knownAliases", e.target.value)}
+                    placeholder="Separate with commas"
+                    className="flex-1"
+                  />
+                  <VoiceDictationInput 
+                    onTranscript={(text) => updateFormData("knownAliases", formData.knownAliases ? `${formData.knownAliases}, ${text}` : text)}
+                    placeholder="Dictate alias"
+                  />
+                </div>
               </div>
             </div>
 
@@ -391,21 +407,35 @@ export function VIPDeepScanWizard() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Primary Email *</Label>
-                <Input 
-                  type="email"
-                  value={formData.primaryEmail}
-                  onChange={(e) => updateFormData("primaryEmail", e.target.value)}
-                  placeholder="Main email address"
-                />
+                <div className="flex gap-2">
+                  <Input 
+                    type="email"
+                    value={formData.primaryEmail}
+                    onChange={(e) => updateFormData("primaryEmail", e.target.value)}
+                    placeholder="Main email address"
+                    className="flex-1"
+                  />
+                  <VoiceDictationInput 
+                    onTranscript={(text) => updateFormData("primaryEmail", text.toLowerCase().replace(/\s+/g, ""))}
+                    placeholder="Dictate email"
+                  />
+                </div>
               </div>
               <div className="space-y-2">
                 <Label>Secondary Emails</Label>
-                <Textarea 
-                  value={formData.secondaryEmails}
-                  onChange={(e) => updateFormData("secondaryEmails", e.target.value)}
-                  placeholder="One per line"
-                  rows={2}
-                />
+                <div className="flex gap-2">
+                  <Textarea 
+                    value={formData.secondaryEmails}
+                    onChange={(e) => updateFormData("secondaryEmails", e.target.value)}
+                    placeholder="One per line"
+                    rows={2}
+                    className="flex-1"
+                  />
+                  <VoiceDictationInput 
+                    onTranscript={(text) => updateFormData("secondaryEmails", formData.secondaryEmails ? `${formData.secondaryEmails}\n${text.toLowerCase().replace(/\s+/g, "")}` : text.toLowerCase().replace(/\s+/g, ""))}
+                    placeholder="Dictate email"
+                  />
+                </div>
               </div>
             </div>
 
@@ -431,12 +461,19 @@ export function VIPDeepScanWizard() {
 
             <div className="space-y-2">
               <Label>Social Media Handles</Label>
-              <Textarea 
-                value={formData.socialMediaHandles}
-                onChange={(e) => updateFormData("socialMediaHandles", e.target.value)}
-                placeholder="Twitter: @handle&#10;LinkedIn: /in/profile&#10;Instagram: @handle&#10;Facebook: profile.url"
-                rows={4}
-              />
+              <div className="flex gap-2">
+                <Textarea 
+                  value={formData.socialMediaHandles}
+                  onChange={(e) => updateFormData("socialMediaHandles", e.target.value)}
+                  placeholder="Twitter: @handle&#10;LinkedIn: /in/profile&#10;Instagram: @handle&#10;Facebook: profile.url"
+                  rows={4}
+                  className="flex-1"
+                />
+                <VoiceDictationInput 
+                  onTranscript={(text) => updateFormData("socialMediaHandles", formData.socialMediaHandles ? `${formData.socialMediaHandles}\n${text}` : text)}
+                  placeholder="Dictate handle"
+                />
+              </div>
             </div>
           </div>
         );
@@ -831,42 +868,70 @@ export function VIPDeepScanWizard() {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Known Adversaries / Threats</Label>
-              <Textarea 
-                value={formData.knownAdversaries}
-                onChange={(e) => updateFormData("knownAdversaries", e.target.value)}
-                placeholder="Disgruntled former employees, business rivals, stalkers, estranged family members...&#10;Include names, relationship, and threat level if known"
-                rows={4}
-              />
+              <div className="flex gap-2">
+                <Textarea 
+                  value={formData.knownAdversaries}
+                  onChange={(e) => updateFormData("knownAdversaries", e.target.value)}
+                  placeholder="Disgruntled former employees, business rivals, stalkers, estranged family members...&#10;Include names, relationship, and threat level if known"
+                  rows={4}
+                  className="flex-1"
+                />
+                <VoiceDictationInput 
+                  onTranscript={(text) => updateFormData("knownAdversaries", formData.knownAdversaries ? `${formData.knownAdversaries}\n${text}` : text)}
+                  placeholder="Dictate threats"
+                />
+              </div>
             </div>
 
             <div className="space-y-2">
               <Label>Previous Security Incidents</Label>
-              <Textarea 
-                value={formData.previousIncidents}
-                onChange={(e) => updateFormData("previousIncidents", e.target.value)}
-                placeholder="Break-ins, threats received, doxing, stalking, kidnapping attempts...&#10;Include dates and outcomes"
-                rows={4}
-              />
+              <div className="flex gap-2">
+                <Textarea 
+                  value={formData.previousIncidents}
+                  onChange={(e) => updateFormData("previousIncidents", e.target.value)}
+                  placeholder="Break-ins, threats received, doxing, stalking, kidnapping attempts...&#10;Include dates and outcomes"
+                  rows={4}
+                  className="flex-1"
+                />
+                <VoiceDictationInput 
+                  onTranscript={(text) => updateFormData("previousIncidents", formData.previousIncidents ? `${formData.previousIncidents}\n${text}` : text)}
+                  placeholder="Dictate incidents"
+                />
+              </div>
             </div>
 
             <div className="space-y-2">
               <Label>Specific Security Concerns</Label>
-              <Textarea 
-                value={formData.specificConcerns}
-                onChange={(e) => updateFormData("specificConcerns", e.target.value)}
-                placeholder="What keeps the principal up at night? Specific fears or vulnerabilities they've expressed?"
-                rows={3}
-              />
+              <div className="flex gap-2">
+                <Textarea 
+                  value={formData.specificConcerns}
+                  onChange={(e) => updateFormData("specificConcerns", e.target.value)}
+                  placeholder="What keeps the principal up at night? Specific fears or vulnerabilities they've expressed?"
+                  rows={3}
+                  className="flex-1"
+                />
+                <VoiceDictationInput 
+                  onTranscript={(text) => updateFormData("specificConcerns", formData.specificConcerns ? `${formData.specificConcerns} ${text}` : text)}
+                  placeholder="Dictate concerns"
+                />
+              </div>
             </div>
 
             <div className="space-y-2">
               <Label>Industry-Specific Threats</Label>
-              <Textarea 
-                value={formData.industryThreats}
-                onChange={(e) => updateFormData("industryThreats", e.target.value)}
-                placeholder="Activist groups targeting the industry, regulatory investigations, competitor espionage..."
-                rows={3}
-              />
+              <div className="flex gap-2">
+                <Textarea 
+                  value={formData.industryThreats}
+                  onChange={(e) => updateFormData("industryThreats", e.target.value)}
+                  placeholder="Activist groups targeting the industry, regulatory investigations, competitor espionage..."
+                  rows={3}
+                  className="flex-1"
+                />
+                <VoiceDictationInput 
+                  onTranscript={(text) => updateFormData("industryThreats", formData.industryThreats ? `${formData.industryThreats} ${text}` : text)}
+                  placeholder="Dictate threats"
+                />
+              </div>
             </div>
           </div>
         );
@@ -1081,6 +1146,17 @@ export function VIPDeepScanWizard() {
           </Button>
         )}
       </div>
+
+      {/* Voice Assistant Panel */}
+      <VoiceAssistantPanel
+        formData={formData}
+        onUpdateField={updateFormData}
+        onAddFamilyMember={addFamilyMember ? () => addFamilyMember() : undefined}
+        onAddProperty={addProperty ? () => addProperty() : undefined}
+        onAddTravelPlan={addTravelPlan ? () => addTravelPlan() : undefined}
+        currentStep={currentStep}
+        stepTitle={STEPS[currentStep - 1].title}
+      />
     </div>
   );
 }
