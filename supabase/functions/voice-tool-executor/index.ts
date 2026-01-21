@@ -20,6 +20,12 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    const assertQueryOk = (op: string, error: any) => {
+      if (!error) return;
+      console.error(`[Voice Tool] ${op} failed:`, error);
+      throw new Error(`${op} failed: ${error.message || 'Unknown error'}`);
+    };
+
     let result: unknown;
 
     switch (tool_name) {
@@ -85,20 +91,26 @@ serve(async (req) => {
       
       case 'get_current_threats': {
         // Get recent high-priority signals and incidents
-        const { data: recentSignals } = await supabase
+        const { data: recentSignals, error: recentSignalsError } = await supabase
           .from('signals')
-          .select('id, title, severity, description, source, created_at, rule_category, status')
+          .select('id, title, severity, description, source_id, created_at, rule_category, status')
           .in('severity', ['critical', 'high'])
-          .eq('status', 'active')
+          // Signal statuses in this project are typically: new, triaged, false_positive
+          .in('status', ['new', 'triaged'])
           .order('created_at', { ascending: false })
           .limit(10);
+
+        assertQueryOk('get_current_threats.signals', recentSignalsError);
         
-        const { data: openIncidents } = await supabase
+        const { data: openIncidents, error: openIncidentsError } = await supabase
           .from('incidents')
           .select('id, title, severity_level, status, incident_type, priority, created_at, opened_at')
-          .in('status', ['open', 'investigating'])
+          // Incident statuses in this project are typically: open, acknowledged, resolved
+          .in('status', ['open', 'acknowledged'])
           .order('created_at', { ascending: false })
           .limit(10);
+
+        assertQueryOk('get_current_threats.incidents', openIncidentsError);
         
         // Get threat patterns
         const signalCategories: Record<string, number> = {};
@@ -112,7 +124,7 @@ serve(async (req) => {
             id: s.id,
             title: s.title,
             severity: s.severity,
-            source: s.source,
+            source: s.source_id,
             category: s.rule_category,
             status: s.status,
             created_at: s.created_at
@@ -135,42 +147,53 @@ serve(async (req) => {
       case 'get_entity_info': {
         const entityName = toolArgs.entity_name || '';
         
-        const { data: entities } = await supabase
+        const { data: entities, error: entitiesError } = await supabase
           .from('entities')
           .select('*')
           .ilike('name', `%${entityName}%`)
           .limit(5);
+
+        assertQueryOk('get_entity_info.entities', entitiesError);
         
         if (entities && entities.length > 0) {
           const entity = entities[0];
           
           // Get related signals
-          const { data: relatedSignals } = await supabase
+          const { data: relatedSignals, error: relatedSignalsError } = await supabase
             .from('signals')
-            .select('id, title, severity, created_at, rule_category')
-            .contains('correlated_entity_ids', [entity.id])
+            .select('id, title, severity, created_at, rule_category, status')
+            .contains('auto_correlated_entities', [entity.id])
             .order('created_at', { ascending: false })
             .limit(5);
+
+          assertQueryOk('get_entity_info.relatedSignals', relatedSignalsError);
           
           // Get related incidents
-          const { data: relatedIncidents } = await supabase
-            .from('incidents')
-            .select('id, title, severity_level, status, priority')
-            .contains('correlated_entity_ids', [entity.id])
-            .order('created_at', { ascending: false })
-            .limit(3);
+          let relatedIncidents: any[] = [];
+          if (relatedSignals && relatedSignals.length > 0) {
+            const signalIds = relatedSignals.map((s: any) => s.id);
+            const { data: incidentsBySignal, error: incidentsBySignalError } = await supabase
+              .from('incidents')
+              .select('id, title, severity_level, status, priority, signal_id, opened_at')
+              .in('signal_id', signalIds)
+              .order('opened_at', { ascending: false })
+              .limit(5);
+
+            assertQueryOk('get_entity_info.relatedIncidents', incidentsBySignalError);
+            relatedIncidents = incidentsBySignal || [];
+          }
           
           result = {
             found: true,
             entity: {
               id: entity.id,
               name: entity.name,
-              type: entity.entity_type,
+              type: entity.type,
               risk_level: entity.risk_level,
-              monitoring_status: entity.monitoring_status,
+              monitoring_status: entity.active_monitoring_enabled ? 'enabled' : 'disabled',
               aliases: entity.aliases,
               description: entity.description,
-              notes: entity.notes
+              attributes: entity.attributes
             },
             recent_signals: relatedSignals || [],
             recent_incidents: relatedIncidents || [],
@@ -246,7 +269,7 @@ serve(async (req) => {
         if (queryType === 'signals' || queryType === 'comprehensive') {
           let query = supabase
             .from('signals')
-            .select('id, title, severity, source, created_at, rule_category, status, description')
+            .select('id, title, severity, source_id, created_at, rule_category, status, description')
             .gte('created_at', cutoffDate)
             .order('created_at', { ascending: false })
             .limit(limit);
@@ -260,31 +283,33 @@ serve(async (req) => {
             query = query.or(searchTerms);
           }
           
-          const { data } = await query;
+          const { data, error } = await query;
+          assertQueryOk('query_fortress_data.signals', error);
           results.signals = data || [];
         }
         
         if (queryType === 'incidents' || queryType === 'comprehensive') {
           let query = supabase
             .from('incidents')
-            .select('id, title, severity_level, status, priority, incident_type, created_at, description')
+            .select('id, title, severity_level, status, priority, incident_type, created_at, opened_at, summary')
             .gte('created_at', cutoffDate)
             .order('created_at', { ascending: false })
             .limit(limit);
           
           if (keywords.length > 0) {
-            const searchTerms = keywords.map((k: string) => `title.ilike.%${k}%,description.ilike.%${k}%`).join(',');
+            const searchTerms = keywords.map((k: string) => `title.ilike.%${k}%,summary.ilike.%${k}%`).join(',');
             query = query.or(searchTerms);
           }
           
-          const { data } = await query;
+          const { data, error } = await query;
+          assertQueryOk('query_fortress_data.incidents', error);
           results.incidents = data || [];
         }
         
         if (queryType === 'entities' || queryType === 'comprehensive') {
           let query = supabase
             .from('entities')
-            .select('id, name, entity_type, risk_level, monitoring_status, aliases, description')
+            .select('id, name, type, risk_level, active_monitoring_enabled, aliases, description')
             .limit(limit);
           
           if (keywords.length > 0) {
@@ -292,8 +317,13 @@ serve(async (req) => {
             query = query.or(searchTerms);
           }
           
-          const { data } = await query;
-          results.entities = data || [];
+          const { data, error } = await query;
+          assertQueryOk('query_fortress_data.entities', error);
+          results.entities = (data || []).map((e: any) => ({
+            ...e,
+            entity_type: e.type,
+            monitoring_status: e.active_monitoring_enabled ? 'enabled' : 'disabled',
+          }));
         }
         
         if (queryType === 'documents' || queryType === 'comprehensive') {
@@ -309,7 +339,8 @@ serve(async (req) => {
             query = query.or(searchTerms);
           }
           
-          const { data } = await query;
+          const { data, error } = await query;
+          assertQueryOk('query_fortress_data.documents', error);
           results.documents = data || [];
         }
         
@@ -332,32 +363,38 @@ serve(async (req) => {
         const cutoffDate = new Date(Date.now() - timeRangeHours * 60 * 60 * 1000).toISOString();
         
         // Get recent signals
-        const { data: signals } = await supabase
+        const { data: signals, error: signalsError } = await supabase
           .from('signals')
-          .select('id, title, severity, source, created_at, rule_category, status')
+          .select('id, title, severity, source_id, created_at, rule_category, status')
           .gte('created_at', cutoffDate)
           .order('created_at', { ascending: false })
           .limit(50);
+
+        assertQueryOk('generate_intelligence_summary.signals', signalsError);
         
         // Get critical/high signals
         const criticalSignals = signals?.filter((s: any) => ['critical', 'high'].includes(s.severity)) || [];
         
         // Get open incidents
-        const { data: incidents } = await supabase
+        const { data: incidents, error: incidentsError } = await supabase
           .from('incidents')
           .select('id, title, severity_level, status, priority, incident_type, opened_at')
-          .in('status', ['open', 'investigating'])
+          .in('status', ['open', 'acknowledged'])
           .order('opened_at', { ascending: false })
           .limit(20);
+
+        assertQueryOk('generate_intelligence_summary.incidents', incidentsError);
         
         const highPriorityIncidents = incidents?.filter((i: any) => ['p1', 'p2'].includes(i.priority)) || [];
         
         // Get high-risk entities
-        const { data: highRiskEntities } = await supabase
+        const { data: highRiskEntities, error: highRiskEntitiesError } = await supabase
           .from('entities')
-          .select('id, name, entity_type, risk_level, monitoring_status')
+          .select('id, name, type, risk_level, active_monitoring_enabled')
           .in('risk_level', ['critical', 'high'])
           .limit(10);
+
+        assertQueryOk('generate_intelligence_summary.entities', highRiskEntitiesError);
         
         // Compute threat patterns
         const categoryMap: Record<string, number> = {};
@@ -384,7 +421,7 @@ serve(async (req) => {
           critical_signals: criticalSignals.slice(0, 5).map((s: any) => ({
             title: s.title,
             severity: s.severity,
-            source: s.source,
+            source: s.source_id,
             category: s.rule_category,
             time: s.created_at
           })),
@@ -398,7 +435,7 @@ serve(async (req) => {
           threat_patterns: threatPatterns,
           high_risk_entities: highRiskEntities?.slice(0, 5).map((e: any) => ({
             name: e.name,
-            type: e.entity_type,
+            type: e.type,
             risk_level: e.risk_level
           })) || [],
           briefing_note: `Intelligence summary for the past ${timeRangeHours} hours. All data sourced from Fortress database.`
@@ -489,7 +526,7 @@ serve(async (req) => {
             .from('incidents')
             .select('id, title, priority, status')
             .eq('client_id', client.id)
-            .in('status', ['open', 'investigating'])
+            .in('status', ['open', 'acknowledged'])
             .limit(5);
           
           result = {
@@ -673,8 +710,8 @@ async function searchInternalOnly(supabase: any, query: string, geographic_focus
   // Search incidents
   const { data: incidents } = await supabase
     .from('incidents')
-    .select('title, description, severity_level, status, created_at, priority')
-    .or(`title.ilike.%${query}%,description.ilike.%${query}%`)
+    .select('title, summary, severity_level, status, created_at, priority')
+    .or(`title.ilike.%${query}%,summary.ilike.%${query}%`)
     .order('created_at', { ascending: false })
     .limit(5);
   
@@ -688,14 +725,14 @@ async function searchInternalOnly(supabase: any, query: string, geographic_focus
   // Search entities
   const { data: entities } = await supabase
     .from('entities')
-    .select('name, entity_type, risk_level, monitoring_status')
+    .select('name, type, risk_level, active_monitoring_enabled')
     .or(`name.ilike.%${query}%,aliases.cs.{${query}}`)
     .limit(5);
   
   if (entities?.length) {
     internalResults.push('\n**Known Entities:**');
     entities.forEach((e: any) => {
-      internalResults.push(`- ${e.name} (${e.entity_type}) - Risk: ${e.risk_level || 'Unknown'}`);
+      internalResults.push(`- ${e.name} (${e.type}) - Risk: ${e.risk_level || 'Unknown'}`);
     });
   }
   
