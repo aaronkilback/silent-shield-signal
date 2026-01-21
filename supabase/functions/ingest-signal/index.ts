@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -127,6 +128,20 @@ serve(async (req) => {
     }
     
     let signalText = text || JSON.stringify(event);
+    
+    // EARLY REJECTION: Check for false positive content patterns
+    if (isFalsePositiveContent(signalText)) {
+      console.log(`[FP Filter] Rejecting false positive signal: ${signalText.substring(0, 100)}...`);
+      return new Response(
+        JSON.stringify({ 
+          status: 'rejected',
+          reason: 'false_positive_pattern',
+          message: 'Content matches known false positive pattern'
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
     let signalLocation = location || null;
     let signalRaw = raw_json || event || { text: signalText };
     

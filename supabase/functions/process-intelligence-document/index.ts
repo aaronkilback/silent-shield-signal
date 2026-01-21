@@ -1,6 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -254,6 +255,28 @@ serve(async (req) => {
     // PRIORITY 2: If no entity client, use keyword matching
     if (clientMatches.length === 0) {
       clientMatches = matchClientKeywords(document.raw_text || '', clients || []);
+    }
+    
+    // PRIORITY 3: Filter out known false positive content patterns
+    const documentText = document.raw_text || document.title || '';
+    if (isFalsePositiveContent(documentText)) {
+      console.log(`[FP Filter] Rejecting false positive content: ${documentText.substring(0, 100)}...`);
+      await supabase
+        .from('ingested_documents')
+        .update({
+          processing_status: 'completed',
+          processed_at: new Date().toISOString(),
+          error_message: 'False positive content pattern detected'
+        })
+        .eq('id', documentId);
+      
+      return new Response(
+        JSON.stringify({
+          success: true,
+          results: { message: 'False positive content rejected', skipped: true }
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
     
     // Skip processing if no client matches at all
