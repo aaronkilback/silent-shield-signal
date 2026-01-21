@@ -1,5 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -27,7 +25,7 @@ function checkRateLimit(ip: string): boolean {
   return true;
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -98,6 +96,12 @@ You have access to the full Fortress intelligence platform via tools. Use them w
 - get_travel_status: Check traveler locations, itineraries, travel alerts
 - get_investigation_status: Get status of ongoing investigations
 
+🧠 PERSISTENT MEMORY:
+- get_user_memory: Retrieve saved preferences/projects/facts
+- remember_this: Save a key fact/decision/preference for next time
+- update_user_preferences: Update communication/format preferences
+- manage_project_context: Track ongoing projects (create/update/pause/complete)
+
 WHEN TO USE TOOLS:
 - "What threats do we have?" → get_current_threats
 - "Tell me about [entity name]" → get_entity_info
@@ -110,6 +114,9 @@ WHEN TO USE TOOLS:
 - "What's our procedure for [topic]?" → get_knowledge_base
 - "Where are our travelers?" → get_travel_status
 - "What investigations are open?" → get_investigation_status
+- "Remember this" / "save this" → remember_this
+- "My preference is..." → update_user_preferences
+- "I'm working on..." → manage_project_context
 
 AFTER GETTING TOOL RESULTS:
 - Summarize conversationally — don't read raw data
@@ -267,6 +274,70 @@ Structure responses as: What's happening → What matters → Recommendation →
             investigation_name: { type: 'string', description: 'Investigation name to search for (optional)' }
           },
           required: []
+        }
+      },
+      {
+        type: 'function',
+        name: 'get_user_memory',
+        description: 'Retrieve the user\'s persistent memory context (preferences, active projects, remembered facts).',
+        parameters: {
+          type: 'object',
+          properties: {
+            current_client_id: { type: 'string', description: 'Optional current client context to prioritize client-scoped memory' }
+          },
+          required: []
+        }
+      },
+      {
+        type: 'function',
+        name: 'remember_this',
+        description: 'Save important information to persistent memory (key facts, decisions, preferences).',
+        parameters: {
+          type: 'object',
+          properties: {
+            memory_type: { type: 'string', enum: ['summary', 'key_fact', 'preference', 'decision'] },
+            content: { type: 'string', description: 'The information to remember (concise but complete)' },
+            context_tags: { type: 'array', items: { type: 'string' } },
+            importance_score: { type: 'number', description: '1-10 (default 5)' },
+            client_id: { type: 'string', description: 'Optional: associate memory with a client' },
+            expires_in_days: { type: 'number', description: 'Optional: expire after N days' }
+          },
+          required: ['memory_type', 'content']
+        }
+      },
+      {
+        type: 'function',
+        name: 'update_user_preferences',
+        description: 'Update user preferences for communication style/format/timezone and custom settings.',
+        parameters: {
+          type: 'object',
+          properties: {
+            communication_style: { type: 'string' },
+            preferred_format: { type: 'string' },
+            role_context: { type: 'string' },
+            timezone: { type: 'string' },
+            language_preference: { type: 'string' },
+            custom_preferences: { type: 'object' }
+          },
+          required: []
+        }
+      },
+      {
+        type: 'function',
+        name: 'manage_project_context',
+        description: 'Create/update/pause/complete a project in the user\'s persistent context.',
+        parameters: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', enum: ['create', 'update', 'complete', 'pause'] },
+            project_id: { type: 'string' },
+            project_name: { type: 'string' },
+            project_description: { type: 'string' },
+            key_details: { type: 'object' },
+            priority: { type: 'string', enum: ['high', 'medium', 'low'] },
+            client_id: { type: 'string' }
+          },
+          required: ['action']
         }
       }
     ];
