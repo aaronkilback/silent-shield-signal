@@ -4384,6 +4384,141 @@ export const activityTrackingTests = {
 };
 
 // ============================================
+// VOICE FEATURES TESTS
+// ============================================
+
+export const voiceFeaturesTests = {
+  name: 'Voice Features',
+  tests: [
+    {
+      name: 'OpenAI realtime token endpoint responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('openai-realtime-token', {
+          body: { test_mode: true }
+        });
+        if (error && error.message?.includes('timeout')) {
+          throw new Error('Token endpoint timed out');
+        }
+      },
+    },
+    {
+      name: 'Voice tool executor responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('voice-tool-executor', {
+          body: { 
+            tool_name: 'get_current_threats',
+            arguments: {}
+          }
+        });
+        if (error && error.message?.includes('timeout')) {
+          throw new Error('Voice tool executor timed out');
+        }
+        if (!error && !data) {
+          throw new Error('Voice tool executor returned empty response');
+        }
+      },
+    },
+    {
+      name: 'Voice memory tools available',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('voice-tool-executor', {
+          body: { 
+            tool_name: 'get_user_memory',
+            arguments: {}
+          }
+        });
+        if (error && error.message?.includes('timeout')) {
+          throw new Error('Memory tools timed out');
+        }
+      },
+    },
+    {
+      name: 'Browser SpeechRecognition API available',
+      fn: async () => {
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          throw new Error('SpeechRecognition API not available in this browser');
+        }
+      },
+    },
+    {
+      name: 'MediaDevices API available for microphone',
+      fn: async () => {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('MediaDevices API not available');
+        }
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const audioInputs = devices.filter(d => d.kind === 'audioinput');
+        if (audioInputs.length === 0) {
+          throw new Error('No audio input devices found');
+        }
+      },
+    },
+    {
+      name: 'WebRTC RTCPeerConnection available',
+      fn: async () => {
+        if (typeof RTCPeerConnection === 'undefined') {
+          throw new Error('RTCPeerConnection not available');
+        }
+        const pc = new RTCPeerConnection();
+        if (!pc) {
+          throw new Error('Failed to create RTCPeerConnection');
+        }
+        pc.close();
+      },
+    },
+    {
+      name: 'Voice tool query_fortress_data works',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('voice-tool-executor', {
+          body: { 
+            tool_name: 'query_fortress_data',
+            arguments: { query: 'recent signals', data_type: 'signals' }
+          }
+        });
+        if (error && error.message?.includes('timeout')) {
+          throw new Error('Fortress data query timed out');
+        }
+      },
+    },
+    {
+      name: 'Voice search_web tool responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('voice-tool-executor', {
+          body: { 
+            tool_name: 'search_web',
+            arguments: { query: 'test query' }
+          }
+        });
+        if (error && error.message?.includes('timeout')) {
+          throw new Error('Web search tool timed out');
+        }
+      },
+    },
+    {
+      name: 'Agent memory table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('agent_memory')
+          .select('id')
+          .limit(1);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'AI assistant messages table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('ai_assistant_messages')
+          .select('id')
+          .limit(1);
+        if (error) throw error;
+      },
+    },
+  ],
+};
+
+// ============================================
 // RUN ALL TESTS
 // ============================================
 
@@ -4471,6 +4606,9 @@ export async function runAllTests(): Promise<TestSuite[]> {
     securityAccessTests,
     signalFeedbackTests,
     activityTrackingTests,
+    
+    // Voice Features
+    voiceFeaturesTests,
   ];
   
   const results: TestSuite[] = [];
