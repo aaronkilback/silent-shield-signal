@@ -243,11 +243,30 @@ You MUST specify ALL of:
 
 ---
 
-### 9. EXTERNAL INTEL FILTER
+### 9. EXTERNAL INTEL FILTER & TEMPORAL CONTEXT
 
-Only include external sources DIRECTLY RELEVANT to current events.
-• Label older items: "Historical context only — not evidence of current threat"
-• Include publication date badge: 📜 HISTORICAL (>7 days) | ⚠️ DATED (>30 days)
+**CRITICAL: EVERY signal and source MUST include temporal context:**
+
+For EVERY piece of intelligence, you MUST:
+• **State the EVENT DATE** — when the event/content was originally created
+• **State the DISCOVERY DATE** — when we ingested/detected it  
+• **Apply age classification badges:**
+  - 🟢 CURRENT (event < 7 days old)
+  - 🔵 RECENT (event 7-30 days old)
+  - 🟡 DATED (event 30 days - 1 year old) — label: "📜 DATED - [X months ago]"
+  - 🟠 HISTORICAL (event > 1 year old) — label: "⚠️ HISTORICAL - [X years ago]"
+
+**MANDATORY for historical content (>30 days old):**
+• Preface with: "HISTORICAL CONTEXT (Event: [date]):"
+• Explicitly state: "This event occurred [X months/years] ago and is provided for context only"
+• DO NOT present as current or emerging threat
+• DO NOT conflate with current actionable intelligence
+
+**Example of CORRECT temporal reporting:**
+✓ "**⚠️ HISTORICAL (Feb 2023):** Protest at [location] drew 200 participants. *This event occurred 2 years ago and is provided for historical context only. It does not represent a current active threat.*"
+
+**Example of INCORRECT reporting:**
+❌ "There are reports of protests at [location]" (without date context — reader may assume current)
 
 ---
 
@@ -274,7 +293,7 @@ List tools used with results:
 🚫 Do NOT claim "X verified sources" without listing them
 
 ---
-*OUTPUT GOAL: Produce briefings that are precise, conservative in claims, and decision-ready for executives.*
+*OUTPUT GOAL: Produce briefings that are precise, conservative in claims, temporally accurate, and decision-ready for executives.*
 ---
 
 ┌─────────────────────────────────────────────────────────────────────────────┐

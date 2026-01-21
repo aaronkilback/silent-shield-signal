@@ -3091,7 +3091,7 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
     case "get_recent_signals": {
       let query = supabaseClient
         .from("signals")
-        .select("id, title, description, severity, received_at, status, client_id, clients(name)")
+        .select("id, title, description, severity, received_at, created_at, event_date, status, client_id, clients(name)")
         .order("received_at", { ascending: false })
         .limit(args.limit || 10);
 
@@ -3124,7 +3124,53 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
 
       const { data, error } = await query;
       if (error) throw error;
-      return data;
+      
+      // Enrich signals with temporal context
+      const now = new Date();
+      const enrichedSignals = (data || []).map((signal: any) => {
+        const eventDate = signal.event_date ? new Date(signal.event_date) : null;
+        const ingestedDate = new Date(signal.received_at || signal.created_at);
+        
+        let ageCategory = 'current';
+        let ageDescription = '';
+        
+        if (eventDate) {
+          const ageDays = Math.floor((now.getTime() - eventDate.getTime()) / (1000 * 60 * 60 * 24));
+          
+          if (ageDays <= 7) {
+            ageCategory = 'current';
+            ageDescription = ageDays === 0 ? 'Today' : ageDays === 1 ? 'Yesterday' : `${ageDays} days ago`;
+          } else if (ageDays <= 30) {
+            ageCategory = 'recent';
+            ageDescription = `${Math.ceil(ageDays / 7)} weeks ago`;
+          } else if (ageDays <= 365) {
+            ageCategory = 'dated';
+            ageDescription = `${Math.floor(ageDays / 30)} months ago`;
+          } else {
+            ageCategory = 'historical';
+            const years = Math.floor(ageDays / 365);
+            ageDescription = years === 1 ? '1 year ago' : `${years} years ago`;
+          }
+        }
+        
+        return {
+          ...signal,
+          temporal_context: {
+            event_date: signal.event_date,
+            ingested_at: signal.received_at || signal.created_at,
+            age_category: ageCategory,
+            age_description: ageDescription,
+            is_historical: ageCategory === 'historical' || ageCategory === 'dated',
+            warning: ageCategory === 'historical' 
+              ? `⚠️ HISTORICAL: This event occurred ${ageDescription}. Do NOT present as current threat.`
+              : ageCategory === 'dated'
+              ? `📜 DATED: This event occurred ${ageDescription}. Provide temporal context when reporting.`
+              : null
+          }
+        };
+      });
+      
+      return enrichedSignals;
     }
 
     case "search_entities": {
