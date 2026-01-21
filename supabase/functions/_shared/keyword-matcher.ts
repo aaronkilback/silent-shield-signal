@@ -1,6 +1,36 @@
 // Shared keyword matching utility for all monitors
 // Uses weighted scoring to pick the BEST client match, not just any match
 
+// False positive exclusion patterns - organizations/entities that commonly match broad keywords
+export const FALSE_POSITIVE_PATTERNS = [
+  // "BC" false positives (not British Columbia/client related)
+  /\bBakersfield\s+College\b/i,
+  /\bBC\s+Partners\b/i,
+  /\bBC\s+Partners\s+Real\s+Estate\b/i,
+  /\bMaria\s+BC\b/i,
+  /\bBC\s+School\s+of\b/i,
+  /\bBC\s+Offroad\b/i,
+  /\bGlobal\s+News\s+BC\b/i,  // Too generic
+  // Generic service announcements
+  /\boffers?\s+(online\s+)?support\b/i,
+  /\benrollment\s+events?\b/i,
+  /\bcareer\s+workshops?\b/i,
+  /\bstudent\s+information\b/i,
+  /\bcompany\s+profile\b/i,
+  /\balternative\s+investment\b/i,
+  // Music/entertainment
+  /\breleases?\s+['"]?[A-Za-z]+['"]?\s+(LP|EP|album)\b/i,
+  /\bannounced\s+the\s+release\s+of\s+their\s+(LP|EP|album)\b/i,
+];
+
+// Check if content matches known false positive patterns
+export function isFalsePositiveContent(text: string): boolean {
+  return FALSE_POSITIVE_PATTERNS.some(pattern => pattern.test(text));
+}
+
+// Minimum keyword length for standalone matching (short keywords need context)
+const MIN_STANDALONE_KEYWORD_LENGTH = 4;
+
 export interface ClientMatch {
   clientId: string;
   clientName: string;
@@ -19,6 +49,12 @@ export function matchClientKeywords(
     locations?: string[];
   }>
 ): ClientMatch[] {
+  // Pre-check: reject known false positive content
+  if (isFalsePositiveContent(text)) {
+    console.log(`[KeywordMatcher] Rejecting false positive content: ${text.substring(0, 80)}...`);
+    return [];
+  }
+
   const lowerText = text.toLowerCase();
   const clientScores: ClientMatch[] = [];
   
