@@ -5317,6 +5317,7 @@ export type Database = {
           description: string | null
           engagement_metrics: Json | null
           entity_tags: string[] | null
+          event_date: string | null
           hashtags: string[] | null
           id: string
           information_accuracy: string | null
@@ -5363,6 +5364,7 @@ export type Database = {
           description?: string | null
           engagement_metrics?: Json | null
           entity_tags?: string[] | null
+          event_date?: string | null
           hashtags?: string[] | null
           id?: string
           information_accuracy?: string | null
@@ -5409,6 +5411,7 @@ export type Database = {
           description?: string | null
           engagement_metrics?: Json | null
           entity_tags?: string[] | null
+          event_date?: string | null
           hashtags?: string[] | null
           id?: string
           information_accuracy?: string | null

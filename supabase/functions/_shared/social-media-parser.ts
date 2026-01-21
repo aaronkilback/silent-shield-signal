@@ -349,3 +349,119 @@ export function isHighPriorityContent(text: string): boolean {
   return (hasSecurityKeyword && hasPipelineKeyword) || 
          (hasSecurityKeyword && hasIndigenousKeyword);
 }
+
+// Extract publication date from social media content and text
+export function extractPublicationDate(text: string, url: string = ''): Date | null {
+  const now = new Date();
+  
+  // Pattern 1: Relative time in text (e.g., "2 hours ago", "3 days ago", "1 year ago")
+  const relativeTimePatterns = [
+    { pattern: /(\d+)\s*(?:second|sec)s?\s*ago/i, unit: 'seconds' },
+    { pattern: /(\d+)\s*(?:minute|min)s?\s*ago/i, unit: 'minutes' },
+    { pattern: /(\d+)\s*(?:hour|hr)s?\s*ago/i, unit: 'hours' },
+    { pattern: /(\d+)\s*days?\s*ago/i, unit: 'days' },
+    { pattern: /(\d+)\s*weeks?\s*ago/i, unit: 'weeks' },
+    { pattern: /(\d+)\s*months?\s*ago/i, unit: 'months' },
+    { pattern: /(\d+)\s*years?\s*ago/i, unit: 'years' },
+  ];
+  
+  for (const { pattern, unit } of relativeTimePatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const value = parseInt(match[1], 10);
+      const date = new Date(now);
+      switch (unit) {
+        case 'seconds': date.setSeconds(date.getSeconds() - value); break;
+        case 'minutes': date.setMinutes(date.getMinutes() - value); break;
+        case 'hours': date.setHours(date.getHours() - value); break;
+        case 'days': date.setDate(date.getDate() - value); break;
+        case 'weeks': date.setDate(date.getDate() - (value * 7)); break;
+        case 'months': date.setMonth(date.getMonth() - value); break;
+        case 'years': date.setFullYear(date.getFullYear() - value); break;
+      }
+      return date;
+    }
+  }
+  
+  // Pattern 2: Absolute dates (e.g., "January 15, 2023", "Jan 15 2023", "2023-01-15")
+  const absoluteDatePatterns = [
+    // ISO format: 2023-01-15 or 2023/01/15
+    /(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/,
+    // Month Day, Year: January 15, 2023
+    /(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})/i,
+    // Day Month Year: 15 January 2023
+    /(\d{1,2})(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?),?\s+(\d{4})/i,
+    // Short format: MM/DD/YYYY or DD/MM/YYYY
+    /(\d{1,2})\/(\d{1,2})\/(\d{2,4})/,
+  ];
+  
+  for (const pattern of absoluteDatePatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      try {
+        const dateStr = match[0];
+        const parsed = new Date(dateStr);
+        if (!isNaN(parsed.getTime()) && parsed <= now) {
+          return parsed;
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+  
+  // Pattern 3: Facebook-specific date formats (e.g., "March 15 at 3:30 PM")
+  const fbDatePattern = /(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:\s+at\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?/i;
+  const fbMatch = text.match(fbDatePattern);
+  if (fbMatch) {
+    try {
+      // Assume current year if not specified
+      const dateStr = `${fbMatch[0]} ${now.getFullYear()}`;
+      const parsed = new Date(dateStr);
+      // If the date is in the future, it's probably from last year
+      if (parsed > now) {
+        parsed.setFullYear(parsed.getFullYear() - 1);
+      }
+      if (!isNaN(parsed.getTime())) {
+        return parsed;
+      }
+    } catch {
+      // Ignore parsing errors
+    }
+  }
+  
+  return null;
+}
+
+// Calculate the age category of content
+export type ContentAge = 'current' | 'recent' | 'dated' | 'historical';
+
+export function categorizeContentAge(eventDate: Date | null, ingestedAt: Date = new Date()): ContentAge {
+  if (!eventDate) return 'current'; // Unknown, assume current
+  
+  const diffMs = ingestedAt.getTime() - eventDate.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  
+  if (diffDays <= 7) return 'current';      // Within the last week
+  if (diffDays <= 30) return 'recent';      // Within the last month  
+  if (diffDays <= 365) return 'dated';      // Within the last year
+  return 'historical';                       // Older than a year
+}
+
+// Get a human-readable age description
+export function getContentAgeDescription(eventDate: Date | null): string {
+  if (!eventDate) return '';
+  
+  const now = new Date();
+  const diffMs = now.getTime() - eventDate.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  
+  if (diffDays <= 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays} days ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`;
+  
+  const years = Math.floor(diffDays / 365);
+  return years === 1 ? '1 year ago' : `${years} years ago`;
+}

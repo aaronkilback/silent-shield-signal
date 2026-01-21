@@ -7,6 +7,82 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Extract publication date from social media content and text
+function extractPublicationDate(text: string, _url: string = ''): Date | null {
+  const now = new Date();
+  
+  // Pattern 1: Relative time in text (e.g., "2 hours ago", "3 days ago", "1 year ago")
+  const relativeTimePatterns = [
+    { pattern: /(\d+)\s*(?:second|sec)s?\s*ago/i, unit: 'seconds' },
+    { pattern: /(\d+)\s*(?:minute|min)s?\s*ago/i, unit: 'minutes' },
+    { pattern: /(\d+)\s*(?:hour|hr)s?\s*ago/i, unit: 'hours' },
+    { pattern: /(\d+)\s*days?\s*ago/i, unit: 'days' },
+    { pattern: /(\d+)\s*weeks?\s*ago/i, unit: 'weeks' },
+    { pattern: /(\d+)\s*months?\s*ago/i, unit: 'months' },
+    { pattern: /(\d+)\s*years?\s*ago/i, unit: 'years' },
+  ];
+  
+  for (const { pattern, unit } of relativeTimePatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const value = parseInt(match[1], 10);
+      const date = new Date(now);
+      switch (unit) {
+        case 'seconds': date.setSeconds(date.getSeconds() - value); break;
+        case 'minutes': date.setMinutes(date.getMinutes() - value); break;
+        case 'hours': date.setHours(date.getHours() - value); break;
+        case 'days': date.setDate(date.getDate() - value); break;
+        case 'weeks': date.setDate(date.getDate() - (value * 7)); break;
+        case 'months': date.setMonth(date.getMonth() - value); break;
+        case 'years': date.setFullYear(date.getFullYear() - value); break;
+      }
+      return date;
+    }
+  }
+  
+  // Pattern 2: Absolute dates (e.g., "January 15, 2023", "2023-01-15")
+  const absoluteDatePatterns = [
+    /(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/,
+    /(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})/i,
+    /(\d{1,2})(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?),?\s+(\d{4})/i,
+  ];
+  
+  for (const pattern of absoluteDatePatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      try {
+        const dateStr = match[0];
+        const parsed = new Date(dateStr);
+        if (!isNaN(parsed.getTime()) && parsed <= now) {
+          return parsed;
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+  
+  // Pattern 3: Facebook-specific date formats (e.g., "March 15 at 3:30 PM")
+  const fbDatePattern = /(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:\s+at\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?/i;
+  const fbMatch = text.match(fbDatePattern);
+  if (fbMatch) {
+    try {
+      const dateStr = `${fbMatch[0]} ${now.getFullYear()}`;
+      const parsed = new Date(dateStr);
+      if (parsed > now) {
+        parsed.setFullYear(parsed.getFullYear() - 1);
+      }
+      if (!isNaN(parsed.getTime())) {
+        return parsed;
+      }
+    } catch {
+      // Ignore parsing errors
+    }
+  }
+  
+  return null;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -531,6 +607,13 @@ Extract all entities, signals, and their relationships.`
           continue; // Skip to next clientMatch
         }
 
+        // Extract event date from document content
+        const sourceUrl = document.source_url || document.metadata?.url || '';
+        const contentText = `${document.raw_text || ''} ${document.post_caption || ''}`;
+        const eventDate = document.post_date 
+          ? new Date(document.post_date)
+          : extractPublicationDate(contentText, sourceUrl);
+        
         const { data: newSignal, error: signalError } = await supabase
           .from('signals')
           .insert({
@@ -548,6 +631,7 @@ Extract all entities, signals, and their relationships.`
             status: 'new',
             is_test: false,
             client_id: clientMatch.clientId,
+            event_date: eventDate?.toISOString() || null,
             // Propagate media and social data from document to signal
             media_urls: document.media_urls || [],
             thumbnail_url: document.thumbnail_url,
