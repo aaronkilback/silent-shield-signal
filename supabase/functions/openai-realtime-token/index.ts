@@ -7,8 +7,8 @@ const corsHeaders = {
 
 // Simple in-memory rate limiting (per IP)
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
-const RATE_LIMIT_MAX = 10; // Max requests per window
-const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute window
+const RATE_LIMIT_MAX = 10;
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 
 function checkRateLimit(ip: string): boolean {
   const now = Date.now();
@@ -28,7 +28,6 @@ function checkRateLimit(ip: string): boolean {
 }
 
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -43,12 +42,10 @@ serve(async (req) => {
       );
     }
 
-    // Get client IP for rate limiting
     const clientIP = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 
                      req.headers.get('x-real-ip') || 
                      'unknown';
     
-    // Check rate limit
     if (!checkRateLimit(clientIP)) {
       console.warn(`Rate limit exceeded for IP: ${clientIP}`);
       return new Response(
@@ -57,7 +54,6 @@ serve(async (req) => {
       );
     }
 
-    // Parse request body for optional context
     let agentContext = '';
     let conversationHistory: Array<{ role: string; content: string }> = [];
     
@@ -82,32 +78,52 @@ VOICE STYLE:
 
 CURRENT DATE: ${currentDate}
 
-CRITICAL CAPABILITIES - USE TOOLS PROACTIVELY:
-- You have access to tools for searching the web and the Fortress database
-- When users ask about current events, threats, or need research: USE search_web
-- When users ask about threat status or active incidents: USE get_current_threats  
-- When users ask about specific people, organizations, or entities: USE get_entity_info
-- When users ask about legal topics, case law, regulations, or compliance: USE query_legal_database
+YOUR CAPABILITIES - USE TOOLS PROACTIVELY:
+You have access to the full Fortress intelligence platform via tools. Use them whenever relevant:
 
-ALWAYS use tools when the user asks about:
-- Current news or events ("what's happening with...", "latest on...")
-- Threat assessments, security situations, or active incidents
-- Information about people, organizations, or locations
-- Legal matters, case law, regulations, statutes, or compliance requirements
-- Any topic requiring current or factual information
+📊 DATA ACCESS:
+- get_current_threats: Get active high-priority signals and open incidents
+- get_entity_info: Look up people, organizations, locations in the database
+- query_fortress_data: Search signals, incidents, entities, documents by keywords
+- generate_intelligence_summary: Create a formal briefing report
+- analyze_threat_radar: Get overall threat level and patterns
 
-AFTER getting tool results:
+🌐 EXTERNAL RESEARCH:
+- search_web: Search the internet for current news, events, intelligence
+- query_legal_database: Research case law, statutes, regulations
+
+📋 OPERATIONAL DATA:
+- get_client_info: Look up client details, their signals and incidents
+- get_knowledge_base: Search internal knowledge articles and procedures
+- get_travel_status: Check traveler locations, itineraries, travel alerts
+- get_investigation_status: Get status of ongoing investigations
+
+WHEN TO USE TOOLS:
+- "What threats do we have?" → get_current_threats
+- "Tell me about [entity name]" → get_entity_info
+- "Search for signals about [topic]" → query_fortress_data with keywords
+- "Give me a briefing" → generate_intelligence_summary
+- "What's our threat level?" → analyze_threat_radar
+- "What's happening with [news topic]?" → search_web
+- "Look up case law on [topic]" → query_legal_database
+- "Status of [client name]" → get_client_info
+- "What's our procedure for [topic]?" → get_knowledge_base
+- "Where are our travelers?" → get_travel_status
+- "What investigations are open?" → get_investigation_status
+
+AFTER GETTING TOOL RESULTS:
 - Summarize conversationally — don't read raw data
 - Include source attribution and dates when relevant
 - If data is historical, clearly mention when the event occurred
-- For legal information, always include the jurisdiction and add "this is not legal advice"
+- For legal information, always add "this is not legal advice"
 - Distinguish between "current threats" and "historical context"
 
 ANTI-FABRICATION RULES (CRITICAL):
-- NEVER invent news, threats, incidents, or legal information
+- NEVER invent news, threats, incidents, signals, or legal information
 - If search returns nothing, say "I don't have current information on that"
 - Report only what the tools return — no speculation or embellishment
 - For legal queries with no results, recommend consulting a legal professional
+- Never claim to have found something that wasn't in the tool results
 
 Structure responses as: What's happening → What matters → Recommendation → Next step. Never dramatize. Never ramble.`;
 
@@ -119,23 +135,17 @@ Structure responses as: What's happening → What matters → Recommendation →
       instructions += `\n\nPrevious conversation context:\n${conversationHistory.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n')}`;
     }
 
-    // Define tools for the realtime session
+    // Define all tools matching chat agent capabilities
     const tools = [
       {
         type: 'function',
         name: 'search_web',
-        description: 'Search the web and Fortress internal database for information about current events, threats, news, or any topic. Use this for any question requiring factual or current information.',
+        description: 'Search the web for current events, news, threats, or any topic. Use for questions requiring external/current information.',
         parameters: {
           type: 'object',
           properties: {
-            query: {
-              type: 'string',
-              description: 'The search query - what to look for'
-            },
-            geographic_focus: {
-              type: 'string',
-              description: 'Optional geographic focus (e.g., "British Columbia", "Canada", "North America")'
-            }
+            query: { type: 'string', description: 'The search query' },
+            geographic_focus: { type: 'string', description: 'Geographic focus (e.g., "British Columbia", "Canada")' }
           },
           required: ['query']
         }
@@ -143,12 +153,8 @@ Structure responses as: What's happening → What matters → Recommendation →
       {
         type: 'function',
         name: 'get_current_threats',
-        description: 'Get current high-priority signals and open incidents from the Fortress system. Use when asked about current threat status, active incidents, or security situation.',
-        parameters: {
-          type: 'object',
-          properties: {},
-          required: []
-        }
+        description: 'Get current high-priority signals and open incidents. Use when asked about current threat status, active incidents, or security situation.',
+        parameters: { type: 'object', properties: {}, required: [] }
       },
       {
         type: 'function',
@@ -157,10 +163,7 @@ Structure responses as: What's happening → What matters → Recommendation →
         parameters: {
           type: 'object',
           properties: {
-            entity_name: {
-              type: 'string',
-              description: 'The name of the entity to look up'
-            }
+            entity_name: { type: 'string', description: 'The name of the entity to look up' }
           },
           required: ['entity_name']
         }
@@ -168,32 +171,108 @@ Structure responses as: What's happening → What matters → Recommendation →
       {
         type: 'function',
         name: 'query_legal_database',
-        description: 'Query for legal information including case law, statutes, regulations, and compliance requirements. Useful for questions about laws, legal precedents, regulatory frameworks, and compliance obligations.',
+        description: 'Query for legal information including case law, statutes, regulations, and compliance requirements.',
         parameters: {
           type: 'object',
           properties: {
-            topic: {
-              type: 'string',
-              description: 'The legal topic or subject to research (e.g., "corporate security liability", "negligence in security services")'
-            },
-            jurisdiction: {
-              type: 'string',
-              description: 'The legal jurisdiction (e.g., "British Columbia", "Alberta", "Canada federal")'
-            },
-            keywords: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'Additional keywords to refine the search'
-            }
+            topic: { type: 'string', description: 'The legal topic to research' },
+            jurisdiction: { type: 'string', description: 'The legal jurisdiction (e.g., "British Columbia", "Canada federal")' },
+            keywords: { type: 'array', items: { type: 'string' }, description: 'Additional keywords' }
           },
           required: ['topic']
+        }
+      },
+      {
+        type: 'function',
+        name: 'query_fortress_data',
+        description: 'Search Fortress database for signals, incidents, entities, or documents matching criteria.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query_type: { type: 'string', enum: ['signals', 'incidents', 'entities', 'documents', 'comprehensive'], description: 'Type of data to query' },
+            keywords: { type: 'array', items: { type: 'string' }, description: 'Keywords to search for' },
+            time_range_days: { type: 'number', description: 'Days to look back (default 30)' },
+            severity_filter: { type: 'string', enum: ['critical', 'high', 'medium', 'low', 'all'], description: 'Filter by severity' },
+            limit: { type: 'number', description: 'Max results (default 20)' }
+          },
+          required: ['query_type']
+        }
+      },
+      {
+        type: 'function',
+        name: 'generate_intelligence_summary',
+        description: 'Generate a formal intelligence briefing. Use when user asks for a briefing, summary, sitrep, or intelligence overview.',
+        parameters: {
+          type: 'object',
+          properties: {
+            time_range_hours: { type: 'number', description: 'Hours to include (default 24)' },
+            focus_areas: { type: 'array', items: { type: 'string' }, description: 'Areas to focus on' },
+            format: { type: 'string', enum: ['executive', 'operational', 'technical'], description: 'Report format' }
+          },
+          required: []
+        }
+      },
+      {
+        type: 'function',
+        name: 'analyze_threat_radar',
+        description: 'Get threat radar analysis with overall threat level, patterns, and risk assessments.',
+        parameters: {
+          type: 'object',
+          properties: {
+            client_id: { type: 'string', description: 'Client UUID for focused analysis' },
+            include_predictions: { type: 'boolean', description: 'Include predictive insights' },
+            time_horizon_days: { type: 'number', description: 'Prediction horizon in days' }
+          },
+          required: []
+        }
+      },
+      {
+        type: 'function',
+        name: 'get_client_info',
+        description: 'Get information about a specific client including their signals, incidents, and monitoring status.',
+        parameters: {
+          type: 'object',
+          properties: {
+            client_name: { type: 'string', description: 'The client name to look up' }
+          },
+          required: ['client_name']
+        }
+      },
+      {
+        type: 'function',
+        name: 'get_knowledge_base',
+        description: 'Search the internal knowledge base for articles, procedures, and documentation.',
+        parameters: {
+          type: 'object',
+          properties: {
+            topic: { type: 'string', description: 'Topic to search for' },
+            category: { type: 'string', description: 'Category filter' }
+          },
+          required: []
+        }
+      },
+      {
+        type: 'function',
+        name: 'get_travel_status',
+        description: 'Get current travel status including active travelers, itineraries, and travel alerts.',
+        parameters: { type: 'object', properties: {}, required: [] }
+      },
+      {
+        type: 'function',
+        name: 'get_investigation_status',
+        description: 'Get status of ongoing investigations.',
+        parameters: {
+          type: 'object',
+          properties: {
+            investigation_name: { type: 'string', description: 'Investigation name to search for (optional)' }
+          },
+          required: []
         }
       }
     ];
 
-    console.log('Requesting ephemeral token from OpenAI with tools...');
+    console.log('Requesting ephemeral token from OpenAI with full tool set...');
 
-    // Request ephemeral client secret from OpenAI
     const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
       method: 'POST',
       headers: {
@@ -240,9 +319,8 @@ Structure responses as: What's happening → What matters → Recommendation →
     }
 
     const data = await response.json();
-    console.log('Ephemeral token created successfully');
+    console.log('Ephemeral token created successfully with', tools.length, 'tools');
 
-    // Return the ephemeral client secret
     return new Response(
       JSON.stringify({
         client_secret: data.client_secret,
