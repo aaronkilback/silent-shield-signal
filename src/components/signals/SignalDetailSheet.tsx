@@ -3,8 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check } from "lucide-react";
-import { format } from "date-fns";
+import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, History, Clock } from "lucide-react";
+import { format, differenceInDays } from "date-fns";
+import { SignalAgeBadge } from "./SignalAgeBadge";
 
 interface SignalDetailSheetProps {
   open: boolean;
@@ -22,6 +23,7 @@ interface SignalDetailSheetProps {
     confidence?: number | null;
     source_reliability?: string | null;
     information_accuracy?: string | null;
+    event_date?: string | null;
   } | null;
   onAssign: () => void;
   onDismiss: () => void;
@@ -91,12 +93,37 @@ export function SignalDetailSheet({
               )}
             </div>
 
+            {/* Date Information - Enhanced with Event Date */}
+            <div className="space-y-3">
+              {signal.event_date && (
+                <div className="p-3 rounded-lg bg-muted/50 border">
+                  <div className="flex items-center gap-2 mb-2">
+                    {differenceInDays(new Date(), new Date(signal.event_date)) > 365 ? (
+                      <AlertTriangle className="h-4 w-4 text-orange-500" />
+                    ) : differenceInDays(new Date(), new Date(signal.event_date)) > 30 ? (
+                      <History className="h-4 w-4 text-amber-500" />
+                    ) : (
+                      <Calendar className="h-4 w-4 text-primary" />
+                    )}
+                    <span className="text-sm font-medium">Event Timeline</span>
+                  </div>
+                  <SignalAgeBadge 
+                    eventDate={signal.event_date} 
+                    ingestedAt={signal.created_at} 
+                  />
+                </div>
+              )}
+              
+              {!signal.event_date && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Clock className="h-4 w-4" />
+                  <span>Discovered: {format(new Date(signal.created_at), "PPp")}</span>
+                </div>
+              )}
+            </div>
+
             {/* Metadata */}
             <div className="grid grid-cols-2 gap-4 text-sm">
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Calendar className="h-4 w-4" />
-                <span>{format(new Date(signal.created_at), "PPp")}</span>
-              </div>
               {signal.location && (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <MapPin className="h-4 w-4" />

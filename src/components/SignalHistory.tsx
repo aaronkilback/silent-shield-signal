@@ -5,11 +5,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
-import { History, Clock, AlertCircle, Trash2, ExternalLink } from "lucide-react";
+import { History, AlertCircle, Trash2, ExternalLink } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
-
+import { SignalAgeIndicator } from "@/components/signals/SignalAgeBadge";
 import { SignalDetailDialog } from "./SignalDetailDialog";
 import { SignalFeedback } from "./SignalFeedback";
 import { toast } from "sonner";
@@ -51,6 +51,7 @@ interface Signal {
   is_read: boolean;
   is_test: boolean;
   source_id: string | null;
+  event_date?: string | null;
   // Rule-based categorization fields - applied_rules is JSONB (string[] in JSON format)
   applied_rules?: any; // JSONB array
   rule_tags?: string[];
@@ -151,6 +152,7 @@ export const SignalHistory = () => {
           is_read,
           is_test,
           source_id,
+          event_date,
           applied_rules,
           rule_tags,
           rule_category,
@@ -519,10 +521,10 @@ export const SignalHistory = () => {
                       
                       <div className="flex items-center justify-between text-xs text-muted-foreground">
                         <div className="flex items-center gap-3">
-                          <span className="flex items-center gap-1.5">
-                            <Clock className="w-3.5 h-3.5" />
-                            {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
-                          </span>
+                          <SignalAgeIndicator 
+                            eventDate={signal.event_date} 
+                            ingestedAt={signal.created_at} 
+                          />
                           {signal.applied_rules && Array.isArray(signal.applied_rules) && signal.applied_rules.length > 0 && (
                             <span className="text-xs text-blue-600 font-medium">
                               ⚡ {signal.applied_rules.length} rule{signal.applied_rules.length > 1 ? 's' : ''} applied
