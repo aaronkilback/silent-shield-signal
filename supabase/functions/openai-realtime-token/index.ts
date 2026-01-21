@@ -69,8 +69,24 @@ serve(async (req) => {
       // No body or invalid JSON, continue with defaults
     }
 
-    // Aegis — Calm Strategist persona (brisk, concise)
-    let instructions = `You are Aegis — a calm, strategic security advisor. Speak at a brisk, conversational pace (slightly faster than default) with shorter pauses between sentences. Sound human, not robotic. Keep answers tight: 1–3 sentences by default. Lead with clarity, not detail. Structure responses as: What's happening → What matters → Best recommendation → One clear next step. If more detail is needed, ask: 'Want the longer version?' Never dramatize, never sell, never ramble.`;
+    // Aegis — Calm Strategist persona with tool capabilities
+    let instructions = `You are Aegis — a calm, strategic security advisor for the Fortress intelligence platform. Speak at a brisk, conversational pace (slightly faster than default) with shorter pauses between sentences. Sound human, not robotic. Keep answers tight: 1–3 sentences by default.
+
+CRITICAL CAPABILITIES:
+- You have access to tools for searching the web and Fortress database
+- When users ask about current events, threats, or need research, USE the search_web tool
+- When users ask about threat status, USE the get_current_threats tool
+- When users ask about specific people, organizations, or entities, USE the get_entity_info tool
+
+ALWAYS use tools when the user asks about:
+- Current news or events ("what's happening with...", "latest on...")
+- Threat assessments or security situations
+- Information about people, organizations, or locations
+- Any topic requiring current/factual information
+
+After getting tool results, summarize them conversationally. Include source attribution when relevant. If data is historical, mention when the event occurred.
+
+Structure responses as: What's happening → What matters → Best recommendation → One clear next step. If more detail is needed, ask: 'Want the longer version?' Never dramatize, never sell, never ramble.`;
 
     if (agentContext) {
       instructions += `\n\nCurrent context: ${agentContext}`;
@@ -80,7 +96,55 @@ serve(async (req) => {
       instructions += `\n\nPrevious conversation context:\n${conversationHistory.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n')}`;
     }
 
-    console.log('Requesting ephemeral token from OpenAI...');
+    // Define tools for the realtime session
+    const tools = [
+      {
+        type: 'function',
+        name: 'search_web',
+        description: 'Search the web and Fortress internal database for information about current events, threats, news, or any topic. Use this for any question requiring factual or current information.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'The search query - what to look for'
+            },
+            geographic_focus: {
+              type: 'string',
+              description: 'Optional geographic focus (e.g., "British Columbia", "Canada", "North America")'
+            }
+          },
+          required: ['query']
+        }
+      },
+      {
+        type: 'function',
+        name: 'get_current_threats',
+        description: 'Get current high-priority signals and open incidents from the Fortress system. Use when asked about current threat status, active incidents, or security situation.',
+        parameters: {
+          type: 'object',
+          properties: {},
+          required: []
+        }
+      },
+      {
+        type: 'function',
+        name: 'get_entity_info',
+        description: 'Get information about a specific entity (person, organization, location) from the Fortress database.',
+        parameters: {
+          type: 'object',
+          properties: {
+            entity_name: {
+              type: 'string',
+              description: 'The name of the entity to look up'
+            }
+          },
+          required: ['entity_name']
+        }
+      }
+    ];
+
+    console.log('Requesting ephemeral token from OpenAI with tools...');
 
     // Request ephemeral client secret from OpenAI
     const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
@@ -96,6 +160,8 @@ serve(async (req) => {
         input_audio_format: 'pcm16',
         output_audio_format: 'pcm16',
         instructions: instructions,
+        tools: tools,
+        tool_choice: 'auto',
         input_audio_transcription: {
           model: 'whisper-1'
         },

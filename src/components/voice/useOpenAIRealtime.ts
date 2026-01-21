@@ -6,13 +6,14 @@ interface UseOpenAIRealtimeOptions {
   onAgentResponse?: (text: string) => void;
   onAgentResponseComplete?: (fullText: string) => void;
   onError?: (error: string) => void;
-  onStatusChange?: (status: 'idle' | 'connecting' | 'connected' | 'speaking' | 'listening') => void;
+  onStatusChange?: (status: 'idle' | 'connecting' | 'connected' | 'speaking' | 'listening' | 'thinking') => void;
+  onToolCall?: (toolName: string, args: Record<string, unknown>) => void;
   agentContext?: string;
   conversationHistory?: Array<{ role: string; content: string }>;
 }
 
 export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
-  const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'speaking' | 'listening'>('idle');
+  const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'speaking' | 'listening' | 'thinking'>('idle');
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [agentResponse, setAgentResponse] = useState('');
@@ -37,6 +38,64 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     setStatus(newStatus);
     optionsRef.current.onStatusChange?.(newStatus);
   }, []);
+
+  // Execute a tool and send result back to OpenAI
+  const executeToolCall = useCallback(async (
+    callId: string, 
+    toolName: string, 
+    toolArgs: Record<string, unknown>
+  ) => {
+    console.log(`[Voice] Executing tool: ${toolName}`, toolArgs);
+    updateStatus('thinking');
+    optionsRef.current.onToolCall?.(toolName, toolArgs);
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('voice-tool-executor', {
+        body: { tool_name: toolName, arguments: toolArgs }
+      });
+      
+      if (error) throw error;
+      
+      const resultStr = JSON.stringify(data?.result || { error: 'No result' });
+      console.log(`[Voice] Tool result:`, resultStr.substring(0, 200));
+      
+      // Send function result back to OpenAI
+      if (dcRef.current?.readyState === 'open') {
+        // Create conversation item with function output
+        dcRef.current.send(JSON.stringify({
+          type: 'conversation.item.create',
+          item: {
+            type: 'function_call_output',
+            call_id: callId,
+            output: resultStr
+          }
+        }));
+        
+        // Trigger response generation
+        dcRef.current.send(JSON.stringify({
+          type: 'response.create'
+        }));
+      }
+    } catch (err) {
+      console.error('[Voice] Tool execution error:', err);
+      
+      // Send error result back
+      if (dcRef.current?.readyState === 'open') {
+        dcRef.current.send(JSON.stringify({
+          type: 'conversation.item.create',
+          item: {
+            type: 'function_call_output',
+            call_id: callId,
+            output: JSON.stringify({ error: 'Tool execution failed' })
+          }
+        }));
+        
+        dcRef.current.send(JSON.stringify({
+          type: 'response.create'
+        }));
+      }
+    }
+  }, [updateStatus]);
 
   const handleRealtimeEvent = useCallback((event: Record<string, unknown>) => {
     console.log('Realtime event:', event.type, event);
@@ -71,6 +130,24 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           console.log('User transcript:', transcriptText);
           setTranscript(transcriptText);
           optionsRef.current.onTranscript?.(transcriptText, true);
+        }
+        break;
+
+      case 'response.function_call_arguments.done':
+        {
+          // Function call is complete, execute it
+          const callId = event.call_id as string;
+          const name = event.name as string;
+          const argsStr = event.arguments as string;
+          
+          console.log(`[Voice] Function call: ${name}`, argsStr);
+          
+          try {
+            const args = JSON.parse(argsStr || '{}');
+            executeToolCall(callId, name, args);
+          } catch (e) {
+            console.error('Failed to parse function args:', e);
+          }
         }
         break;
 
@@ -125,7 +202,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           console.log('Unhandled event type:', event.type);
         }
     }
-  }, [updateStatus]);
+  }, [updateStatus, executeToolCall]);
 
   const disconnect = useCallback(() => {
     console.log('Disconnecting...');
