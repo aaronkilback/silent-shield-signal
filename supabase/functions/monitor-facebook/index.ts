@@ -112,28 +112,33 @@ serve(async (req) => {
       }
     }
 
-    // PART 2: Entity-focused searches (entities with Facebook presence)
-    for (const entity of facebookEntities) {
+    // PART 2: Entity-focused searches - ALL monitored entities (not just those with FB handles)
+    // Search by name for all monitored entities regardless of whether they have FB handles
+    const allMonitoredEntities = watchedEntities || [];
+    
+    for (const entity of allMonitoredEntities) {
       try {
-        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
+        await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 1500));
         
         const searchQueries: string[] = [];
         const fbPage = entity.attributes?.facebook_page || entity.attributes?.facebook_handle;
         
+        // If entity has a Facebook handle, search that directly
         if (fbPage) {
-          // Direct page search
           searchQueries.push(`site:facebook.com/${fbPage}`);
-          // Page posts
           searchQueries.push(`site:facebook.com/${fbPage}/posts`);
         }
         
-        // Entity name + pipeline/energy project terms
-        searchQueries.push(`site:facebook.com "${entity.name}" (pipeline OR LNG OR "Coastal GasLink" OR PRGT OR protest)`);
+        // ALWAYS search by entity name on Facebook (primary search)
+        searchQueries.push(`site:facebook.com "${entity.name}"`);
+        
+        // Entity name + pipeline/energy project terms for more targeted results
+        searchQueries.push(`site:facebook.com "${entity.name}" (pipeline OR LNG OR "Coastal GasLink" OR PRGT OR protest OR indigenous)`);
         
         // Include aliases in search
         if (entity.aliases && entity.aliases.length > 0) {
-          for (const alias of entity.aliases.slice(0, 2)) {
-            searchQueries.push(`site:facebook.com "${alias}" (pipeline OR protest OR blockade)`);
+          for (const alias of entity.aliases.slice(0, 3)) {
+            searchQueries.push(`site:facebook.com "${alias}"`);
           }
         }
 
@@ -151,34 +156,13 @@ serve(async (req) => {
       }
     }
 
-    // PART 3: Also check other high-risk entities without FB handles
-    const otherEntities = (watchedEntities || []).filter(e => 
-      !e.attributes?.facebook_page && 
-      !e.attributes?.facebook_handle &&
-      (e.risk_level === 'high' || e.risk_level === 'critical')
-    );
-
-    for (const entity of otherEntities.slice(0, 10)) {
-      try {
-        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
-        
-        const query = `site:facebook.com "${entity.name}" (protest OR pipeline OR activist)`;
-        totalSearches++;
-        const result = await processSearch(supabase, query, null, entity.name, 'entity', processedUrls, entity.id);
-        signalsCreated += result.signals;
-        mediaCaptures += result.media;
-      } catch (error) {
-        console.error(`Error monitoring Facebook for entity ${entity.name}:`, error);
-      }
-    }
-
     console.log(`Facebook monitoring complete. Ran ${totalSearches} searches. Created ${signalsCreated} signals. Captured ${mediaCaptures} media files.`);
 
     return new Response(
       JSON.stringify({
         success: true,
         clients_scanned: clients?.length || 0,
-        entities_scanned: facebookEntities.length + otherEntities.length,
+        entities_scanned: allMonitoredEntities.length,
         searches_executed: totalSearches,
         signals_created: signalsCreated,
         media_captured: mediaCaptures,
