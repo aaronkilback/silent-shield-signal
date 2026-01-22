@@ -187,7 +187,7 @@ Respond naturally and briefly.`
     if (effectiveScope.incident_id) {
       const { data: incident } = await supabase
         .from('incidents')
-        .select('*, clients(name), signals(normalized_text, category, severity, location)')
+        .select('*, clients(name), signals(normalized_text, category, severity, location, source_url, raw_json)')
         .eq('id', effectiveScope.incident_id)
         .single();
 
@@ -202,10 +202,13 @@ Respond naturally and briefly.`
         scopeContextData += `\nOpened At: ${normalizeOpenedAt(incident) || 'N/A'}`;
         scopeContextData += `\nClient: ${incident.clients?.name || 'Unknown'}`;
         if (incident.signals) {
-          scopeContextData += `\nOriginating Signal: ${incident.signals.normalized_text?.substring(0, 300) || 'N/A'}`;
-          scopeContextData += `\nSignal Category: ${incident.signals.category || 'N/A'}`;
-          scopeContextData += `\nSignal Severity: ${incident.signals.severity || 'N/A'}`;
-          scopeContextData += `\nLocation: ${incident.signals.location || 'N/A'}`;
+          const sig = incident.signals;
+          const sourceUrl = sig.source_url || sig.raw_json?.url || sig.raw_json?.source_url || sig.raw_json?.link || null;
+          scopeContextData += `\nOriginating Signal: ${sig.normalized_text?.substring(0, 300) || 'N/A'}`;
+          scopeContextData += `\nSignal Category: ${sig.category || 'N/A'}`;
+          scopeContextData += `\nSignal Severity: ${sig.severity || 'N/A'}`;
+          scopeContextData += `\nLocation: ${sig.location || 'N/A'}`;
+          scopeContextData += `\nSource URL: ${sourceUrl || 'Internal record (no public URL)'}`;
         }
         if (incident.timeline_json?.length) {
           scopeContextData += `\n\nTimeline Events:`;

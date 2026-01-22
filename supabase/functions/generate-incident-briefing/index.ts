@@ -54,7 +54,7 @@ serve(async (req) => {
     const { data: linkedSignals, error: signalsError } = await supabase
       .from("incident_signals")
       .select(`
-        signals(id, normalized_text, severity, category, created_at, source)
+        signals(id, normalized_text, severity, category, created_at, source, source_url, raw_json)
       `)
       .eq("incident_id", incident_id);
 
@@ -122,8 +122,12 @@ INCIDENT DATA:
 - Severity: ${incident.severity_level || 'Not assessed'}
 - Summary: ${incident.summary || 'No summary available'}
 
-INTELLIGENCE:
-${linkedSignals && linkedSignals.length > 0 ? linkedSignals.map((ls: any) => `- [${ls.signals.severity}] ${ls.signals.normalized_text.substring(0, 100)}...`).join('\n') : 'No linked signals'}
+INTELLIGENCE (with source URLs):
+${linkedSignals && linkedSignals.length > 0 ? linkedSignals.map((ls: any) => {
+  const sig = ls.signals;
+  const sourceUrl = sig.source_url || sig.raw_json?.url || sig.raw_json?.source_url || sig.raw_json?.link || null;
+  return `- [${sig.severity}] ${sig.normalized_text.substring(0, 100)}...${sourceUrl ? `\n  Source: ${sourceUrl}` : ''}`;
+}).join('\n') : 'No linked signals'}
 
 ENTITIES:
 ${incidentEntities && incidentEntities.length > 0 ? incidentEntities.map((ie: any) => `- ${ie.entities.name} (${ie.entities.type}, Risk: ${ie.entities.risk_level || 'Unknown'})`).join('\n') : 'No entities identified'}

@@ -446,14 +446,17 @@ Respond naturally and briefly.`
     if (agent.input_sources.includes('signals')) {
       const { data: signals } = await supabase
         .from('signals')
-        .select('title, source_id, severity, created_at, rule_category')
+        .select('id, title, source_id, severity, created_at, rule_category, raw_json, source_url')
         .order('created_at', { ascending: false })
         .limit(10);
       
       if (signals?.length) {
         contextData += `\n\nRecent Signals (${signals.length}):\n`;
-        signals.forEach(s => {
-          contextData += `- [${s.severity}] ${s.title} (${s.rule_category}) - ${new Date(s.created_at).toLocaleDateString()}\n`;
+        signals.forEach((s: any) => {
+          // Extract source URL from raw_json or source_url field
+          const sourceUrl = s.source_url || s.raw_json?.url || s.raw_json?.source_url || s.raw_json?.link || null;
+          const sourceDisplay = sourceUrl ? ` | Source: ${sourceUrl}` : '';
+          contextData += `- [${s.severity}] ${s.title} (${s.rule_category}) - ${new Date(s.created_at).toLocaleDateString()}${sourceDisplay}\n`;
         });
       }
     }
@@ -1199,9 +1202,9 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           
           console.log('[Briefing] Generating intelligence summary:', { hoursBack, cutoff, client_id, focusAreas });
           
-          // Build signals query - FIXED: proper client_id filtering
+          // Build signals query - FIXED: proper client_id filtering and source URL extraction
           let signalsQuery = supabase.from('signals')
-            .select('id, title, severity, source_id, created_at, rule_category, normalized_text, client_id, description, signal_type')
+            .select('id, title, severity, source_id, created_at, rule_category, normalized_text, client_id, description, signal_type, source_url, raw_json')
             .gte('created_at', cutoff)
             .order('created_at', { ascending: false })
             .limit(50);
@@ -1351,16 +1354,21 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
                 return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
               })
               .slice(0, 10)
-              .map((s, idx) => ({
-                ref: `SIG-${idx + 1}`,
-                title: s.title || s.description?.substring(0, 100) || 'Untitled Signal',
-                severity: s.severity,
-                signal_type: s.signal_type || 'unclassified',
-                category: s.rule_category,
-                timestamp: s.created_at,
-                time_ago: getTimeAgo(s.created_at),
-                details: s.normalized_text?.substring(0, 400) || s.description?.substring(0, 400),
-              })),
+              .map((s: any, idx: number) => {
+                // Extract source URL from signal data
+                const sourceUrl = s.source_url || s.raw_json?.url || s.raw_json?.source_url || s.raw_json?.link || null;
+                return {
+                  ref: `SIG-${idx + 1}`,
+                  title: s.title || s.description?.substring(0, 100) || 'Untitled Signal',
+                  severity: s.severity,
+                  signal_type: s.signal_type || 'unclassified',
+                  category: s.rule_category,
+                  timestamp: s.created_at,
+                  time_ago: getTimeAgo(s.created_at),
+                  details: s.normalized_text?.substring(0, 400) || s.description?.substring(0, 400),
+                  source_url: sourceUrl,
+                };
+              }),
             
             // OPEN INCIDENTS
             high_priority_open_incidents: (highPriorityIncidents || []).map((i, idx) => ({
