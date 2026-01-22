@@ -180,43 +180,87 @@ serve(async (req) => {
       s.normalized_text?.toLowerCase().includes('pipeline')
     );
 
-    // Calculate scores (0-100)
+    // =================================================================
+    // IMPROVED THREAT SCORING - Based on signal intelligence, NOT incident counts
+    // Incidents are OUTCOMES, not predictive indicators. Threat level should be
+    // based on ACTIONABLE intelligence: signals, precursors, and entity activity.
+    // =================================================================
+
+    // Calculate recency weight - recent signals matter more
+    const now = Date.now();
+    const getRecencyWeight = (dateStr: string): number => {
+      const age = now - new Date(dateStr).getTime();
+      const hoursOld = age / (1000 * 60 * 60);
+      if (hoursOld < 24) return 1.0;      // Last 24h: full weight
+      if (hoursOld < 72) return 0.7;      // 1-3 days: 70% weight
+      if (hoursOld < 168) return 0.4;     // 3-7 days: 40% weight
+      return 0.2;                          // Older: 20% weight
+    };
+
+    // Score signals by severity with recency weighting
+    const severityWeight = { critical: 25, high: 15, medium: 5, low: 2, info: 1 };
+    
+    // Radical Activity: weighted by signal severity AND recency (not just count)
     const radicalActivityScore = Math.min(100, Math.round(
-      (radicalSignals.length * 10) + 
-      (darkWebSignals.length * 15) + 
-      (existingRadical.filter((r: any) => r.threat_level === 'high' || r.threat_level === 'critical').length * 20)
+      radicalSignals.reduce((acc: number, s: any) => {
+        const weight = severityWeight[s.severity as keyof typeof severityWeight] || 5;
+        const recency = getRecencyWeight(s.created_at);
+        return acc + (weight * recency);
+      }, 0) +
+      (existingRadical.filter((r: any) => r.threat_level === 'high' || r.threat_level === 'critical').length * 10)
     ));
 
+    // Sentiment Volatility: based on actual volatility metrics, not social signal counts
     const sentimentVolatilityScore = Math.min(100, Math.round(
-      existingSentiment.reduce((acc: number, s: any) => acc + (s.sentiment_volatility || 0) * 50, 0) / Math.max(1, existingSentiment.length) +
-      (socialSignals.filter((s: any) => s.severity === 'high' || s.severity === 'critical').length * 10)
+      existingSentiment.length > 0
+        ? existingSentiment.reduce((acc: number, s: any) => acc + (s.sentiment_volatility || 0) * 100, 0) / existingSentiment.length
+        : (socialSignals.filter((s: any) => s.severity === 'critical' || s.severity === 'high').length * 8)
     ));
 
+    // Precursor Activity: PRIMARY driver of predictive threat assessment
+    // Precursors ARE the leading indicators - weight them heavily
     const precursorActivityScore = Math.min(100, Math.round(
-      (existingPrecursors.length * 15) +
-      (existingPrecursors.filter((p: any) => p.severity_level === 'critical' || p.severity_level === 'high').length * 25)
+      existingPrecursors.reduce((acc: number, p: any) => {
+        const severityMult = p.severity_level === 'critical' ? 30 : p.severity_level === 'high' ? 20 : 10;
+        const recency = getRecencyWeight(p.last_activity_at || p.created_at);
+        return acc + (severityMult * recency);
+      }, 0)
     ));
 
+    // Infrastructure Risk: based on SIGNAL intelligence about infrastructure, NOT past incidents
+    // Incidents are lagging indicators - using them inflates threat level incorrectly
     const infrastructureRiskScore = Math.min(100, Math.round(
-      (infrastructureSignals.length * 8) +
-      (incidents.filter((i: any) => i.incident_type?.toLowerCase().includes('infrastructure')).length * 25) +
-      (criticalAssets.filter((a: any) => a.is_internet_facing).length * 5)
+      infrastructureSignals.reduce((acc: number, s: any) => {
+        const weight = severityWeight[s.severity as keyof typeof severityWeight] || 5;
+        const recency = getRecencyWeight(s.created_at);
+        return acc + (weight * recency);
+      }, 0) +
+      // Add exposure factor for internet-facing critical assets (static risk)
+      (criticalAssets.filter((a: any) => a.is_internet_facing && a.business_criticality === 'mission_critical').length * 3)
     ));
 
-    // Calculate overall threat score
+    // Calculate overall threat score with BALANCED weights
+    // Precursors get highest weight as they are true LEADING indicators
     const overallThreatScore = Math.round(
-      (radicalActivityScore * 0.3) +
-      (sentimentVolatilityScore * 0.2) +
-      (precursorActivityScore * 0.25) +
-      (infrastructureRiskScore * 0.25)
+      (radicalActivityScore * 0.25) +     // Radical signals: 25%
+      (sentimentVolatilityScore * 0.15) + // Sentiment volatility: 15%
+      (precursorActivityScore * 0.35) +   // Precursor indicators: 35% (LEADING)
+      (infrastructureRiskScore * 0.25)    // Infrastructure signals: 25%
     );
 
-    // Determine threat level
+    // Determine threat level with CONSERVATIVE thresholds
+    // Avoid false alarms from low-value signal accumulation
     let overallThreatLevel = 'low';
-    if (overallThreatScore >= 80) overallThreatLevel = 'critical';
-    else if (overallThreatScore >= 60) overallThreatLevel = 'high';
-    else if (overallThreatScore >= 40) overallThreatLevel = 'elevated';
-    else if (overallThreatScore >= 20) overallThreatLevel = 'moderate';
+    if (overallThreatScore >= 75) overallThreatLevel = 'critical';
+    else if (overallThreatScore >= 55) overallThreatLevel = 'high';
+    else if (overallThreatScore >= 35) overallThreatLevel = 'elevated';
+    else if (overallThreatScore >= 15) overallThreatLevel = 'moderate';
+
+    // Calculate threat momentum (is it getting worse or better?)
+    const recentSignals = signals.filter((s: any) => getRecencyWeight(s.created_at) >= 0.7).length;
+    const olderSignals = signals.filter((s: any) => getRecencyWeight(s.created_at) < 0.7).length;
+    const threatMomentum = recentSignals > olderSignals * 1.5 ? 'rising' : 
+                           recentSignals < olderSignals * 0.5 ? 'declining' : 'stable';
 
     // Generate AI analysis for predictions
     let aiAnalysis = '';
@@ -399,10 +443,16 @@ Provide concise, actionable intelligence assessments focused on proactive threat
       client_id,
       snapshot_id: snapshotId,
       
-      // Overall assessment
+      // Overall assessment with Silent Shield metrics
       threat_assessment: {
         overall_level: overallThreatLevel,
         overall_score: overallThreatScore,
+        // Silent Shield Executive Metrics
+        threat_momentum: threatMomentum, // rising / stable / declining
+        signal_confidence: overallThreatScore >= 50 && signals.length >= 10 ? 'high' : 
+                           overallThreatScore >= 25 && signals.length >= 5 ? 'medium' : 'low',
+        exposure_readiness: criticalAssets.length > 0 && existingPrecursors.length < 3 ? 'prepared' :
+                            existingPrecursors.length < 5 ? 'partial' : 'unprepared',
         scores: {
           radical_activity: radicalActivityScore,
           sentiment_volatility: sentimentVolatilityScore,
