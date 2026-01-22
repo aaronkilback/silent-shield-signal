@@ -8732,7 +8732,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
       // Query signals
       if (query_type === 'signals' || query_type === 'comprehensive') {
-        let signalsQ = supabaseClient.from('signals').select('id, title, description, severity, status, received_at, client_id, clients(name), normalized_text, category');
+        let signalsQ = supabaseClient.from('signals').select('id, title, description, severity, status, received_at, client_id, clients(name), normalized_text, category, source_url, raw_json');
         signalsQ = applyFilters(signalsQ);
         if (filters.severity?.length) signalsQ = signalsQ.in('severity', filters.severity);
         if (filters.status?.length) signalsQ = signalsQ.in('status', filters.status);

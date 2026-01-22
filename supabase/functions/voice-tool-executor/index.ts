@@ -376,7 +376,7 @@ Deno.serve(async (req) => {
         // Get recent signals
         const { data: signals, error: signalsError } = await supabase
           .from('signals')
-          .select('id, title, severity, source_id, created_at, rule_category, status')
+          .select('id, title, severity, source_id, created_at, rule_category, status, source_url, raw_json')
           .gte('created_at', cutoffDate)
           .order('created_at', { ascending: false })
           .limit(50);
