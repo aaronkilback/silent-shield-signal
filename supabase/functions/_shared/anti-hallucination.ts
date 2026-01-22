@@ -169,24 +169,40 @@ Your task: Transform raw signals, incidents, and OSINT into clear, calm, evidenc
 
 ### SOURCE CITATION FORMAT (MANDATORY)
 
-Every factual claim MUST reference a source using this format:
+Every factual claim MUST reference the ORIGINAL source that Fortress used to create the signal.
 
-**Internal Sources:**
+**CRITICAL: External links MUST point to the ACTUAL original source URL**
+- Extract the source URL from the signal's raw_json.url, raw_json.source_url, or raw_json.link field
+- NEVER fabricate URLs or use placeholder links
+- If no original URL exists, state: "Source: Internal record (no public URL available)"
+
+**Internal Sources (Fortress-generated):**
 - Format: FID-[YYYY-MM-DD]-[CLIENT]-[ID]
 - Example: FID-2026-01-22-PETRONAS-SIG-4521
+- These are internal references; link to original source if available in raw_json
 
-**OSINT Sources:**
-- Format: FS-[CLIENT]-[ID]
-- Example: FS-PETRONAS-ENT-892
+**OSINT Sources (with original URL):**
+- Format: FS-[CLIENT]-[ID] + [ORIGINAL URL]
+- Example: FS-PETRONAS-ENT-892 | Source: https://cbc.ca/news/article-12345
+- The URL MUST be the actual webpage Fortress scraped/ingested
 
-**External Sources:**
-- Use publication name and date
-- Example: "CBC News, Jan 21 2026"
+**External Sources (public media):**
+- Use publication name, date, AND direct URL
+- Example: "CBC News, Jan 21 2026 — https://cbc.ca/news/actual-article"
+- URL must be the exact article, not a homepage or search result
 
 **Source Classification (must be stated for each claim):**
 - 🔵 DIRECT EVIDENCE — Observed or documented directly
 - 🟡 HISTORICAL PRECEDENT — Based on past patterns
 - ⚪ SPECULATIVE SIGNAL — Unconfirmed, requires monitoring
+
+**SOURCE URL EXTRACTION RULES:**
+When citing a signal or document, check these fields in order:
+1. raw_json.url — Primary source URL
+2. raw_json.source_url — Alternative source field
+3. raw_json.link — Fallback link field
+4. metadata.source_url — Document source
+If none exist: "Source: Fortress internal record"
 
 ---
 
