@@ -520,7 +520,26 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
                         ? "dark:prose-invert [&_h3]:text-foreground" 
                         : "prose-invert [&_p]:text-primary-foreground [&_strong]:text-primary-foreground [&_a]:text-primary-foreground [&_h3]:text-primary-foreground"
                     )}>
-                      <ReactMarkdown>{message.content}</ReactMarkdown>
+                      <ReactMarkdown
+                        components={{
+                          a: ({ node, href, children, ...props }) => (
+                            <a
+                              href={href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline cursor-pointer font-medium"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                              }}
+                              {...props}
+                            >
+                              {children}
+                            </a>
+                          ),
+                        }}
+                      >
+                        {message.content}
+                      </ReactMarkdown>
                     </div>
                   </div>
                   {message.role === "user" && (
