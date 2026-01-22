@@ -103,97 +103,94 @@ serve(async (req) => {
     const ageDays = Math.round(ageMinutes / (60 * 24));
     const isStale = ageDays > 7;
 
-    // Construct briefing prompt based on format
+    // Construct briefing prompt based on format - USING SILENT SHIELD EXECUTIVE FORMAT
     const briefingPrompt = format === "executive" 
-      ? `Generate an EXECUTIVE BRIEFING for this security incident. Target audience: C-level executives and senior management who need high-level understanding and business impact focus.
+      ? `Generate an EXECUTIVE BRIEFING using the Silent Shield 10-Section Format. 
+Target audience: VP/Director and C-suite executives who need DECISIONS, not methodology.
 
 CRITICAL DATE CONTEXT:
 - Today's Date: ${currentDate}
 - Incident Opened: ${incidentOpenedDate} (${ageDays > 0 ? `${ageDays} days ago` : 'today'})
-${isStale ? `- ⚠️ STALE INCIDENT: This incident is ${ageDays} days old. It may require review for closure or escalation.` : ''}
+${isStale ? `- ⚠️ STALE INCIDENT: This incident is ${ageDays} days old. Recommend closure review or escalation.` : ''}
 
-INCIDENT OVERVIEW:
-- Incident ID: ${incident.id.substring(0, 8)}
-- Title: ${incident.title || 'Untitled Incident'}
-- Priority: ${incident.priority}
-- Status: ${incident.status}
-- Client: ${incident.clients?.name || 'Unknown'}
-- Industry: ${incident.clients?.industry || 'Unknown'}
-- Opened: ${incidentOpenedDate}
-- Age: ${ageDays > 0 ? `${ageDays} days` : ageMinutes < 60 ? `${ageMinutes} minutes` : `${Math.round(ageMinutes / 60)} hours`}
-
-INCIDENT DETAILS:
+INCIDENT DATA:
+- ID: ${incident.id.substring(0, 8)}
+- Title: ${incident.title || 'Untitled'}
+- Priority: ${incident.priority} | Status: ${incident.status}
+- Client: ${incident.clients?.name || 'Unknown'} (${incident.clients?.industry || 'Unknown'})
 - Type: ${incident.incident_type || 'Not specified'}
 - Severity: ${incident.severity_level || 'Not assessed'}
 - Summary: ${incident.summary || 'No summary available'}
 
-SIGNALS & INTELLIGENCE:
-${linkedSignals && linkedSignals.length > 0 ? linkedSignals.map((ls: any) => `- [${ls.signals.severity}] ${ls.signals.normalized_text.substring(0, 150)}...`).join('\n') : 'No linked signals'}
+INTELLIGENCE:
+${linkedSignals && linkedSignals.length > 0 ? linkedSignals.map((ls: any) => `- [${ls.signals.severity}] ${ls.signals.normalized_text.substring(0, 100)}...`).join('\n') : 'No linked signals'}
 
-INVOLVED ENTITIES:
+ENTITIES:
 ${incidentEntities && incidentEntities.length > 0 ? incidentEntities.map((ie: any) => `- ${ie.entities.name} (${ie.entities.type}, Risk: ${ie.entities.risk_level || 'Unknown'})`).join('\n') : 'No entities identified'}
 
-IMPACT ASSESSMENT:
-${impactAnalysis ? `
-- Risk Score: ${impactAnalysis.risk_score}/100 (${impactAnalysis.risk_level})
-- Financial Impact: $${impactAnalysis.impact_assessment?.financial_impact?.estimated_cost_range?.minimum}-${impactAnalysis.impact_assessment?.financial_impact?.estimated_cost_range?.maximum}
-- Operational Impact: ${impactAnalysis.impact_assessment?.operational_impact?.estimated_downtime_hours}h downtime estimated
-- People at Risk: ${impactAnalysis.impact_assessment?.people_impact?.employees_at_risk || 'Unknown'}
-` : 'Impact analysis not available'}
+IMPACT:
+${impactAnalysis ? `Risk Score: ${impactAnalysis.risk_score}/100 | Financial: $${impactAnalysis.impact_assessment?.financial_impact?.estimated_cost_range?.minimum}-${impactAnalysis.impact_assessment?.financial_impact?.estimated_cost_range?.maximum} | Downtime: ${impactAnalysis.impact_assessment?.operational_impact?.estimated_downtime_hours}h` : 'Impact analysis not available'}
 
-RESPONSE STATUS:
-- Time to Acknowledge: ${timeToAcknowledge ? `${timeToAcknowledge} minutes` : 'Not acknowledged'}
+RESPONSE:
+- Time to Acknowledge: ${timeToAcknowledge ? `${timeToAcknowledge} min` : 'Not acknowledged'}
 - Time to Resolve: ${timeToResolve ? `${timeToResolve} hours` : 'Not resolved'}
-- Alerts Sent: ${alerts?.length || 0} (${alerts?.filter((a: any) => a.status === 'delivered').length || 0} delivered)
+- Alerts Sent: ${alerts?.length || 0}
 
-OUTCOME & LESSONS:
-${incident.incident_outcomes && incident.incident_outcomes.length > 0 ? `
-- Outcome: ${incident.incident_outcomes[0].outcome_type}
-- Accurate Assessment: ${incident.incident_outcomes[0].was_accurate ? 'Yes' : 'No'}
-- Lessons Learned: ${incident.incident_outcomes[0].lessons_learned || 'None documented'}
-` : 'No outcome recorded'}
+===== SILENT SHIELD EXECUTIVE BRIEFING FORMAT (MANDATORY) =====
 
-EXECUTIVE BRIEFING FORMAT:
-1. **SITUATION** (2-3 sentences): What happened? Current status?
-2. **BUSINESS IMPACT** (3-4 sentences): Financial, operational, reputational implications. Use specific numbers.
-3. **ROOT CAUSE** (2 sentences): Why did this happen? What vulnerability was exploited?
-4. **RESPONSE ACTIONS** (3-4 bullet points): What has been done? What's in progress?
-5. **CURRENT STATUS** (2 sentences): Where are we now? Is it contained?
-6. **RECOMMENDATIONS** (2-3 bullet points): What decisions are needed? Resource allocation? Policy changes?
-7. **TIMELINE** (3-5 bullet points): Key milestones from detection to current state
+WRITE EXACTLY 10 SECTIONS:
 
-8. **VP/DIRECTOR MESSAGING** (MANDATORY - ready-to-use messaging for operational leaders):
-   Format as a quotable block:
-   > **FOR INTERNAL DISTRIBUTION — VP/DIRECTOR LEVEL**
-   > 
-   > [Situation summary in 1-2 sentences]
-   > 
-   > **Operational Impact:** [Specific impacts to operations, timeline, affected sites/teams]
-   > 
-   > **Action Required:** [Specific next steps for this leadership tier]
-   > 
-   > **Escalation Trigger:** [Conditions that warrant CEO involvement]
+### 1. CORE SIGNAL (1-2 sentences)
+What triggered this? Why does it matter to the business TODAY?
 
-9. **CEO MESSAGING** (MANDATORY - ready-to-use messaging for C-suite):
-   Format as a quotable block:
-   > **FOR C-SUITE — EXECUTIVE SUMMARY**
-   > 
-   > [Strategic situation in 1 sentence - business impact focus]
-   > 
-   > **Risk Exposure:** [Quantified risk — financial, reputational, regulatory in business terms]
-   > 
-   > **Recommendation:** [Single clear action or decision point]
-   > 
-   > **Timeline:** [When decision is needed]
-   
-   CEO Messaging Rules:
-   - NO operational details (specific sites, contractors, timelines under 30 days)
-   - NO technical security terminology
-   - Frame in business terms: revenue impact, stakeholder relations, regulatory exposure
-   - Include external factors: media attention, political climate, investor sentiment
-   - State the "so what" — why this matters at the board level
+### 2. WHAT CHANGED
+**Physical Environment:** [site activity, observable changes]
+**Activist/Threat Landscape:** [social media, threat actor movements]  
+**Regulatory/Legal:** [filings, policy changes]
+(State "No material change" if nothing changed in a track)
 
-Keep language clear, non-technical, business-focused. Use active voice. Highlight risks and decisions needed.`
+### 3. THREAT CASCADE
+[TRIGGER] → [OPERATIONAL IMPACT] → [BUSINESS CONSEQUENCE]
+(One chain, highest impact only)
+
+### 4. RISK ASSESSMENT
+**Threat Momentum:** [Rising / Stable / Declining] — with ONE data point
+**Signal Confidence:** [High / Medium / Low] — based on source quality
+**Exposure Readiness:** [Prepared / Partial / Unprepared] — current mitigation posture
+
+### 5. MOST LIKELY SCENARIO (48-72 hours)
+Single most probable outcome with probability qualifier and decision point.
+
+### 6. OPERATIONAL IMPACT (plain English, 4 bullets)
+- Who is affected?
+- What can't we do?
+- How much does it cost?
+- How long?
+
+### 7. REQUIRED ACTION
+**Immediate (0-24h):** [Specific action] at [location] by [role]
+**Short-term (24-72h):** [Specific action] at [location] by [role]
+
+### 8. EXECUTIVE DECISION OPTIONS
+**Option A: [Name]** - Action / Cost / Risk
+**Option B: [Name]** - Action / Cost / Risk
+**Option C: [Name]** - Action / Cost / Risk
+**Silent Shield Recommends: [Letter]** because [one sentence]
+
+### 9. ESCALATION TRIGGERS
+1. If [condition] → Escalate to [level] within [timeframe]
+2. If [condition] → Escalate to [level] within [timeframe]
+3. If [condition] → Escalate to [level] within [timeframe]
+
+### 10. C-SUITE ONE-LINER
+> "[Situation] creates [risk] that requires [action] by [timeline]."
+
+===== BRIEFING RULES =====
+- NO analyst jargon
+- Short sentences
+- No duplication
+- If it doesn't change decisions, DELETE IT
+- Write like a security commander, not a researcher`
       : `Generate an OPERATIONAL BRIEFING for this security incident. Target audience: Security analysts, incident responders, technical teams who need detailed tactical information.
 
 INCIDENT OVERVIEW:
