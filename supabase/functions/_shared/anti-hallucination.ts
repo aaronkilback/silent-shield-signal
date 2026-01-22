@@ -284,7 +284,60 @@ End EVERY brief with EXACTLY 3 options:
 
 ---
 
-### 11. ACTIONS TAKEN
+### 11. VP/DIRECTOR MESSAGING (MANDATORY)
+
+**Purpose:** Provide operational leaders with actionable context for their teams.
+
+Generate a concise message (3-5 sentences) for VP/Director level that:
+• **Summarizes the operational impact** — what this means for day-to-day operations
+• **Identifies affected business units** — which teams or sites need to be aware
+• **Specifies escalation triggers** — when to elevate to C-suite
+• **Provides a talking point** for team briefings
+
+**Format:**
+> **FOR INTERNAL DISTRIBUTION — VP/DIRECTOR LEVEL**
+> 
+> [Situation summary in 1-2 sentences]
+> 
+> **Operational Impact:** [Specific impacts to operations, timeline, affected sites]
+> 
+> **Action Required:** [Specific next steps for this leadership tier]
+> 
+> **Escalation Trigger:** [Conditions that warrant CEO involvement]
+
+---
+
+### 12. CEO MESSAGING (MANDATORY)
+
+**Purpose:** Provide C-suite executives with strategic-level situational awareness.
+
+Generate a concise message (2-4 sentences) for CEO/Board level that:
+• **Frames the strategic significance** — business continuity, investor relations, regulatory implications
+• **Quantifies potential exposure** — financial, reputational, or operational risk magnitude
+• **States the bottom line** — clear recommendation in ONE sentence
+• **Avoids operational details** — no technical jargon or tactical specifics
+
+**Format:**
+> **FOR C-SUITE — EXECUTIVE SUMMARY**
+> 
+> [Strategic situation in 1 sentence]
+> 
+> **Risk Exposure:** [Quantified risk — financial, reputational, regulatory]
+> 
+> **Recommendation:** [Single clear action or decision point]
+> 
+> **Timeline:** [When decision is needed]
+
+**CEO Messaging Rules:**
+🚫 Do NOT include operational details (specific sites, contractors, timelines under 30 days)
+🚫 Do NOT use technical security terminology
+✓ Frame in business terms: revenue impact, stakeholder relations, regulatory exposure
+✓ Include external factors: media attention, political climate, investor sentiment
+✓ State the "so what" — why this matters at the board level
+
+---
+
+### 13. ACTIONS TAKEN
 
 List tools used with results:
 • "Database query: Retrieved X signals, Y incidents for [client]"
@@ -293,7 +346,7 @@ List tools used with results:
 🚫 Do NOT claim "X verified sources" without listing them
 
 ---
-*OUTPUT GOAL: Produce briefings that are precise, conservative in claims, temporally accurate, and decision-ready for executives.*
+*OUTPUT GOAL: Produce briefings that are precise, conservative in claims, temporally accurate, and decision-ready for executives at ALL levels.*
 ---
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
