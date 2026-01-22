@@ -641,6 +641,36 @@ When generating intelligence briefings, follow this professional structure:
    - Format: [S#] Source Name | Type | PUBLISHED Date (not retrieval date)
    - If no publication date available, mark as "Date Unknown - treat as historical"
 
+7. **VP/DIRECTOR MESSAGING** (MANDATORY for all briefings):
+   Generate a concise message (3-5 sentences) for VP/Director level:
+   > **FOR INTERNAL DISTRIBUTION — VP/DIRECTOR LEVEL**
+   > 
+   > [Situation summary in 1-2 sentences]
+   > 
+   > **Operational Impact:** [Specific impacts to operations, timeline, affected sites]
+   > 
+   > **Action Required:** [Specific next steps for this leadership tier]
+   > 
+   > **Escalation Trigger:** [Conditions that warrant CEO involvement]
+
+8. **CEO MESSAGING** (MANDATORY for all briefings):
+   Generate a concise message (2-4 sentences) for CEO/Board level:
+   > **FOR C-SUITE — EXECUTIVE SUMMARY**
+   > 
+   > [Strategic situation in 1 sentence]
+   > 
+   > **Risk Exposure:** [Quantified risk — financial, reputational, regulatory]
+   > 
+   > **Recommendation:** [Single clear action or decision point]
+   > 
+   > **Timeline:** [When decision is needed]
+   
+   CEO Messaging Rules:
+   🚫 Do NOT include operational details (specific sites, contractors, timelines under 30 days)
+   🚫 Do NOT use technical security terminology
+   ✓ Frame in business terms: revenue impact, stakeholder relations, regulatory exposure
+   ✓ State the "so what" — why this matters at the board level
+
 CRITICAL DATE VERIFICATION:
 - Current date is ${currentDate}
 - News/articles from >7 days ago = HISTORICAL context, not current intel

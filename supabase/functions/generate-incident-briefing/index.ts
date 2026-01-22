@@ -162,6 +162,37 @@ EXECUTIVE BRIEFING FORMAT:
 6. **RECOMMENDATIONS** (2-3 bullet points): What decisions are needed? Resource allocation? Policy changes?
 7. **TIMELINE** (3-5 bullet points): Key milestones from detection to current state
 
+8. **VP/DIRECTOR MESSAGING** (MANDATORY - ready-to-use messaging for operational leaders):
+   Format as a quotable block:
+   > **FOR INTERNAL DISTRIBUTION — VP/DIRECTOR LEVEL**
+   > 
+   > [Situation summary in 1-2 sentences]
+   > 
+   > **Operational Impact:** [Specific impacts to operations, timeline, affected sites/teams]
+   > 
+   > **Action Required:** [Specific next steps for this leadership tier]
+   > 
+   > **Escalation Trigger:** [Conditions that warrant CEO involvement]
+
+9. **CEO MESSAGING** (MANDATORY - ready-to-use messaging for C-suite):
+   Format as a quotable block:
+   > **FOR C-SUITE — EXECUTIVE SUMMARY**
+   > 
+   > [Strategic situation in 1 sentence - business impact focus]
+   > 
+   > **Risk Exposure:** [Quantified risk — financial, reputational, regulatory in business terms]
+   > 
+   > **Recommendation:** [Single clear action or decision point]
+   > 
+   > **Timeline:** [When decision is needed]
+   
+   CEO Messaging Rules:
+   - NO operational details (specific sites, contractors, timelines under 30 days)
+   - NO technical security terminology
+   - Frame in business terms: revenue impact, stakeholder relations, regulatory exposure
+   - Include external factors: media attention, political climate, investor sentiment
+   - State the "so what" — why this matters at the board level
+
 Keep language clear, non-technical, business-focused. Use active voice. Highlight risks and decisions needed.`
       : `Generate an OPERATIONAL BRIEFING for this security incident. Target audience: Security analysts, incident responders, technical teams who need detailed tactical information.
 
@@ -225,6 +256,36 @@ OPERATIONAL BRIEFING FORMAT:
 7. **NEXT STEPS** (prioritized list): Immediate actions, 24h actions, 72h actions
 8. **TECHNICAL RECOMMENDATIONS**: Security controls to implement, detection rules to add
 9. **COORDINATION REQUIREMENTS**: Teams involved, external parties (law enforcement, vendors)
+
+10. **VP/DIRECTOR MESSAGING** (MANDATORY - ready-to-use messaging for operational leaders):
+    Format as a quotable block:
+    > **FOR INTERNAL DISTRIBUTION — VP/DIRECTOR LEVEL**
+    > 
+    > [Situation summary in 1-2 sentences - operational focus]
+    > 
+    > **Operational Impact:** [Specific impacts to operations, timeline, affected sites/teams]
+    > 
+    > **Action Required:** [Specific next steps for this leadership tier]
+    > 
+    > **Escalation Trigger:** [Conditions that warrant CEO involvement]
+
+11. **CEO MESSAGING** (MANDATORY - ready-to-use messaging for C-suite):
+    Format as a quotable block:
+    > **FOR C-SUITE — EXECUTIVE SUMMARY**
+    > 
+    > [Strategic situation in 1 sentence - business impact focus]
+    > 
+    > **Risk Exposure:** [Quantified risk — financial, reputational, regulatory in business terms]
+    > 
+    > **Recommendation:** [Single clear action or decision point]
+    > 
+    > **Timeline:** [When decision is needed]
+    
+    CEO Messaging Rules:
+    - NO operational details (specific sites, contractors, timelines under 30 days)
+    - NO technical security terminology
+    - Frame in business terms: revenue impact, stakeholder relations, regulatory exposure
+    - State the "so what" — why this matters at the board level
 
 Include specific technical details, TTPs, and actionable steps. Use security terminology.`;
 
