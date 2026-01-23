@@ -539,11 +539,68 @@ export const DashboardAIAssistant = () => {
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    setAttachments((prev) => [...prev, ...files]);
+    
+    // Validate file sizes upfront
+    const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+    const validFiles: File[] = [];
+    
+    for (const file of files) {
+      if (file.size > MAX_FILE_SIZE) {
+        toast.error(`${file.name} is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 100MB.`);
+        continue;
+      }
+      validFiles.push(file);
+    }
+    
+    if (validFiles.length > 0) {
+      setAttachments((prev) => [...prev, ...validFiles]);
+    }
   };
 
   const removeAttachment = (index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Helper function to invoke processing with retry logic
+  const invokeWithRetry = async (
+    functionName: string, 
+    body: Record<string, unknown>, 
+    maxRetries = 3
+  ): Promise<{ data: unknown; error: Error | null }> => {
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const { data, error } = await supabase.functions.invoke(functionName, { body });
+        
+        if (error) {
+          lastError = error;
+          console.warn(`${functionName} attempt ${attempt}/${maxRetries} failed:`, error.message);
+          
+          // Don't retry on certain errors
+          if (error.message?.includes('not found') || error.message?.includes('too large')) {
+            return { data: null, error };
+          }
+          
+          // Wait before retry (exponential backoff)
+          if (attempt < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+          }
+          continue;
+        }
+        
+        return { data, error: null };
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        console.warn(`${functionName} attempt ${attempt}/${maxRetries} threw:`, lastError.message);
+        
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        }
+      }
+    }
+    
+    return { data: null, error: lastError };
   };
 
   const uploadFiles = async (): Promise<{ urls: string[], documentIds: string[] }> => {
@@ -552,78 +609,141 @@ export const DashboardAIAssistant = () => {
     setIsUploading(true);
     const uploadedUrls: string[] = [];
     const documentIds: string[] = [];
+    const processingPromises: Promise<void>[] = [];
     
     try {
       for (const file of attachments) {
-        // Upload to storage
+        const fileSizeMB = file.size / (1024 * 1024);
+        console.log(`Uploading ${file.name} (${fileSizeMB.toFixed(2)}MB)...`);
+        
+        // Upload to storage with retry
         const fileExt = file.name.split('.').pop();
         const fileName = `${user?.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
         
-        const { data: storageData, error: storageError } = await supabase.storage
-          .from('ai-chat-attachments')
-          .upload(fileName, file, {
-            cacheControl: '3600',
-            upsert: false
-          });
+        let storageData: { path: string } | null = null;
+        let uploadAttempt = 0;
+        const maxUploadAttempts = 3;
         
-        if (storageError) {
-          console.error("Upload error:", storageError);
-          toast.error(`Failed to upload ${file.name}`);
-          continue;
+        while (!storageData && uploadAttempt < maxUploadAttempts) {
+          uploadAttempt++;
+          const { data, error: storageError } = await supabase.storage
+            .from('ai-chat-attachments')
+            .upload(fileName, file, {
+              cacheControl: '3600',
+              upsert: false
+            });
+          
+          if (storageError) {
+            console.error(`Upload attempt ${uploadAttempt}/${maxUploadAttempts} failed:`, storageError);
+            if (uploadAttempt < maxUploadAttempts) {
+              await new Promise(resolve => setTimeout(resolve, 1000 * uploadAttempt));
+            } else {
+              toast.error(`Failed to upload ${file.name} after ${maxUploadAttempts} attempts`);
+            }
+          } else {
+            storageData = data;
+          }
         }
+        
+        if (!storageData) continue;
         
         const { data: { publicUrl } } = supabase.storage
           .from('ai-chat-attachments')
           .getPublicUrl(storageData.path);
         
         uploadedUrls.push(publicUrl);
+        toast.success(`Uploaded ${file.name}`);
         
-        // Also create archival document record for AI analysis
+        // Create archival document record for AI analysis
         try {
-            const { data: archivalDoc, error: archivalError } = await supabase
-              .from('archival_documents')
-              .insert({
-                filename: file.name,
-                file_type: file.type || 'application/octet-stream',
-                file_size: file.size,
-                storage_path: storageData.path,
-                uploaded_by: user?.id,
-                tags: ['ai-chat-upload'],
-                content_text: `Uploaded via AI chat attachment: ${file.name}`,
-                metadata: {
-                  source: 'ai-chat',
-                  original_name: file.name,
-                  storage_bucket: 'ai-chat-attachments',
-                },
-              })
-              .select('id')
-              .single();
+          const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+          const isOfficeDoc = file.type.includes('officedocument') || 
+                              file.name.toLowerCase().endsWith('.docx') || 
+                              file.name.toLowerCase().endsWith('.doc');
+          
+          const { data: archivalDoc, error: archivalError } = await supabase
+            .from('archival_documents')
+            .insert({
+              filename: file.name,
+              file_type: file.type || 'application/octet-stream',
+              file_size: file.size,
+              storage_path: storageData.path,
+              uploaded_by: user?.id,
+              tags: ['ai-chat-upload'],
+              content_text: `Processing document: ${file.name} (${fileSizeMB.toFixed(1)}MB)...`,
+              metadata: {
+                source: 'ai-chat',
+                original_name: file.name,
+                storage_bucket: 'ai-chat-attachments',
+                upload_timestamp: new Date().toISOString(),
+                processing_status: 'pending',
+              },
+            })
+            .select('id')
+            .single();
           
           if (archivalError) {
             console.error("Failed to create archival record:", archivalError);
+            toast.error(`Failed to create record for ${file.name}`);
           } else if (archivalDoc) {
             documentIds.push(archivalDoc.id);
             
-            // Trigger document processing for text extraction and entity detection
-            // This runs in the background - don't await to keep UI responsive
-            supabase.functions.invoke('process-stored-document', {
-              body: { 
+            // Process document - await for PDFs/Office docs to ensure success
+            const processingPromise = (async () => {
+              console.log(`Starting processing for ${file.name} (ID: ${archivalDoc.id})`);
+              
+              const { data, error } = await invokeWithRetry('process-stored-document', {
                 documentId: archivalDoc.id,
-                storagePath: storageData.path 
-              }
-            }).then(({ data, error }) => {
+                storagePath: storageData.path
+              });
+              
               if (error) {
-                console.error(`Failed to process document ${file.name}:`, error);
-                toast.error(`Document uploaded but processing failed: ${file.name}`);
+                console.error(`Document processing failed for ${file.name}:`, error);
+                
+                // Update record to reflect failure
+                await supabase
+                  .from('archival_documents')
+                  .update({
+                    content_text: `[Processing failed for ${file.name}: ${error.message}. The file is stored and can be manually processed later.]`,
+                    metadata: {
+                      source: 'ai-chat',
+                      original_name: file.name,
+                      storage_bucket: 'ai-chat-attachments',
+                      processing_status: 'failed',
+                      processing_error: error.message,
+                      processed_at: new Date().toISOString(),
+                    },
+                  })
+                  .eq('id', archivalDoc.id);
+                
+                toast.error(`Processing failed for ${file.name}. File saved for manual review.`);
               } else {
-                console.log(`Document ${file.name} processed:`, data);
-                toast.success(`Document ${file.name} processed successfully`);
+                console.log(`Document ${file.name} processed successfully:`, data);
+                toast.success(`${file.name} processed and ready for analysis`);
               }
-            });
+            })();
+            
+            // For PDFs and Office docs, await processing to give user feedback
+            // For other files, process in background
+            if (isPDF || isOfficeDoc) {
+              processingPromises.push(processingPromise);
+            } else {
+              // Fire and forget for images and other files
+              processingPromise.catch(err => 
+                console.error(`Background processing error for ${file.name}:`, err)
+              );
+            }
           }
         } catch (err) {
           console.error("Error creating archival document:", err);
+          toast.error(`Error processing ${file.name}`);
         }
+      }
+      
+      // Wait for critical document processing to complete
+      if (processingPromises.length > 0) {
+        toast.info(`Processing ${processingPromises.length} document(s)...`);
+        await Promise.allSettled(processingPromises);
       }
       
       return { urls: uploadedUrls, documentIds };
