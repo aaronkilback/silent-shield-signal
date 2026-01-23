@@ -7,6 +7,51 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Helper function for retrying AI API calls with exponential backoff
+async function fetchWithRetry(
+  url: string, 
+  options: RequestInit, 
+  maxRetries = 3,
+  context = 'AI API'
+): Promise<Response> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      
+      // Success or client error (don't retry 4xx except 429)
+      if (response.ok || (response.status >= 400 && response.status < 500 && response.status !== 429)) {
+        return response;
+      }
+      
+      // Rate limit or server error - retry
+      if (response.status === 429 || response.status >= 500) {
+        console.warn(`${context} returned ${response.status}, attempt ${attempt}/${maxRetries}`);
+        lastError = new Error(`${context} error: ${response.status}`);
+        
+        if (attempt < maxRetries) {
+          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+      }
+      
+      return response;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      console.warn(`${context} attempt ${attempt}/${maxRetries} failed:`, lastError.message);
+      
+      if (attempt < maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  
+  throw lastError || new Error(`${context} failed after ${maxRetries} attempts`);
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -600,22 +645,24 @@ Be comprehensive - list all details visible in the document.`
               }
             } else {
               // Use signed URL approach - no memory overhead for large files
-              console.log(`Sending PDF via signed URL to Gemini...`);
+              console.log(`Sending PDF via signed URL to Gemini (with retry)...`);
               
-              const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  model: 'google/gemini-2.5-flash',
-                  messages: [{
-                    role: 'user',
-                    content: [
-                      {
-                        type: 'text',
-                        text: `You are analyzing the document "${document.filename}" which is a PDF file (${fileSizeMB.toFixed(1)}MB).
+              const visionResponse = await fetchWithRetry(
+                'https://ai.gateway.lovable.dev/v1/chat/completions',
+                {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    model: 'google/gemini-2.5-flash',
+                    messages: [{
+                      role: 'user',
+                      content: [
+                        {
+                          type: 'text',
+                          text: `You are analyzing the document "${document.filename}" which is a PDF file (${fileSizeMB.toFixed(1)}MB).
 
 This document may contain maps, diagrams, tables, or image-based content.
 Analyze ALL pages thoroughly and extract every piece of visible text, data, labels, legends, and geographic/infrastructure information.
@@ -631,18 +678,21 @@ EXTRACT ALL VISIBLE INFORMATION:
 8. Legend items, symbols, and their meanings
 
 Be comprehensive - list all details visible in the document.`
-                      },
-                      {
-                        type: 'image_url',
-                        image_url: { 
-                          url: signedPdfUrl 
+                        },
+                        {
+                          type: 'image_url',
+                          image_url: { 
+                            url: signedPdfUrl 
+                          }
                         }
-                      }
-                    ]
-                  }],
-                  max_tokens: 8000
-                }),
-              });
+                      ]
+                    }],
+                    max_tokens: 8000
+                  }),
+                },
+                3,
+                'PDF Vision Analysis'
+              );
 
               if (visionResponse.ok) {
                 const visionData = await visionResponse.json();
@@ -803,9 +853,9 @@ Be comprehensive - list all details visible in the document.`
     // Prepare text sample (max 20000 chars for AI processing - increased for better extraction)
     const sampleText = textContent.slice(0, 20000);
 
-    console.log('Calling Lovable AI for entity extraction...');
+    console.log('Calling Lovable AI for entity extraction (with retry)...');
 
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const aiResponse = await fetchWithRetry('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${LOVABLE_API_KEY}`,
@@ -1083,7 +1133,7 @@ Think like a professional intelligence analyst reading an opposition research do
         ],
         tool_choice: { type: "function", function: { name: "extract_entities_and_relationships" } }
       }),
-    });
+    }, 3, 'Entity Extraction');
 
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
