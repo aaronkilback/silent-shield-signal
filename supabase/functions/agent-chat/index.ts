@@ -1450,7 +1450,17 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           });
           
         } else if (funcName === 'get_document_content') {
-          const isPlaceholder = (t?: string | null) => !t || t.startsWith('Uploaded via');
+          const isPlaceholder = (t?: string | null) => {
+            if (!t) return true;
+            const trimmed = t.trim();
+            return (
+              trimmed.startsWith('Uploaded via') ||
+              trimmed.startsWith('Processing document:') ||
+              trimmed.startsWith('[Processing failed') ||
+              trimmed.startsWith('[Document processing failed') ||
+              trimmed.startsWith('[Image-based PDF could not be fully analyzed')
+            );
+          };
           const knownBuckets = [
             'ai-chat-attachments',
             'archival-documents',
@@ -1520,7 +1530,28 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
 
           const best = pickBest(rows);
 
-          if (!best) {
+          // If a specific document_id was referenced but it contains a placeholder/error,
+          // try to automatically resolve to the newest successfully-extracted record for the same filename.
+          let resolvedBest = best;
+          if (resolvedBest && args.document_id && isPlaceholder(resolvedBest.content_text) && resolvedBest.filename) {
+            try {
+              const { data: newerDocs } = await supabase
+                .from('archival_documents')
+                .select('id, filename, content_text, file_type, storage_path, updated_at')
+                .ilike('filename', `%${resolvedBest.filename}%`)
+                .order('updated_at', { ascending: false })
+                .limit(5);
+
+              const newerBest = pickBest(newerDocs || []);
+              if (newerBest && !isPlaceholder(newerBest.content_text)) {
+                resolvedBest = newerBest;
+              }
+            } catch (_e) {
+              // non-fatal: fall back to the original best
+            }
+          }
+
+          if (!resolvedBest) {
             toolResults.push({
               tool: 'get_document_content',
               result: {
@@ -1529,18 +1560,18 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
                 suggestion: 'Use process_document with the full file_path (including bucket) to extract content.'
               }
             });
-          } else if (isPlaceholder(best.content_text)) {
-            const fullPath = await resolveFullPath(best.storage_path);
+          } else if (isPlaceholder(resolvedBest.content_text)) {
+            const fullPath = await resolveFullPath(resolvedBest.storage_path);
             toolResults.push({
               tool: 'get_document_content',
               result: {
                 success: false,
-                document_id: best.id,
-                filename: best.filename,
-                storage_path: best.storage_path,
+                document_id: resolvedBest.id,
+                filename: resolvedBest.filename,
+                storage_path: resolvedBest.storage_path,
                 file_path: fullPath,
                 error: 'Document content not yet extracted',
-                suggestion: `Call process_document with file_path=\"${fullPath || best.storage_path}\" and document_id=\"${best.id}\" to extract text`
+                suggestion: `Call process_document with file_path=\"${fullPath || resolvedBest.storage_path}\" and document_id=\"${resolvedBest.id}\" to extract text`
               }
             });
           } else {
@@ -1548,10 +1579,10 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               tool: 'get_document_content',
               result: {
                 success: true,
-                document_id: best.id,
-                filename: best.filename,
-                content_text: best.content_text,
-                text_length: best.content_text.length
+                document_id: resolvedBest.id,
+                filename: resolvedBest.filename,
+                content_text: resolvedBest.content_text,
+                text_length: resolvedBest.content_text.length
               }
             });
           }

@@ -92,10 +92,10 @@ export const ArchivalDocumentsList = () => {
 
       if (error) throw error;
 
-      // Check for image-based PDF error
+      // Check for image-based PDF indicator (OCR may take longer / may need retry)
       if (data?.isImageBased) {
         toast.error(
-          `📄 ${filename} appears to be a scanned/image-based PDF. The system cannot extract text from scanned documents. Please upload a PDF with selectable text or provide a text export.`,
+          `📄 ${filename} appears to be a scanned/image-based PDF. OCR can take longer and may require a retry. If this persists, click 🧠 again or try “Re-extract entities”.`,
           { duration: 10000 }
         );
         return;

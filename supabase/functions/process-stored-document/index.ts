@@ -446,11 +446,9 @@ serve(async (req) => {
         const arrayBuffer = await blobToRead.arrayBuffer();
 
          const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
-         // Required in Deno even when disableWorker=true
-         if (pdfjsLib?.GlobalWorkerOptions) {
-           // esm.sh provides a real module entry for the legacy worker
-           pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.worker.min.mjs';
-         }
+         // NOTE: Do NOT set GlobalWorkerOptions.workerSrc in Deno.
+         // With `disableWorker: true`, pdfjs will use a fake worker; setting workerSrc
+         // can trigger a module fetch that fails in this environment and breaks extraction.
 
          const loadingTask = pdfjsLib.getDocument({
            data: new Uint8Array(arrayBuffer),
