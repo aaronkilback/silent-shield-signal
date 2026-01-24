@@ -848,13 +848,85 @@ Deno.serve(async (req) => {
         break;
       }
       
+      case 'run_entity_deep_scan': {
+        // Trigger comprehensive entity deep scan
+        const entityId = toolArgs.entity_id;
+        const entityName = toolArgs.entity_name;
+        
+        if (!entityId && !entityName) {
+          result = { error: "Either entity_id or entity_name is required" };
+          break;
+        }
+        
+        let targetEntityId = entityId;
+        
+        // Find entity by name if needed
+        if (!targetEntityId && entityName) {
+          const { data: foundEntity } = await supabase
+            .from('entities')
+            .select('id, name, type')
+            .ilike('name', `%${entityName}%`)
+            .limit(1)
+            .single();
+          
+          if (!foundEntity) {
+            result = { 
+              error: `Entity not found: ${entityName}`,
+              suggestion: "Ask user to specify entity more precisely"
+            };
+            break;
+          }
+          
+          targetEntityId = foundEntity.id;
+        }
+        
+        try {
+          const scanResponse = await fetch(`${supabaseUrl}/functions/v1/entity-deep-scan`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify({ entity_id: targetEntityId }),
+          });
+          
+          if (!scanResponse.ok) {
+            result = { error: `Entity deep scan failed: ${scanResponse.status}` };
+            break;
+          }
+          
+          const scanResult = await scanResponse.json();
+          
+          const riskEmoji = scanResult.critical_count > 0 ? "🚨" : scanResult.high_count > 0 ? "⚠️" : "✅";
+          
+          result = {
+            success: true,
+            entity_name: scanResult.entity_name,
+            findings_count: scanResult.findings_count,
+            critical_count: scanResult.critical_count,
+            high_count: scanResult.high_count,
+            overall_risk: scanResult.overall_risk,
+            categories: scanResult.categories,
+            summary: `${riskEmoji} Deep scan complete for ${scanResult.entity_name}: ${scanResult.findings_count} findings discovered. ${scanResult.critical_count} critical, ${scanResult.high_count} high risk. Overall risk: ${scanResult.overall_risk}.`,
+            recommendation: scanResult.critical_count > 0 
+              ? "Immediate review of critical findings required."
+              : scanResult.high_count > 0 
+              ? "Review high-risk findings and update entity profile."
+              : "No critical issues found. Continue routine monitoring."
+          };
+        } catch (e) {
+          result = { error: `Entity deep scan error: ${e instanceof Error ? e.message : 'Unknown'}` };
+        }
+        break;
+      }
+      
       default:
         result = { error: `Unknown tool: ${tool_name}`, available_tools: [
           'search_web', 'get_current_threats', 'get_entity_info', 'query_legal_database',
           'query_fortress_data', 'generate_intelligence_summary', 'analyze_threat_radar',
           'get_client_info', 'get_knowledge_base', 'get_travel_status', 'get_investigation_status',
           'get_user_memory', 'remember_this', 'update_user_preferences', 'manage_project_context',
-          'check_dark_web_exposure', 'run_vip_deep_scan', 'get_threat_intel_feeds'
+          'check_dark_web_exposure', 'run_vip_deep_scan', 'get_threat_intel_feeds', 'run_entity_deep_scan'
         ]};
     }
     

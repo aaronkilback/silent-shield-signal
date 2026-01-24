@@ -11,7 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus, Brain, Search, Trash2, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus, Brain, Search, Trash2, ThumbsUp, ThumbsDown, Radar, Shield, AlertTriangle, CheckCircle, Loader2 } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
 import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
 import { CreateRelationshipDialog } from "./CreateRelationshipDialog";
@@ -55,6 +56,15 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
   const [scanningContent, setScanningContent] = useState(false);
   const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
   const [isDeletingPhotos, setIsDeletingPhotos] = useState(false);
+  const [runningDeepScan, setRunningDeepScan] = useState(false);
+  const [deepScanProgress, setDeepScanProgress] = useState(0);
+  const [deepScanResults, setDeepScanResults] = useState<{
+    findings_count: number;
+    critical_count: number;
+    high_count: number;
+    overall_risk: string;
+    categories: string[];
+  } | null>(null);
 
   const { data: entity, isLoading } = useQuery({
     queryKey: ['entity-detail', entityId],
@@ -483,6 +493,66 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     }
   };
 
+  const handleDeepScan = async () => {
+    if (!entityId) return;
+    
+    setRunningDeepScan(true);
+    setDeepScanProgress(0);
+    setDeepScanResults(null);
+    
+    try {
+      toast({ 
+        title: "🔍 Deep Scan Started", 
+        description: "Running comprehensive OSINT analysis including dark web, breaches, and relationship mapping..."
+      });
+      
+      // Simulate progress updates
+      const progressInterval = setInterval(() => {
+        setDeepScanProgress(prev => Math.min(prev + 8, 85));
+      }, 1000);
+      
+      const { data, error } = await supabase.functions.invoke('entity-deep-scan', {
+        body: { entity_id: entityId }
+      });
+
+      clearInterval(progressInterval);
+      setDeepScanProgress(100);
+
+      if (error) throw error;
+
+      setDeepScanResults({
+        findings_count: data.findings_count || 0,
+        critical_count: data.critical_count || 0,
+        high_count: data.high_count || 0,
+        overall_risk: data.overall_risk || 'low',
+        categories: data.categories || []
+      });
+      
+      const riskEmoji = data.critical_count > 0 ? '🚨' : data.high_count > 0 ? '⚠️' : '✅';
+      
+      toast({ 
+        title: `${riskEmoji} Deep Scan Complete`, 
+        description: `Found ${data.findings_count} items: ${data.critical_count} critical, ${data.high_count} high risk. Overall: ${data.overall_risk}`,
+        duration: 10000
+      });
+      
+      // Refresh all entity data
+      queryClient.invalidateQueries({ queryKey: ['entity-detail', entityId] });
+      queryClient.invalidateQueries({ queryKey: ['entity-content', entityId] });
+      queryClient.invalidateQueries({ queryKey: ['entity-relationships', entityId] });
+      queryClient.invalidateQueries({ queryKey: ['entities'] });
+    } catch (error: any) {
+      console.error('Error running deep scan:', error);
+      toast({ 
+        title: "Deep Scan Failed", 
+        description: error.message,
+        variant: "destructive" 
+      });
+    } finally {
+      setRunningDeepScan(false);
+    }
+  };
+
   const handleDeleteRelationship = async (relationshipId: string) => {
     try {
       const { error } = await supabase
@@ -632,13 +702,93 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
         <DialogHeader>
           <div className="flex items-center justify-between">
             <DialogTitle className="text-2xl">{entity.name}</DialogTitle>
-            {!isEditing && (
-              <Button variant="outline" size="sm" onClick={startEditing}>
-                <Pencil className="w-4 h-4 mr-2" />
-                Edit
+            <div className="flex items-center gap-2">
+              <Button 
+                variant="default" 
+                size="sm" 
+                onClick={handleDeepScan}
+                disabled={runningDeepScan}
+                className="bg-gradient-to-r from-primary to-primary/80"
+              >
+                {runningDeepScan ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Scanning...
+                  </>
+                ) : (
+                  <>
+                    <Radar className="w-4 h-4 mr-2" />
+                    Deep Scan
+                  </>
+                )}
               </Button>
-            )}
+              {!isEditing && (
+                <Button variant="outline" size="sm" onClick={startEditing}>
+                  <Pencil className="w-4 h-4 mr-2" />
+                  Edit
+                </Button>
+              )}
+            </div>
           </div>
+          
+          {/* Deep Scan Progress & Results */}
+          {runningDeepScan && (
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Shield className="w-4 h-4 animate-pulse" />
+                <span>Running comprehensive OSINT scan...</span>
+              </div>
+              <Progress value={deepScanProgress} className="h-2" />
+              <p className="text-xs text-muted-foreground">
+                Phase {Math.ceil(deepScanProgress / 15)}/7: {
+                  deepScanProgress < 15 ? 'Dark Web & Breach Check' :
+                  deepScanProgress < 30 ? 'Underground Mentions' :
+                  deepScanProgress < 45 ? 'Social Media Footprint' :
+                  deepScanProgress < 60 ? 'News & Media Intelligence' :
+                  deepScanProgress < 75 ? 'Relationship Analysis' :
+                  deepScanProgress < 90 ? 'Threat Intelligence Feeds' :
+                  'Finalizing Results'
+                }
+              </p>
+            </div>
+          )}
+          
+          {deepScanResults && !runningDeepScan && (
+            <Card className={`mt-4 p-3 ${
+              deepScanResults.critical_count > 0 ? 'border-destructive bg-destructive/5' :
+              deepScanResults.high_count > 0 ? 'border-orange-500 bg-orange-500/5' :
+              'border-green-500 bg-green-500/5'
+            }`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {deepScanResults.critical_count > 0 ? (
+                    <AlertTriangle className="w-5 h-5 text-destructive" />
+                  ) : deepScanResults.high_count > 0 ? (
+                    <AlertTriangle className="w-5 h-5 text-orange-500" />
+                  ) : (
+                    <CheckCircle className="w-5 h-5 text-green-500" />
+                  )}
+                  <div>
+                    <p className="font-medium">
+                      Deep Scan Complete: {deepScanResults.findings_count} findings
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {deepScanResults.critical_count} critical, {deepScanResults.high_count} high risk • 
+                      Categories: {deepScanResults.categories.join(', ')}
+                    </p>
+                  </div>
+                </div>
+                <Badge variant={
+                  deepScanResults.overall_risk === 'critical' ? 'destructive' :
+                  deepScanResults.overall_risk === 'high' ? 'destructive' :
+                  deepScanResults.overall_risk === 'medium' ? 'secondary' :
+                  'outline'
+                }>
+                  {deepScanResults.overall_risk.toUpperCase()}
+                </Badge>
+              </div>
+            </Card>
+          )}
         </DialogHeader>
 
         <Tabs defaultValue="details" className="w-full">
