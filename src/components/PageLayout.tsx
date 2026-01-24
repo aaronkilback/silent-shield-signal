@@ -11,6 +11,11 @@ interface PageLayoutProps {
   headerContent?: ReactNode;
   fullWidth?: boolean;
   pageName?: string;
+  /**
+   * Controls overflow behavior of the main content container.
+   * Defaults to "hidden" to preserve existing layouts.
+   */
+  contentOverflow?: "hidden" | "auto";
 }
 
 /**
@@ -28,6 +33,7 @@ export const PageLayout = ({
   headerContent,
   fullWidth = false,
   pageName,
+  contentOverflow = "hidden",
 }: PageLayoutProps) => {
   const { trackPageView, isTracking } = useActivityTracking();
 
@@ -59,7 +65,13 @@ export const PageLayout = ({
         )}
         
         {/* Content area with stable minimum height and overflow containment */}
-        <div className="min-h-[calc(100vh-200px)] relative overflow-hidden">
+        <div
+          className={
+            contentOverflow === "auto"
+              ? "min-h-[calc(100vh-200px)] relative overflow-y-auto overflow-x-hidden"
+              : "min-h-[calc(100vh-200px)] relative overflow-hidden"
+          }
+        >
           {loading ? (
             <div className="absolute inset-0 flex items-center justify-center">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />

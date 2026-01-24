@@ -21,6 +21,7 @@ import { VoiceAssistantPanel } from "./VoiceAssistantPanel";
 import { VoiceDictationInput } from "./VoiceDictationInput";
 import { OSINTDiscoveryPanel } from "./OSINTDiscoveryPanel";
 import { useOSINTDiscovery, type DiscoveryItem } from "@/hooks/useOSINTDiscovery";
+import { resolveVIPFieldMapping } from "./discoveryFieldMapping";
 
 interface FamilyMember {
   name: string;
@@ -191,72 +192,91 @@ export function VIPDeepScanWizard() {
 
   // Auto-apply high-confidence discoveries to form fields
   useEffect(() => {
-    if (!osintDiscovery.isRunning && osintDiscovery.discoveries.length > 0) {
-      const newAppliedFields = new Set(autoAppliedFields);
-      let appliedCount = 0;
-      
-      osintDiscovery.discoveries.forEach((discovery) => {
-        // Only auto-apply high confidence discoveries with field mappings
-        if (discovery.confidence >= 75 && discovery.fieldMapping && !appliedDiscoveryIds.has(discovery.id) && !dismissedDiscoveryIds.has(discovery.id)) {
-          const field = discovery.fieldMapping as keyof VIPIntakeData;
-          const currentValue = formData[field];
-          
-          // Auto-populate empty fields or append to list fields
-          if (field === "socialMediaHandles") {
-            const newLine = `${discovery.source}: ${discovery.value}`;
-            const existingValue = typeof currentValue === "string" ? currentValue : "";
-            if (!existingValue.toLowerCase().includes(discovery.value.toLowerCase())) {
-              setFormData(prev => ({
-                ...prev,
-                socialMediaHandles: existingValue ? `${existingValue}\n${newLine}` : newLine,
-              }));
-              newAppliedFields.add(field);
-              appliedCount++;
-            }
-          } else if (field === "corporateAffiliations") {
-            const existingValue = typeof currentValue === "string" ? currentValue : "";
-            if (!existingValue.toLowerCase().includes(discovery.value.toLowerCase())) {
-              setFormData(prev => ({
-                ...prev,
-                corporateAffiliations: existingValue ? `${existingValue}, ${discovery.value}` : discovery.value,
-              }));
-              newAppliedFields.add(field);
-              appliedCount++;
-            }
-          } else if (field === "primaryEmail" && typeof currentValue === "string" && !currentValue) {
-            setFormData(prev => ({ ...prev, primaryEmail: discovery.value }));
-            newAppliedFields.add(field);
-            appliedCount++;
-          } else if (field === "primaryPhone" && typeof currentValue === "string" && !currentValue) {
-            setFormData(prev => ({ ...prev, primaryPhone: discovery.value }));
-            newAppliedFields.add(field);
-            appliedCount++;
-          } else if (field === "knownAliases") {
-            const existingValue = typeof currentValue === "string" ? currentValue : "";
-            if (!existingValue.toLowerCase().includes(discovery.value.toLowerCase())) {
-              setFormData(prev => ({
-                ...prev,
-                knownAliases: existingValue ? `${existingValue}, ${discovery.value}` : discovery.value,
-              }));
-              newAppliedFields.add(field);
-              appliedCount++;
-            }
-          }
-          
-          // Mark as applied
-          setAppliedDiscoveryIds(prev => new Set([...prev, discovery.id]));
+    if (osintDiscovery.isRunning) return;
+    if (osintDiscovery.discoveries.length === 0) return;
+
+    const candidates = osintDiscovery.discoveries.filter((d) => {
+      if (d.confidence < 75) return false;
+      if (appliedDiscoveryIds.has(d.id) || dismissedDiscoveryIds.has(d.id)) return false;
+      return resolveVIPFieldMapping(d) !== null;
+    });
+
+    if (candidates.length === 0) return;
+
+    const nextFormData: VIPIntakeData = { ...formData };
+    const nextAutoAppliedFields = new Set(autoAppliedFields);
+    const newlyAppliedIds: string[] = [];
+    let appliedCount = 0;
+
+    for (const discovery of candidates) {
+      const resolved = resolveVIPFieldMapping(discovery);
+      if (!resolved) continue;
+
+      const field = resolved as keyof VIPIntakeData;
+      const currentValue = nextFormData[field];
+
+      if (field === "socialMediaHandles") {
+        const newLine = `${discovery.source}: ${discovery.value}`;
+        const existingValue = typeof currentValue === "string" ? currentValue : "";
+        if (!existingValue.toLowerCase().includes(discovery.value.toLowerCase())) {
+          nextFormData.socialMediaHandles = existingValue
+            ? `${existingValue}\n${newLine}`
+            : newLine;
+          nextAutoAppliedFields.add(field);
+          newlyAppliedIds.push(discovery.id);
+          appliedCount++;
         }
-      });
-      
-      if (appliedCount > 0) {
-        setAutoAppliedFields(newAppliedFields);
-        toast({
-          title: "Fields Auto-Populated",
-          description: `${appliedCount} intelligence item(s) automatically applied to the form.`,
-        });
+      } else if (field === "corporateAffiliations") {
+        const existingValue = typeof currentValue === "string" ? currentValue : "";
+        if (!existingValue.toLowerCase().includes(discovery.value.toLowerCase())) {
+          nextFormData.corporateAffiliations = existingValue
+            ? `${existingValue}, ${discovery.value}`
+            : discovery.value;
+          nextAutoAppliedFields.add(field);
+          newlyAppliedIds.push(discovery.id);
+          appliedCount++;
+        }
+      } else if (field === "primaryEmail" && typeof currentValue === "string" && !currentValue) {
+        nextFormData.primaryEmail = discovery.value;
+        nextAutoAppliedFields.add(field);
+        newlyAppliedIds.push(discovery.id);
+        appliedCount++;
+      } else if (field === "primaryPhone" && typeof currentValue === "string" && !currentValue) {
+        nextFormData.primaryPhone = discovery.value;
+        nextAutoAppliedFields.add(field);
+        newlyAppliedIds.push(discovery.id);
+        appliedCount++;
+      } else if (field === "knownAliases") {
+        const existingValue = typeof currentValue === "string" ? currentValue : "";
+        if (!existingValue.toLowerCase().includes(discovery.value.toLowerCase())) {
+          nextFormData.knownAliases = existingValue
+            ? `${existingValue}, ${discovery.value}`
+            : discovery.value;
+          nextAutoAppliedFields.add(field);
+          newlyAppliedIds.push(discovery.id);
+          appliedCount++;
+        }
       }
     }
-  }, [osintDiscovery.isRunning, osintDiscovery.discoveries.length]);
+
+    if (appliedCount === 0) return;
+
+    setFormData(nextFormData);
+    setAutoAppliedFields(nextAutoAppliedFields);
+    setAppliedDiscoveryIds((prev) => new Set([...prev, ...newlyAppliedIds]));
+    toast({
+      title: "Fields Auto-Populated",
+      description: `${appliedCount} intelligence item(s) automatically applied to the form.`,
+    });
+  }, [
+    osintDiscovery.isRunning,
+    osintDiscovery.discoveries,
+    formData,
+    autoAppliedFields,
+    appliedDiscoveryIds,
+    dismissedDiscoveryIds,
+    toast,
+  ]);
 
   // Manual discovery trigger - no auto-trigger to ensure full name is entered
   const handleStartDiscovery = useCallback((isRescan = false) => {
@@ -316,24 +336,24 @@ export function VIPDeepScanWizard() {
 
   // Apply a discovery to the form
   const handleApplyDiscovery = useCallback((discovery: DiscoveryItem) => {
-    setAppliedDiscoveryIds((prev) => new Set([...prev, discovery.id]));
-
+    const resolved = resolveVIPFieldMapping(discovery);
     // Map discovery to form fields
-    if (discovery.fieldMapping) {
-      const currentValue = formData[discovery.fieldMapping as keyof VIPIntakeData];
+    if (resolved) {
+      setAppliedDiscoveryIds((prev) => new Set([...prev, discovery.id]));
+      const currentValue = formData[resolved as keyof VIPIntakeData];
       
-      if (discovery.fieldMapping === "socialMediaHandles") {
+      if (resolved === "socialMediaHandles") {
         const newLine = `${discovery.source}: ${discovery.value}`;
         const existingValue = typeof currentValue === "string" ? currentValue : "";
         if (!existingValue.includes(discovery.value)) {
           updateFormData("socialMediaHandles", existingValue ? `${existingValue}\n${newLine}` : newLine);
         }
-      } else if (discovery.fieldMapping === "corporateAffiliations") {
+      } else if (resolved === "corporateAffiliations") {
         const existingValue = typeof currentValue === "string" ? currentValue : "";
         if (!existingValue.includes(discovery.value)) {
           updateFormData("corporateAffiliations", existingValue ? `${existingValue}, ${discovery.value}` : discovery.value);
         }
-      } else if (discovery.fieldMapping === "knownAliases") {
+      } else if (resolved === "knownAliases") {
         const existingValue = typeof currentValue === "string" ? currentValue : "";
         if (!existingValue.includes(discovery.value)) {
           updateFormData("knownAliases", existingValue ? `${existingValue}, ${discovery.value}` : discovery.value);
@@ -341,7 +361,7 @@ export function VIPDeepScanWizard() {
       } else {
         // Generic string field
         if (typeof currentValue === "string" && !currentValue) {
-          updateFormData(discovery.fieldMapping as keyof VIPIntakeData, discovery.value);
+          updateFormData(resolved as keyof VIPIntakeData, discovery.value);
         }
       }
     }
