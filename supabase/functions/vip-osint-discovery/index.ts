@@ -6,6 +6,37 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Helper: delay between requests
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Helper: fetch with retry and exponential backoff for rate limits
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries = 3,
+  baseDelayMs = 1500
+): Promise<Response> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      if (response.status === 429) {
+        // Rate limited - wait and retry
+        const waitTime = baseDelayMs * Math.pow(2, attempt);
+        console.log(`[DEEP-SCAN] Rate limited, waiting ${waitTime}ms before retry ${attempt + 1}/${maxRetries}`);
+        await delay(waitTime);
+        continue;
+      }
+      return response;
+    } catch (e) {
+      lastError = e as Error;
+      console.error(`[DEEP-SCAN] Fetch error (attempt ${attempt + 1}):`, e);
+      await delay(baseDelayMs * Math.pow(2, attempt));
+    }
+  }
+  throw lastError || new Error("Max retries exceeded");
+}
+
 interface DiscoveryParams {
   name: string;
   email?: string;
@@ -286,7 +317,7 @@ serve(async (req) => {
 - Social media handles
 Only return verified, publicly available information.`;
 
-            const contactResponse = await fetch('https://api.perplexity.ai/chat/completions', {
+            const contactResponse = await fetchWithRetry('https://api.perplexity.ai/chat/completions', {
               method: 'POST',
               headers: {
                 'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
@@ -380,6 +411,9 @@ Only return verified, publicly available information.`;
           }
           send({ type: "source_complete", data: { source: "Perplexity Contact Intel" } });
           
+          // Delay between Perplexity requests to avoid rate limits
+          await delay(1500);
+          
           // Query 2: Residence & Property Information
           send({ type: "source_started", data: { source: "Perplexity Property Intel", category: "physical" } });
           try {
@@ -390,7 +424,7 @@ Only return verified, publicly available information.`;
 - Known vacation homes or secondary residences
 Only return information that has been publicly reported or documented.`;
 
-            const propertyResponse = await fetch('https://api.perplexity.ai/chat/completions', {
+            const propertyResponse = await fetchWithRetry('https://api.perplexity.ai/chat/completions', {
               method: 'POST',
               headers: {
                 'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
@@ -463,6 +497,9 @@ Only return information that has been publicly reported or documented.`;
           }
           send({ type: "source_complete", data: { source: "Perplexity Property Intel" } });
           
+          // Delay between Perplexity requests to avoid rate limits
+          await delay(1500);
+          
           // Query 3: Family & Associates
           send({ type: "source_started", data: { source: "Perplexity Associates Intel", category: "identity" } });
           try {
@@ -473,7 +510,7 @@ Only return information that has been publicly reported or documented.`;
 - Known close associates
 Only return information that is publicly documented in news or official records.`;
 
-            const familyResponse = await fetch('https://api.perplexity.ai/chat/completions', {
+            const familyResponse = await fetchWithRetry('https://api.perplexity.ai/chat/completions', {
               method: 'POST',
               headers: {
                 'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
