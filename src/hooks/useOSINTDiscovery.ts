@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 export interface DiscoveryItem {
   id: string;
@@ -109,14 +110,25 @@ export function useOSINTDiscovery() {
       abortControllerRef.current = new AbortController();
 
       try {
+        // Use the signed-in user's access token so backend can enforce access control.
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData.session?.access_token;
+
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          // Helps proxies/browsers treat the response as a stream (SSE-style).
+          Accept: "text/event-stream",
+        };
+
+        if (accessToken) {
+          headers.Authorization = `Bearer ${accessToken}`;
+        }
+
         const response = await fetch(
           `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/vip-osint-discovery`,
           {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-            },
+            headers,
             body: JSON.stringify(params),
             signal: abortControllerRef.current.signal,
           }

@@ -56,7 +56,7 @@ const VIPDeepScan = () => {
   }
 
   return (
-    <PageLayout loading={isPageLoading}>
+    <PageLayout loading={isPageLoading} contentOverflow="auto">
       <VIPDeepScanWizard />
     </PageLayout>
   );
