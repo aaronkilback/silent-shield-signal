@@ -191,6 +191,24 @@ export function VIPDeepScanWizard() {
   }, [clients, formData.clientId]);
 
   // Auto-apply high-confidence discoveries to form fields
+  // All newline-appended fields (multi-value, one per line)
+  const newlineAppendFields = [
+    "socialMediaHandles", "secondaryEmails", "secondaryPhones",
+    "householdStaff", "securityPersonnel", "pets", "humanWildlifeConflict",
+    "primaryDevices", "cloudServices", "knownUsernames",
+    "vehicles", "regularRoutes", "frequentedLocations", "gymClubMemberships",
+    "preferredAirlines", "frequentDestinations",
+    "knownAdversaries", "previousIncidents", "specificConcerns", "industryThreats",
+    "wildfirePreparedness", "wildfireEvacuationPlan", "emailProviders"
+  ] as const;
+  
+  // All comma-appended fields
+  const commaAppendFields = ["corporateAffiliations", "knownAliases", "nationality"] as const;
+  
+  // Set-if-empty fields
+  const setIfEmptyFields = ["primaryEmail", "primaryPhone", "dateOfBirth"] as const;
+
+  // Auto-apply high-confidence discoveries to form fields
   useEffect(() => {
     if (osintDiscovery.isRunning) return;
     if (osintDiscovery.discoveries.length === 0) return;
@@ -215,71 +233,40 @@ export function VIPDeepScanWizard() {
       const field = resolved as keyof VIPIntakeData;
       const currentValue = nextFormData[field];
 
-      // Helper: append to multi-value text field (newline-separated)
-      const appendNewline = (key: "socialMediaHandles" | "secondaryEmails" | "secondaryPhones") => {
-        const prefix = key === "socialMediaHandles" ? `${discovery.source}: ` : "";
+      // Check field type and apply appropriately
+      if ((newlineAppendFields as readonly string[]).includes(field)) {
+        const prefix = field === "socialMediaHandles" ? `${discovery.source}: ` : "";
         const newLine = `${prefix}${discovery.value}`;
         const existingValue = typeof currentValue === "string" ? currentValue : "";
         if (!existingValue.toLowerCase().includes(discovery.value.toLowerCase())) {
-          nextFormData[key] = existingValue ? `${existingValue}\n${newLine}` : newLine;
-          nextAutoAppliedFields.add(key);
+          (nextFormData as any)[field] = existingValue ? `${existingValue}\n${newLine}` : newLine;
+          nextAutoAppliedFields.add(field);
           newlyAppliedIds.push(discovery.id);
           appliedCount++;
         }
-      };
-
-      // Helper: append comma-separated
-      const appendComma = (key: "corporateAffiliations" | "knownAliases" | "nationality") => {
+      } else if ((commaAppendFields as readonly string[]).includes(field)) {
         const existingValue = typeof currentValue === "string" ? currentValue : "";
         if (!existingValue.toLowerCase().includes(discovery.value.toLowerCase())) {
-          nextFormData[key] = existingValue ? `${existingValue}, ${discovery.value}` : discovery.value;
-          nextAutoAppliedFields.add(key);
+          (nextFormData as any)[field] = existingValue ? `${existingValue}, ${discovery.value}` : discovery.value;
+          nextAutoAppliedFields.add(field);
           newlyAppliedIds.push(discovery.id);
           appliedCount++;
         }
-      };
-
-      // Helper: set only if empty
-      const setIfEmpty = (key: "primaryEmail" | "primaryPhone" | "dateOfBirth") => {
+      } else if ((setIfEmptyFields as readonly string[]).includes(field)) {
         if (typeof currentValue === "string" && !currentValue) {
-          nextFormData[key] = discovery.value;
-          nextAutoAppliedFields.add(key);
+          (nextFormData as any)[field] = discovery.value;
+          nextAutoAppliedFields.add(field);
           newlyAppliedIds.push(discovery.id);
           appliedCount++;
         }
-      };
-
-      switch (field) {
-        case "socialMediaHandles":
-          appendNewline("socialMediaHandles");
-          break;
-        case "secondaryEmails":
-          appendNewline("secondaryEmails");
-          break;
-        case "secondaryPhones":
-          appendNewline("secondaryPhones");
-          break;
-        case "corporateAffiliations":
-          appendComma("corporateAffiliations");
-          break;
-        case "knownAliases":
-          appendComma("knownAliases");
-          break;
-        case "nationality":
-          appendComma("nationality");
-          break;
-        case "primaryEmail":
-          setIfEmpty("primaryEmail");
-          break;
-        case "primaryPhone":
-          setIfEmpty("primaryPhone");
-          break;
-        case "dateOfBirth":
-          setIfEmpty("dateOfBirth");
-          break;
-        default:
-          // Unknown field, skip
-          break;
+      } else if (resolved === "propertyAddress") {
+        // Special handling for property addresses - add to first property if empty
+        if (nextFormData.properties.length > 0 && !nextFormData.properties[0].address) {
+          nextFormData.properties[0].address = discovery.value;
+          nextAutoAppliedFields.add("propertyAddress");
+          newlyAppliedIds.push(discovery.id);
+          appliedCount++;
+        }
       }
     }
 
@@ -369,28 +356,35 @@ export function VIPDeepScanWizard() {
     setAppliedDiscoveryIds((prev) => new Set([...prev, discovery.id]));
     setAutoAppliedFields((prev) => new Set([...prev, resolved]));
 
-    const currentValue = formData[resolved as keyof VIPIntakeData];
-
-    // Newline-appended fields
-    if (resolved === "socialMediaHandles" || resolved === "secondaryEmails" || resolved === "secondaryPhones") {
+    // Check field type and apply appropriately
+    if ((newlineAppendFields as readonly string[]).includes(resolved)) {
       const prefix = resolved === "socialMediaHandles" ? `${discovery.source}: ` : "";
       const newLine = `${prefix}${discovery.value}`;
-      const existingValue = typeof currentValue === "string" ? currentValue : "";
+      const existingValue = typeof formData[resolved as keyof VIPIntakeData] === "string" 
+        ? (formData[resolved as keyof VIPIntakeData] as string) 
+        : "";
       if (!existingValue.toLowerCase().includes(discovery.value.toLowerCase())) {
-        updateFormData(resolved, existingValue ? `${existingValue}\n${newLine}` : newLine);
+        updateFormData(resolved as keyof VIPIntakeData, existingValue ? `${existingValue}\n${newLine}` : newLine);
       }
-    }
-    // Comma-appended fields
-    else if (resolved === "corporateAffiliations" || resolved === "knownAliases" || resolved === "nationality") {
-      const existingValue = typeof currentValue === "string" ? currentValue : "";
+    } else if ((commaAppendFields as readonly string[]).includes(resolved)) {
+      const existingValue = typeof formData[resolved as keyof VIPIntakeData] === "string" 
+        ? (formData[resolved as keyof VIPIntakeData] as string) 
+        : "";
       if (!existingValue.toLowerCase().includes(discovery.value.toLowerCase())) {
-        updateFormData(resolved, existingValue ? `${existingValue}, ${discovery.value}` : discovery.value);
+        updateFormData(resolved as keyof VIPIntakeData, existingValue ? `${existingValue}, ${discovery.value}` : discovery.value);
       }
-    }
-    // Set-if-empty fields
-    else if (resolved === "primaryEmail" || resolved === "primaryPhone" || resolved === "dateOfBirth") {
+    } else if ((setIfEmptyFields as readonly string[]).includes(resolved)) {
+      const currentValue = formData[resolved as keyof VIPIntakeData];
       if (typeof currentValue === "string" && !currentValue) {
-        updateFormData(resolved, discovery.value);
+        updateFormData(resolved as keyof VIPIntakeData, discovery.value);
+      }
+    } else if (resolved === "propertyAddress") {
+      // Special handling for property addresses
+      if (formData.properties.length > 0 && !formData.properties[0].address) {
+        setFormData(prev => ({
+          ...prev,
+          properties: prev.properties.map((p, i) => i === 0 ? { ...p, address: discovery.value } : p)
+        }));
       }
     }
 
@@ -398,7 +392,7 @@ export function VIPDeepScanWizard() {
       title: "Discovery Applied",
       description: `Added: ${discovery.label}`,
     });
-  }, [formData, toast]);
+  }, [formData, toast, newlineAppendFields, commaAppendFields, setIfEmptyFields]);
 
   const handleDismissDiscovery = useCallback((discoveryId: string) => {
     setDismissedDiscoveryIds((prev) => new Set([...prev, discoveryId]));
@@ -904,22 +898,40 @@ export function VIPDeepScanWizard() {
                 </div>
                 
                 <div className="space-y-2">
-                  <Label>Current Wildfire Preparedness Measures</Label>
+                  <div className="flex items-center gap-2">
+                    <Label>Current Wildfire Preparedness Measures</Label>
+                    {autoAppliedFields.has("wildfirePreparedness") && (
+                      <Badge variant="secondary" className="text-xs bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400">
+                        <Sparkles className="h-3 w-3 mr-1" />
+                        AI Discovered
+                      </Badge>
+                    )}
+                  </div>
                   <Textarea 
                     value={formData.wildfirePreparedness}
                     onChange={(e) => updateFormData("wildfirePreparedness", e.target.value)}
                     placeholder="Defensible space around property, fire-resistant landscaping, ember-resistant vents, roof sprinkler system, fireproof safe location, important documents off-site backup..."
                     rows={3}
+                    className={autoAppliedFields.has("wildfirePreparedness") ? "border-orange-300 dark:border-orange-700" : ""}
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Evacuation Plan</Label>
+                  <div className="flex items-center gap-2">
+                    <Label>Evacuation Plan</Label>
+                    {autoAppliedFields.has("wildfireEvacuationPlan") && (
+                      <Badge variant="secondary" className="text-xs bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400">
+                        <Sparkles className="h-3 w-3 mr-1" />
+                        AI Discovered
+                      </Badge>
+                    )}
+                  </div>
                   <Textarea 
                     value={formData.wildfireEvacuationPlan}
                     onChange={(e) => updateFormData("wildfireEvacuationPlan", e.target.value)}
                     placeholder="Primary and alternate evacuation routes, designated meeting points, go-bag locations, pet evacuation plan, livestock arrangements, important items to grab..."
                     rows={3}
+                    className={autoAppliedFields.has("wildfireEvacuationPlan") ? "border-orange-300 dark:border-orange-700" : ""}
                   />
                 </div>
               </div>
@@ -1037,6 +1049,12 @@ export function VIPDeepScanWizard() {
                 <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
                   <AlertTriangle className="h-5 w-5" />
                   <h4 className="font-semibold">Human-Wildlife Conflict</h4>
+                  {autoAppliedFields.has("humanWildlifeConflict") && (
+                    <Badge variant="secondary" className="text-xs bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                      <Sparkles className="h-3 w-3 mr-1" />
+                      AI Discovered
+                    </Badge>
+                  )}
                 </div>
                 
                 <div className="space-y-2">
@@ -1046,6 +1064,7 @@ export function VIPDeepScanWizard() {
                     onChange={(e) => updateFormData("humanWildlifeConflict", e.target.value)}
                     placeholder="Bears frequently on property, coyotes near children's play area, mountain lion sightings, venomous snakes, aggressive deer during rutting season...&#10;Include any past incidents and current mitigation measures"
                     rows={3}
+                    className={autoAppliedFields.has("humanWildlifeConflict") ? "border-amber-300 dark:border-amber-700" : ""}
                   />
                 </div>
               </div>
@@ -1281,14 +1300,22 @@ export function VIPDeepScanWizard() {
         return (
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Known Adversaries / Threats</Label>
+              <div className="flex items-center gap-2">
+                <Label>Known Adversaries / Threats</Label>
+                {autoAppliedFields.has("knownAdversaries") && (
+                  <Badge variant="secondary" className="text-xs bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                    <Sparkles className="h-3 w-3 mr-1" />
+                    AI Discovered
+                  </Badge>
+                )}
+              </div>
               <div className="flex gap-2">
                 <Textarea 
                   value={formData.knownAdversaries}
                   onChange={(e) => updateFormData("knownAdversaries", e.target.value)}
                   placeholder="Disgruntled former employees, business rivals, stalkers, estranged family members...&#10;Include names, relationship, and threat level if known"
                   rows={4}
-                  className="flex-1"
+                  className={`flex-1 ${autoAppliedFields.has("knownAdversaries") ? "border-red-300 dark:border-red-700" : ""}`}
                 />
                 <VoiceDictationInput 
                   onTranscript={(text) => updateFormData("knownAdversaries", formData.knownAdversaries ? `${formData.knownAdversaries}\n${text}` : text)}
@@ -1298,14 +1325,22 @@ export function VIPDeepScanWizard() {
             </div>
 
             <div className="space-y-2">
-              <Label>Previous Security Incidents</Label>
+              <div className="flex items-center gap-2">
+                <Label>Previous Security Incidents</Label>
+                {autoAppliedFields.has("previousIncidents") && (
+                  <Badge variant="secondary" className="text-xs bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                    <Sparkles className="h-3 w-3 mr-1" />
+                    AI Discovered
+                  </Badge>
+                )}
+              </div>
               <div className="flex gap-2">
                 <Textarea 
                   value={formData.previousIncidents}
                   onChange={(e) => updateFormData("previousIncidents", e.target.value)}
                   placeholder="Break-ins, threats received, doxing, stalking, kidnapping attempts...&#10;Include dates and outcomes"
                   rows={4}
-                  className="flex-1"
+                  className={`flex-1 ${autoAppliedFields.has("previousIncidents") ? "border-red-300 dark:border-red-700" : ""}`}
                 />
                 <VoiceDictationInput 
                   onTranscript={(text) => updateFormData("previousIncidents", formData.previousIncidents ? `${formData.previousIncidents}\n${text}` : text)}
@@ -1315,14 +1350,22 @@ export function VIPDeepScanWizard() {
             </div>
 
             <div className="space-y-2">
-              <Label>Specific Security Concerns</Label>
+              <div className="flex items-center gap-2">
+                <Label>Specific Security Concerns</Label>
+                {autoAppliedFields.has("specificConcerns") && (
+                  <Badge variant="secondary" className="text-xs bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                    <Sparkles className="h-3 w-3 mr-1" />
+                    AI Discovered
+                  </Badge>
+                )}
+              </div>
               <div className="flex gap-2">
                 <Textarea 
                   value={formData.specificConcerns}
                   onChange={(e) => updateFormData("specificConcerns", e.target.value)}
                   placeholder="What keeps the principal up at night? Specific fears or vulnerabilities they've expressed?"
                   rows={3}
-                  className="flex-1"
+                  className={`flex-1 ${autoAppliedFields.has("specificConcerns") ? "border-red-300 dark:border-red-700" : ""}`}
                 />
                 <VoiceDictationInput 
                   onTranscript={(text) => updateFormData("specificConcerns", formData.specificConcerns ? `${formData.specificConcerns} ${text}` : text)}
@@ -1332,14 +1375,22 @@ export function VIPDeepScanWizard() {
             </div>
 
             <div className="space-y-2">
-              <Label>Industry-Specific Threats</Label>
+              <div className="flex items-center gap-2">
+                <Label>Industry-Specific Threats</Label>
+                {autoAppliedFields.has("industryThreats") && (
+                  <Badge variant="secondary" className="text-xs bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                    <Sparkles className="h-3 w-3 mr-1" />
+                    AI Discovered
+                  </Badge>
+                )}
+              </div>
               <div className="flex gap-2">
                 <Textarea 
                   value={formData.industryThreats}
                   onChange={(e) => updateFormData("industryThreats", e.target.value)}
                   placeholder="Activist groups targeting the industry, regulatory investigations, competitor espionage..."
                   rows={3}
-                  className="flex-1"
+                  className={`flex-1 ${autoAppliedFields.has("industryThreats") ? "border-red-300 dark:border-red-700" : ""}`}
                 />
                 <VoiceDictationInput 
                   onTranscript={(text) => updateFormData("industryThreats", formData.industryThreats ? `${formData.industryThreats} ${text}` : text)}

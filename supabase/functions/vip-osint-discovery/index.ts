@@ -532,15 +532,15 @@ Only return information that is publicly documented in news or official records.
         send({ type: "progress", data: { percent: 55 } });
 
         // ═══════════════════════════════════════════════════════════════════════
-        // PHASE II: SIGNAL DETECTION - Threat Momentum
+        // PHASE II: SIGNAL DETECTION - Threat Momentum (Including Environmental)
         // ═══════════════════════════════════════════════════════════════════════
         send({ type: "phase", data: { phase: "signal_detection", label: "Phase II: Signal Detection" } });
 
         const threatSearches = [
-          { name: "Activist Targeting", query: `"${fullName}" protest OR boycott OR "campaign against"`, type: "threat" },
-          { name: "Controversy", query: `"${fullName}" scandal OR controversy OR accused OR criticized`, type: "threat" },
-          { name: "Legal Risk", query: `"${fullName}" lawsuit OR sued OR investigation`, type: "threat" },
-          { name: "Security Incidents", query: `"${fullName}" hacked OR security breach OR attacked`, type: "threat" },
+          { name: "Activist Targeting", query: `"${fullName}" protest OR boycott OR "campaign against"`, type: "threat", fieldMapping: "knownAdversaries" },
+          { name: "Controversy", query: `"${fullName}" scandal OR controversy OR accused OR criticized`, type: "threat", fieldMapping: "specificConcerns" },
+          { name: "Legal Risk", query: `"${fullName}" lawsuit OR sued OR investigation`, type: "threat", fieldMapping: "previousIncidents" },
+          { name: "Security Incidents", query: `"${fullName}" hacked OR security breach OR attacked`, type: "threat", fieldMapping: "previousIncidents" },
         ];
 
         // Industry-specific threats if industry is provided
@@ -549,8 +549,60 @@ Only return information that is publicly documented in news or official records.
             name: "Industry Threats",
             query: `"${industry}" threat OR attack OR targeting executives`,
             type: "threat",
+            fieldMapping: "industryThreats",
           });
         }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // ENVIRONMENTAL THREATS: Wildfire & Wildlife Risk Assessment
+        // ═══════════════════════════════════════════════════════════════════════
+        send({ type: "domain", data: { domain: "environmental", label: "Environmental & Wildlife Threats" } });
+        
+        // Wildfire risk searches based on location
+        if (location) {
+          threatSearches.push(
+            { 
+              name: "Wildfire Risk Zone", 
+              query: `"${location}" wildfire risk OR fire zone OR evacuation zone OR fire danger`, 
+              type: "threat",
+              fieldMapping: "wildfirePreparedness"
+            },
+            { 
+              name: "Wildfire Evacuation Routes", 
+              query: `"${location}" fire evacuation route OR emergency exit OR wildfire preparedness`, 
+              type: "threat",
+              fieldMapping: "wildfireEvacuationPlan"
+            },
+            { 
+              name: "Wildlife Encounters", 
+              query: `"${location}" bear sighting OR coyote attack OR mountain lion OR wildlife conflict OR dangerous animals`, 
+              type: "threat",
+              fieldMapping: "humanWildlifeConflict"
+            },
+            { 
+              name: "Wildlife Activity", 
+              query: `"${location}" wildlife warning OR animal attacks OR venomous snake OR aggressive deer`, 
+              type: "threat",
+              fieldMapping: "humanWildlifeConflict"
+            }
+          );
+        }
+        
+        // General wildfire/wildlife threats for any principal
+        threatSearches.push(
+          { 
+            name: "Wildfire Season", 
+            query: `California OR Colorado OR Arizona wildfire season 2024 2025 high risk areas evacuation`, 
+            type: "threat",
+            fieldMapping: "wildfirePreparedness"
+          },
+          { 
+            name: "Wildlife Safety Alerts", 
+            query: `bear attack warning OR mountain lion sighting residential OR coyote pet danger 2024 2025`, 
+            type: "threat",
+            fieldMapping: "humanWildlifeConflict"
+          }
+        );
 
         for (const source of threatSearches) {
           if (GOOGLE_API_KEY && GOOGLE_CX) {
@@ -570,6 +622,7 @@ Only return information that is publicly documented in news or official records.
                 const items = data.items || [];
                 
                 if (items.length > 0) {
+                  const isEnvironmental = source.name.includes("Wildfire") || source.name.includes("Wildlife");
                   const discovery: Discovery = {
                     type: "threat",
                     label: `${source.name} Signal`,
@@ -579,7 +632,10 @@ Only return information that is publicly documented in news or official records.
                     confidence: Math.min(50 + items.length * 15, 85),
                     category: "threat",
                     riskLevel: items.length >= 3 ? "high" : "medium",
-                    commentary: `Found ${items.length} recent result(s) related to ${source.name.toLowerCase()}. Review for actionable threat intelligence.`,
+                    fieldMapping: source.fieldMapping,
+                    commentary: isEnvironmental 
+                      ? `Environmental threat detected: ${items.length} result(s) for ${source.name.toLowerCase()}. Critical for property and evacuation planning.`
+                      : `Found ${items.length} recent result(s) related to ${source.name.toLowerCase()}. Review for actionable threat intelligence.`,
                   };
                   discoveries.push(discovery);
                   send({ type: "discovery", data: discovery });
