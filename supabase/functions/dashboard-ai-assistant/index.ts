@@ -2809,6 +2809,51 @@ RETURNS:
   {
     type: "function",
     function: {
+      name: "run_entity_deep_scan",
+      description: `ENTITY DEEP SCAN: Comprehensive OSINT intelligence gathering for any entity (person, organization, infrastructure, domain, etc.). Performs multi-phase scanning across dark web, breaches, social media, news, and relationship networks.
+
+PHASES:
+1. DARK WEB & BREACHES: HIBP breach checks, paste site exposure, credential leaks (for emails/persons)
+2. UNDERGROUND MENTIONS: Dark web forum mentions, doxing sites, leak repositories
+3. DIGITAL FOOTPRINT: LinkedIn, Twitter/X, Facebook, Instagram presence discovery
+4. NEWS & MEDIA: Recent articles, adverse media, legal/controversy mentions
+5. RELATIONSHIP ANALYSIS: AI-powered network mapping, associates, affiliations
+6. THREAT INTELLIGENCE: CISA KEV vulnerabilities (for infrastructure/domains)
+
+USE WHEN ASKED ABOUT:
+- "Run a deep scan on this entity"
+- "Full OSINT profile for [entity]"
+- "What's the digital footprint of [organization]?"
+- "Check for breaches related to [entity]"
+- "Scan [entity] for dark web mentions"
+- "Entity intelligence report"
+- "Background check on [entity]"
+
+RETURNS:
+- findings_count: Total OSINT findings discovered
+- critical_count: Critical severity findings
+- high_count: High severity findings
+- overall_risk: Calculated risk level (critical/high/medium/low)
+- findings: Array of detailed discoveries by category
+- categories: List of intelligence categories covered`,
+      parameters: {
+        type: "object",
+        properties: {
+          entity_id: {
+            type: "string",
+            description: "UUID of the entity to scan (use get_entities first if needed)"
+          },
+          entity_name: {
+            type: "string",
+            description: "Name of the entity to find and scan (if entity_id not provided)"
+          }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "perform_external_web_search",
       description: `OSINT WEB SEARCH: Perform targeted external web searches for intelligence gathering. This tool searches the open web for information related to security threats, incidents, organizations, and individuals.
 
@@ -9704,6 +9749,106 @@ The signal is now in the database with status 'triaged' and rules have been appl
         ],
         fetched_at: new Date().toISOString(),
       };
+    }
+
+    case "run_entity_deep_scan": {
+      const { entity_id, entity_name } = args;
+      
+      if (!entity_id && !entity_name) {
+        return { error: "Either entity_id or entity_name is required" };
+      }
+      
+      console.log(`[run_entity_deep_scan] Initiating deep scan for: ${entity_id || entity_name}`);
+      
+      const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+      const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      
+      let targetEntityId = entity_id;
+      
+      // If only name provided, find the entity first
+      if (!targetEntityId && entity_name) {
+        const { data: foundEntity, error: findError } = await supabaseClient
+          .from("entities")
+          .select("id, name, type")
+          .ilike("name", `%${entity_name}%`)
+          .limit(1)
+          .single();
+          
+        if (findError || !foundEntity) {
+          return { 
+            error: `Entity not found: ${entity_name}`,
+            suggestion: "Use get_entities to list available entities first"
+          };
+        }
+        
+        targetEntityId = foundEntity.id;
+        console.log(`[run_entity_deep_scan] Resolved entity: ${foundEntity.name} (${foundEntity.id})`);
+      }
+      
+      try {
+        const scanResponse = await fetch(`${SUPABASE_URL}/functions/v1/entity-deep-scan`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+          body: JSON.stringify({ entity_id: targetEntityId }),
+        });
+        
+        if (!scanResponse.ok) {
+          const errorText = await scanResponse.text();
+          console.error("[run_entity_deep_scan] Error:", errorText);
+          return {
+            error: `Entity deep scan failed: ${scanResponse.status}`,
+            details: errorText.substring(0, 200),
+          };
+        }
+        
+        const scanResult = await scanResponse.json();
+        
+        // Categorize findings
+        const findingsByCategory: Record<string, number> = {};
+        const criticalFindings: any[] = [];
+        const highFindings: any[] = [];
+        
+        for (const finding of scanResult.findings || []) {
+          const cat = finding.category || "other";
+          findingsByCategory[cat] = (findingsByCategory[cat] || 0) + 1;
+          
+          if (finding.riskLevel === "critical") {
+            criticalFindings.push({ label: finding.label, source: finding.source });
+          } else if (finding.riskLevel === "high") {
+            highFindings.push({ label: finding.label, source: finding.source });
+          }
+        }
+        
+        return {
+          entity_id: targetEntityId,
+          entity_name: scanResult.entity_name,
+          scan_complete: true,
+          total_findings: scanResult.findings_count,
+          critical_count: scanResult.critical_count,
+          high_count: scanResult.high_count,
+          overall_risk: scanResult.overall_risk,
+          updated_threat_score: scanResult.updated_threat_score,
+          findings_by_category: findingsByCategory,
+          critical_findings: criticalFindings.slice(0, 5),
+          high_findings: highFindings.slice(0, 5),
+          categories_scanned: scanResult.categories,
+          recommendations: [
+            ...(scanResult.critical_count > 0 ? ["IMMEDIATE ACTION: Review critical findings for breach response"] : []),
+            ...(scanResult.high_count > 0 ? ["Review high-risk findings and update entity risk profile"] : []),
+            "Update entity relationships based on discovered connections",
+            "Schedule follow-up scan in 30 days",
+          ],
+          scanned_at: new Date().toISOString(),
+        };
+      } catch (e) {
+        console.error("[run_entity_deep_scan] Exception:", e);
+        return {
+          error: `Entity deep scan exception: ${e instanceof Error ? e.message : "Unknown error"}`,
+        };
+      }
     }
 
     case "perform_external_web_search": {
