@@ -565,13 +565,13 @@ export function VIPDeepScanWizard() {
 
       if (error) throw error;
 
-      // Clear persisted state on success
-      clearPersistedState();
-      
       toast({
         title: "Deep Scan Initiated",
         description: `VIP Deep Scan for ${formData.fullLegalName} has been queued. ${formData.priorityLevel === 'priority' ? 'Priority processing (72 hours)' : 'Standard processing (14 days)'}.`,
       });
+
+      // Clear persisted state only AFTER successful submission
+      clearPersistedState();
 
       navigate(`/client/${formData.clientId}`);
     } catch (error) {
