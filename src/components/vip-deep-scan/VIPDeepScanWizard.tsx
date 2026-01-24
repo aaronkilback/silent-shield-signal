@@ -162,6 +162,8 @@ export function VIPDeepScanWizard() {
   const [appliedDiscoveryIds, setAppliedDiscoveryIds] = useState<Set<string>>(new Set());
   const [dismissedDiscoveryIds, setDismissedDiscoveryIds] = useState<Set<string>>(new Set());
   const [discoveryTriggered, setDiscoveryTriggered] = useState(false);
+  const [scanCount, setScanCount] = useState(0);
+  const [autoAppliedFields, setAutoAppliedFields] = useState<Set<string>>(new Set());
   const { toast } = useToast();
   const navigate = useNavigate();
   
@@ -187,8 +189,77 @@ export function VIPDeepScanWizard() {
     return clients?.find(c => c.id === formData.clientId);
   }, [clients, formData.clientId]);
 
+  // Auto-apply high-confidence discoveries to form fields
+  useEffect(() => {
+    if (!osintDiscovery.isRunning && osintDiscovery.discoveries.length > 0) {
+      const newAppliedFields = new Set(autoAppliedFields);
+      let appliedCount = 0;
+      
+      osintDiscovery.discoveries.forEach((discovery) => {
+        // Only auto-apply high confidence discoveries with field mappings
+        if (discovery.confidence >= 75 && discovery.fieldMapping && !appliedDiscoveryIds.has(discovery.id) && !dismissedDiscoveryIds.has(discovery.id)) {
+          const field = discovery.fieldMapping as keyof VIPIntakeData;
+          const currentValue = formData[field];
+          
+          // Auto-populate empty fields or append to list fields
+          if (field === "socialMediaHandles") {
+            const newLine = `${discovery.source}: ${discovery.value}`;
+            const existingValue = typeof currentValue === "string" ? currentValue : "";
+            if (!existingValue.toLowerCase().includes(discovery.value.toLowerCase())) {
+              setFormData(prev => ({
+                ...prev,
+                socialMediaHandles: existingValue ? `${existingValue}\n${newLine}` : newLine,
+              }));
+              newAppliedFields.add(field);
+              appliedCount++;
+            }
+          } else if (field === "corporateAffiliations") {
+            const existingValue = typeof currentValue === "string" ? currentValue : "";
+            if (!existingValue.toLowerCase().includes(discovery.value.toLowerCase())) {
+              setFormData(prev => ({
+                ...prev,
+                corporateAffiliations: existingValue ? `${existingValue}, ${discovery.value}` : discovery.value,
+              }));
+              newAppliedFields.add(field);
+              appliedCount++;
+            }
+          } else if (field === "primaryEmail" && typeof currentValue === "string" && !currentValue) {
+            setFormData(prev => ({ ...prev, primaryEmail: discovery.value }));
+            newAppliedFields.add(field);
+            appliedCount++;
+          } else if (field === "primaryPhone" && typeof currentValue === "string" && !currentValue) {
+            setFormData(prev => ({ ...prev, primaryPhone: discovery.value }));
+            newAppliedFields.add(field);
+            appliedCount++;
+          } else if (field === "knownAliases") {
+            const existingValue = typeof currentValue === "string" ? currentValue : "";
+            if (!existingValue.toLowerCase().includes(discovery.value.toLowerCase())) {
+              setFormData(prev => ({
+                ...prev,
+                knownAliases: existingValue ? `${existingValue}, ${discovery.value}` : discovery.value,
+              }));
+              newAppliedFields.add(field);
+              appliedCount++;
+            }
+          }
+          
+          // Mark as applied
+          setAppliedDiscoveryIds(prev => new Set([...prev, discovery.id]));
+        }
+      });
+      
+      if (appliedCount > 0) {
+        setAutoAppliedFields(newAppliedFields);
+        toast({
+          title: "Fields Auto-Populated",
+          description: `${appliedCount} intelligence item(s) automatically applied to the form.`,
+        });
+      }
+    }
+  }, [osintDiscovery.isRunning, osintDiscovery.discoveries.length]);
+
   // Manual discovery trigger - no auto-trigger to ensure full name is entered
-  const handleStartDiscovery = useCallback(() => {
+  const handleStartDiscovery = useCallback((isRescan = false) => {
     const nameToUse = formData.fullLegalName.trim();
     if (nameToUse.length < 3) {
       toast({
@@ -211,6 +282,9 @@ export function VIPDeepScanWizard() {
     }
     
     setDiscoveryTriggered(true);
+    setScanCount(prev => prev + 1);
+    
+    // Pass all available context to improve scan
     osintDiscovery.startDiscovery({
       name: nameToUse,
       email: formData.primaryEmail || undefined,
@@ -221,10 +295,24 @@ export function VIPDeepScanWizard() {
     });
     
     toast({
-      title: "Deep Scan Started",
-      description: `Running Silent Shield™ intelligence sweep for "${nameToUse}"`,
+      title: isRescan ? "Enhanced Scan Started" : "Deep Scan Started",
+      description: isRescan 
+        ? `Re-scanning with ${[formData.primaryEmail, formData.properties[0]?.address, formData.socialMediaHandles].filter(Boolean).length + 1} data points`
+        : `Running Silent Shield™ intelligence sweep for "${nameToUse}"`,
     });
   }, [formData, selectedClient?.industry, osintDiscovery, toast]);
+
+  // Check if we have new context for a rescan
+  const hasNewContextForRescan = useMemo(() => {
+    if (scanCount === 0) return false;
+    const contextPoints = [
+      formData.primaryEmail,
+      formData.properties[0]?.address,
+      formData.socialMediaHandles,
+      formData.dateOfBirth,
+    ].filter(Boolean).length;
+    return contextPoints >= 2;
+  }, [formData, scanCount]);
 
   // Apply a discovery to the form
   const handleApplyDiscovery = useCallback((discovery: DiscoveryItem) => {
@@ -474,7 +562,7 @@ export function VIPDeepScanWizard() {
                   <Button 
                     variant="outline" 
                     size="sm" 
-                    onClick={handleStartDiscovery}
+                    onClick={() => handleStartDiscovery(false)}
                     className="mt-2 w-full"
                     disabled={formData.fullLegalName.trim().split(/\s+/).length < 2}
                   >
@@ -489,20 +577,41 @@ export function VIPDeepScanWizard() {
                   </div>
                 )}
                 {discoveryTriggered && !osintDiscovery.isRunning && osintDiscovery.discoveries.length > 0 && (
-                  <div className="flex items-center gap-2 text-sm text-green-600 mt-2">
-                    <CheckCircle className="h-4 w-4" />
-                    Found {osintDiscovery.discoveries.length} intelligence items
+                  <div className="space-y-2 mt-2">
+                    <div className="flex items-center gap-2 text-sm text-green-600">
+                      <CheckCircle className="h-4 w-4" />
+                      Found {osintDiscovery.discoveries.length} intelligence items • {autoAppliedFields.size} fields auto-populated
+                    </div>
+                    {hasNewContextForRescan && (
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => handleStartDiscovery(true)}
+                        className="w-full text-xs"
+                      >
+                        <Zap className="h-3 w-3 mr-1" />
+                        Re-scan with additional context (more accurate)
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>
               <div className="space-y-2">
-                <Label>Known Aliases / Nicknames</Label>
+                <div className="flex items-center gap-2">
+                  <Label>Known Aliases / Nicknames</Label>
+                  {autoAppliedFields.has("knownAliases") && (
+                    <Badge variant="secondary" className="text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                      <Sparkles className="h-3 w-3 mr-1" />
+                      AI Populated
+                    </Badge>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <Input 
                     value={formData.knownAliases}
                     onChange={(e) => updateFormData("knownAliases", e.target.value)}
                     placeholder="Separate with commas"
-                    className="flex-1"
+                    className={`flex-1 ${autoAppliedFields.has("knownAliases") ? "border-green-300 dark:border-green-700" : ""}`}
                   />
                   <VoiceDictationInput 
                     onTranscript={(text) => updateFormData("knownAliases", formData.knownAliases ? `${formData.knownAliases}, ${text}` : text)}
@@ -533,14 +642,22 @@ export function VIPDeepScanWizard() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Primary Email *</Label>
+                <div className="flex items-center gap-2">
+                  <Label>Primary Email *</Label>
+                  {autoAppliedFields.has("primaryEmail") && (
+                    <Badge variant="secondary" className="text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                      <Sparkles className="h-3 w-3 mr-1" />
+                      AI Discovered
+                    </Badge>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <Input 
                     type="email"
                     value={formData.primaryEmail}
                     onChange={(e) => updateFormData("primaryEmail", e.target.value)}
                     placeholder="Main email address"
-                    className="flex-1"
+                    className={`flex-1 ${autoAppliedFields.has("primaryEmail") ? "border-green-300 dark:border-green-700" : ""}`}
                   />
                   <VoiceDictationInput 
                     onTranscript={(text) => updateFormData("primaryEmail", text.toLowerCase().replace(/\s+/g, ""))}
@@ -568,11 +685,20 @@ export function VIPDeepScanWizard() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Primary Phone</Label>
+                <div className="flex items-center gap-2">
+                  <Label>Primary Phone</Label>
+                  {autoAppliedFields.has("primaryPhone") && (
+                    <Badge variant="secondary" className="text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                      <Sparkles className="h-3 w-3 mr-1" />
+                      AI Discovered
+                    </Badge>
+                  )}
+                </div>
                 <Input 
                   value={formData.primaryPhone}
                   onChange={(e) => updateFormData("primaryPhone", e.target.value)}
                   placeholder="+1 (555) 123-4567"
+                  className={autoAppliedFields.has("primaryPhone") ? "border-green-300 dark:border-green-700" : ""}
                 />
               </div>
               <div className="space-y-2">
@@ -587,14 +713,22 @@ export function VIPDeepScanWizard() {
             </div>
 
             <div className="space-y-2">
-              <Label>Social Media Handles</Label>
+              <div className="flex items-center gap-2">
+                <Label>Social Media Handles</Label>
+                {autoAppliedFields.has("socialMediaHandles") && (
+                  <Badge variant="secondary" className="text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                    <Sparkles className="h-3 w-3 mr-1" />
+                    AI Discovered
+                  </Badge>
+                )}
+              </div>
               <div className="flex gap-2">
                 <Textarea 
                   value={formData.socialMediaHandles}
                   onChange={(e) => updateFormData("socialMediaHandles", e.target.value)}
                   placeholder="Twitter: @handle&#10;LinkedIn: /in/profile&#10;Instagram: @handle&#10;Facebook: profile.url"
                   rows={4}
-                  className="flex-1"
+                  className={`flex-1 ${autoAppliedFields.has("socialMediaHandles") ? "border-green-300 dark:border-green-700" : ""}`}
                 />
                 <VoiceDictationInput 
                   onTranscript={(text) => updateFormData("socialMediaHandles", formData.socialMediaHandles ? `${formData.socialMediaHandles}\n${text}` : text)}
@@ -882,12 +1016,21 @@ export function VIPDeepScanWizard() {
             </div>
 
             <div className="space-y-2">
-              <Label>Corporate Affiliations</Label>
+              <div className="flex items-center gap-2">
+                <Label>Corporate Affiliations</Label>
+                {autoAppliedFields.has("corporateAffiliations") && (
+                  <Badge variant="secondary" className="text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                    <Sparkles className="h-3 w-3 mr-1" />
+                    AI Discovered
+                  </Badge>
+                )}
+              </div>
               <Textarea 
                 value={formData.corporateAffiliations}
                 onChange={(e) => updateFormData("corporateAffiliations", e.target.value)}
                 placeholder="List all companies, board positions, advisory roles...&#10;Include ownership stakes if public"
                 rows={3}
+                className={autoAppliedFields.has("corporateAffiliations") ? "border-green-300 dark:border-green-700" : ""}
               />
             </div>
           </div>

@@ -102,12 +102,22 @@ serve(async (req) => {
           { name: "Facebook", query: `site:facebook.com "${fullName}"`, type: "social_media", category: "identity" },
         ];
 
+        // Contact & Email discovery sources
+        send({ type: "domain", data: { domain: "contact", label: "Contact Information Discovery" } });
+        const contactSources = [
+          { name: "Email Discovery", query: `"${fullName}" email contact "@" site:linkedin.com OR site:crunchbase.com`, type: "contact", category: "identity" },
+          { name: "Company Contact", query: `"${fullName}" contact phone email CEO founder`, type: "contact", category: "identity" },
+          { name: "Speaker Bio", query: `"${fullName}" speaker bio contact email`, type: "contact", category: "identity" },
+          { name: "Press Contact", query: `"${fullName}" press media contact email`, type: "contact", category: "identity" },
+        ];
+
         // Physical & Geographic sources
         send({ type: "domain", data: { domain: "physical", label: "Physical & Geographic Exposure" } });
         const physicalSources = [
           { name: "Property Records", query: `"${fullName}" property owner OR deed OR real estate`, type: "property", category: "physical" },
           { name: "Conference Appearances", query: `"${fullName}" speaking OR keynote OR conference 2024 OR 2025`, type: "news", category: "physical" },
           { name: "Office Locations", query: `"${fullName}" office headquarters address`, type: "property", category: "physical" },
+          { name: "Location Mentions", query: `"${fullName}" "lives in" OR "based in" OR "resides in"`, type: "property", category: "physical" },
         ];
 
         // Digital Surface sources
@@ -129,7 +139,35 @@ serve(async (req) => {
           { name: "Legal", query: `"${fullName}" lawsuit OR litigation OR plaintiff OR defendant`, type: "news", category: "operational" },
         ];
 
-        const allSources = [...identitySources, ...physicalSources, ...digitalSources, ...operationalSources];
+        // If we have email hint, search for related accounts
+        const emailSources = email ? [
+          { name: "Email Accounts", query: `"${email}" OR "${email.split('@')[0]}"`, type: "contact", category: "digital" },
+        ] : [];
+
+        // If we have location, enhance property search
+        const locationSources = location ? [
+          { name: "Location Property", query: `"${fullName}" "${location}" property OR address OR residence`, type: "property", category: "physical" },
+        ] : [];
+
+        // If we have social handles, verify and expand
+        const handleSources = socialMediaHandles ? 
+          socialMediaHandles.split(/[\n,]+/).filter(h => h.trim()).slice(0, 3).map((handle, i) => ({
+            name: `Handle Verify ${i + 1}`,
+            query: `"${handle.trim()}" "${fullName}"`,
+            type: "social_media",
+            category: "digital",
+          })) : [];
+
+        const allSources = [
+          ...identitySources, 
+          ...contactSources, 
+          ...physicalSources, 
+          ...digitalSources, 
+          ...operationalSources,
+          ...emailSources,
+          ...locationSources,
+          ...handleSources,
+        ];
         const progressPerSource = 50 / allSources.length;
         let progressPercent = 0;
 
@@ -569,10 +607,42 @@ function extractDiscovery(
     label = `Corporate: ${title.slice(0, 50)}`;
     fieldMapping = "corporateAffiliations";
     commentary = "Corporate leadership role identified. Creates operational dependency and public exposure.";
-  } else if (source.type === "property") {
-    label = `Property: ${title.slice(0, 40)}`;
-    riskLevel = "medium";
-    commentary = "Real estate record found. Physical footprint exposed.";
+  } else if (source.name.includes("Email") || source.name.includes("Contact") || source.name.includes("Speaker") || source.name.includes("Press")) {
+    // Extract email addresses from content
+    const emailMatch = `${title} ${snippet}`.match(/[\w.-]+@[\w.-]+\.\w+/gi);
+    const phoneMatch = `${title} ${snippet}`.match(/(?:\+?1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}/g);
+    
+    if (emailMatch && emailMatch.length > 0) {
+      const foundEmail = emailMatch[0].toLowerCase();
+      label = `Email: ${foundEmail}`;
+      value = foundEmail;
+      fieldMapping = "primaryEmail";
+      commentary = `Contact email discovered. May be used for breach monitoring and account correlation.`;
+      confidence = Math.max(confidence, 75);
+    } else if (phoneMatch && phoneMatch.length > 0) {
+      label = `Phone: ${phoneMatch[0]}`;
+      value = phoneMatch[0];
+      fieldMapping = "primaryPhone";
+      commentary = `Contact phone discovered. Verify and add to monitoring.`;
+      confidence = Math.max(confidence, 70);
+    } else {
+      label = `Contact Info: ${title.slice(0, 40)}`;
+      commentary = "Potential contact information source. Review for details.";
+    }
+  } else if (source.name.includes("Location") || source.type === "property") {
+    // Extract location/address patterns
+    const locationPattern = /(?:lives?\s+in|based\s+in|resides?\s+in|located\s+in|from)\s+([A-Z][a-zA-Z\s,]+(?:USA|Canada|UK|US|CA)?)/gi;
+    const locationMatch = `${title} ${snippet}`.match(locationPattern);
+    
+    if (locationMatch) {
+      label = `Location: ${locationMatch[0].slice(0, 40)}`;
+      commentary = "Geographic location identified. Add to physical exposure assessment.";
+      riskLevel = "medium";
+    } else {
+      label = `Property: ${title.slice(0, 40)}`;
+      riskLevel = "medium";
+      commentary = "Real estate record found. Physical footprint exposed.";
+    }
   } else if (source.type === "threat") {
     label = title.slice(0, 60);
     riskLevel = "high";
