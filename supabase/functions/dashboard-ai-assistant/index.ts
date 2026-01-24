@@ -186,6 +186,18 @@ If you describe an action without calling the tool, IT DOES NOT HAPPEN.
 │                                 │ "What's the current threat landscape?"     │
 │                                 │ "Any emerging risks?" / "Early warnings?"  │
 ├─────────────────────────────────┼────────────────────────────────────────────┤
+│ check_dark_web_exposure         │ Check email for dark web breaches & leaks  │
+│                                 │ "Has this email been compromised?"         │
+│                                 │ "Check for data breaches"                  │
+├─────────────────────────────────┼────────────────────────────────────────────┤
+│ run_vip_deep_scan               │ Full OSINT profile for individuals         │
+│                                 │ "Run a deep scan on [person]"              │
+│                                 │ "VIP risk assessment for [executive]"      │
+├─────────────────────────────────┼────────────────────────────────────────────┤
+│ get_threat_intel_feeds          │ CISA/CVE vulnerability intelligence        │
+│                                 │ "What are the latest vulnerabilities?"     │
+│                                 │ "Active exploits we should know about?"    │
+├─────────────────────────────────┼────────────────────────────────────────────┤
 │ trigger_osint_scan              │ Run OSINT scan on a specific entity        │
 ├─────────────────────────────────┼────────────────────────────────────────────┤
 │ perform_impact_analysis         │ Quantify threat impact on a signal         │
@@ -2644,6 +2656,153 @@ RETURNS:
           }
         },
         required: []
+      }
+    }
+  },
+  // ══════════════════════════════════════════════════════════════════════════
+  // DARK WEB & BREACH INTELLIGENCE TOOLS
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    type: "function",
+    function: {
+      name: "check_dark_web_exposure",
+      description: `DARK WEB BREACH CHECK: Scan for compromised credentials, paste site exposure, and dark web mentions of an individual or email address.
+
+CAPABILITIES:
+- Check email addresses against Have I Been Pwned database for breach history
+- Scan paste sites (Pastebin, etc.) for credential dumps containing the email
+- Search for dark web mentions and doxing content
+- Identify exposed data classes (passwords, financial info, SSN, etc.)
+
+USE WHEN ASKED ABOUT:
+- "Has this email been compromised?"
+- "Check for data breaches"
+- "Dark web exposure"
+- "Is this person's data leaked?"
+- "Credential compromise check"
+- "Breach history"
+
+RETURNS:
+- breach_count: Number of known breaches
+- breaches: Array of breach details (name, date, data exposed)
+- paste_exposure: Whether found on paste sites
+- risk_level: critical/high/medium/low based on exposure
+- recommendations: Immediate actions to take`,
+      parameters: {
+        type: "object",
+        properties: {
+          email: {
+            type: "string",
+            description: "Email address to check for breaches and exposure"
+          },
+          person_name: {
+            type: "string",
+            description: "Full name to search for dark web mentions (optional, enhances search)"
+          },
+          include_paste_check: {
+            type: "boolean",
+            description: "Also check paste sites for exposure (default: true)"
+          }
+        },
+        required: ["email"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_vip_deep_scan",
+      description: `VIP DEEP SCAN: Comprehensive OSINT intelligence gathering for high-net-worth individuals and executives. Performs multi-phase terrain mapping across identity, physical, digital, and operational domains.
+
+PHASES:
+1. TERRAIN MAPPING: Social media, corporate profiles, news, contact discovery
+2. DARK WEB INTEL: Breach checks, paste site exposure, credential leaks  
+3. THREAT DETECTION: Adversaries, legal risks, activist targeting, controversies
+4. RISK ANALYSIS: AI-powered threat vector identification and exposure ranking
+
+USE WHEN ASKED ABOUT:
+- "Run a deep scan on [person]"
+- "VIP risk assessment for [executive]"
+- "Full OSINT profile for [name]"
+- "Executive protection assessment"
+- "Comprehensive background check"
+- "What's the digital footprint of [person]?"
+
+RETURNS:
+- discoveries: Array of OSINT findings (social profiles, emails, properties, etc.)
+- breach_data: Dark web breach exposure
+- threat_vectors: Identified threat actors and risk narratives
+- exposure_tiers: Prioritized vulnerabilities ranked by severity
+- terrain_summary: Scores for identity/physical/digital/operational exposure
+- executive_summary: AI-generated risk assessment`,
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Full legal name of the individual to scan"
+          },
+          email: {
+            type: "string",
+            description: "Known email address (enables breach detection)"
+          },
+          location: {
+            type: "string",
+            description: "Known location (enables environmental threat detection)"
+          },
+          industry: {
+            type: "string",
+            description: "Industry sector (enables industry-specific threat analysis)"
+          },
+          social_handles: {
+            type: "string",
+            description: "Known social media handles (comma-separated)"
+          }
+        },
+        required: ["name"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_threat_intel_feeds",
+      description: `THREAT INTELLIGENCE FEEDS: Access real-time threat intelligence from CISA, CVE databases, and other authoritative sources.
+
+FEEDS AVAILABLE:
+- CISA Known Exploited Vulnerabilities (KEV) catalog
+- Trending CVEs from vulnerability trackers
+- Active threat campaigns relevant to client industries
+
+USE WHEN ASKED ABOUT:
+- "What are the latest vulnerabilities?"
+- "Active exploits we should know about?"
+- "CISA alerts"
+- "CVE threats"
+- "Patch priority recommendations"
+
+RETURNS:
+- vulnerabilities: Array of active threats with CVE IDs, vendors, products
+- required_actions: Mandated remediation actions
+- due_dates: Patching deadlines
+- industry_relevance: How threats relate to monitored clients`,
+      parameters: {
+        type: "object",
+        properties: {
+          industry_filter: {
+            type: "string",
+            description: "Filter by industry (e.g., 'energy', 'finance', 'healthcare')"
+          },
+          severity_filter: {
+            type: "string",
+            enum: ["critical", "high", "all"],
+            description: "Minimum severity level (default: all)"
+          },
+          limit: {
+            type: "number",
+            description: "Number of results (default: 10)"
+          }
+        }
       }
     }
   },
@@ -9204,6 +9363,346 @@ The signal is now in the database with status 'triaged' and rules have been appl
           ...(assessment.scores?.precursor_activity >= 50 ? ["Brief leadership on emerging threats"] : [])
         ],
         snapshot_id: radarResult?.snapshot_id
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // DARK WEB & BREACH INTELLIGENCE EXECUTION HANDLERS
+    // ══════════════════════════════════════════════════════════════════════════
+    case "check_dark_web_exposure": {
+      const { email, person_name, include_paste_check = true } = args;
+      
+      if (!email) {
+        return { error: "Email address is required for breach check" };
+      }
+      
+      console.log(`[check_dark_web_exposure] Checking breaches for: ${email}`);
+      
+      const HIBP_API_KEY = Deno.env.get("HIBP_API_KEY");
+      const breaches: any[] = [];
+      let pasteExposure: any = null;
+      let riskLevel = "low";
+      
+      // Check HIBP for breaches
+      if (HIBP_API_KEY) {
+        try {
+          const hibpResponse = await fetch(
+            `https://haveibeenpwned.com/api/v3/breachedaccount/${encodeURIComponent(email)}?truncateResponse=false`,
+            {
+              headers: {
+                "hibp-api-key": HIBP_API_KEY,
+                "user-agent": "Fortress-AEGIS",
+              },
+            }
+          );
+          
+          if (hibpResponse.ok) {
+            const breachData = await hibpResponse.json();
+            for (const breach of breachData) {
+              const dataClasses = breach.DataClasses || [];
+              const hasCriticalData = dataClasses.some((dc: string) => 
+                /password|credit|financial|ssn|social security|passport|bank/i.test(dc)
+              );
+              
+              breaches.push({
+                name: breach.Name,
+                title: breach.Title,
+                date: breach.BreachDate,
+                data_exposed: dataClasses.slice(0, 8),
+                is_sensitive: breach.IsSensitive,
+                has_critical_data: hasCriticalData,
+                affected_accounts: breach.PwnCount,
+              });
+              
+              if (hasCriticalData) riskLevel = "critical";
+              else if (breach.IsSensitive && riskLevel !== "critical") riskLevel = "critical";
+              else if (riskLevel !== "critical") riskLevel = "high";
+            }
+          } else if (hibpResponse.status !== 404) {
+            console.error(`[check_dark_web_exposure] HIBP error: ${hibpResponse.status}`);
+          }
+        } catch (e) {
+          console.error("[check_dark_web_exposure] HIBP fetch error:", e);
+        }
+        
+        // Check paste sites
+        if (include_paste_check) {
+          try {
+            // Rate limit delay
+            await new Promise(r => setTimeout(r, 1600));
+            
+            const pasteResponse = await fetch(
+              `https://haveibeenpwned.com/api/v3/pasteaccount/${encodeURIComponent(email)}`,
+              {
+                headers: {
+                  "hibp-api-key": HIBP_API_KEY,
+                  "user-agent": "Fortress-AEGIS",
+                },
+              }
+            );
+            
+            if (pasteResponse.ok) {
+              const pastes = await pasteResponse.json();
+              pasteExposure = {
+                found: true,
+                count: pastes.length,
+                sources: [...new Set(pastes.map((p: any) => p.Source || "Unknown"))],
+                recent_date: pastes[0]?.Date || null,
+              };
+              if (pastes.length > 0) riskLevel = "critical";
+            } else if (pasteResponse.status === 404) {
+              pasteExposure = { found: false, count: 0 };
+            }
+          } catch (e) {
+            console.error("[check_dark_web_exposure] Paste check error:", e);
+          }
+        }
+      } else {
+        return {
+          error: "HIBP_API_KEY not configured",
+          message: "Dark web breach checking requires Have I Been Pwned API key. Please configure it in secrets.",
+        };
+      }
+      
+      // Generate recommendations based on findings
+      const recommendations: string[] = [];
+      if (breaches.length > 0) {
+        recommendations.push("Immediately reset passwords for all accounts using this email");
+        recommendations.push("Enable multi-factor authentication everywhere possible");
+        if (breaches.some(b => b.has_critical_data)) {
+          recommendations.push("Monitor financial accounts and credit reports for suspicious activity");
+          recommendations.push("Consider identity theft protection service");
+        }
+      }
+      if (pasteExposure?.found) {
+        recommendations.push("Assume credentials are compromised - change ALL passwords");
+        recommendations.push("Check for unauthorized account access across all services");
+      }
+      if (breaches.length === 0 && !pasteExposure?.found) {
+        recommendations.push("No breaches detected, but continue monitoring");
+        recommendations.push("Use unique passwords for each service");
+      }
+      
+      return {
+        email_checked: email,
+        person_name: person_name || null,
+        breach_count: breaches.length,
+        breaches: breaches.slice(0, 10),
+        paste_exposure: pasteExposure,
+        risk_level: riskLevel,
+        risk_summary: breaches.length === 0 ? "No known breaches found" :
+          `Found ${breaches.length} breach(es). ${breaches.filter(b => b.has_critical_data).length} contain critical data (passwords/financial).`,
+        recommendations,
+        checked_at: new Date().toISOString(),
+      };
+    }
+
+    case "run_vip_deep_scan": {
+      const { name, email, location, industry, social_handles } = args;
+      
+      if (!name) {
+        return { error: "Name is required for VIP deep scan" };
+      }
+      
+      console.log(`[run_vip_deep_scan] Initiating deep scan for: ${name}`);
+      
+      // Call the vip-osint-discovery function (returns streaming SSE, but we'll parse it)
+      const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+      const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      
+      try {
+        const scanResponse = await fetch(`${SUPABASE_URL}/functions/v1/vip-osint-discovery`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+          body: JSON.stringify({
+            name,
+            email,
+            location,
+            industry,
+            socialMediaHandles: social_handles,
+          }),
+        });
+        
+        if (!scanResponse.ok) {
+          const errorText = await scanResponse.text();
+          console.error("[run_vip_deep_scan] Error:", errorText);
+          return {
+            error: `Deep scan failed: ${scanResponse.status}`,
+            details: errorText.substring(0, 200),
+          };
+        }
+        
+        // Parse SSE stream to extract final results
+        const text = await scanResponse.text();
+        const lines = text.split("\n").filter(l => l.startsWith("data: "));
+        
+        const discoveries: any[] = [];
+        const threatVectors: any[] = [];
+        const exposureTiers: any[] = [];
+        let terrainSummary: any = null;
+        let executiveSummary = "";
+        let totalDiscoveries = 0;
+        
+        for (const line of lines) {
+          try {
+            const jsonStr = line.replace("data: ", "").trim();
+            if (jsonStr === "[DONE]") continue;
+            
+            const event = JSON.parse(jsonStr);
+            
+            switch (event.type) {
+              case "discovery":
+                discoveries.push({
+                  type: event.data.type,
+                  label: event.data.label,
+                  source: event.data.source,
+                  confidence: event.data.confidence,
+                  risk_level: event.data.riskLevel,
+                  category: event.data.category,
+                });
+                break;
+              case "threat_vector":
+                threatVectors.push(event.data);
+                break;
+              case "exposure_tier":
+                exposureTiers.push(event.data);
+                break;
+              case "terrain_summary":
+                terrainSummary = event.data;
+                break;
+              case "executive_summary":
+                executiveSummary = event.data.summary;
+                break;
+              case "done":
+                totalDiscoveries = event.data.totalDiscoveries;
+                break;
+            }
+          } catch {
+            // Skip unparseable lines
+          }
+        }
+        
+        // Summarize findings by category
+        const byCategory = discoveries.reduce((acc: any, d) => {
+          const cat = d.category || "other";
+          acc[cat] = (acc[cat] || 0) + 1;
+          return acc;
+        }, {});
+        
+        const breachDiscoveries = discoveries.filter(d => d.type === "breach");
+        const threatDiscoveries = discoveries.filter(d => d.type === "threat");
+        const socialDiscoveries = discoveries.filter(d => d.type === "social_media");
+        
+        return {
+          subject: name,
+          scan_complete: true,
+          total_discoveries: totalDiscoveries || discoveries.length,
+          summary_by_category: byCategory,
+          terrain_scores: terrainSummary ? {
+            identity_visibility: terrainSummary.identityVisibility,
+            physical_exposure: terrainSummary.physicalExposure,
+            digital_attack_surface: terrainSummary.digitalAttackSurface,
+            operational_dependencies: terrainSummary.operationalDependencies,
+          } : null,
+          breach_findings: {
+            count: breachDiscoveries.length,
+            items: breachDiscoveries.slice(0, 5).map(d => ({ label: d.label, source: d.source })),
+          },
+          social_media_presence: {
+            count: socialDiscoveries.length,
+            platforms: socialDiscoveries.slice(0, 5).map(d => d.label),
+          },
+          threat_vectors: threatVectors.slice(0, 5),
+          top_exposures: exposureTiers.filter((e: any) => e.tier === 1).slice(0, 3),
+          executive_summary: executiveSummary || "Deep scan completed. Review discoveries for detailed findings.",
+          recommendations: [
+            ...(breachDiscoveries.length > 0 ? ["Immediate password reset required for compromised accounts"] : []),
+            ...(threatVectors.length > 0 ? ["Review threat vectors for protective intelligence planning"] : []),
+            ...(terrainSummary?.physicalExposure > 50 ? ["Physical security review recommended due to location exposure"] : []),
+          ],
+        };
+      } catch (e) {
+        console.error("[run_vip_deep_scan] Exception:", e);
+        return {
+          error: `Deep scan exception: ${e instanceof Error ? e.message : "Unknown error"}`,
+        };
+      }
+    }
+
+    case "get_threat_intel_feeds": {
+      const { industry_filter, severity_filter = "all", limit = 10 } = args;
+      
+      console.log(`[get_threat_intel_feeds] Fetching threat intelligence feeds`);
+      
+      const vulnerabilities: any[] = [];
+      
+      // Fetch CISA KEV Catalog
+      try {
+        const cisaResponse = await fetch(
+          "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+          { signal: AbortSignal.timeout(15000) }
+        );
+        
+        if (cisaResponse.ok) {
+          const cisaData = await cisaResponse.json();
+          let vulns = cisaData.vulnerabilities || [];
+          
+          // Filter by severity if specified
+          if (severity_filter === "critical") {
+            vulns = vulns.filter((v: any) => v.cveID.includes("CRITICAL") || v.shortDescription?.toLowerCase().includes("critical"));
+          }
+          
+          // Take most recent
+          vulns = vulns.slice(0, limit);
+          
+          for (const vuln of vulns) {
+            vulnerabilities.push({
+              cve_id: vuln.cveID,
+              vendor: vuln.vendorProject,
+              product: vuln.product,
+              name: vuln.vulnerabilityName,
+              description: vuln.shortDescription,
+              date_added: vuln.dateAdded,
+              due_date: vuln.dueDate,
+              required_action: vuln.requiredAction,
+              source: "CISA KEV",
+            });
+          }
+        }
+      } catch (e) {
+        console.error("[get_threat_intel_feeds] CISA fetch error:", e);
+      }
+      
+      // Industry relevance analysis
+      let industryRelevance: string[] = [];
+      if (industry_filter) {
+        const industryLower = industry_filter.toLowerCase();
+        industryRelevance = vulnerabilities
+          .filter((v: any) => {
+            const text = `${v.vendor} ${v.product} ${v.description}`.toLowerCase();
+            if (industryLower.includes("energy")) return text.includes("scada") || text.includes("ics") || text.includes("industrial");
+            if (industryLower.includes("finance")) return text.includes("banking") || text.includes("payment");
+            if (industryLower.includes("health")) return text.includes("medical") || text.includes("healthcare");
+            return true;
+          })
+          .map((v: any) => v.cve_id);
+      }
+      
+      return {
+        feed_source: "CISA Known Exploited Vulnerabilities",
+        vulnerabilities_count: vulnerabilities.length,
+        vulnerabilities: vulnerabilities.slice(0, limit),
+        industry_filter: industry_filter || "all",
+        industry_relevant: industryRelevance.length > 0 ? industryRelevance : null,
+        recommendations: [
+          "Prioritize patching systems with internet exposure",
+          "Verify remediation status against due dates",
+          "Cross-reference with internal asset inventory",
+        ],
+        fetched_at: new Date().toISOString(),
       };
     }
 
