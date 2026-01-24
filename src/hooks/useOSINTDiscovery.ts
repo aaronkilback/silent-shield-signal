@@ -77,8 +77,27 @@ const initialState: OSINTDiscoveryState = {
   executiveSummary: null,
 };
 
-export function useOSINTDiscovery() {
-  const [state, setState] = useState<OSINTDiscoveryState>(initialState);
+export function useOSINTDiscovery(restoredState?: Partial<OSINTDiscoveryState>) {
+  const [state, setState] = useState<OSINTDiscoveryState>(() => {
+    // Restore discoveries/threats/summary from localStorage if available
+    if (restoredState && restoredState.discoveries && restoredState.discoveries.length > 0) {
+      return {
+        ...initialState,
+        discoveries: restoredState.discoveries.map((d: any) => ({
+          ...d,
+          timestamp: new Date(d.timestamp),
+        })),
+        terrainSummary: restoredState.terrainSummary || null,
+        threatVectors: restoredState.threatVectors || [],
+        exposureTiers: restoredState.exposureTiers || [],
+        executiveSummary: restoredState.executiveSummary || null,
+        phase: "complete",
+        phaseLabel: "Scan Complete (Restored)",
+        progress: 100,
+      };
+    }
+    return initialState;
+  });
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const startDiscovery = useCallback(
