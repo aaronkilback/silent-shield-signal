@@ -250,8 +250,11 @@ serve(async (req) => {
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // PHASE I.5: BREACH CHECK (HIBP)
+        // PHASE I.5: DARK WEB & BREACH INTELLIGENCE (Comprehensive)
         // ═══════════════════════════════════════════════════════════════════════
+        send({ type: "domain", data: { domain: "dark_web", label: "Dark Web & Breach Intelligence" } });
+        
+        // HIBP Email Breach Check
         if (email && HIBP_API_KEY) {
           send({ type: "source_started", data: { source: "Have I Been Pwned", category: "digital" } });
           try {
@@ -270,23 +273,40 @@ serve(async (req) => {
               console.log(`[DEEP-SCAN] HIBP: ${breaches.length} breaches found for ${email}`);
               
               for (const breach of breaches) {
+                const dataClasses = breach.DataClasses || [];
+                const hasCriticalData = dataClasses.some((dc: string) => 
+                  /password|credit|financial|ssn|social security|passport|bank/i.test(dc)
+                );
                 const discovery: Discovery = {
                   type: "breach",
-                  label: `Breach: ${breach.Name}`,
-                  value: `${breach.Title} - Data exposed: ${(breach.DataClasses || []).slice(0, 5).join(", ")}`,
+                  label: `🔓 DARK WEB: ${breach.Name}`,
+                  value: `${breach.Title} - Data exposed: ${dataClasses.slice(0, 5).join(", ")}`,
                   source: "Have I Been Pwned",
-                  confidence: 95,
+                  confidence: 98,
                   category: "digital",
-                  riskLevel: breach.IsSensitive ? "critical" : "high",
-                  commentary: `Email "${email}" appeared in the ${breach.Name} breach (${breach.BreachDate}). This may enable credential stuffing or spear-phishing attacks.`,
+                  riskLevel: hasCriticalData ? "critical" : breach.IsSensitive ? "critical" : "high",
+                  fieldMapping: "previousIncidents",
+                  commentary: `⚠️ CONFIRMED BREACH: Email "${email}" compromised in ${breach.Name} (${breach.BreachDate}). ${hasCriticalData ? 'CRITICAL: Financial/credential data exposed. Immediate password reset required.' : 'Enables credential stuffing, identity theft, and targeted phishing.'}`,
                 };
                 discoveries.push(discovery);
                 send({ type: "discovery", data: discovery });
-                terrainAnalysis.digital.attackSurface += 20;
-                terrainAnalysis.digital.observations.push(`Credential exposure in ${breach.Name}`);
+                terrainAnalysis.digital.attackSurface += hasCriticalData ? 35 : 20;
+                terrainAnalysis.digital.observations.push(`Dark web credential exposure: ${breach.Name}`);
               }
             } else if (hibpResponse.status === 404) {
               console.log(`[DEEP-SCAN] HIBP: No breaches found for ${email}`);
+              const noBreachDiscovery: Discovery = {
+                type: "other",
+                label: `✅ No Known Breaches: ${email}`,
+                value: "Email not found in known breach databases",
+                source: "Have I Been Pwned",
+                confidence: 85,
+                category: "digital",
+                riskLevel: "low",
+                commentary: "No breaches currently detected. Continue monitoring as new breaches are regularly discovered.",
+              };
+              discoveries.push(noBreachDiscovery);
+              send({ type: "discovery", data: noBreachDiscovery });
             } else {
               console.error(`[DEEP-SCAN] HIBP error: ${hibpResponse.status}`);
             }
@@ -294,7 +314,131 @@ serve(async (req) => {
             console.error(`[DEEP-SCAN] HIBP check error:`, e);
           }
           send({ type: "source_complete", data: { source: "Have I Been Pwned" } });
+          await delay(1500); // HIBP rate limit
         }
+
+        // HIBP Paste Check (dark web paste site exposure)
+        if (email && HIBP_API_KEY) {
+          send({ type: "source_started", data: { source: "Paste Site Exposure", category: "digital" } });
+          try {
+            const pasteResponse = await fetch(
+              `https://haveibeenpwned.com/api/v3/pasteaccount/${encodeURIComponent(email)}`,
+              {
+                headers: {
+                  "hibp-api-key": HIBP_API_KEY,
+                  "user-agent": "SilentShield-DeepScan",
+                },
+              }
+            );
+            
+            if (pasteResponse.ok) {
+              const pastes = await pasteResponse.json();
+              console.log(`[DEEP-SCAN] HIBP Pastes: ${pastes.length} paste site mentions for ${email}`);
+              
+              if (pastes.length > 0) {
+                const discovery: Discovery = {
+                  type: "breach",
+                  label: `🕵️ PASTE SITES: ${pastes.length} Exposures`,
+                  value: `Found in ${pastes.length} paste site(s): ${pastes.slice(0, 3).map((p: any) => p.Source || 'Unknown').join(", ")}`,
+                  source: "HIBP Paste Check",
+                  confidence: 95,
+                  category: "digital",
+                  riskLevel: "critical",
+                  fieldMapping: "previousIncidents",
+                  commentary: `⚠️ CRITICAL: Email found on ${pastes.length} paste site(s) commonly used by hackers. Data may include credentials, personal info, or targeting lists. Immediate protective action required.`,
+                };
+                discoveries.push(discovery);
+                send({ type: "discovery", data: discovery });
+                terrainAnalysis.digital.attackSurface += 40;
+                terrainAnalysis.digital.observations.push(`Paste site exposure: ${pastes.length} instances`);
+              }
+            }
+          } catch (e) {
+            console.error(`[DEEP-SCAN] HIBP Paste check error:`, e);
+          }
+          send({ type: "source_complete", data: { source: "Paste Site Exposure" } });
+          await delay(1500);
+        }
+
+        // Dark web name search via Google
+        if (GOOGLE_API_KEY && GOOGLE_CX) {
+          send({ type: "source_started", data: { source: "Dark Web Mentions", category: "digital" } });
+          try {
+            const darkWebQueries = [
+              `"${fullName}" site:reddit.com/r/DataHoarder OR site:reddit.com/r/privacy breach leak`,
+              `"${fullName}" doxbin OR doxed OR leaked OR hacked`,
+              `"${fullName}" "pastebin" OR "ghostbin" OR "privatebin" credentials`,
+            ];
+            
+            for (const query of darkWebQueries) {
+              const searchUrl = new URL("https://www.googleapis.com/customsearch/v1");
+              searchUrl.searchParams.set("key", GOOGLE_API_KEY);
+              searchUrl.searchParams.set("cx", GOOGLE_CX);
+              searchUrl.searchParams.set("q", query);
+              searchUrl.searchParams.set("num", "3");
+              
+              const response = await fetchWithRetry(searchUrl.toString(), { method: 'GET' }, 2, 1000);
+              if (response.ok) {
+                const data = await response.json();
+                for (const item of (data.items || []).slice(0, 2)) {
+                  const discovery: Discovery = {
+                    type: "breach",
+                    label: `🚨 Dark Web Mention: ${item.title?.slice(0, 40)}`,
+                    value: item.link,
+                    url: item.link,
+                    source: "Dark Web Search",
+                    confidence: 70,
+                    category: "digital",
+                    riskLevel: "high",
+                    fieldMapping: "specificConcerns",
+                    commentary: `Potential dark web/hacker forum mention. Requires immediate investigation: ${item.snippet?.slice(0, 100)}`,
+                  };
+                  discoveries.push(discovery);
+                  send({ type: "discovery", data: discovery });
+                }
+              }
+              await delay(200);
+            }
+          } catch (e) {
+            console.error(`[DEEP-SCAN] Dark web search error:`, e);
+          }
+          send({ type: "source_complete", data: { source: "Dark Web Mentions" } });
+        }
+
+        // CISA Known Exploited Vulnerabilities (if they're in tech/exec role)
+        send({ type: "source_started", data: { source: "CISA Threat Intel", category: "threat" } });
+        try {
+          const cisaResponse = await fetch(
+            'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json',
+            { signal: AbortSignal.timeout(10000) }
+          );
+          
+          if (cisaResponse.ok) {
+            const cisaData = await cisaResponse.json();
+            const recentVulns = (cisaData.vulnerabilities || []).slice(0, 3);
+            
+            if (recentVulns.length > 0 && industry) {
+              const discovery: Discovery = {
+                type: "threat",
+                label: `🛡️ Active Threats: ${recentVulns.length} Critical Vulnerabilities`,
+                value: recentVulns.map((v: any) => v.cveID).join(", "),
+                source: "CISA KEV Catalog",
+                confidence: 90,
+                category: "threat",
+                riskLevel: "high",
+                fieldMapping: "industryThreats",
+                commentary: `Active exploitation in the wild. Top CVEs: ${recentVulns.slice(0, 2).map((v: any) => `${v.cveID} (${v.vendorProject})`).join("; ")}. Verify organizational patching status.`,
+              };
+              discoveries.push(discovery);
+              send({ type: "discovery", data: discovery });
+            }
+          }
+        } catch (e) {
+          console.error(`[DEEP-SCAN] CISA fetch error:`, e);
+        }
+        send({ type: "source_complete", data: { source: "CISA Threat Intel" } });
+
+        send({ type: "progress", data: { percent: 55 } });
 
         // ═══════════════════════════════════════════════════════════════════════
         // PHASE I.6: PERPLEXITY DEEP INTELLIGENCE (Contact & Residence Discovery)
@@ -566,11 +710,177 @@ Only return information that is publicly documented in news or official records.
             console.error(`[DEEP-SCAN] Perplexity family query error:`, e);
           }
           send({ type: "source_complete", data: { source: "Perplexity Associates Intel" } });
+          
+          await delay(1500);
+          
+          // Query 4: Deep Threat & Risk Intelligence
+          send({ type: "source_started", data: { source: "Perplexity Threat Intel", category: "threat" } });
+          try {
+            const threatQuery = `Research any security threats, risks, or concerns related to ${fullName}${industry ? ` (${industry})` : ''}. Include:
+- Any known adversaries, critics, or activists targeting this person
+- Legal troubles, lawsuits, or investigations
+- Controversial statements or actions that generated backlash
+- Industry-specific threats relevant to their sector
+- Any stalking, harassment, or credible threat incidents
+- Competitor conflicts or business disputes
+Only return factual, documented information from reliable sources.`;
+
+            const threatResponse = await fetchWithRetry('https://api.perplexity.ai/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'sonar-pro',
+                messages: [
+                  { role: 'system', content: 'You are a threat intelligence analyst. Report documented risks, threats, and adversaries. Be specific and cite sources.' },
+                  { role: 'user', content: threatQuery }
+                ],
+              }),
+            });
+
+            if (threatResponse.ok) {
+              const threatData = await threatResponse.json();
+              const threatContent = threatData.choices?.[0]?.message?.content || '';
+              const citations = threatData.citations || [];
+              
+              console.log(`[DEEP-SCAN] Perplexity Threats: Got response with ${citations.length} citations`);
+              
+              // Parse for specific threat indicators
+              const threatPatterns = [
+                { pattern: /lawsuit|sued|litigation|plaintiff|defendant/gi, type: 'legal', field: 'previousIncidents' },
+                { pattern: /investigation|probe|inquiry|scrutiny/gi, type: 'investigation', field: 'previousIncidents' },
+                { pattern: /protest|boycott|activist|campaign against/gi, type: 'activist', field: 'knownAdversaries' },
+                { pattern: /controversy|scandal|criticized|backlash/gi, type: 'reputational', field: 'specificConcerns' },
+                { pattern: /threat|stalker|harass|target/gi, type: 'direct_threat', field: 'knownAdversaries' },
+                { pattern: /competitor|rival|dispute|conflict/gi, type: 'business', field: 'specificConcerns' },
+              ];
+              
+              for (const { pattern, type, field } of threatPatterns) {
+                if (pattern.test(threatContent)) {
+                  const discovery: Discovery = {
+                    type: "threat",
+                    label: `🚨 Threat: ${type.charAt(0).toUpperCase() + type.slice(1)} Risk Detected`,
+                    value: threatContent.slice(0, 200),
+                    url: citations[0] || undefined,
+                    source: "Perplexity Threat Intel",
+                    confidence: 80,
+                    category: "threat",
+                    riskLevel: type === 'direct_threat' ? 'critical' : 'high',
+                    fieldMapping: field,
+                    commentary: `AI-detected ${type} threat indicator. Review source for actionable intelligence.`,
+                  };
+                  discoveries.push(discovery);
+                  send({ type: "discovery", data: discovery });
+                  terrainAnalysis.operational.dependencies += 15;
+                }
+              }
+            }
+          } catch (e) {
+            console.error(`[DEEP-SCAN] Perplexity threat query error:`, e);
+          }
+          send({ type: "source_complete", data: { source: "Perplexity Threat Intel" } });
+
+          await delay(1500);
+
+          // Query 5: Digital Footprint & Attack Surface
+          send({ type: "source_started", data: { source: "Perplexity Digital Intel", category: "digital" } });
+          try {
+            const digitalQuery = `Find the complete digital footprint for ${fullName}. Include:
+- All social media accounts (Twitter, LinkedIn, Instagram, Facebook, TikTok, etc.)
+- Websites or domains they own or are associated with
+- Email addresses (business and personal if public)
+- Phone numbers if publicly listed
+- Apps or platforms they've created or are associated with
+- Podcast appearances, YouTube videos, or online media
+- Any mentions on company websites or in press releases
+Be thorough and include URLs where possible.`;
+
+            const digitalResponse = await fetchWithRetry('https://api.perplexity.ai/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'sonar',
+                messages: [
+                  { role: 'system', content: 'You are an OSINT analyst mapping digital attack surface. Extract all digital identifiers and platforms.' },
+                  { role: 'user', content: digitalQuery }
+                ],
+              }),
+            });
+
+            if (digitalResponse.ok) {
+              const digitalData = await digitalResponse.json();
+              const digitalContent = digitalData.choices?.[0]?.message?.content || '';
+              const citations = digitalData.citations || [];
+              
+              // Extract social handles
+              const handlePatterns = [
+                { pattern: /@([a-zA-Z0-9_]{1,15})/g, platform: 'Twitter/X' },
+                { pattern: /instagram\.com\/([a-zA-Z0-9_.]+)/gi, platform: 'Instagram' },
+                { pattern: /linkedin\.com\/in\/([a-zA-Z0-9-]+)/gi, platform: 'LinkedIn' },
+                { pattern: /facebook\.com\/([a-zA-Z0-9.]+)/gi, platform: 'Facebook' },
+                { pattern: /tiktok\.com\/@([a-zA-Z0-9_.]+)/gi, platform: 'TikTok' },
+              ];
+              
+              for (const { pattern, platform } of handlePatterns) {
+                const matches = digitalContent.match(pattern);
+                if (matches) {
+                  const uniqueMatches = [...new Set(matches)] as string[];
+                  for (const match of uniqueMatches.slice(0, 2)) {
+                    const discovery: Discovery = {
+                      type: "social_media",
+                      label: `${platform}: ${match}`,
+                      value: String(match),
+                      url: citations[0] || undefined,
+                      source: "Perplexity Digital Intel",
+                      confidence: 75,
+                      category: "digital",
+                      fieldMapping: "socialMediaHandles",
+                      commentary: `Social presence on ${platform}. Add to monitoring for real-time alerts.`,
+                    };
+                    discoveries.push(discovery);
+                    send({ type: "discovery", data: discovery });
+                  }
+                }
+              }
+              
+              // Extract domains
+              const domainPattern = /(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9-]+\.[a-zA-Z]{2,})/gi;
+              const domains = digitalContent.match(domainPattern);
+              if (domains) {
+                const uniqueDomains = [...new Set(domains)] as string[];
+                for (const domain of uniqueDomains.slice(0, 3)) {
+                  if (!domain.includes('linkedin') && !domain.includes('twitter') && !domain.includes('facebook')) {
+                    const discovery: Discovery = {
+                      type: "other",
+                      label: `Domain: ${domain}`,
+                      value: String(domain),
+                      source: "Perplexity Digital Intel",
+                      confidence: 70,
+                      category: "digital",
+                      commentary: `Associated domain. Check WHOIS for ownership and DNS for infrastructure exposure.`,
+                    };
+                    discoveries.push(discovery);
+                    send({ type: "discovery", data: discovery });
+                    terrainAnalysis.digital.attackSurface += 10;
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.error(`[DEEP-SCAN] Perplexity digital query error:`, e);
+          }
+          send({ type: "source_complete", data: { source: "Perplexity Digital Intel" } });
+          
         } else {
           console.log(`[DEEP-SCAN] Perplexity: API key not configured, skipping deep intel extraction`);
         }
 
-        send({ type: "progress", data: { percent: 55 } });
+        send({ type: "progress", data: { percent: 60 } });
 
         // ═══════════════════════════════════════════════════════════════════════
         // PHASE II: SIGNAL DETECTION - Threat Momentum (Including Environmental)
