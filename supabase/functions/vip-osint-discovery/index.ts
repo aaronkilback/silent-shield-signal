@@ -384,7 +384,7 @@ Only return verified, publicly available information.`;
                 /(?:headquarter(?:s|ed)?|office|based)\s+(?:in|at)\s+([A-Z][a-zA-Z\s,]+(?:USA|US|Canada|CA|UK)?)/gi
               ];
               
-              for (const pattern of addressPatterns) {
+                for (const pattern of addressPatterns) {
                 const matches = contactContent.match(pattern) || [];
                 const uniqueAddresses = [...new Set(matches)] as string[];
                 for (const addr of uniqueAddresses.slice(0, 2)) {
@@ -395,6 +395,7 @@ Only return verified, publicly available information.`;
                     source: "Perplexity AI",
                     url: citations[0] || undefined,
                     confidence: 75,
+                    fieldMapping: "propertyAddress",
                     category: "physical",
                     riskLevel: "medium",
                     commentary: `Business location or headquarters identified. Add to physical security assessment.`,
@@ -463,6 +464,7 @@ Only return information that has been publicly reported or documented.`;
                     source: "Perplexity AI",
                     url: citations[0] || undefined,
                     confidence: 80,
+                    fieldMapping: "propertyAddress",
                     category: "physical",
                     riskLevel: "high",
                     commentary: `Residence location discovered. Critical for physical security planning and route analysis.`,
@@ -541,13 +543,16 @@ Only return information that is publicly documented in news or official records.
                 const matches = familyContent.match(pattern) || [];
                 const uniqueMatches = [...new Set(matches)] as string[];
                 for (const match of uniqueMatches.slice(0, 3)) {
+                  // Determine if this is a staff member or family member
+                  const isStaff = /driver|nanny|housekeeper|bodyguard|assistant|chef|butler/i.test(match);
                   const discovery: Discovery = {
                     type: "family",
-                    label: `Family: ${match.slice(0, 40)}`,
+                    label: `${isStaff ? 'Staff' : 'Family'}: ${match.slice(0, 40)}`,
                     value: match,
                     source: "Perplexity AI",
                     url: citations[0] || undefined,
                     confidence: 75,
+                    fieldMapping: isStaff ? "householdStaff" : undefined, // Family members need manual review
                     category: "identity",
                     riskLevel: "medium",
                     commentary: `Family relationship identified. Consider for extended protection planning.`,
@@ -991,10 +996,13 @@ function extractDiscovery(
     
     if (locationMatch) {
       label = `Location: ${locationMatch[0].slice(0, 40)}`;
+      value = locationMatch[0];
+      fieldMapping = "propertyAddress";
       commentary = "Geographic location identified. Add to physical exposure assessment.";
       riskLevel = "medium";
     } else {
       label = `Property: ${title.slice(0, 40)}`;
+      fieldMapping = "propertyAddress";
       riskLevel = "medium";
       commentary = "Real estate record found. Physical footprint exposed.";
     }

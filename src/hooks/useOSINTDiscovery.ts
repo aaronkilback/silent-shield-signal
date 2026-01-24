@@ -238,17 +238,51 @@ export function useOSINTDiscovery() {
           break;
 
         case "threat_vector":
-          setState((prev) => ({
-            ...prev,
-            threatVectors: [...prev.threatVectors, event.data],
-          }));
+          // Store threat vector AND create a discovery for auto-apply
+          setState((prev) => {
+            const threatDiscovery: DiscoveryItem = {
+              id: crypto.randomUUID(),
+              type: "threat",
+              label: `Threat: ${event.data.vector}`,
+              value: `${event.data.narrative} (Trigger: ${event.data.trigger})`,
+              source: "AI Analysis",
+              confidence: Math.round((event.data.confidence || 0.7) * 100),
+              timestamp: new Date(),
+              fieldMapping: event.data.vector.toLowerCase().includes("adversar") ? "knownAdversaries" : "specificConcerns",
+              category: "threat",
+              riskLevel: event.data.momentum === "rising" ? "high" : "medium",
+              commentary: `Beneficiary: ${event.data.beneficiary}. Momentum: ${event.data.momentum}.`,
+            };
+            return {
+              ...prev,
+              threatVectors: [...prev.threatVectors, event.data],
+              discoveries: [...prev.discoveries, threatDiscovery],
+            };
+          });
           break;
 
         case "exposure_tier":
-          setState((prev) => ({
-            ...prev,
-            exposureTiers: [...prev.exposureTiers, event.data],
-          }));
+          // Store exposure tier AND create a discovery for auto-apply
+          setState((prev) => {
+            const exposureDiscovery: DiscoveryItem = {
+              id: crypto.randomUUID(),
+              type: "threat",
+              label: `Tier ${event.data.tier} Exposure: ${event.data.exposure.slice(0, 40)}`,
+              value: `${event.data.reason}. Early warning: ${event.data.earlyWarning}`,
+              source: "AI Analysis",
+              confidence: event.data.tier === 1 ? 90 : event.data.tier === 2 ? 80 : 70,
+              timestamp: new Date(),
+              fieldMapping: "specificConcerns",
+              category: "threat",
+              riskLevel: event.data.tier === 1 ? "critical" : event.data.tier === 2 ? "high" : "medium",
+              commentary: `Exploit method: ${event.data.exploitMethod}. Intervention: ${event.data.intervention}`,
+            };
+            return {
+              ...prev,
+              exposureTiers: [...prev.exposureTiers, event.data],
+              discoveries: [...prev.discoveries, exposureDiscovery],
+            };
+          });
           break;
 
         case "executive_summary":
