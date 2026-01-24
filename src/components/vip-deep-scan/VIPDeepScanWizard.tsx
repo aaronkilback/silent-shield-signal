@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,10 +15,12 @@ import { useQuery } from "@tanstack/react-query";
 import { 
   Shield, User, Home, Users, Smartphone, Plane, AlertTriangle, 
   CheckCircle, ChevronRight, ChevronLeft, Clock, Zap, FileText,
-  Plus, Trash2, MapPin, Car, Building, Globe, Mic
+  Plus, Trash2, MapPin, Car, Building, Globe, Mic, Sparkles
 } from "lucide-react";
 import { VoiceAssistantPanel } from "./VoiceAssistantPanel";
 import { VoiceDictationInput } from "./VoiceDictationInput";
+import { OSINTDiscoveryPanel } from "./OSINTDiscoveryPanel";
+import { useOSINTDiscovery, type DiscoveryItem } from "@/hooks/useOSINTDiscovery";
 
 interface FamilyMember {
   name: string;
@@ -157,8 +159,14 @@ export function VIPDeepScanWizard() {
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState<VIPIntakeData>(initialFormData);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [appliedDiscoveryIds, setAppliedDiscoveryIds] = useState<Set<string>>(new Set());
+  const [dismissedDiscoveryIds, setDismissedDiscoveryIds] = useState<Set<string>>(new Set());
+  const [discoveryTriggered, setDiscoveryTriggered] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
+  
+  // OSINT Discovery hook
+  const osintDiscovery = useOSINTDiscovery();
 
   // Fetch clients
   const { data: clients } = useQuery({
@@ -173,6 +181,68 @@ export function VIPDeepScanWizard() {
       return data;
     },
   });
+
+  // Trigger OSINT discovery when user completes step 2 with basic info
+  useEffect(() => {
+    if (
+      currentStep >= 2 &&
+      formData.fullLegalName &&
+      formData.fullLegalName.trim().length >= 3 &&
+      !discoveryTriggered &&
+      !osintDiscovery.isRunning
+    ) {
+      setDiscoveryTriggered(true);
+      osintDiscovery.startDiscovery({
+        name: formData.fullLegalName,
+        email: formData.primaryEmail || undefined,
+        dateOfBirth: formData.dateOfBirth || undefined,
+        location: formData.properties[0]?.address || undefined,
+        socialMediaHandles: formData.socialMediaHandles || undefined,
+      });
+    }
+  }, [currentStep, formData.fullLegalName, formData.primaryEmail, discoveryTriggered, osintDiscovery.isRunning]);
+
+  // Apply a discovery to the form
+  const handleApplyDiscovery = useCallback((discovery: DiscoveryItem) => {
+    setAppliedDiscoveryIds((prev) => new Set([...prev, discovery.id]));
+
+    // Map discovery to form fields
+    if (discovery.fieldMapping) {
+      const currentValue = formData[discovery.fieldMapping as keyof VIPIntakeData];
+      
+      if (discovery.fieldMapping === "socialMediaHandles") {
+        const newLine = `${discovery.source}: ${discovery.value}`;
+        const existingValue = typeof currentValue === "string" ? currentValue : "";
+        if (!existingValue.includes(discovery.value)) {
+          updateFormData("socialMediaHandles", existingValue ? `${existingValue}\n${newLine}` : newLine);
+        }
+      } else if (discovery.fieldMapping === "corporateAffiliations") {
+        const existingValue = typeof currentValue === "string" ? currentValue : "";
+        if (!existingValue.includes(discovery.value)) {
+          updateFormData("corporateAffiliations", existingValue ? `${existingValue}, ${discovery.value}` : discovery.value);
+        }
+      } else if (discovery.fieldMapping === "knownAliases") {
+        const existingValue = typeof currentValue === "string" ? currentValue : "";
+        if (!existingValue.includes(discovery.value)) {
+          updateFormData("knownAliases", existingValue ? `${existingValue}, ${discovery.value}` : discovery.value);
+        }
+      } else {
+        // Generic string field
+        if (typeof currentValue === "string" && !currentValue) {
+          updateFormData(discovery.fieldMapping as keyof VIPIntakeData, discovery.value);
+        }
+      }
+    }
+
+    toast({
+      title: "Discovery Applied",
+      description: `Added: ${discovery.label}`,
+    });
+  }, [formData, toast]);
+
+  const handleDismissDiscovery = useCallback((discoveryId: string) => {
+    setDismissedDiscoveryIds((prev) => new Set([...prev, discoveryId]));
+  }, []);
 
   const updateFormData = (field: keyof VIPIntakeData, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -1181,6 +1251,18 @@ export function VIPDeepScanWizard() {
           {renderStepContent()}
         </CardContent>
       </Card>
+
+      {/* OSINT Discovery Panel - shows when discovery is active or has results */}
+      {(osintDiscovery.isRunning || osintDiscovery.discoveries.length > 0) && currentStep >= 2 && (
+        <OSINTDiscoveryPanel
+          state={osintDiscovery}
+          onApplyDiscovery={handleApplyDiscovery}
+          onDismissDiscovery={handleDismissDiscovery}
+          appliedIds={appliedDiscoveryIds}
+          dismissedIds={dismissedDiscoveryIds}
+          onStop={osintDiscovery.stopDiscovery}
+        />
+      )}
 
       {/* Navigation */}
       <div className="flex justify-between">

@@ -222,3 +222,6 @@ verify_jwt = false
 
 [functions.openai-realtime-token]
 verify_jwt = false
+
+[functions.vip-osint-discovery]
+verify_jwt = false
