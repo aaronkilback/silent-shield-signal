@@ -24,6 +24,8 @@ interface VIPIntakeData {
     hasSecuritySystem: boolean;
     notes: string;
   }>;
+  wildfirePreparedness: string;
+  wildfireEvacuationPlan: string;
   familyMembers: Array<{
     name: string;
     relationship: string;
@@ -32,6 +34,8 @@ interface VIPIntakeData {
   }>;
   householdStaff: string;
   securityPersonnel: string;
+  pets: string;
+  humanWildlifeConflict: string;
   primaryDevices: string;
   emailProviders: string;
   cloudServices: string;
@@ -115,9 +119,13 @@ serve(async (req) => {
           primary_phone: intakeData.primaryPhone,
           secondary_phones: intakeData.secondaryPhones,
           properties: intakeData.properties,
+          wildfire_preparedness: intakeData.wildfirePreparedness,
+          wildfire_evacuation_plan: intakeData.wildfireEvacuationPlan,
           family_members: intakeData.familyMembers,
           household_staff: intakeData.householdStaff,
           security_personnel: intakeData.securityPersonnel,
+          pets: intakeData.pets,
+          human_wildlife_conflict: intakeData.humanWildlifeConflict,
           digital_footprint: {
             devices: intakeData.primaryDevices,
             email_providers: intakeData.emailProviders,

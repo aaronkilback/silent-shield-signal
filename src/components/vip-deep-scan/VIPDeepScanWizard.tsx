@@ -60,11 +60,15 @@ interface VIPIntakeData {
   
   // Step 3: Residence & Properties
   properties: PropertyInfo[];
+  wildfirePreparedness: string;
+  wildfireEvacuationPlan: string;
   
   // Step 4: Family & Household
   familyMembers: FamilyMember[];
   householdStaff: string;
   securityPersonnel: string;
+  pets: string;
+  humanWildlifeConflict: string;
   
   // Step 5: Digital Footprint
   primaryDevices: string;
@@ -121,9 +125,13 @@ const initialFormData: VIPIntakeData = {
   secondaryPhones: "",
   socialMediaHandles: "",
   properties: [{ type: "primary", address: "", hasSecuritySystem: false, notes: "" }],
+  wildfirePreparedness: "",
+  wildfireEvacuationPlan: "",
   familyMembers: [],
   householdStaff: "",
   securityPersonnel: "",
+  pets: "",
+  humanWildlifeConflict: "",
   primaryDevices: "",
   emailProviders: "",
   cloudServices: "",
@@ -550,6 +558,36 @@ export function VIPDeepScanWizard() {
                 </div>
               </Card>
             ))}
+
+            {/* Wildfire Preparedness Section */}
+            <Card className="p-4 border-orange-200 bg-orange-50/30 dark:border-orange-900 dark:bg-orange-950/20">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-orange-700 dark:text-orange-400">
+                  <AlertTriangle className="h-5 w-5" />
+                  <h4 className="font-semibold">Wildfire Preparedness</h4>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label>Current Wildfire Preparedness Measures</Label>
+                  <Textarea 
+                    value={formData.wildfirePreparedness}
+                    onChange={(e) => updateFormData("wildfirePreparedness", e.target.value)}
+                    placeholder="Defensible space around property, fire-resistant landscaping, ember-resistant vents, roof sprinkler system, fireproof safe location, important documents off-site backup..."
+                    rows={3}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Evacuation Plan</Label>
+                  <Textarea 
+                    value={formData.wildfireEvacuationPlan}
+                    onChange={(e) => updateFormData("wildfireEvacuationPlan", e.target.value)}
+                    placeholder="Primary and alternate evacuation routes, designated meeting points, go-bag locations, pet evacuation plan, livestock arrangements, important items to grab..."
+                    rows={3}
+                  />
+                </div>
+              </div>
+            </Card>
           </div>
         );
 
@@ -645,6 +683,37 @@ export function VIPDeepScanWizard() {
                 />
               </div>
             </div>
+
+            {/* Pets Section */}
+            <div className="space-y-2 pt-4 border-t">
+              <Label className="text-base font-medium">Pets & Animals</Label>
+              <Textarea 
+                value={formData.pets}
+                onChange={(e) => updateFormData("pets", e.target.value)}
+                placeholder="Dog: German Shepherd named Max, 4 years old&#10;Cat: Indoor only, named Luna&#10;Horse: Boarded at XYZ Stables&#10;Include species, breed, name, age, and any special needs or security considerations"
+                rows={3}
+              />
+            </div>
+
+            {/* Human-Wildlife Conflict Section */}
+            <Card className="p-4 border-amber-200 bg-amber-50/30 dark:border-amber-900 dark:bg-amber-950/20">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="h-5 w-5" />
+                  <h4 className="font-semibold">Human-Wildlife Conflict</h4>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label>Wildlife Concerns at Properties</Label>
+                  <Textarea 
+                    value={formData.humanWildlifeConflict}
+                    onChange={(e) => updateFormData("humanWildlifeConflict", e.target.value)}
+                    placeholder="Bears frequently on property, coyotes near children's play area, mountain lion sightings, venomous snakes, aggressive deer during rutting season...&#10;Include any past incidents and current mitigation measures"
+                    rows={3}
+                  />
+                </div>
+              </div>
+            </Card>
           </div>
         );
 
