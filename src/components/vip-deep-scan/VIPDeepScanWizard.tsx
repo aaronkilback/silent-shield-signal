@@ -156,17 +156,91 @@ const initialFormData: VIPIntakeData = {
   consentSocialMediaAnalysis: false,
 };
 
+const STORAGE_KEY = "vip-deep-scan-wizard-state";
+
+interface PersistedState {
+  formData: VIPIntakeData;
+  currentStep: number;
+  appliedDiscoveryIds: string[];
+  dismissedDiscoveryIds: string[];
+  scanCount: number;
+  autoAppliedFields: string[];
+  savedAt: string;
+}
+
+function loadPersistedState(): Partial<PersistedState> | null {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return null;
+    const parsed = JSON.parse(saved) as PersistedState;
+    // Expire after 24 hours
+    const savedAt = new Date(parsed.savedAt);
+    const hoursSinceSave = (Date.now() - savedAt.getTime()) / (1000 * 60 * 60);
+    if (hoursSinceSave > 24) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function savePersistedState(state: PersistedState) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (e) {
+    console.warn("Failed to persist wizard state:", e);
+  }
+}
+
+function clearPersistedState() {
+  localStorage.removeItem(STORAGE_KEY);
+}
+
 export function VIPDeepScanWizard() {
-  const [currentStep, setCurrentStep] = useState(1);
-  const [formData, setFormData] = useState<VIPIntakeData>(initialFormData);
+  // Load persisted state on mount
+  const persistedState = useMemo(() => loadPersistedState(), []);
+  
+  const [currentStep, setCurrentStep] = useState(persistedState?.currentStep ?? 1);
+  const [formData, setFormData] = useState<VIPIntakeData>(persistedState?.formData ?? initialFormData);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [appliedDiscoveryIds, setAppliedDiscoveryIds] = useState<Set<string>>(new Set());
-  const [dismissedDiscoveryIds, setDismissedDiscoveryIds] = useState<Set<string>>(new Set());
+  const [appliedDiscoveryIds, setAppliedDiscoveryIds] = useState<Set<string>>(
+    new Set(persistedState?.appliedDiscoveryIds ?? [])
+  );
+  const [dismissedDiscoveryIds, setDismissedDiscoveryIds] = useState<Set<string>>(
+    new Set(persistedState?.dismissedDiscoveryIds ?? [])
+  );
   const [discoveryTriggered, setDiscoveryTriggered] = useState(false);
-  const [scanCount, setScanCount] = useState(0);
-  const [autoAppliedFields, setAutoAppliedFields] = useState<Set<string>>(new Set());
+  const [scanCount, setScanCount] = useState(persistedState?.scanCount ?? 0);
+  const [autoAppliedFields, setAutoAppliedFields] = useState<Set<string>>(
+    new Set(persistedState?.autoAppliedFields ?? [])
+  );
   const { toast } = useToast();
   const navigate = useNavigate();
+  
+  // Show recovery toast if we loaded persisted data
+  useEffect(() => {
+    if (persistedState?.formData?.fullLegalName) {
+      toast({
+        title: "Progress Restored",
+        description: `Resumed scan for "${persistedState.formData.fullLegalName}" from Step ${persistedState.currentStep}.`,
+      });
+    }
+  }, []); // Only on mount
+  
+  // Persist state on every change
+  useEffect(() => {
+    savePersistedState({
+      formData,
+      currentStep,
+      appliedDiscoveryIds: Array.from(appliedDiscoveryIds),
+      dismissedDiscoveryIds: Array.from(dismissedDiscoveryIds),
+      scanCount,
+      autoAppliedFields: Array.from(autoAppliedFields),
+      savedAt: new Date().toISOString(),
+    });
+  }, [formData, currentStep, appliedDiscoveryIds, dismissedDiscoveryIds, scanCount, autoAppliedFields]);
   
   // OSINT Discovery hook
   const osintDiscovery = useOSINTDiscovery();
@@ -491,6 +565,9 @@ export function VIPDeepScanWizard() {
 
       if (error) throw error;
 
+      // Clear persisted state on success
+      clearPersistedState();
+      
       toast({
         title: "Deep Scan Initiated",
         description: `VIP Deep Scan for ${formData.fullLegalName} has been queued. ${formData.priorityLevel === 'priority' ? 'Priority processing (72 hours)' : 'Standard processing (14 days)'}.`,
