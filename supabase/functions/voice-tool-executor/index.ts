@@ -674,12 +674,187 @@ Deno.serve(async (req) => {
         break;
       }
       
+      case 'check_dark_web_exposure': {
+        // Check email for breaches via HIBP
+        const email = toolArgs.email;
+        const personName = toolArgs.person_name;
+        
+        if (!email) {
+          result = { error: "Email address is required for breach check" };
+          break;
+        }
+        
+        const HIBP_API_KEY = Deno.env.get("HIBP_API_KEY");
+        
+        if (!HIBP_API_KEY) {
+          result = { 
+            error: "Dark web breach checking is not configured",
+            suggestion: "HIBP API key required for breach monitoring"
+          };
+          break;
+        }
+        
+        try {
+          const hibpResponse = await fetch(
+            `https://haveibeenpwned.com/api/v3/breachedaccount/${encodeURIComponent(email)}?truncateResponse=false`,
+            {
+              headers: {
+                "hibp-api-key": HIBP_API_KEY,
+                "user-agent": "Fortress-AEGIS-Voice",
+              },
+            }
+          );
+          
+          if (hibpResponse.ok) {
+            const breaches = await hibpResponse.json();
+            const criticalBreaches = breaches.filter((b: any) => 
+              (b.DataClasses || []).some((dc: string) => /password|credit|financial/i.test(dc))
+            );
+            
+            result = {
+              found: true,
+              email: email,
+              breach_count: breaches.length,
+              critical_breaches: criticalBreaches.length,
+              breaches: breaches.slice(0, 5).map((b: any) => ({
+                name: b.Name,
+                date: b.BreachDate,
+                data_types: (b.DataClasses || []).slice(0, 4).join(", ")
+              })),
+              risk_level: criticalBreaches.length > 0 ? "critical" : breaches.length > 2 ? "high" : "medium",
+              summary: `${email} found in ${breaches.length} breach(es). ${criticalBreaches.length} contain passwords or financial data.`
+            };
+          } else if (hibpResponse.status === 404) {
+            result = {
+              found: false,
+              email: email,
+              breach_count: 0,
+              risk_level: "low",
+              summary: `Good news: ${email} not found in any known breaches.`
+            };
+          } else {
+            result = { error: `Breach check failed: ${hibpResponse.status}` };
+          }
+        } catch (e) {
+          result = { error: `Breach check error: ${e instanceof Error ? e.message : 'Unknown'}` };
+        }
+        break;
+      }
+      
+      case 'run_vip_deep_scan': {
+        // Trigger VIP deep scan (returns summary since full scan is async)
+        const name = toolArgs.name;
+        const email = toolArgs.email;
+        
+        if (!name) {
+          result = { error: "Name is required for VIP deep scan" };
+          break;
+        }
+        
+        // Start the scan by calling the edge function
+        try {
+          const scanResponse = await fetch(`${supabaseUrl}/functions/v1/vip-osint-discovery`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify({
+              name,
+              email,
+              location: toolArgs.location,
+              industry: toolArgs.industry,
+              socialMediaHandles: toolArgs.social_handles,
+            }),
+          });
+          
+          if (!scanResponse.ok) {
+            result = { error: `Deep scan failed to start: ${scanResponse.status}` };
+            break;
+          }
+          
+          // Parse streaming response for key findings
+          const text = await scanResponse.text();
+          const lines = text.split("\n").filter(l => l.startsWith("data: "));
+          
+          let discoveryCount = 0;
+          let breachCount = 0;
+          let threatCount = 0;
+          let executiveSummary = "";
+          
+          for (const line of lines) {
+            try {
+              const jsonStr = line.replace("data: ", "").trim();
+              if (jsonStr === "[DONE]") continue;
+              const event = JSON.parse(jsonStr);
+              
+              if (event.type === "discovery") discoveryCount++;
+              if (event.type === "discovery" && event.data?.type === "breach") breachCount++;
+              if (event.type === "threat_vector") threatCount++;
+              if (event.type === "executive_summary") executiveSummary = event.data?.summary || "";
+            } catch { /* skip */ }
+          }
+          
+          result = {
+            scan_complete: true,
+            subject: name,
+            discoveries_found: discoveryCount,
+            breaches_found: breachCount,
+            threats_identified: threatCount,
+            summary: executiveSummary || `Deep scan completed for ${name}. Found ${discoveryCount} data points, ${breachCount} breach exposures, ${threatCount} threat vectors.`,
+            recommendation: breachCount > 0 
+              ? "Critical: Breach exposure detected. Recommend immediate credential reset and identity monitoring."
+              : threatCount > 0 
+                ? "Elevated risk profile detected. Review threat vectors for protective planning."
+                : "Standard risk profile. Continue routine monitoring."
+          };
+        } catch (e) {
+          result = { error: `Deep scan error: ${e instanceof Error ? e.message : 'Unknown'}` };
+        }
+        break;
+      }
+      
+      case 'get_threat_intel_feeds': {
+        // Get latest CISA vulnerabilities
+        try {
+          const cisaResponse = await fetch(
+            "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+            { signal: AbortSignal.timeout(10000) }
+          );
+          
+          if (cisaResponse.ok) {
+            const cisaData = await cisaResponse.json();
+            const vulns = (cisaData.vulnerabilities || []).slice(0, 5);
+            
+            result = {
+              source: "CISA Known Exploited Vulnerabilities",
+              count: vulns.length,
+              vulnerabilities: vulns.map((v: any) => ({
+                cve: v.cveID,
+                vendor: v.vendorProject,
+                product: v.product,
+                name: v.vulnerabilityName,
+                due_date: v.dueDate
+              })),
+              summary: `${vulns.length} active vulnerabilities requiring immediate patching. Top vendor: ${vulns[0]?.vendorProject || 'Various'}.`,
+              recommendation: "Cross-reference with asset inventory and prioritize internet-facing systems."
+            };
+          } else {
+            result = { error: `CISA feed unavailable: ${cisaResponse.status}` };
+          }
+        } catch (e) {
+          result = { error: `Threat intel fetch error: ${e instanceof Error ? e.message : 'Unknown'}` };
+        }
+        break;
+      }
+      
       default:
         result = { error: `Unknown tool: ${tool_name}`, available_tools: [
           'search_web', 'get_current_threats', 'get_entity_info', 'query_legal_database',
           'query_fortress_data', 'generate_intelligence_summary', 'analyze_threat_radar',
           'get_client_info', 'get_knowledge_base', 'get_travel_status', 'get_investigation_status',
-          'get_user_memory', 'remember_this', 'update_user_preferences', 'manage_project_context'
+          'get_user_memory', 'remember_this', 'update_user_preferences', 'manage_project_context',
+          'check_dark_web_exposure', 'run_vip_deep_scan', 'get_threat_intel_feeds'
         ]};
     }
     
