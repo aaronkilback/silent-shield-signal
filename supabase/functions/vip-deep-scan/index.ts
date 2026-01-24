@@ -97,13 +97,14 @@ serve(async (req) => {
       .insert({
         name: intakeData.fullLegalName,
         type: "person",
-        status: "active",
-        monitoring_status: "active",
+        entity_status: "active",
+        is_active: true,
+        active_monitoring_enabled: true,
         client_id: intakeData.clientId,
         aliases: aliases,
-        location: primaryAddress,
-        social_media_handles: socialHandles,
-        metadata: {
+        current_location: primaryAddress,
+        attributes: {
+          social_media_handles: socialHandles,
           vip_deep_scan: true,
           intake_date: new Date().toISOString(),
           priority_level: intakeData.priorityLevel,
@@ -168,10 +169,11 @@ serve(async (req) => {
         .insert({
           name: member.name,
           type: "person",
-          status: "active",
-          monitoring_status: "active",
+          entity_status: "active",
+          is_active: true,
+          active_monitoring_enabled: true,
           client_id: intakeData.clientId,
-          metadata: {
+          attributes: {
             relationship_to_vip: member.relationship,
             date_of_birth: member.dateOfBirth,
             social_media: member.socialMedia,
