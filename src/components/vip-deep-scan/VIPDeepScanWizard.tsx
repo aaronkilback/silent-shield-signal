@@ -187,26 +187,44 @@ export function VIPDeepScanWizard() {
     return clients?.find(c => c.id === formData.clientId);
   }, [clients, formData.clientId]);
 
-  // Trigger OSINT discovery when user enters name in step 2
-  useEffect(() => {
-    if (
-      currentStep >= 2 &&
-      formData.fullLegalName &&
-      formData.fullLegalName.trim().length >= 3 &&
-      !discoveryTriggered &&
-      !osintDiscovery.isRunning
-    ) {
-      setDiscoveryTriggered(true);
-      osintDiscovery.startDiscovery({
-        name: formData.fullLegalName,
-        email: formData.primaryEmail || undefined,
-        dateOfBirth: formData.dateOfBirth || undefined,
-        location: formData.properties[0]?.address || undefined,
-        socialMediaHandles: formData.socialMediaHandles || undefined,
-        industry: selectedClient?.industry || undefined,
+  // Manual discovery trigger - no auto-trigger to ensure full name is entered
+  const handleStartDiscovery = useCallback(() => {
+    const nameToUse = formData.fullLegalName.trim();
+    if (nameToUse.length < 3) {
+      toast({
+        title: "Name Required",
+        description: "Please enter the principal's full legal name (at least 3 characters).",
+        variant: "destructive",
       });
+      return;
     }
-  }, [currentStep, formData.fullLegalName, formData.primaryEmail, discoveryTriggered, osintDiscovery.isRunning, selectedClient?.industry]);
+    
+    // Require at least a first and last name
+    const nameParts = nameToUse.split(/\s+/).filter(p => p.length > 0);
+    if (nameParts.length < 2) {
+      toast({
+        title: "Full Name Required",
+        description: "Please enter both first and last name for accurate OSINT discovery.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    setDiscoveryTriggered(true);
+    osintDiscovery.startDiscovery({
+      name: nameToUse,
+      email: formData.primaryEmail || undefined,
+      dateOfBirth: formData.dateOfBirth || undefined,
+      location: formData.properties[0]?.address || undefined,
+      socialMediaHandles: formData.socialMediaHandles || undefined,
+      industry: selectedClient?.industry || undefined,
+    });
+    
+    toast({
+      title: "Deep Scan Started",
+      description: `Running Silent Shield™ intelligence sweep for "${nameToUse}"`,
+    });
+  }, [formData, selectedClient?.industry, osintDiscovery, toast]);
 
   // Apply a discovery to the form
   const handleApplyDiscovery = useCallback((discovery: DiscoveryItem) => {
@@ -443,7 +461,7 @@ export function VIPDeepScanWizard() {
                   <Input 
                     value={formData.fullLegalName}
                     onChange={(e) => updateFormData("fullLegalName", e.target.value)}
-                    placeholder="As appears on government ID"
+                    placeholder="First and Last Name (e.g., Dan Martell)"
                     className="flex-1"
                   />
                   <VoiceDictationInput 
@@ -451,6 +469,31 @@ export function VIPDeepScanWizard() {
                     placeholder="Dictate name"
                   />
                 </div>
+                {/* Discovery trigger button */}
+                {!discoveryTriggered && !osintDiscovery.isRunning && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleStartDiscovery}
+                    className="mt-2 w-full"
+                    disabled={formData.fullLegalName.trim().split(/\s+/).length < 2}
+                  >
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    Run AI Discovery for "{formData.fullLegalName.trim() || '...'}"
+                  </Button>
+                )}
+                {osintDiscovery.isRunning && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground mt-2">
+                    <div className="h-3 w-3 rounded-full bg-primary animate-pulse" />
+                    Running Silent Shield™ intelligence sweep...
+                  </div>
+                )}
+                {discoveryTriggered && !osintDiscovery.isRunning && osintDiscovery.discoveries.length > 0 && (
+                  <div className="flex items-center gap-2 text-sm text-green-600 mt-2">
+                    <CheckCircle className="h-4 w-4" />
+                    Found {osintDiscovery.discoveries.length} intelligence items
+                  </div>
+                )}
               </div>
               <div className="space-y-2">
                 <Label>Known Aliases / Nicknames</Label>
