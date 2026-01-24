@@ -1,55 +1,84 @@
 import { useState, useCallback, useRef } from "react";
-import { supabase } from "@/integrations/supabase/client";
 
 export interface DiscoveryItem {
   id: string;
-  type: "social_media" | "photo" | "news" | "property" | "corporate" | "family" | "contact" | "other";
+  type: "social_media" | "photo" | "news" | "property" | "corporate" | "family" | "contact" | "breach" | "threat" | "geospatial" | "dependency" | "other";
   label: string;
   value: string;
   source: string;
   confidence: number;
   timestamp: Date;
-  fieldMapping?: string; // Which form field this maps to
+  fieldMapping?: string;
+  category?: "identity" | "physical" | "digital" | "operational" | "threat" | "consequence";
+  riskLevel?: "low" | "medium" | "high" | "critical";
+  commentary?: string;
+}
+
+export interface ThreatVector {
+  vector: string;
+  beneficiary: string;
+  narrative: string;
+  trigger: string;
+  momentum: "rising" | "stable" | "declining";
+  confidence: number;
+}
+
+export interface ExposureTier {
+  tier: 1 | 2 | 3;
+  exposure: string;
+  reason: string;
+  exploitMethod: string;
+  earlyWarning: string;
+  intervention: string;
+}
+
+export interface TerrainSummary {
+  identityVisibility: number;
+  identityObservations: string[];
+  physicalExposure: number;
+  physicalObservations: string[];
+  digitalAttackSurface: number;
+  digitalObservations: string[];
+  operationalDependencies: number;
+  operationalObservations: string[];
 }
 
 export interface OSINTDiscoveryState {
   isRunning: boolean;
-  phase: "idle" | "searching" | "analyzing" | "complete" | "error";
+  phase: "idle" | "terrain_mapping" | "signal_detection" | "analyzing" | "complete" | "error";
+  phaseLabel: string;
+  currentDomain: string;
   discoveries: DiscoveryItem[];
   sourcesScanned: string[];
   progress: number;
   error: string | null;
   startedAt: Date | null;
+  // Deep Scan enhanced data
+  terrainSummary: TerrainSummary | null;
+  threatVectors: ThreatVector[];
+  exposureTiers: ExposureTier[];
+  executiveSummary: string | null;
 }
 
 const initialState: OSINTDiscoveryState = {
   isRunning: false,
   phase: "idle",
+  phaseLabel: "Ready",
+  currentDomain: "",
   discoveries: [],
   sourcesScanned: [],
   progress: 0,
   error: null,
   startedAt: null,
+  terrainSummary: null,
+  threatVectors: [],
+  exposureTiers: [],
+  executiveSummary: null,
 };
 
 export function useOSINTDiscovery() {
   const [state, setState] = useState<OSINTDiscoveryState>(initialState);
-  const eventSourceRef = useRef<EventSource | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-
-  const addDiscovery = useCallback((item: Omit<DiscoveryItem, "id" | "timestamp">) => {
-    setState((prev) => ({
-      ...prev,
-      discoveries: [
-        ...prev.discoveries,
-        {
-          ...item,
-          id: crypto.randomUUID(),
-          timestamp: new Date(),
-        },
-      ],
-    }));
-  }, []);
 
   const startDiscovery = useCallback(
     async (params: {
@@ -58,22 +87,28 @@ export function useOSINTDiscovery() {
       dateOfBirth?: string;
       location?: string;
       socialMediaHandles?: string;
+      industry?: string;
     }) => {
       // Reset state
       setState({
         isRunning: true,
-        phase: "searching",
+        phase: "terrain_mapping",
+        phaseLabel: "Initializing Deep Scan...",
+        currentDomain: "",
         discoveries: [],
         sourcesScanned: [],
         progress: 0,
         error: null,
         startedAt: new Date(),
+        terrainSummary: null,
+        threatVectors: [],
+        exposureTiers: [],
+        executiveSummary: null,
       });
 
       abortControllerRef.current = new AbortController();
 
       try {
-        // Call the discovery edge function
         const response = await fetch(
           `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/vip-osint-discovery`,
           {
@@ -91,7 +126,6 @@ export function useOSINTDiscovery() {
           throw new Error(`Discovery failed: ${response.status}`);
         }
 
-        // Process SSE stream for live updates
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
 
@@ -121,14 +155,15 @@ export function useOSINTDiscovery() {
           }
         }
 
-        setState((prev) => ({ ...prev, phase: "complete", isRunning: false, progress: 100 }));
+        setState((prev) => ({ ...prev, phase: "complete", phaseLabel: "Deep Scan Complete", isRunning: false, progress: 100 }));
       } catch (error) {
         if ((error as Error).name === "AbortError") {
-          setState((prev) => ({ ...prev, phase: "idle", isRunning: false }));
+          setState((prev) => ({ ...prev, phase: "idle", phaseLabel: "Cancelled", isRunning: false }));
         } else {
           setState((prev) => ({
             ...prev,
             phase: "error",
+            phaseLabel: "Error",
             isRunning: false,
             error: error instanceof Error ? error.message : "Unknown error",
           }));
@@ -139,20 +174,33 @@ export function useOSINTDiscovery() {
   );
 
   const handleDiscoveryEvent = useCallback(
-    (event: {
-      type: "source_started" | "source_complete" | "discovery" | "progress" | "phase" | "error";
-      data: any;
-    }) => {
+    (event: { type: string; data: any }) => {
       switch (event.type) {
+        case "phase":
+          setState((prev) => ({
+            ...prev,
+            phase: event.data.phase,
+            phaseLabel: event.data.label || event.data.phase,
+          }));
+          break;
+
+        case "domain":
+          setState((prev) => ({
+            ...prev,
+            currentDomain: event.data.label,
+          }));
+          break;
+
         case "source_started":
           setState((prev) => ({
             ...prev,
-            sourcesScanned: [...prev.sourcesScanned, event.data.source],
+            sourcesScanned: prev.sourcesScanned.includes(event.data.source) 
+              ? prev.sourcesScanned 
+              : [...prev.sourcesScanned, event.data.source],
           }));
           break;
 
         case "source_complete":
-          // Already tracked in source_started
           break;
 
         case "discovery":
@@ -173,8 +221,26 @@ export function useOSINTDiscovery() {
           setState((prev) => ({ ...prev, progress: event.data.percent }));
           break;
 
-        case "phase":
-          setState((prev) => ({ ...prev, phase: event.data.phase }));
+        case "terrain_summary":
+          setState((prev) => ({ ...prev, terrainSummary: event.data }));
+          break;
+
+        case "threat_vector":
+          setState((prev) => ({
+            ...prev,
+            threatVectors: [...prev.threatVectors, event.data],
+          }));
+          break;
+
+        case "exposure_tier":
+          setState((prev) => ({
+            ...prev,
+            exposureTiers: [...prev.exposureTiers, event.data],
+          }));
+          break;
+
+        case "executive_summary":
+          setState((prev) => ({ ...prev, executiveSummary: event.data.summary }));
           break;
 
         case "error":
@@ -187,8 +253,7 @@ export function useOSINTDiscovery() {
 
   const stopDiscovery = useCallback(() => {
     abortControllerRef.current?.abort();
-    eventSourceRef.current?.close();
-    setState((prev) => ({ ...prev, isRunning: false, phase: "idle" }));
+    setState((prev) => ({ ...prev, isRunning: false, phase: "idle", phaseLabel: "Cancelled" }));
   }, []);
 
   const clearDiscoveries = useCallback(() => {

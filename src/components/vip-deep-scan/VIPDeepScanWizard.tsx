@@ -182,7 +182,12 @@ export function VIPDeepScanWizard() {
     },
   });
 
-  // Trigger OSINT discovery when user completes step 2 with basic info
+  // Get selected client's industry for threat context
+  const selectedClient = useMemo(() => {
+    return clients?.find(c => c.id === formData.clientId);
+  }, [clients, formData.clientId]);
+
+  // Trigger OSINT discovery when user enters name in step 2
   useEffect(() => {
     if (
       currentStep >= 2 &&
@@ -198,9 +203,10 @@ export function VIPDeepScanWizard() {
         dateOfBirth: formData.dateOfBirth || undefined,
         location: formData.properties[0]?.address || undefined,
         socialMediaHandles: formData.socialMediaHandles || undefined,
+        industry: selectedClient?.industry || undefined,
       });
     }
-  }, [currentStep, formData.fullLegalName, formData.primaryEmail, discoveryTriggered, osintDiscovery.isRunning]);
+  }, [currentStep, formData.fullLegalName, formData.primaryEmail, discoveryTriggered, osintDiscovery.isRunning, selectedClient?.industry]);
 
   // Apply a discovery to the form
   const handleApplyDiscovery = useCallback((discovery: DiscoveryItem) => {
@@ -1199,21 +1205,26 @@ export function VIPDeepScanWizard() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-5xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between bg-gradient-to-r from-primary/10 to-transparent p-4 rounded-lg border border-primary/20">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Shield className="h-7 w-7 text-primary" />
-            VIP Deep Scan Intake
+            Silent Shield™ Deep Scan
           </h1>
           <p className="text-muted-foreground mt-1">
-            Comprehensive threat assessment and vulnerability analysis
+            7-Day Intelligence Risk Snapshot — AI-Powered Terrain Mapping & Threat Detection
           </p>
         </div>
-        <Badge variant="outline" className="text-lg px-4 py-2">
-          Step {currentStep} of {STEPS.length}
-        </Badge>
+        <div className="text-right">
+          <Badge variant="outline" className="text-lg px-4 py-2">
+            Step {currentStep} of {STEPS.length}
+          </Badge>
+          {formData.priorityLevel === "priority" && (
+            <p className="text-xs text-amber-600 mt-1 font-medium">72-Hour Priority</p>
+          )}
+        </div>
       </div>
 
       {/* Progress */}
