@@ -266,6 +266,269 @@ serve(async (req) => {
           send({ type: "source_complete", data: { source: "Have I Been Pwned" } });
         }
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // PHASE I.6: PERPLEXITY DEEP INTELLIGENCE (Contact & Residence Discovery)
+        // ═══════════════════════════════════════════════════════════════════════
+        const PERPLEXITY_API_KEY = Deno.env.get("PERPLEXITY_API_KEY");
+        
+        if (PERPLEXITY_API_KEY) {
+          console.log(`[DEEP-SCAN] Perplexity: Starting deep intelligence extraction...`);
+          send({ type: "domain", data: { domain: "deep_intel", label: "Deep Intelligence Extraction (Perplexity AI)" } });
+          
+          // Query 1: Contact Information
+          send({ type: "source_started", data: { source: "Perplexity Contact Intel", category: "identity" } });
+          try {
+            const contactQuery = `Find publicly available contact information for ${fullName}${industry ? ` (${industry} industry)` : ''}. Include:
+- Business email addresses
+- Public phone numbers
+- Office addresses
+- Company headquarters location
+- Social media handles
+Only return verified, publicly available information.`;
+
+            const contactResponse = await fetch('https://api.perplexity.ai/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'sonar',
+                messages: [
+                  { role: 'system', content: 'You are an OSINT analyst. Extract only publicly available, verified information. Format each item clearly.' },
+                  { role: 'user', content: contactQuery }
+                ],
+              }),
+            });
+
+            if (contactResponse.ok) {
+              const contactData = await contactResponse.json();
+              const contactContent = contactData.choices?.[0]?.message?.content || '';
+              const citations = contactData.citations || [];
+              
+              console.log(`[DEEP-SCAN] Perplexity Contact: Got response with ${citations.length} citations`);
+              
+              // Extract emails from response
+              const emailMatches = contactContent.match(/[\w.-]+@[\w.-]+\.\w+/gi) || [];
+              const uniqueEmails = [...new Set(emailMatches)] as string[];
+              for (const email of uniqueEmails.slice(0, 3)) {
+                const discovery: Discovery = {
+                  type: "contact",
+                  label: `Email: ${email}`,
+                  value: email.toLowerCase(),
+                  source: "Perplexity AI",
+                  url: citations[0] || undefined,
+                  confidence: 85,
+                  fieldMapping: "primaryEmail",
+                  category: "identity",
+                  riskLevel: "medium",
+                  commentary: `Business email discovered via AI-powered search. Verify and add to breach monitoring.`,
+                };
+                discoveries.push(discovery);
+                send({ type: "discovery", data: discovery });
+              }
+              
+              // Extract phone numbers
+              const phoneMatches = contactContent.match(/(?:\+?1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}/g) || [];
+              const uniquePhones = [...new Set(phoneMatches)] as string[];
+              for (const phone of uniquePhones.slice(0, 2)) {
+                const discovery: Discovery = {
+                  type: "contact",
+                  label: `Phone: ${phone}`,
+                  value: phone,
+                  source: "Perplexity AI",
+                  url: citations[0] || undefined,
+                  confidence: 80,
+                  fieldMapping: "primaryPhone",
+                  category: "identity",
+                  riskLevel: "medium",
+                  commentary: `Contact phone discovered. May be office line or public contact number.`,
+                };
+                discoveries.push(discovery);
+                send({ type: "discovery", data: discovery });
+              }
+              
+              // Extract addresses/locations from content
+              const addressPatterns = [
+                /(?:\d+\s+[\w\s]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Way|Lane|Ln)[,.\s]+[\w\s]+,?\s*(?:CA|NY|TX|FL|WA|MA|IL|CO|AZ|NC|GA|VA|NJ|PA|OH|MI|OR|MN|MD|WI|MO|TN|IN|SC|AL|KY|LA|OK|CT|UT|IA|NV|AR|MS|KS|NE|NM|WV|ID|HI|NH|ME|MT|RI|DE|SD|ND|AK|VT|WY|DC)?[\s,]*\d{5}(?:-\d{4})?)/gi,
+                /(?:headquarter(?:s|ed)?|office|based)\s+(?:in|at)\s+([A-Z][a-zA-Z\s,]+(?:USA|US|Canada|CA|UK)?)/gi
+              ];
+              
+              for (const pattern of addressPatterns) {
+                const matches = contactContent.match(pattern) || [];
+                const uniqueAddresses = [...new Set(matches)] as string[];
+                for (const addr of uniqueAddresses.slice(0, 2)) {
+                  const discovery: Discovery = {
+                    type: "property",
+                    label: `Location: ${addr.slice(0, 50)}...`,
+                    value: addr,
+                    source: "Perplexity AI",
+                    url: citations[0] || undefined,
+                    confidence: 75,
+                    category: "physical",
+                    riskLevel: "medium",
+                    commentary: `Business location or headquarters identified. Add to physical security assessment.`,
+                  };
+                  discoveries.push(discovery);
+                  send({ type: "discovery", data: discovery });
+                  terrainAnalysis.physical.exposure += 15;
+                }
+              }
+            }
+          } catch (e) {
+            console.error(`[DEEP-SCAN] Perplexity contact query error:`, e);
+          }
+          send({ type: "source_complete", data: { source: "Perplexity Contact Intel" } });
+          
+          // Query 2: Residence & Property Information
+          send({ type: "source_started", data: { source: "Perplexity Property Intel", category: "physical" } });
+          try {
+            const propertyQuery = `Find publicly known residence or property information for ${fullName}. Include:
+- Known cities or neighborhoods of residence
+- Public property records mentions
+- Real estate transactions reported in news
+- Known vacation homes or secondary residences
+Only return information that has been publicly reported or documented.`;
+
+            const propertyResponse = await fetch('https://api.perplexity.ai/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'sonar',
+                messages: [
+                  { role: 'system', content: 'You are an OSINT analyst specializing in property records and residence information. Only report publicly documented information.' },
+                  { role: 'user', content: propertyQuery }
+                ],
+              }),
+            });
+
+            if (propertyResponse.ok) {
+              const propertyData = await propertyResponse.json();
+              const propertyContent = propertyData.choices?.[0]?.message?.content || '';
+              const citations = propertyData.citations || [];
+              
+              console.log(`[DEEP-SCAN] Perplexity Property: Got response with ${citations.length} citations`);
+              
+              // Check if we found residence info
+              const residenceKeywords = ['lives in', 'resides in', 'home in', 'residence in', 'house in', 'property in', 'mansion', 'estate', 'purchased', 'bought'];
+              const hasResidenceInfo = residenceKeywords.some(kw => propertyContent.toLowerCase().includes(kw));
+              
+              if (hasResidenceInfo) {
+                // Extract location mentions
+                const locationPattern = /(?:lives?|resides?|home|property|mansion|estate|house)\s+(?:in|at|near)\s+([A-Z][a-zA-Z\s,]+)/gi;
+                const locationMatches = propertyContent.match(locationPattern) || [];
+                const uniqueLocations = [...new Set(locationMatches)] as string[];
+                
+                for (const loc of uniqueLocations.slice(0, 3)) {
+                  const discovery: Discovery = {
+                    type: "property",
+                    label: `Residence: ${loc.slice(0, 50)}`,
+                    value: loc,
+                    source: "Perplexity AI",
+                    url: citations[0] || undefined,
+                    confidence: 80,
+                    category: "physical",
+                    riskLevel: "high",
+                    commentary: `Residence location discovered. Critical for physical security planning and route analysis.`,
+                  };
+                  discoveries.push(discovery);
+                  send({ type: "discovery", data: discovery });
+                  terrainAnalysis.physical.exposure += 25;
+                  terrainAnalysis.physical.observations.push(`Known residence: ${loc.slice(0, 40)}`);
+                }
+                
+                // Also add a summary discovery if we have content but no specific extractions
+                if (locationMatches.length === 0 && propertyContent.length > 100) {
+                  const discovery: Discovery = {
+                    type: "property",
+                    label: `Property Intelligence Report`,
+                    value: propertyContent.slice(0, 200) + '...',
+                    source: "Perplexity AI",
+                    url: citations[0] || undefined,
+                    confidence: 70,
+                    category: "physical",
+                    riskLevel: "medium",
+                    commentary: `Property-related information found. Review full report for residence and real estate details.`,
+                  };
+                  discoveries.push(discovery);
+                  send({ type: "discovery", data: discovery });
+                }
+              }
+            }
+          } catch (e) {
+            console.error(`[DEEP-SCAN] Perplexity property query error:`, e);
+          }
+          send({ type: "source_complete", data: { source: "Perplexity Property Intel" } });
+          
+          // Query 3: Family & Associates
+          send({ type: "source_started", data: { source: "Perplexity Associates Intel", category: "identity" } });
+          try {
+            const familyQuery = `Find publicly known family members and close associates of ${fullName}. Include:
+- Spouse or partner names
+- Children (if public figures)
+- Business partners
+- Known close associates
+Only return information that is publicly documented in news or official records.`;
+
+            const familyResponse = await fetch('https://api.perplexity.ai/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'sonar',
+                messages: [
+                  { role: 'system', content: 'You are an OSINT analyst. Only report publicly documented relationships. Be factual and concise.' },
+                  { role: 'user', content: familyQuery }
+                ],
+              }),
+            });
+
+            if (familyResponse.ok) {
+              const familyData = await familyResponse.json();
+              const familyContent = familyData.choices?.[0]?.message?.content || '';
+              const citations = familyData.citations || [];
+              
+              console.log(`[DEEP-SCAN] Perplexity Family: Got response with ${citations.length} citations`);
+              
+              // Look for family relationship mentions
+              const relationshipPatterns = [
+                /(?:wife|husband|spouse|partner|married to)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/gi,
+                /(?:daughter|son|child)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/gi,
+              ];
+              
+              for (const pattern of relationshipPatterns) {
+                const matches = familyContent.match(pattern) || [];
+                const uniqueMatches = [...new Set(matches)] as string[];
+                for (const match of uniqueMatches.slice(0, 3)) {
+                  const discovery: Discovery = {
+                    type: "family",
+                    label: `Family: ${match.slice(0, 40)}`,
+                    value: match,
+                    source: "Perplexity AI",
+                    url: citations[0] || undefined,
+                    confidence: 75,
+                    category: "identity",
+                    riskLevel: "medium",
+                    commentary: `Family relationship identified. Consider for extended protection planning.`,
+                  };
+                  discoveries.push(discovery);
+                  send({ type: "discovery", data: discovery });
+                }
+              }
+            }
+          } catch (e) {
+            console.error(`[DEEP-SCAN] Perplexity family query error:`, e);
+          }
+          send({ type: "source_complete", data: { source: "Perplexity Associates Intel" } });
+        } else {
+          console.log(`[DEEP-SCAN] Perplexity: API key not configured, skipping deep intel extraction`);
+        }
+
         send({ type: "progress", data: { percent: 55 } });
 
         // ═══════════════════════════════════════════════════════════════════════
