@@ -202,52 +202,51 @@ serve(async (req) => {
         const progressPerSource = 50 / allSources.length;
         let progressPercent = 0;
 
-        // Execute searches in batches of 4
-        for (let i = 0; i < allSources.length; i += 4) {
-          const batch = allSources.slice(i, i + 4);
-          
-          await Promise.all(
-            batch.map(async (source) => {
-              send({ type: "source_started", data: { source: source.name, category: source.category } });
+        // Execute searches SEQUENTIALLY to avoid Google API rate limits
+        for (let i = 0; i < allSources.length; i++) {
+          const source = allSources[i];
+          send({ type: "source_started", data: { source: source.name, category: source.category } });
 
-              if (GOOGLE_API_KEY && GOOGLE_CX) {
-                try {
-                  const searchUrl = new URL("https://www.googleapis.com/customsearch/v1");
-                  searchUrl.searchParams.set("key", GOOGLE_API_KEY);
-                  searchUrl.searchParams.set("cx", GOOGLE_CX);
-                  searchUrl.searchParams.set("q", source.query);
-                  searchUrl.searchParams.set("num", "5");
+          if (GOOGLE_API_KEY && GOOGLE_CX) {
+            try {
+              const searchUrl = new URL("https://www.googleapis.com/customsearch/v1");
+              searchUrl.searchParams.set("key", GOOGLE_API_KEY);
+              searchUrl.searchParams.set("cx", GOOGLE_CX);
+              searchUrl.searchParams.set("q", source.query);
+              searchUrl.searchParams.set("num", "5");
 
-                  console.log(`[DEEP-SCAN] ${source.name}: "${source.query}"`);
-                  const response = await fetch(searchUrl.toString());
-                  
-                  if (response.ok) {
-                    const data = await response.json();
-                    const items = data.items || [];
-                    console.log(`[DEEP-SCAN] ${source.name}: ${items.length} results`);
-                    
-                    for (const item of items) {
-                      const discovery = extractDiscovery(item, source, fullName);
-                      if (discovery) {
-                        discoveries.push(discovery);
-                        send({ type: "discovery", data: discovery });
-                        updateTerrainAnalysis(terrainAnalysis, discovery, source.category);
-                      }
-                    }
-                  } else {
-                    console.error(`[DEEP-SCAN] ${source.name} failed: ${response.status}`);
+              console.log(`[DEEP-SCAN] ${source.name}: "${source.query}"`);
+              const response = await fetchWithRetry(searchUrl.toString(), { method: 'GET' }, 2, 1000);
+              
+              if (response.ok) {
+                const data = await response.json();
+                const items = data.items || [];
+                console.log(`[DEEP-SCAN] ${source.name}: ${items.length} results`);
+                
+                for (const item of items) {
+                  const discovery = extractDiscovery(item, source, fullName);
+                  if (discovery) {
+                    discoveries.push(discovery);
+                    send({ type: "discovery", data: discovery });
+                    updateTerrainAnalysis(terrainAnalysis, discovery, source.category);
                   }
-                } catch (e) {
-                  console.error(`[DEEP-SCAN] ${source.name} error:`, e);
                 }
+              } else {
+                console.error(`[DEEP-SCAN] ${source.name} failed: ${response.status}`);
               }
+            } catch (e) {
+              console.error(`[DEEP-SCAN] ${source.name} error:`, e);
+            }
+          }
 
-              send({ type: "source_complete", data: { source: source.name } });
-            })
-          );
-
-          progressPercent += progressPerSource * batch.length;
+          send({ type: "source_complete", data: { source: source.name } });
+          progressPercent += progressPerSource;
           send({ type: "progress", data: { percent: Math.round(progressPercent) } });
+          
+          // Small delay between Google API calls to avoid rate limits
+          if (i < allSources.length - 1 && GOOGLE_API_KEY) {
+            await delay(200);
+          }
         }
 
         // ═══════════════════════════════════════════════════════════════════════
