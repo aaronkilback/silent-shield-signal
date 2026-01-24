@@ -49,6 +49,10 @@ serve(async (req) => {
         const GOOGLE_CX = Deno.env.get("GOOGLE_SEARCH_ENGINE_ID");
         const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
 
+        console.log(`[VIP-OSINT] Starting discovery for: ${name}`);
+        console.log(`[VIP-OSINT] Google API configured: ${!!GOOGLE_API_KEY && !!GOOGLE_CX}`);
+        console.log(`[VIP-OSINT] Lovable API configured: ${!!LOVABLE_API_KEY}`);
+
         const supabase = createClient(
           Deno.env.get("SUPABASE_URL")!,
           Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
@@ -94,9 +98,13 @@ serve(async (req) => {
                   searchUrl.searchParams.set("q", source.query);
                   searchUrl.searchParams.set("num", "5");
 
+                  console.log(`[VIP-OSINT] Searching ${source.name}: ${source.query}`);
                   const response = await fetch(searchUrl.toString());
+                  console.log(`[VIP-OSINT] ${source.name} response status: ${response.status}`);
+                  
                   if (response.ok) {
                     const data = await response.json();
+                    console.log(`[VIP-OSINT] ${source.name} results: ${data.items?.length || 0} items`);
                     
                     for (const item of data.items || []) {
                       const discovery = extractDiscovery(item, source, name);
@@ -105,11 +113,15 @@ serve(async (req) => {
                         send({ type: "discovery", data: discovery });
                       }
                     }
+                  } else {
+                    const errorText = await response.text();
+                    console.error(`[VIP-OSINT] ${source.name} search failed: ${errorText}`);
                   }
                 } catch (e) {
-                  console.error(`Search error for ${source.name}:`, e);
+                  console.error(`[VIP-OSINT] Search error for ${source.name}:`, e);
                 }
               } else {
+                console.log(`[VIP-OSINT] Using simulated discovery for ${source.name} (no Google API)`)
                 // Simulate discovery for development
                 const simulatedDiscovery = simulateDiscovery(source, name);
                 if (simulatedDiscovery) {
