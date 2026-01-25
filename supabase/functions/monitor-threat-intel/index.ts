@@ -7,6 +7,38 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Generate content hash for deduplication
+async function generateContentHash(text: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text.toLowerCase().trim());
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Check if signal already exists (by content hash or normalized text)
+async function isDuplicateSignal(supabase: any, contentHash: string, normalizedText: string): Promise<boolean> {
+  // Check by content hash first
+  const { data: hashMatch } = await supabase
+    .from('signals')
+    .select('id')
+    .eq('content_hash', contentHash)
+    .limit(1);
+  
+  if (hashMatch && hashMatch.length > 0) return true;
+  
+  // Check by exact normalized text in last 24 hours
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: textMatch } = await supabase
+    .from('signals')
+    .select('id')
+    .eq('normalized_text', normalizedText)
+    .gte('created_at', yesterday)
+    .limit(1);
+  
+  return textMatch && textMatch.length > 0;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -28,6 +60,7 @@ serve(async (req) => {
     if (clientsError) throw clientsError;
 
     let signalsCreated = 0;
+    let duplicatesSkipped = 0;
 
     // AlienVault OTX (Open Threat Exchange) - Free API
     // Cert.pl - Public CVE feed
@@ -46,6 +79,16 @@ serve(async (req) => {
         for (const vuln of recentVulns) {
           const severity = vuln.cveID.includes('CRITICAL') ? 'critical' : 'high';
 
+          const normalizedText = `${vuln.cveID}: ${vuln.vulnerabilityName}`;
+          const contentHash = await generateContentHash(normalizedText);
+          
+          // Check for duplicates before creating
+          if (await isDuplicateSignal(supabase, contentHash, normalizedText)) {
+            console.log(`Skipping duplicate KEV signal: ${vuln.cveID}`);
+            duplicatesSkipped++;
+            continue;
+          }
+
           for (const client of clients || []) {
             try {
               const { error: signalError } = await supabase
@@ -57,7 +100,8 @@ serve(async (req) => {
                   location: 'Global',
                   severity: severity,
                   category: 'vulnerability',
-                  normalized_text: `${vuln.cveID}: ${vuln.vulnerabilityName}`,
+                  normalized_text: normalizedText,
+                  content_hash: contentHash,
                   entity_tags: ['cisa', 'kev', 'vulnerability', vuln.cveID],
                   confidence: 0.95,
                   raw_json: {
@@ -122,6 +166,16 @@ serve(async (req) => {
           const description = descMatch ? descMatch[1] : '';
           const link = linkMatch ? linkMatch[1] : '';
 
+          const normalizedText = title;
+          const contentHash = await generateContentHash(normalizedText);
+          
+          // Check for duplicates before creating
+          if (await isDuplicateSignal(supabase, contentHash, normalizedText)) {
+            console.log(`Skipping duplicate CVE signal: ${title}`);
+            duplicatesSkipped++;
+            continue;
+          }
+
           for (const client of clients || []) {
             try {
               const { error: signalError } = await supabase
@@ -133,7 +187,8 @@ serve(async (req) => {
                   location: 'Global',
                   severity: 'medium',
                   category: 'vulnerability',
-                  normalized_text: title,
+                  normalized_text: normalizedText,
+                  content_hash: contentHash,
                   entity_tags: ['cve', 'trending', 'vulnerability'],
                   confidence: 0.85,
                   raw_json: {
@@ -167,13 +222,14 @@ serve(async (req) => {
       }
     }
 
-    console.log(`Threat intelligence monitoring complete. Created ${signalsCreated} signals.`);
+    console.log(`Threat intelligence monitoring complete. Created ${signalsCreated} signals, skipped ${duplicatesSkipped} duplicates.`);
 
     return new Response(
       JSON.stringify({
         success: true,
         clients_scanned: clients?.length || 0,
         signals_created: signalsCreated,
+        duplicates_skipped: duplicatesSkipped,
         source: 'threat-intelligence'
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
