@@ -973,10 +973,10 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                         onChange={(e) => setFormData({ ...formData, active_monitoring_enabled: e.target.checked })}
                         className="h-4 w-4"
                       />
-                      <Label htmlFor="active_monitoring" className="font-semibold">Enable Active Proximity Monitoring</Label>
+                      <Label htmlFor="active_monitoring" className="font-semibold">Enable OSINT & Proximity Monitoring</Label>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      System actively searches for threats near this entity's location
+                      Enables social media scans (Instagram, X, Facebook) and proximity threat detection. Add social handles for best results.
                     </p>
                   </div>
 
