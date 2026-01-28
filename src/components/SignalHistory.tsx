@@ -94,6 +94,7 @@ export const SignalHistory = () => {
   // Filter states
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
+  const [dateRangeFilter, setDateRangeFilter] = useState<string>('30d'); // Default to last 30 days
 
   useEffect(() => {
     // Load signals regardless of client selection - show all if none selected
@@ -308,13 +309,23 @@ export const SignalHistory = () => {
 
   // Removed early return for no client - now shows all signals when none selected
 
-  // Apply filters
+  // Apply filters including date range
   const filteredSignals = signals.filter(signal => {
     if (categoryFilter !== 'all' && signal.rule_category !== categoryFilter && signal.category !== categoryFilter) {
       return false;
     }
     if (priorityFilter !== 'all' && signal.rule_priority !== priorityFilter) {
       return false;
+    }
+    // Date range filter
+    if (dateRangeFilter !== 'all') {
+      const signalDate = new Date(signal.event_date || signal.created_at);
+      const now = new Date();
+      const days = parseInt(dateRangeFilter.replace('d', ''));
+      const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+      if (signalDate < cutoff) {
+        return false;
+      }
     }
     return true;
   });
@@ -360,46 +371,57 @@ export const SignalHistory = () => {
           )}
         </div>
         {/* Filters */}
-        {(uniqueCategories.length > 0 || uniquePriorities.length > 0) && (
-          <div className="flex gap-2 mt-4">
-            {uniqueCategories.length > 0 && (
-              <select
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
-                className="px-3 py-1.5 text-sm border rounded-md bg-background"
-              >
-                <option value="all">All Categories</option>
-                {uniqueCategories.map(cat => (
-                  <option key={cat} value={cat}>{cat}</option>
-                ))}
-              </select>
-            )}
-            {uniquePriorities.length > 0 && (
-              <select
-                value={priorityFilter}
-                onChange={(e) => setPriorityFilter(e.target.value)}
-                className="px-3 py-1.5 text-sm border rounded-md bg-background"
-              >
-                <option value="all">All Priorities</option>
-                {uniquePriorities.map(pri => (
-                  <option key={pri} value={pri}>{pri?.toUpperCase()}</option>
-                ))}
-              </select>
-            )}
-            {(categoryFilter !== 'all' || priorityFilter !== 'all') && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setCategoryFilter('all');
-                  setPriorityFilter('all');
-                }}
-              >
-                Clear Filters
-              </Button>
-            )}
-          </div>
-        )}
+        <div className="flex gap-2 mt-4 flex-wrap">
+          {/* Date range filter - always visible */}
+          <select
+            value={dateRangeFilter}
+            onChange={(e) => setDateRangeFilter(e.target.value)}
+            className="px-3 py-1.5 text-sm border rounded-md bg-background"
+          >
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="90d">Last 90 days</option>
+            <option value="365d">Last year</option>
+            <option value="all">All time</option>
+          </select>
+          {uniqueCategories.length > 0 && (
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="px-3 py-1.5 text-sm border rounded-md bg-background"
+            >
+              <option value="all">All Categories</option>
+              {uniqueCategories.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          )}
+          {uniquePriorities.length > 0 && (
+            <select
+              value={priorityFilter}
+              onChange={(e) => setPriorityFilter(e.target.value)}
+              className="px-3 py-1.5 text-sm border rounded-md bg-background"
+            >
+              <option value="all">All Priorities</option>
+              {uniquePriorities.map(pri => (
+                <option key={pri} value={pri}>{pri?.toUpperCase()}</option>
+              ))}
+            </select>
+          )}
+          {(categoryFilter !== 'all' || priorityFilter !== 'all' || dateRangeFilter !== '30d') && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setCategoryFilter('all');
+                setPriorityFilter('all');
+                setDateRangeFilter('30d');
+              }}
+            >
+              Reset Filters
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent>
         {filteredSignals.length === 0 ? (
