@@ -167,7 +167,7 @@ export const LiveEventFeed = () => {
           <select
             value={dateFilter}
             onChange={(e) => setDateFilter(e.target.value)}
-            className="px-2 py-1 text-xs border rounded-md bg-background"
+            className="px-2 py-1 text-xs border rounded-md bg-card text-foreground z-50"
           >
             <option value="1d">Last 24h</option>
             <option value="7d">Last 7 days</option>

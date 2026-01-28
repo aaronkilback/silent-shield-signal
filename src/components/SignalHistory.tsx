@@ -4,9 +4,10 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
-import { History, AlertCircle, Trash2, ExternalLink } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
+import { History, AlertCircle, Trash2, ExternalLink, Clock, Calendar, Archive } from "lucide-react";
+import { formatDistanceToNow, isToday, isThisWeek, isThisMonth, differenceInDays } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
 import { SignalAgeIndicator } from "@/components/signals/SignalAgeBadge";
@@ -94,7 +95,8 @@ export const SignalHistory = () => {
   // Filter states
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
-  const [dateRangeFilter, setDateRangeFilter] = useState<string>('30d'); // Default to last 30 days
+  const [dateRangeFilter, setDateRangeFilter] = useState<string>('30d');
+  const [activeTab, setActiveTab] = useState<string>('recent'); // 'recent' | 'all' | 'historical'
 
   useEffect(() => {
     // Load signals regardless of client selection - show all if none selected
@@ -309,6 +311,18 @@ export const SignalHistory = () => {
 
   // Removed early return for no client - now shows all signals when none selected
 
+  // Helper to categorize signals by recency
+  const categorizeByRecency = (signal: Signal) => {
+    const signalDate = new Date(signal.event_date || signal.created_at);
+    const daysDiff = differenceInDays(new Date(), signalDate);
+    
+    if (isToday(signalDate)) return 'today';
+    if (isThisWeek(signalDate)) return 'thisWeek';
+    if (isThisMonth(signalDate)) return 'thisMonth';
+    if (daysDiff <= 90) return 'recent';
+    return 'historical';
+  };
+
   // Apply filters including date range
   const filteredSignals = signals.filter(signal => {
     if (categoryFilter !== 'all' && signal.rule_category !== categoryFilter && signal.category !== categoryFilter) {
@@ -317,18 +331,33 @@ export const SignalHistory = () => {
     if (priorityFilter !== 'all' && signal.rule_priority !== priorityFilter) {
       return false;
     }
-    // Date range filter
-    if (dateRangeFilter !== 'all') {
-      const signalDate = new Date(signal.event_date || signal.created_at);
-      const now = new Date();
-      const days = parseInt(dateRangeFilter.replace('d', ''));
-      const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-      if (signalDate < cutoff) {
-        return false;
-      }
+    
+    // Tab-based filtering
+    const recency = categorizeByRecency(signal);
+    if (activeTab === 'recent') {
+      // Show today, this week, this month
+      if (!['today', 'thisWeek', 'thisMonth'].includes(recency)) return false;
+    } else if (activeTab === 'historical') {
+      // Show only historical (90+ days old)
+      if (recency !== 'historical') return false;
     }
+    // 'all' tab shows everything
+    
     return true;
   });
+
+  // Group signals for display
+  const groupedSignals = {
+    today: filteredSignals.filter(s => categorizeByRecency(s) === 'today'),
+    thisWeek: filteredSignals.filter(s => categorizeByRecency(s) === 'thisWeek'),
+    thisMonth: filteredSignals.filter(s => categorizeByRecency(s) === 'thisMonth'),
+    recent: filteredSignals.filter(s => categorizeByRecency(s) === 'recent'),
+    historical: filteredSignals.filter(s => categorizeByRecency(s) === 'historical'),
+  };
+
+  // Counts for tabs
+  const recentCount = groupedSignals.today.length + groupedSignals.thisWeek.length + groupedSignals.thisMonth.length;
+  const historicalCount = groupedSignals.historical.length;
 
   // Get unique categories and priorities for filters
   const uniqueCategories = Array.from(new Set(signals.map(s => s.rule_category || s.category).filter(Boolean)));
@@ -370,210 +399,149 @@ export const SignalHistory = () => {
             </div>
           )}
         </div>
-        {/* Filters */}
-        <div className="flex gap-2 mt-4 flex-wrap">
-          {/* Date range filter - always visible */}
-          <select
-            value={dateRangeFilter}
-            onChange={(e) => setDateRangeFilter(e.target.value)}
-            className="px-3 py-1.5 text-sm border rounded-md bg-background"
-          >
-            <option value="7d">Last 7 days</option>
-            <option value="30d">Last 30 days</option>
-            <option value="90d">Last 90 days</option>
-            <option value="365d">Last year</option>
-            <option value="all">All time</option>
-          </select>
-          {uniqueCategories.length > 0 && (
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="px-3 py-1.5 text-sm border rounded-md bg-background"
-            >
-              <option value="all">All Categories</option>
-              {uniqueCategories.map(cat => (
-                <option key={cat} value={cat}>{cat}</option>
-              ))}
-            </select>
-          )}
-          {uniquePriorities.length > 0 && (
-            <select
-              value={priorityFilter}
-              onChange={(e) => setPriorityFilter(e.target.value)}
-              className="px-3 py-1.5 text-sm border rounded-md bg-background"
-            >
-              <option value="all">All Priorities</option>
-              {uniquePriorities.map(pri => (
-                <option key={pri} value={pri}>{pri?.toUpperCase()}</option>
-              ))}
-            </select>
-          )}
-          {(categoryFilter !== 'all' || priorityFilter !== 'all' || dateRangeFilter !== '30d') && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setCategoryFilter('all');
-                setPriorityFilter('all');
-                setDateRangeFilter('30d');
-              }}
-            >
-              Reset Filters
-            </Button>
-          )}
-        </div>
+        {/* Tabs for Recent vs Historical */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-4">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="recent" className="flex items-center gap-2">
+              <Clock className="w-4 h-4" />
+              Recent
+              {recentCount > 0 && (
+                <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">{recentCount}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="all" className="flex items-center gap-2">
+              <Calendar className="w-4 h-4" />
+              All
+              <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs">{signals.length}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="historical" className="flex items-center gap-2">
+              <Archive className="w-4 h-4" />
+              Historical
+              {historicalCount > 0 && (
+                <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs">{historicalCount}</Badge>
+              )}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        {/* Category/Priority Filters */}
+        {(uniqueCategories.length > 0 || uniquePriorities.length > 0) && (
+          <div className="flex gap-2 mt-3 flex-wrap">
+            {uniqueCategories.length > 0 && (
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="px-3 py-1.5 text-sm border rounded-md bg-card text-foreground"
+              >
+                <option value="all">All Categories</option>
+                {uniqueCategories.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+            )}
+            {uniquePriorities.length > 0 && (
+              <select
+                value={priorityFilter}
+                onChange={(e) => setPriorityFilter(e.target.value)}
+                className="px-3 py-1.5 text-sm border rounded-md bg-card text-foreground"
+              >
+                <option value="all">All Priorities</option>
+                {uniquePriorities.map(pri => (
+                  <option key={pri} value={pri}>{pri?.toUpperCase()}</option>
+                ))}
+              </select>
+            )}
+            {(categoryFilter !== 'all' || priorityFilter !== 'all') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setCategoryFilter('all');
+                  setPriorityFilter('all');
+                }}
+              >
+                Clear Filters
+              </Button>
+            )}
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         {filteredSignals.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <AlertCircle className="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p>{signals.length === 0 ? 'No signals found. Use the Test Signal Generator to create demo signals.' : 'No signals match the selected filters.'}</p>
+            <p>{signals.length === 0 ? 'No signals found. Use the Test Signal Generator to create demo signals.' : `No ${activeTab === 'historical' ? 'historical' : 'recent'} signals match the filters.`}</p>
           </div>
         ) : (
           <ScrollArea className="h-[400px] pr-4">
-            <div className="space-y-2">
-              {filteredSignals.map((signal) => (
-                <div
-                  key={signal.id}
-                  className={`p-4 border rounded-lg hover:bg-muted/50 transition-colors ${!signal.is_read ? 'bg-primary/5 border-primary/20' : ''}`}
-                >
-                  <div className="flex items-start gap-3">
-                    <Checkbox
-                      checked={selectedSignalIds.has(signal.id)}
-                      onCheckedChange={() => handleSelectSignal(signal.id)}
-                      className="mt-1"
-                    />
-                    <div className="flex-1 cursor-pointer" onClick={(e) => handleSignalClick(signal, e)}>
-                      <div className="flex items-start justify-between gap-3 mb-3">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {!signal.is_read && (
-                            <Badge variant="default" className="h-5 px-2 text-xs">New</Badge>
-                          )}
-                          {Array.isArray(signal.applied_rules) && signal.applied_rules.length > 0 && (
-                            <Badge variant="secondary" className="h-5 px-2 text-xs">
-                              ✓ Rule Applied
-                            </Badge>
-                          )}
-                          <Badge variant={getSeverityColor(signal.severity)} className="h-5 px-2 text-xs">
-                            {signal.severity}
-                          </Badge>
-                          <Badge variant="outline" className="h-5 px-2 text-xs">
-                            {signal.rule_category || signal.category}
-                          </Badge>
-                          {signal.rule_priority && (
-                            <Badge variant="destructive" className="h-5 px-2 text-xs">
-                              {signal.rule_priority.toUpperCase()}
-                            </Badge>
-                          )}
-                          {signal.rule_tags && signal.rule_tags.length > 0 && (
-                            signal.rule_tags.slice(0, 3).map(tag => (
-                              <Badge key={tag} variant="secondary" className="h-5 px-2 text-xs">
-                                {tag}
-                              </Badge>
-                            ))
-                          )}
-                          {signal.routed_to_team && (
-                            <Badge variant="outline" className="h-5 px-2 text-xs">
-                              → {signal.routed_to_team}
-                            </Badge>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <span className="text-xs text-muted-foreground font-medium">
-                            {((signal.confidence || 0) * 100).toFixed(0)}%
-                          </span>
-                          <SignalFeedback
-                            signalId={signal.id}
-                            onFeedbackChange={loadSignals}
-                          />
-                        </div>
-                      </div>
-                      
-                      {/* Signal title or cleaned text */}
-                      <p className="text-sm font-medium mb-1">
-                        {signal.title || cleanSignalText(signal.normalized_text)}
-                      </p>
-                      
-                      {/* Description or post caption */}
-                      {(signal.description || signal.post_caption) && (
-                        <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
-                          {signal.description || signal.post_caption}
-                        </p>
-                      )}
-                      
-                      {/* Hashtags */}
-                      {signal.hashtags && signal.hashtags.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mb-2">
-                          {signal.hashtags.slice(0, 5).map((tag, idx) => (
-                            <Badge key={idx} variant="outline" className="text-xs text-blue-600">
-                              #{tag}
-                            </Badge>
-                          ))}
-                          {signal.hashtags.length > 5 && (
-                            <span className="text-xs text-muted-foreground">+{signal.hashtags.length - 5} more</span>
-                          )}
-                        </div>
-                      )}
-                      
-                      {/* Engagement metrics */}
-                      {signal.engagement_metrics && (signal.engagement_metrics.likes || signal.engagement_metrics.comments || signal.engagement_metrics.shares) && (
-                        <div className="flex gap-3 text-xs text-muted-foreground mb-2">
-                          {signal.engagement_metrics.likes && (
-                            <span>❤️ {signal.engagement_metrics.likes.toLocaleString()}</span>
-                          )}
-                          {signal.engagement_metrics.comments && (
-                            <span>💬 {signal.engagement_metrics.comments.toLocaleString()}</span>
-                          )}
-                          {signal.engagement_metrics.shares && (
-                            <span>🔄 {signal.engagement_metrics.shares.toLocaleString()}</span>
-                          )}
-                        </div>
-                      )}
-                      
-                      {/* Thumbnail */}
-                      {signal.thumbnail_url && (
-                        <div className="mb-2">
-                          <ImageLightbox 
-                            src={signal.thumbnail_url} 
-                            alt="Signal media" 
-                            className="h-20 w-auto rounded object-contain bg-muted"
-                          />
-                        </div>
-                      )}
-                      
-                      <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <div className="flex items-center gap-3">
-                          <SignalAgeIndicator 
-                            eventDate={signal.event_date} 
-                            ingestedAt={signal.created_at} 
-                          />
-                          {signal.applied_rules && Array.isArray(signal.applied_rules) && signal.applied_rules.length > 0 && (
-                            <span className="text-xs text-blue-600 font-medium">
-                              ⚡ {signal.applied_rules.length} rule{signal.applied_rules.length > 1 ? 's' : ''} applied
-                            </span>
-                          )}
-                          {/* Source link */}
-                          {(signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link) && (
-                            <a
-                              href={signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-1 text-primary hover:underline"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <ExternalLink className="w-3 h-3" />
-                              Source
-                            </a>
-                          )}
-                        </div>
-                        {signal.sources && (
-                          <span className="font-medium">{signal.sources.name}</span>
-                        )}
-                      </div>
-                    </div>
+            <div className="space-y-4">
+              {/* Today's signals - highlighted */}
+              {activeTab !== 'historical' && groupedSignals.today.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
+                    <Badge variant="default" className="bg-green-600">Today</Badge>
+                    <span className="text-xs text-muted-foreground">{groupedSignals.today.length} signals</span>
+                  </div>
+                  <div className="space-y-2 pl-2 border-l-2 border-green-500">
+                    {groupedSignals.today.map((signal) => renderSignalCard(signal, true))}
                   </div>
                 </div>
-              ))}
+              )}
+
+              {/* This week's signals */}
+              {activeTab !== 'historical' && groupedSignals.thisWeek.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
+                    <Badge variant="secondary">This Week</Badge>
+                    <span className="text-xs text-muted-foreground">{groupedSignals.thisWeek.length} signals</span>
+                  </div>
+                  <div className="space-y-2 pl-2 border-l-2 border-blue-400">
+                    {groupedSignals.thisWeek.map((signal) => renderSignalCard(signal, true))}
+                  </div>
+                </div>
+              )}
+
+              {/* This month's signals */}
+              {activeTab !== 'historical' && groupedSignals.thisMonth.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
+                    <Badge variant="outline">This Month</Badge>
+                    <span className="text-xs text-muted-foreground">{groupedSignals.thisMonth.length} signals</span>
+                  </div>
+                  <div className="space-y-2 pl-2 border-l-2 border-muted">
+                    {groupedSignals.thisMonth.map((signal) => renderSignalCard(signal, false))}
+                  </div>
+                </div>
+              )}
+
+              {/* Older but not historical (for "all" tab) */}
+              {activeTab === 'all' && groupedSignals.recent.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
+                    <Badge variant="outline" className="opacity-70">Last 90 Days</Badge>
+                    <span className="text-xs text-muted-foreground">{groupedSignals.recent.length} signals</span>
+                  </div>
+                  <div className="space-y-2 pl-2 border-l-2 border-muted/50 opacity-80">
+                    {groupedSignals.recent.map((signal) => renderSignalCard(signal, false))}
+                  </div>
+                </div>
+              )}
+
+              {/* Historical signals */}
+              {(activeTab === 'all' || activeTab === 'historical') && groupedSignals.historical.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
+                    <Badge variant="outline" className="opacity-60 border-amber-500 text-amber-600">
+                      <Archive className="w-3 h-3 mr-1" />
+                      Historical
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">{groupedSignals.historical.length} signals (90+ days old)</span>
+                  </div>
+                  <div className="space-y-2 pl-2 border-l-2 border-amber-500/30 opacity-70">
+                    {groupedSignals.historical.map((signal) => renderSignalCard(signal, false))}
+                  </div>
+                </div>
+              )}
             </div>
           </ScrollArea>
         )}
@@ -588,4 +556,93 @@ export const SignalHistory = () => {
       />
     </Card>
   );
+
+  // Helper function to render a signal card
+  function renderSignalCard(signal: Signal, isRecent: boolean) {
+    return (
+      <div
+        key={signal.id}
+        className={`p-4 border rounded-lg hover:bg-muted/50 transition-colors ${!signal.is_read ? 'bg-primary/5 border-primary/20' : ''} ${!isRecent ? 'opacity-90' : ''}`}
+      >
+        <div className="flex items-start gap-3">
+          <Checkbox
+            checked={selectedSignalIds.has(signal.id)}
+            onCheckedChange={() => handleSelectSignal(signal.id)}
+            className="mt-1"
+          />
+          <div className="flex-1 cursor-pointer" onClick={(e) => handleSignalClick(signal, e)}>
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                {!signal.is_read && (
+                  <Badge variant="default" className="h-5 px-2 text-xs">New</Badge>
+                )}
+                {Array.isArray(signal.applied_rules) && signal.applied_rules.length > 0 && (
+                  <Badge variant="secondary" className="h-5 px-2 text-xs">
+                    ✓ Rule Applied
+                  </Badge>
+                )}
+                <Badge variant={getSeverityColor(signal.severity)} className="h-5 px-2 text-xs">
+                  {signal.severity}
+                </Badge>
+                <Badge variant="outline" className="h-5 px-2 text-xs">
+                  {signal.rule_category || signal.category}
+                </Badge>
+                {signal.rule_priority && (
+                  <Badge variant="destructive" className="h-5 px-2 text-xs">
+                    {signal.rule_priority.toUpperCase()}
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="text-xs text-muted-foreground font-medium">
+                  {((signal.confidence || 0) * 100).toFixed(0)}%
+                </span>
+                <SignalFeedback
+                  signalId={signal.id}
+                  onFeedbackChange={loadSignals}
+                />
+              </div>
+            </div>
+            
+            {/* Signal title or cleaned text */}
+            <p className="text-sm font-medium mb-1">
+              {signal.title || cleanSignalText(signal.normalized_text)}
+            </p>
+            
+            {/* Description or post caption */}
+            {(signal.description || signal.post_caption) && (
+              <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
+                {signal.description || signal.post_caption}
+              </p>
+            )}
+            
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <div className="flex items-center gap-3">
+                <SignalAgeIndicator 
+                  eventDate={signal.event_date} 
+                  ingestedAt={signal.created_at} 
+                />
+                {/* Source link */}
+                {(signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link) && (
+                  <a
+                    href={signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-primary hover:underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    Source
+                  </a>
+                )}
+              </div>
+              {signal.sources && (
+                <span className="font-medium">{signal.sources.name}</span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 };
