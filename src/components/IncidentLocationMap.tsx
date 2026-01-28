@@ -71,7 +71,15 @@ export const IncidentLocationMap = ({ location }: IncidentLocationMapProps) => {
 
     // Cleanup
     return () => {
-      map.current?.remove();
+      if (map.current) {
+        try {
+          map.current.remove();
+        } catch (e) {
+          // Ignore cleanup errors from map already being removed
+          console.debug('Map cleanup completed');
+        }
+        map.current = null;
+      }
     };
   }, [location, mapboxToken]);
 

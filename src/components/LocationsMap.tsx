@@ -100,7 +100,15 @@ export const LocationsMap = ({ locations }: LocationsMapProps) => {
 
     // Cleanup
     return () => {
-      map.current?.remove();
+      if (map.current) {
+        try {
+          map.current.remove();
+        } catch (e) {
+          // Ignore cleanup errors from map already being removed
+          console.debug('Map cleanup completed');
+        }
+        map.current = null;
+      }
     };
   }, [locations, mapboxToken]);
 
