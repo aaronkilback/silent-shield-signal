@@ -37,8 +37,8 @@ serve(async (req) => {
     // Fetch high-risk/monitored entities (activist groups, threat actors, etc.)
     const { data: watchedEntities, error: entitiesError } = await supabase
       .from('entities')
-      .select('id, name, type, aliases, risk_level')
-      .or('risk_level.eq.high,risk_level.eq.critical,is_active_monitoring.eq.true')
+      .select('id, name, type, aliases, risk_level, active_monitoring_enabled')
+      .or('risk_level.eq.high,risk_level.eq.critical,active_monitoring_enabled.eq.true')
       .in('type', ['organization', 'person']);
 
     if (entitiesError) {

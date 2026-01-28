@@ -77,6 +77,7 @@ export const LiveEventFeed = () => {
   const { selectedClientId } = useClientSelection();
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dateFilter, setDateFilter] = useState<string>('7d'); // Default to last 7 days for live feed
 
   useEffect(() => {
     // Fetch initial signals
@@ -148,25 +149,47 @@ export const LiveEventFeed = () => {
     );
   }
 
+  // Filter signals by date range
+  const filteredSignals = signals.filter(signal => {
+    if (dateFilter === 'all') return true;
+    const signalDate = new Date(signal.received_at);
+    const now = new Date();
+    const days = parseInt(dateFilter.replace('d', ''));
+    const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+    return signalDate >= cutoff;
+  });
+
   return (
     <Card className="p-6 bg-card border-border">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold text-foreground">Live Event Feed</h2>
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-status-active animate-pulse" />
-          <span className="text-sm text-muted-foreground">Active</span>
+        <div className="flex items-center gap-3">
+          <select
+            value={dateFilter}
+            onChange={(e) => setDateFilter(e.target.value)}
+            className="px-2 py-1 text-xs border rounded-md bg-background"
+          >
+            <option value="1d">Last 24h</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="all">All time</option>
+          </select>
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-status-active animate-pulse" />
+            <span className="text-sm text-muted-foreground">Active</span>
+          </div>
         </div>
       </div>
       
-      {signals.length === 0 ? (
+      {filteredSignals.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
           <Shield className="w-12 h-12 mx-auto mb-4 opacity-50" />
-          <p>No signals detected yet</p>
-          <p className="text-sm mt-2">All systems nominal</p>
+          <p>{signals.length === 0 ? 'No signals detected yet' : 'No signals in selected time range'}</p>
+          <p className="text-sm mt-2">{signals.length === 0 ? 'All systems nominal' : 'Try expanding the date filter'}</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {signals.map((signal) => (
+          {filteredSignals.map((signal) => (
             <div
               key={signal.id}
               className="p-4 rounded-lg bg-secondary/50 border border-border hover:border-primary/50 transition-all duration-200 animate-fade-in"
