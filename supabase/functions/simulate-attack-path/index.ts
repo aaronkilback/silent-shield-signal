@@ -88,7 +88,7 @@ VULNERABILITY CONTEXT:
 ${vulnerability_id ? '- Analyze exploitation of this specific vulnerability' : '- Analyze most likely attack vectors for this threat actor'}
 
 RECENT THREAT INTELLIGENCE:
-${relatedSignals && relatedSignals.length > 0 ? relatedSignals.map(s => `- [${s.severity}] ${s.normalized_text.substring(0, 150)}...`).join('\n') : 'No recent related signals'}
+${relatedSignals && relatedSignals.length > 0 ? relatedSignals.map(s => `- [${s.severity}] ${(s.normalized_text || 'No details').substring(0, 150)}...`).join('\n') : 'No recent related signals'}
 
 SIMULATION REQUIREMENTS:
 1. **Initial Access**: How would the threat actor gain initial access? Consider phishing, exploitation, supply chain, insider threat, physical security breach.

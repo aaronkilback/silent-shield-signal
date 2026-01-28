@@ -99,7 +99,7 @@ HISTORICAL FAILURE PATTERNS:
 ${topFailureTypes.length > 0 ? topFailureTypes.join('\n') : 'No historical incident data'}
 
 RECENT OPERATIONAL DISRUPTIONS:
-${disruptionSignals && disruptionSignals.length > 0 ? disruptionSignals.slice(0, 5).map(s => `- [${s.severity}] ${s.normalized_text.substring(0, 100)}...`).join('\n') : 'No recent disruption signals'}
+${disruptionSignals && disruptionSignals.length > 0 ? disruptionSignals.slice(0, 5).map(s => `- [${s.severity}] ${(s.normalized_text || 'No details').substring(0, 100)}...`).join('\n') : 'No recent disruption signals'}
 
 LESSONS FROM PAST INCIDENTS:
 ${incidents && incidents.length > 0 ? incidents.filter(i => i.incident_outcomes && i.incident_outcomes.length > 0 && i.incident_outcomes[0].lessons_learned).slice(0, 3).map(i => `- ${i.incident_outcomes[0].lessons_learned}`).join('\n') : 'No lessons learned data'}
