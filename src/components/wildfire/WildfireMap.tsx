@@ -707,8 +707,23 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
     });
 
     return () => {
+      // Clear all markers first
+      markersRef.current.forEach(marker => {
+        try { marker.remove(); } catch (e) { /* ignore */ }
+      });
+      markersRef.current = [];
+      infrastructureMarkersRef.current.forEach(marker => {
+        try { marker.remove(); } catch (e) { /* ignore */ }
+      });
+      infrastructureMarkersRef.current = [];
+      
       if (map.current) {
-        map.current.remove();
+        try {
+          map.current.remove();
+        } catch (e) {
+          // Ignore cleanup errors - map may already be removed or not fully initialized
+          console.debug('Map cleanup completed');
+        }
         map.current = null;
       }
       setStyleLoaded(false);
