@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, History, Clock } from "lucide-react";
+import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, History, Clock, Heart, MessageCircle, Eye, Hash, AtSign, Instagram, Twitter, Facebook } from "lucide-react";
 import { format, differenceInDays } from "date-fns";
 import { SignalAgeBadge } from "./SignalAgeBadge";
 
@@ -24,6 +24,19 @@ interface SignalDetailSheetProps {
     source_reliability?: string | null;
     information_accuracy?: string | null;
     event_date?: string | null;
+    // Social media fields
+    post_caption?: string | null;
+    thumbnail_url?: string | null;
+    media_urls?: string[] | null;
+    hashtags?: string[] | null;
+    mentions?: string[] | null;
+    engagement_metrics?: {
+      likes?: number;
+      comments?: number;
+      views?: number;
+      shares?: number;
+    } | null;
+    raw_json?: any;
   } | null;
   onAssign: () => void;
   onDismiss: () => void;
@@ -61,6 +74,30 @@ export function SignalDetailSheet({
   // Extract source URL from sources
   const sourceUrl = sources.find((s: any) => s?.url || s?.link)?.url || 
                     sources.find((s: any) => s?.url || s?.link)?.link;
+
+  // Detect if this is a social media signal
+  const sourceMetadata = signal.raw_json?.source_metadata || signal.raw_json;
+  const socialPlatform = sourceMetadata?.source || null;
+  const isSocialMedia = ['instagram', 'twitter', 'facebook', 'x'].includes(socialPlatform?.toLowerCase() || '');
+  
+  // Get platform icon
+  const getPlatformIcon = () => {
+    switch (socialPlatform?.toLowerCase()) {
+      case 'instagram': return <Instagram className="h-4 w-4" />;
+      case 'twitter': 
+      case 'x': return <Twitter className="h-4 w-4" />;
+      case 'facebook': return <Facebook className="h-4 w-4" />;
+      default: return null;
+    }
+  };
+
+  // Clean hashtags (remove x prefixes from encoding issues)
+  const cleanHashtags = (tags: string[] | null | undefined) => {
+    if (!tags) return [];
+    return tags
+      .filter(tag => tag && !tag.match(/^x[0-9a-f]{4}$/i)) // Filter out encoded chars like x2019
+      .map(tag => tag.startsWith('#') ? tag : `#${tag}`);
+  };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -158,9 +195,133 @@ export function SignalDetailSheet({
 
             <Separator />
 
-            {/* Signal Text */}
+            {/* Social Media Post Content */}
+            {isSocialMedia && (
+              <div className="space-y-4">
+                {/* Platform Badge */}
+                <div className="flex items-center gap-2">
+                  {getPlatformIcon()}
+                  <span className="text-sm font-medium capitalize">{socialPlatform} Post</span>
+                </div>
+
+                {/* Thumbnail/Media */}
+                {signal.thumbnail_url && (
+                  <div className="rounded-lg overflow-hidden border">
+                    <img 
+                      src={signal.thumbnail_url} 
+                      alt="Post media" 
+                      className="w-full h-auto max-h-64 object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  </div>
+                )}
+
+                {/* Post Caption */}
+                {signal.post_caption && (
+                  <div>
+                    <h4 className="text-sm font-medium mb-2">Original Post</h4>
+                    <div className="bg-muted p-4 rounded-lg text-sm whitespace-pre-wrap border-l-4 border-primary/50">
+                      {signal.post_caption}
+                    </div>
+                  </div>
+                )}
+
+                {/* Engagement Metrics */}
+                {signal.engagement_metrics && (
+                  <div className="flex flex-wrap gap-4 text-sm">
+                    {signal.engagement_metrics.likes !== undefined && (
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <Heart className="h-4 w-4 text-red-500" />
+                        <span>{signal.engagement_metrics.likes.toLocaleString()} likes</span>
+                      </div>
+                    )}
+                    {signal.engagement_metrics.comments !== undefined && (
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <MessageCircle className="h-4 w-4 text-blue-500" />
+                        <span>{signal.engagement_metrics.comments.toLocaleString()} comments</span>
+                      </div>
+                    )}
+                    {signal.engagement_metrics.views !== undefined && signal.engagement_metrics.views > 0 && (
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <Eye className="h-4 w-4 text-green-500" />
+                        <span>{signal.engagement_metrics.views.toLocaleString()} views</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Hashtags */}
+                {cleanHashtags(signal.hashtags).length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium mb-2 flex items-center gap-1.5">
+                      <Hash className="h-3.5 w-3.5" />
+                      Hashtags
+                    </h4>
+                    <div className="flex flex-wrap gap-1.5">
+                      {cleanHashtags(signal.hashtags).map((tag, idx) => (
+                        <Badge key={idx} variant="secondary" className="text-xs">
+                          {tag}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Mentions */}
+                {signal.mentions && signal.mentions.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium mb-2 flex items-center gap-1.5">
+                      <AtSign className="h-3.5 w-3.5" />
+                      Mentions
+                    </h4>
+                    <div className="flex flex-wrap gap-1.5">
+                      {signal.mentions.map((mention, idx) => (
+                        <Badge key={idx} variant="outline" className="text-xs">
+                          @{mention.replace('@', '')}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Additional Media */}
+                {signal.media_urls && signal.media_urls.length > 1 && (
+                  <div>
+                    <h4 className="text-sm font-medium mb-2">Additional Media ({signal.media_urls.length})</h4>
+                    <div className="grid grid-cols-3 gap-2">
+                      {signal.media_urls.slice(1, 4).map((url, idx) => (
+                        <a 
+                          key={idx} 
+                          href={url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="rounded overflow-hidden border hover:opacity-80 transition-opacity"
+                        >
+                          <img 
+                            src={url} 
+                            alt={`Media ${idx + 2}`} 
+                            className="w-full h-20 object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).parentElement!.style.display = 'none';
+                            }}
+                          />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <Separator />
+              </div>
+            )}
+
+            {/* Signal Text / Analysis */}
             <div>
-              <h4 className="text-sm font-medium mb-2">Signal Content</h4>
+              <h4 className="text-sm font-medium mb-2">
+                {isSocialMedia ? "AI Analysis" : "Signal Content"}
+              </h4>
               <div className="bg-muted p-4 rounded-lg text-sm whitespace-pre-wrap">
                 {signal.normalized_text || "No text available"}
               </div>
