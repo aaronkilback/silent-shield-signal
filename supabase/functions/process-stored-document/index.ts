@@ -104,6 +104,45 @@ serve(async (req) => {
 
     console.log(`Found document: ${document.filename}`);
 
+    // CRITICAL: Early file size check to prevent memory exhaustion
+    // Edge functions have 150MB memory limit - base64 encoding doubles file size
+    // Files >10MB will exceed safe memory limits when processed
+    const MAX_SAFE_SIZE_MB = 10;
+    const fileSizeMB = document.file_size / (1024 * 1024);
+    
+    if (fileSizeMB > MAX_SAFE_SIZE_MB) {
+      console.log(`File too large for in-memory processing: ${fileSizeMB.toFixed(1)}MB > ${MAX_SAFE_SIZE_MB}MB limit`);
+      
+      // Update document with size-based skip message
+      await supabase
+        .from('archival_documents')
+        .update({
+          content_text: document.content_text && document.content_text.length > 100 
+            ? document.content_text 
+            : `[Large document: ${document.filename} (${fileSizeMB.toFixed(1)}MB). This file exceeds the ${MAX_SAFE_SIZE_MB}MB processing limit for in-memory analysis. The file is stored and accessible but text extraction was skipped to prevent system resource exhaustion. For full content analysis, please split into smaller files or use external document processing services.]`,
+          metadata: {
+            ...(document.metadata ?? {}),
+            entities_processed: true,
+            skipped_reason: 'file_too_large',
+            file_size_mb: fileSizeMB.toFixed(1),
+            max_safe_size_mb: MAX_SAFE_SIZE_MB,
+            processed_at: new Date().toISOString(),
+          },
+        })
+        .eq('id', documentId);
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          documentId,
+          message: `Document too large for in-memory processing (${fileSizeMB.toFixed(1)}MB). Metadata saved.`,
+          skipped: true,
+          reason: 'file_size_exceeds_limit',
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const preferredBucket =
       (document.metadata as any)?.storage_bucket && typeof (document.metadata as any)?.storage_bucket === 'string'
         ? (document.metadata as any).storage_bucket
