@@ -13,6 +13,7 @@ import { Shield, Loader2, Mail, FileText } from "lucide-react";
 import { getMCMRoleInfo, type MCMRole } from "@/lib/mcmRoles";
 import { MFAVerification } from "@/components/MFAVerification";
 import { SMSMFAVerification } from "@/components/SMSMFAVerification";
+import { MandatoryMFAEnrollment } from "@/components/MandatoryMFAEnrollment";
 
 const USER_AGREEMENT_CONTENT = [
   {
@@ -77,6 +78,10 @@ const Auth = () => {
   // SMS MFA state
   const [showSMSMFA, setShowSMSMFA] = useState(false);
   const [smsMFAPhone, setSmsMFAPhone] = useState<string | null>(null);
+  
+  // Mandatory MFA enrollment for new signups
+  const [showMandatoryMFA, setShowMandatoryMFA] = useState(false);
+  const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   
   const navigate = useNavigate();
 
@@ -302,19 +307,17 @@ const Auth = () => {
 
         if (error) throw error;
         
-        // Redirect to welcome page for new signups
-        if (invitation) {
-          // For invitations, accept and go to workspace
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user) {
-            await handleAcceptInvitation(user.id);
-          }
-          navigate(`/workspace/${invitation.workspace_id}`);
-        } else {
-          // Regular signup - show welcome page
-          navigate("/welcome");
+        // Get the newly created user
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        if (user) {
+          // Store user ID for MFA enrollment
+          setPendingUserId(user.id);
+          
+          // Show mandatory MFA enrollment for all new signups
+          setShowMandatoryMFA(true);
+          toast.success("Account created! Please set up two-factor authentication.");
         }
-        toast.success("Account created! Welcome to Fortress.");
       }
     } catch (error: any) {
       console.error("Auth error:", error);
@@ -367,6 +370,22 @@ const Auth = () => {
     setShowSMSMFA(false);
     setSmsMFAPhone(null);
   };
+
+  const handleMandatoryMFAComplete = async () => {
+    setShowMandatoryMFA(false);
+    
+    if (invitation && pendingUserId) {
+      await handleAcceptInvitation(pendingUserId);
+      navigate(`/workspace/${invitation.workspace_id}`);
+    } else {
+      navigate("/welcome");
+    }
+  };
+
+  // Show mandatory MFA enrollment for new signups
+  if (showMandatoryMFA) {
+    return <MandatoryMFAEnrollment onComplete={handleMandatoryMFAComplete} />;
+  }
 
   // Show TOTP MFA challenge screen
   if (showMFAChallenge && mfaFactorId) {
