@@ -225,3 +225,9 @@ verify_jwt = false
 
 [functions.vip-osint-discovery]
 verify_jwt = false
+
+[functions.send-mfa-code]
+verify_jwt = false
+
+[functions.verify-mfa-code]
+verify_jwt = false

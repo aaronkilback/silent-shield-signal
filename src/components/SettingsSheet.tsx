@@ -9,6 +9,7 @@ import { NotificationSettings } from "./NotificationSettings";
 import { DatabaseSettings } from "./DatabaseSettings";
 import { TestSignalGenerator } from "./TestSignalGenerator";
 import { MFAEnrollment } from "./MFAEnrollment";
+import { MFASetup } from "./MFASetup";
 
 export const SettingsSheet = () => {
   const [open, setOpen] = useState(false);
@@ -53,13 +54,18 @@ export const SettingsSheet = () => {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="security" className="mt-4 space-y-4">
+          <TabsContent value="security" className="mt-4 space-y-6">
             <div className="space-y-2">
               <h3 className="text-lg font-semibold">Account Security</h3>
               <p className="text-sm text-muted-foreground">
                 Manage your account security settings including two-factor authentication.
               </p>
             </div>
+            
+            {/* SMS MFA - Primary Option */}
+            <MFASetup />
+            
+            {/* TOTP MFA - Alternative */}
             <MFAEnrollment />
           </TabsContent>
 
