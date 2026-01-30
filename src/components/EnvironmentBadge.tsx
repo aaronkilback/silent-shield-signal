@@ -44,15 +44,17 @@ export const EnvironmentBadge = () => {
         .from('environment_config')
         .select('*')
         .eq('is_active', true)
-        .single();
+        .maybeSingle();
       
       if (error) {
-        console.error('[EnvironmentBadge] Error fetching config:', error);
+        // Silently handle - RLS may block unauthenticated users
         return null;
       }
       
-      return data as EnvironmentConfig;
-    }
+      return data as EnvironmentConfig | null;
+    },
+    retry: false,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
   if (isLoading || !envConfig) {
