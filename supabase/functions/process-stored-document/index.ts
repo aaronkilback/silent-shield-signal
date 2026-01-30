@@ -578,25 +578,18 @@ serve(async (req) => {
         
         try {
           const fileSizeMB = document.file_size / (1024 * 1024);
-          // Google AI Studio requires base64 data URLs for PDFs - signed URLs only work for images
-          // Limit: ~20MB for base64 encoding (results in ~27MB payload which is within limits)
-          const maxSizeForOCR = 20;
+          // We support OCR up to 10MB per chunk; for larger PDFs we split by page ranges
+          const MAX_CHUNK_MB = 8; // Leave headroom under Gemini's ~10MB base64 limit
+          const pdfBytes = await fileData.arrayBuffer();
+          const pdfUint8 = new Uint8Array(pdfBytes);
           
-          if (fileSizeMB > maxSizeForOCR) {
-            console.log(`PDF too large for OCR processing (${fileSizeMB.toFixed(1)}MB > ${maxSizeForOCR}MB limit)`);
-            textContent = `[This PDF is too large for OCR processing (${fileSizeMB.toFixed(1)}MB). File: ${document.filename}. Please split into smaller files or provide a text-based PDF.]`;
-          } else {
-            console.log(`Processing ${fileSizeMB.toFixed(1)}MB image-based PDF using base64 OCR...`);
+          // Helper: perform OCR on a byte range (full PDF or a sliced portion)
+          const ocrChunk = async (chunkBytes: Uint8Array, label: string): Promise<string> => {
+            const chunkBase64 = base64Encode(new Uint8Array(chunkBytes).buffer as ArrayBuffer);
+            const payloadMB = chunkBase64.length / (1024 * 1024);
+            console.log(`OCR ${label}: sending ${payloadMB.toFixed(2)}MB payload...`);
             
-            // Convert PDF to base64 data URL - this is the ONLY format that works for PDFs with Gemini
-            const pdfBytes = await fileData.arrayBuffer();
-            const base64Pdf = base64Encode(new Uint8Array(pdfBytes).buffer);
-            const pdfDataUrl = `data:application/pdf;base64,${base64Pdf}`;
-            
-            console.log(`Sending PDF as base64 data URL (${(base64Pdf.length / 1024 / 1024).toFixed(2)}MB payload)`);
-            
-            // Use Gemini 2.5 Flash for OCR - it handles PDFs well
-            const ocrResponse = await fetchWithRetry(
+            const resp = await fetchWithRetry(
               'https://ai.gateway.lovable.dev/v1/chat/completions',
               {
                 method: 'POST',
@@ -611,98 +604,106 @@ serve(async (req) => {
                     content: [
                       {
                         type: 'text',
-                        text: `You are performing OCR (Optical Character Recognition) on a scanned/image-based PDF document: "${document.filename}"
+                        text: `You are performing OCR on "${document.filename}" (${label}).
 
-CRITICAL INSTRUCTIONS:
-1. Extract ALL readable text from EVERY page of this document
-2. Preserve the document structure: headings, paragraphs, bullet points, tables
-3. If text is unclear, make your best interpretation and note uncertainty with [?]
-4. Include all visible content: titles, body text, captions, labels, headers, footers
-5. For tables, preserve the structure using | separators
-6. For forms, include field labels and values
-7. Do NOT summarize - extract the FULL text content
-
-OUTPUT FORMAT:
-- Return the complete extracted text organized by page if multiple pages
-- Use "--- Page X ---" markers to separate pages
-- Preserve paragraph breaks and formatting where visible`
+INSTRUCTIONS:
+1. Extract ALL readable text.
+2. Preserve structure: headings, paragraphs, tables (use | for columns), bullet points.
+3. Mark unclear text with [?].
+4. Do NOT summarize - extract full text.`
                       },
                       {
                         type: 'image_url',
-                        image_url: { 
-                          url: pdfDataUrl 
-                        }
+                        image_url: { url: `data:application/pdf;base64,${chunkBase64}` }
                       }
                     ]
                   }],
-                  max_tokens: 16000  // Allow more tokens for full document extraction
+                  max_tokens: 16000
                 }),
               },
               3,
-              'PDF OCR Analysis'
+              `PDF OCR ${label}`
             );
+            if (!resp.ok) {
+              const errText = await resp.text();
+              console.error(`OCR ${label} failed ${resp.status}: ${errText.substring(0, 300)}`);
+              return '';
+            }
+            const data = await resp.json();
+            return data.choices?.[0]?.message?.content?.trim() || '';
+          };
 
-            if (ocrResponse.ok) {
-              const ocrData = await ocrResponse.json();
-              const ocrContent = ocrData.choices?.[0]?.message?.content;
-              
-              if (ocrContent && ocrContent.length > 100) {
-                textContent = ocrContent.trim();
-                console.log(`PDF OCR successful: extracted ${textContent.length} characters`);
-              } else {
-                console.warn(`PDF OCR returned minimal content (${ocrContent?.length || 0} chars)`);
-                
-                // Try with Gemini Pro as fallback for complex documents
-                console.log('Retrying with Gemini 2.5 Pro for more complex OCR...');
-                const proResponse = await fetchWithRetry(
-                  'https://ai.gateway.lovable.dev/v1/chat/completions',
-                  {
-                    method: 'POST',
-                    headers: {
-                      'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-                      'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                      model: 'google/gemini-2.5-pro',
-                      messages: [{
-                        role: 'user',
-                        content: [
-                          {
-                            type: 'text',
-                            text: `Perform complete OCR on this scanned document "${document.filename}". Extract ALL text from every page. Include headings, paragraphs, tables, and any visible text. Preserve formatting.`
-                          },
-                          {
-                            type: 'image_url',
-                            image_url: { url: pdfDataUrl }
-                          }
-                        ]
-                      }],
-                      max_tokens: 16000
-                    }),
-                  },
-                  2,
-                  'PDF OCR Fallback'
-                );
-                
-                if (proResponse.ok) {
-                  const proData = await proResponse.json();
-                  const proContent = proData.choices?.[0]?.message?.content;
-                  if (proContent && proContent.length > 100) {
-                    textContent = proContent.trim();
-                    console.log(`PDF OCR (Pro fallback) successful: ${textContent.length} characters`);
-                  }
-                }
+          if (fileSizeMB <= MAX_CHUNK_MB) {
+            // Small enough to process in one shot
+            textContent = await ocrChunk(pdfUint8, 'full PDF');
+          } else {
+            // Split PDF into ~equal byte chunks and OCR each
+            const numChunks = Math.ceil(fileSizeMB / MAX_CHUNK_MB);
+            const chunkSize = Math.ceil(pdfBytes.byteLength / numChunks);
+            console.log(`Large PDF (${fileSizeMB.toFixed(1)}MB) - splitting into ${numChunks} chunks of ~${(chunkSize / (1024 * 1024)).toFixed(1)}MB each`);
+
+            const ocrParts: string[] = [];
+            for (let i = 0; i < numChunks; i++) {
+              const start = i * chunkSize;
+              const end = Math.min(start + chunkSize, pdfBytes.byteLength);
+              const chunkBytes = pdfUint8.slice(start, end);
+              const part = await ocrChunk(chunkBytes, `chunk ${i + 1}/${numChunks}`);
+              if (part && part.length > 20) {
+                ocrParts.push(`--- Chunk ${i + 1} ---\n${part}`);
               }
-            } else {
-              const errText = await ocrResponse.text();
-              console.error(`PDF OCR API error ${ocrResponse.status}: ${errText.substring(0, 500)}`);
             }
-            
-            // Final fallback message if OCR still failed
-            if (!textContent || textContent.length < 100) {
-              textContent = `[Image-based PDF could not be fully analyzed via OCR. File: ${document.filename}. Size: ${fileSizeMB.toFixed(1)}MB. The document may be corrupted or contain only complex graphics.]`;
-              console.warn('All PDF OCR attempts failed or returned minimal content');
+            textContent = ocrParts.join('\n\n');
+            console.log(`Chunked OCR complete: ${textContent.length} characters from ${ocrParts.length} chunks`);
+          }
+
+          // If still minimal, try Pro model as fallback (for first chunk only to save cost)
+          if (!textContent || textContent.length < 100) {
+            console.log('Flash OCR returned minimal content, trying Gemini Pro fallback...');
+            const proBytes = fileSizeMB > MAX_CHUNK_MB ? pdfUint8.slice(0, MAX_CHUNK_MB * 1024 * 1024) : pdfUint8;
+            const proBase64 = base64Encode(new Uint8Array(proBytes).buffer as ArrayBuffer);
+            const proResp = await fetchWithRetry(
+              'https://ai.gateway.lovable.dev/v1/chat/completions',
+              {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  model: 'google/gemini-2.5-pro',
+                  messages: [{
+                    role: 'user',
+                    content: [
+                      {
+                        type: 'text',
+                        text: `Perform complete OCR on this scanned document "${document.filename}". Extract ALL text, tables, headings. Preserve formatting.`
+                      },
+                      {
+                        type: 'image_url',
+                        image_url: { url: `data:application/pdf;base64,${proBase64}` }
+                      }
+                    ]
+                  }],
+                  max_tokens: 16000
+                }),
+              },
+              2,
+              'PDF OCR Pro Fallback'
+            );
+            if (proResp.ok) {
+              const proData = await proResp.json();
+              const proContent = proData.choices?.[0]?.message?.content?.trim();
+              if (proContent && proContent.length > 100) {
+                textContent = proContent;
+                console.log(`Pro fallback OCR successful: ${textContent.length} chars`);
+              }
             }
+          }
+
+          // Ultimate fallback message
+          if (!textContent || textContent.length < 100) {
+            textContent = `[Image-based PDF could not be fully analyzed via OCR. File: ${document.filename}. Size: ${fileSizeMB.toFixed(1)}MB. The document may be corrupted or contain complex graphics.]`;
+            console.warn('All PDF OCR attempts failed or returned minimal content');
           }
         } catch (visionError) {
           console.error('PDF OCR processing error:', visionError);

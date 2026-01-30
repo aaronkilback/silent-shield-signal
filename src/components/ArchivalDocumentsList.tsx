@@ -63,8 +63,12 @@ export const ArchivalDocumentsList = () => {
 
       if (error) throw error;
 
-      if (data?.entitiesFound > 0) {
-        toast.success(`✨ Found ${data.entitiesFound} entities in ${filename}!`);
+      // Handle skipped response (large file)
+      const resp = data as { success?: boolean; skipped?: boolean; message?: string; entitiesFound?: number };
+      if (resp?.skipped) {
+        toast.info(`${filename}: ${resp.message || 'Stored but too large for full processing.'}`);
+      } else if (resp?.entitiesFound && resp.entitiesFound > 0) {
+        toast.success(`✨ Found ${resp.entitiesFound} entities in ${filename}!`);
       } else {
         toast.info(`No entities extracted from ${filename}`);
       }
@@ -72,7 +76,7 @@ export const ArchivalDocumentsList = () => {
       // Refresh the documents list
       queryClient.invalidateQueries({ queryKey: ['archival-documents'] });
       queryClient.invalidateQueries({ queryKey: ['pending-entity-suggestions-count'] });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Reprocess error:', error);
       const message = await formatFunctionInvokeErrorAsync(error);
       toast.error(`Failed to reprocess: ${message}`);
