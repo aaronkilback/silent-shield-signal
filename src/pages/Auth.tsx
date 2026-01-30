@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { Shield, Loader2, Mail, FileText } from "lucide-react";
 import { getMCMRoleInfo, type MCMRole } from "@/lib/mcmRoles";
 import { MFAVerification } from "@/components/MFAVerification";
+import { SMSMFAVerification } from "@/components/SMSMFAVerification";
 
 const USER_AGREEMENT_CONTENT = [
   {
@@ -69,9 +70,13 @@ const Auth = () => {
   const [loadingInvite, setLoadingInvite] = useState(!!inviteToken);
   const [agreementAccepted, setAgreementAccepted] = useState(false);
   
-  // MFA state
+  // MFA state (TOTP)
   const [showMFAChallenge, setShowMFAChallenge] = useState(false);
   const [mfaFactorId, setMfaFactorId] = useState<string | null>(null);
+  
+  // SMS MFA state
+  const [showSMSMFA, setShowSMSMFA] = useState(false);
+  const [smsMFAPhone, setSmsMFAPhone] = useState<string | null>(null);
   
   const navigate = useNavigate();
 
@@ -247,13 +252,29 @@ const Auth = () => {
         
         // Check if MFA is required
         if (data.session) {
+          // First check for TOTP MFA
           const { data: factorsData } = await supabase.auth.mfa.listFactors();
           const verifiedFactors = factorsData?.totp?.filter(f => f.status === 'verified') || [];
           
           if (verifiedFactors.length > 0) {
-            // MFA is enabled - show verification screen
+            // TOTP MFA is enabled - show verification screen
             setMfaFactorId(verifiedFactors[0].id);
             setShowMFAChallenge(true);
+            setLoading(false);
+            return;
+          }
+          
+          // Check for SMS MFA (cast to any until types regenerate)
+          const { data: mfaSettings } = await (supabase as any)
+            .from('user_mfa_settings')
+            .select('mfa_enabled, phone_number')
+            .eq('user_id', data.user!.id)
+            .maybeSingle();
+          
+          if (mfaSettings?.mfa_enabled && mfaSettings?.phone_number) {
+            // SMS MFA is enabled - show SMS verification screen
+            setSmsMFAPhone(mfaSettings.phone_number);
+            setShowSMSMFA(true);
             setLoading(false);
             return;
           }
@@ -324,14 +345,47 @@ const Auth = () => {
     setShowMFAChallenge(false);
     setMfaFactorId(null);
   };
+  
+  const handleSMSMFASuccess = async () => {
+    setShowSMSMFA(false);
+    setSmsMFAPhone(null);
+    toast.success("Welcome back to Fortress AI");
+    
+    if (invitation) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await handleAcceptInvitation(user.id);
+      }
+      navigate(`/workspace/${invitation.workspace_id}`);
+    } else {
+      navigate("/");
+    }
+  };
+  
+  const handleSMSMFACancel = async () => {
+    await supabase.auth.signOut();
+    setShowSMSMFA(false);
+    setSmsMFAPhone(null);
+  };
 
-  // Show MFA challenge screen
+  // Show TOTP MFA challenge screen
   if (showMFAChallenge && mfaFactorId) {
     return (
       <MFAVerification
         factorId={mfaFactorId}
         onSuccess={handleMFASuccess}
         onCancel={handleMFACancel}
+      />
+    );
+  }
+  
+  // Show SMS MFA challenge screen
+  if (showSMSMFA && smsMFAPhone) {
+    return (
+      <SMSMFAVerification
+        phoneNumber={smsMFAPhone}
+        onVerified={handleSMSMFASuccess}
+        onCancel={handleSMSMFACancel}
       />
     );
   }

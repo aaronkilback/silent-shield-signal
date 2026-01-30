@@ -4209,6 +4209,33 @@ export type Database = {
           },
         ]
       }
+      mfa_verification_codes: {
+        Row: {
+          code: string
+          created_at: string
+          expires_at: string
+          id: string
+          used: boolean | null
+          user_id: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          expires_at: string
+          id?: string
+          used?: boolean | null
+          user_id: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          used?: boolean | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       monitoring_history: {
         Row: {
           created_at: string
@@ -6607,6 +6634,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      user_mfa_settings: {
+        Row: {
+          created_at: string
+          id: string
+          mfa_enabled: boolean | null
+          phone_number: string | null
+          phone_verified: boolean | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          mfa_enabled?: boolean | null
+          phone_number?: string | null
+          phone_verified?: boolean | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          mfa_enabled?: boolean | null
+          phone_number?: string | null
+          phone_verified?: boolean | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       user_preferences: {
         Row: {
