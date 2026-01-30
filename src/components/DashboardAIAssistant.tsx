@@ -717,6 +717,11 @@ export const DashboardAIAssistant = () => {
                   .eq('id', archivalDoc.id);
                 
                 toast.error(`Processing failed for ${file.name}. File saved for manual review.`);
+              } else if ((data as { skipped?: boolean })?.skipped) {
+                // Large file was stored but OCR skipped - this is NOT a failure
+                const resp = data as { skipped?: boolean; reason?: string; message?: string };
+                console.log(`Document ${file.name} stored but processing skipped:`, resp.reason);
+                toast.info(`${file.name} stored successfully. ${resp.message || 'Processing skipped due to size.'}`);
               } else {
                 console.log(`Document ${file.name} processed successfully:`, data);
                 toast.success(`${file.name} processed and ready for analysis`);

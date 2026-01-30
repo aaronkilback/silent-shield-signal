@@ -266,15 +266,13 @@ async function extractPdfTextImproved(blob: Blob): Promise<{ text: string; isSca
   console.log(`Processing PDF: ${blob.size} bytes, reading ${arrayBuffer.byteLength} bytes for extraction`);
 
   // Primary: pdfjs extraction
+  // NOTE: Do NOT set GlobalWorkerOptions.workerSrc in Deno edge functions.
+  // With `disableWorker: true`, pdfjs will use a fake worker internally;
+  // setting workerSrc triggers a module fetch that fails in Deno and breaks extraction.
   try {
-      const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
-      // Required in Deno even when disableWorker=true (pdfjs checks this getter)
-      if (pdfjsLib?.GlobalWorkerOptions) {
-        // esm.sh provides a real module entry for the legacy worker
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.worker.min.mjs';
-      }
+    const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
 
-      const loadingTask = pdfjsLib.getDocument({
+    const loadingTask = pdfjsLib.getDocument({
       data: new Uint8Array(arrayBuffer),
       disableWorker: true,
     });
