@@ -226,6 +226,9 @@ verify_jwt = false
 [functions.vip-osint-discovery]
 verify_jwt = false
 
+[functions.backfill-signal-media]
+verify_jwt = false
+
 [functions.send-mfa-code]
 verify_jwt = false
 
