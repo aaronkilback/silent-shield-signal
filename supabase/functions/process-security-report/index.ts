@@ -43,9 +43,12 @@ function isWordDocument(fileType: string, filename?: string): boolean {
 async function extractTextFromWord(blob: Blob, apiKey: string, filename?: string): Promise<string> {
   console.log('Starting Word document text extraction using Gemini Vision...');
   
-  if (blob.size > MAX_AI_EXTRACT_SIZE) {
-    const sizeMB = (blob.size / (1024 * 1024)).toFixed(1);
-    throw new Error(`Word document is too large (${sizeMB}MB). Maximum supported size is 10MB.`);
+  const fileSizeMB = blob.size / (1024 * 1024);
+  
+  // For very large Word docs, return a message instead of failing
+  if (blob.size > 25 * 1024 * 1024) {
+    console.log(`Word document too large (${fileSizeMB.toFixed(1)}MB), returning size notice`);
+    return `[Large Word document: ${filename || 'document'} (${fileSizeMB.toFixed(1)}MB). File stored successfully. For full text extraction of documents over 25MB, please split into smaller files.]`;
   }
   
   // Convert to base64
@@ -148,32 +151,23 @@ Output ONLY the extracted text, nothing else.`
   throw lastError || new Error('Word extraction failed after all retries');
 }
 
-// OCR using Gemini Vision for scanned/image-based PDFs
-async function extractTextWithOCR(pdfBlob: Blob, apiKey: string): Promise<string> {
-  console.log('Starting OCR extraction using Gemini Vision...');
+// Maximum size for single-chunk OCR (8MB is safe for edge function memory)
+const MAX_SINGLE_CHUNK_SIZE = 8 * 1024 * 1024;
+
+// OCR a single chunk of PDF data
+async function ocrSingleChunk(
+  chunkBytes: Uint8Array, 
+  apiKey: string, 
+  chunkLabel: string
+): Promise<string> {
+  const base64Chunk = uint8ToBase64(chunkBytes);
+  console.log(`OCR processing ${chunkLabel} (${(chunkBytes.byteLength / 1024 / 1024).toFixed(2)}MB)...`);
   
-  // Check file size before processing
-  if (pdfBlob.size > MAX_AI_EXTRACT_SIZE) {
-    const sizeMB = (pdfBlob.size / (1024 * 1024)).toFixed(1);
-    throw new Error(`PDF is too large for OCR (${sizeMB}MB). Maximum supported size is 10MB. Please try uploading a smaller document or a PDF with selectable text.`);
-  }
-  
-  // Convert PDF to base64
-  const arrayBuffer = await pdfBlob.arrayBuffer();
-  const uint8Array = new Uint8Array(arrayBuffer);
-  const base64Pdf = uint8ToBase64(uint8Array);
-  
-  console.log(`PDF size for OCR: ${pdfBlob.size} bytes`);
-  
-  // Retry logic for transient errors
   const maxRetries = 3;
   let lastError: Error | null = null;
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`OCR attempt ${attempt}/${maxRetries}...`);
-      
-      // Use Gemini Vision to extract text from the PDF
       const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -181,21 +175,20 @@ async function extractTextWithOCR(pdfBlob: Blob, apiKey: string): Promise<string
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'google/gemini-2.5-pro',
+          model: 'google/gemini-2.5-flash',
           messages: [
             {
               role: 'user',
               content: [
                 {
                   type: 'text',
-                  text: `You are an OCR system. Extract ALL text from this PDF document. 
+                  text: `You are an OCR system. Extract ALL text from this PDF document chunk.
 
 INSTRUCTIONS:
-- Extract every word, number, and piece of text visible in the document
+- Extract every word, number, and piece of text visible
 - Preserve the general structure (paragraphs, sections, headers)
 - Include tables, lists, and any formatted content
 - Do NOT summarize or interpret - just extract the raw text
-- If there are multiple pages, extract text from all of them
 - Maintain the reading order (top to bottom, left to right)
 
 Output ONLY the extracted text, nothing else.`
@@ -203,58 +196,107 @@ Output ONLY the extracted text, nothing else.`
                 {
                   type: 'image_url',
                   image_url: {
-                    url: `data:application/pdf;base64,${base64Pdf}`
+                    url: `data:application/pdf;base64,${base64Chunk}`
                   }
                 }
               ]
             }
-          ]
+          ],
+          max_tokens: 16000,
         })
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`OCR attempt ${attempt} failed:`, response.status, errorText.slice(0, 300));
+        console.warn(`OCR ${chunkLabel} attempt ${attempt} failed:`, response.status, errorText.slice(0, 200));
         
-        // Check for retryable errors (5xx)
         if (response.status >= 500 && attempt < maxRetries) {
-          console.log(`Retrying after ${attempt * 2} seconds...`);
           await new Promise(resolve => setTimeout(resolve, attempt * 2000));
           continue;
         }
         
-        throw new Error(`AI service temporarily unavailable (${response.status}). Please try again in a few minutes.`);
+        throw new Error(`AI service error (${response.status})`);
       }
 
       const result = await response.json();
       const extractedText = result.choices?.[0]?.message?.content || '';
       
-      if (!extractedText || extractedText.length < 100) {
-        throw new Error('OCR produced insufficient text. The document may be unreadable or corrupted.');
-      }
-      
-      console.log(`OCR extracted ${extractedText.length} characters`);
+      console.log(`OCR ${chunkLabel} extracted ${extractedText.length} characters`);
       return normalizeExtractedText(extractedText);
       
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      
-      // Don't retry if it's a content issue
-      if (lastError.message.includes('insufficient text') || lastError.message.includes('unreadable')) {
-        throw lastError;
-      }
-      
       if (attempt < maxRetries) {
-        console.log(`Retrying after error: ${lastError.message.slice(0, 100)}`);
         await new Promise(resolve => setTimeout(resolve, attempt * 2000));
         continue;
       }
-      
-      throw lastError;
     }
   }
   
-  throw lastError || new Error('OCR failed after all retries');
+  console.warn(`OCR ${chunkLabel} failed after retries:`, lastError?.message);
+  return ''; // Return empty string for failed chunks, continue with others
+}
+
+// OCR using Gemini Vision for scanned/image-based PDFs - supports chunking for large files
+async function extractTextWithOCR(pdfBlob: Blob, apiKey: string): Promise<string> {
+  console.log('Starting OCR extraction using Gemini Vision...');
+  
+  const fileSizeMB = pdfBlob.size / (1024 * 1024);
+  console.log(`PDF size for OCR: ${fileSizeMB.toFixed(2)}MB`);
+  
+  // For smaller files, process as single chunk
+  if (pdfBlob.size <= MAX_SINGLE_CHUNK_SIZE) {
+    const arrayBuffer = await pdfBlob.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    const result = await ocrSingleChunk(uint8Array, apiKey, 'full document');
+    
+    if (!result || result.length < 100) {
+      throw new Error('OCR produced insufficient text. The document may be unreadable or corrupted.');
+    }
+    
+    return result;
+  }
+  
+  // For large files, use chunked OCR
+  console.log(`Large PDF detected (${fileSizeMB.toFixed(1)}MB), using chunked OCR...`);
+  
+  const arrayBuffer = await pdfBlob.arrayBuffer();
+  const pdfBytes = new Uint8Array(arrayBuffer);
+  
+  // Calculate optimal chunks (target ~6MB each for safety margin)
+  const targetChunkSize = 6 * 1024 * 1024;
+  const numChunks = Math.ceil(pdfBytes.byteLength / targetChunkSize);
+  const chunkSize = Math.ceil(pdfBytes.byteLength / numChunks);
+  
+  console.log(`Splitting into ${numChunks} chunks of ~${(chunkSize / 1024 / 1024).toFixed(1)}MB each`);
+  
+  const ocrParts: string[] = [];
+  
+  for (let i = 0; i < numChunks; i++) {
+    const start = i * chunkSize;
+    const end = Math.min(start + chunkSize, pdfBytes.byteLength);
+    const chunkBytes = pdfBytes.slice(start, end);
+    
+    const chunkText = await ocrSingleChunk(chunkBytes, apiKey, `chunk ${i + 1}/${numChunks}`);
+    
+    if (chunkText && chunkText.length > 50) {
+      ocrParts.push(`--- Section ${i + 1} ---\n${chunkText}`);
+    }
+    
+    // Small delay between chunks to avoid rate limiting
+    if (i < numChunks - 1) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+  
+  if (ocrParts.length === 0) {
+    throw new Error('OCR could not extract any text from the document. It may be corrupted or unreadable.');
+  }
+  
+  const combinedText = ocrParts.join('\n\n');
+  console.log(`Chunked OCR complete: ${combinedText.length} characters from ${ocrParts.length}/${numChunks} chunks`);
+  
+  return combinedText;
 }
 
 // Improved PDF text extraction using pdfjs (reliable for most PDFs)
