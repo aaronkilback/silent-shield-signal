@@ -129,6 +129,76 @@ serve(async (req) => {
           const items = searchData.items || [];
 
           for (const item of items) {
+            // CRITICAL: Validate search result is actually about this specific entity
+            // before creating signals. Common names like "Scott" match too broadly.
+            const contentToCheck = `${item.title} ${item.snippet || ''}`.toLowerCase();
+            const entityNameLower = entity.name.toLowerCase();
+            
+            // For person entities, require full name match or very high relevance
+            let isRelevant = false;
+            
+            if (entity.type === 'person') {
+              // For person names, check if the full name appears together
+              // Handle formats like "BROW, Scott" → check both "brow scott" and "scott brow"
+              const nameParts = entityNameLower.split(/[,\s]+/).filter((p: string) => p.length > 2);
+              
+              if (nameParts.length >= 2) {
+                // Check if both name parts appear within close proximity
+                const allPartsPresent = nameParts.every((part: string) => contentToCheck.includes(part));
+                
+                if (allPartsPresent) {
+                  // Use AI to verify this is actually about the same person
+                  const verifyResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': `Bearer ${lovableApiKey}`,
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                      model: 'google/gemini-2.5-flash',
+                      messages: [
+                        {
+                          role: 'system',
+                          content: 'You are verifying if a web search result is actually about a specific person. Respond with only "YES" or "NO".'
+                        },
+                        {
+                          role: 'user',
+                          content: `Is this search result about the person "${entity.name}"?
+                          
+Description of the person we're looking for: ${entity.description || 'No description available'}
+
+Search result title: ${item.title}
+Search result snippet: ${item.snippet || 'No snippet'}
+URL: ${item.link}
+
+Answer YES only if this content is clearly about the same specific individual named "${entity.name}". Answer NO if it's about a different person who happens to have a similar name, or if it's unrelated content.`
+                        }
+                      ],
+                      max_tokens: 10
+                    }),
+                  });
+                  
+                  if (verifyResponse.ok) {
+                    const verifyData = await verifyResponse.json();
+                    const answer = verifyData.choices?.[0]?.message?.content?.trim().toUpperCase();
+                    isRelevant = answer === 'YES';
+                    console.log(`Relevance check for "${item.title}" vs "${entity.name}": ${answer}`);
+                  }
+                }
+              } else {
+                // Single-word name - require exact match
+                isRelevant = contentToCheck.includes(entityNameLower);
+              }
+            } else {
+              // For non-person entities (organizations, etc.), exact name match is usually sufficient
+              isRelevant = contentToCheck.includes(entityNameLower);
+            }
+            
+            if (!isRelevant) {
+              console.log(`Skipping irrelevant result for ${entity.name}: ${item.title}`);
+              continue;
+            }
+            
             // Create ingested document and process with AI
             const { data: doc, error: docError } = await supabase
               .from('ingested_documents')
