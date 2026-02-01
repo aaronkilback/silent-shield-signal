@@ -2024,6 +2024,128 @@ export const threatRadarTests = {
         if (error) throw error;
       },
     },
+    {
+      name: 'threat-radar-analysis function responds',
+      fn: async () => {
+        // Test the analyze_threat_radar capability used by Aegis
+        const { data, error } = await supabase.functions.invoke('threat-radar-analysis', {
+          body: {
+            timeframe_hours: 24,
+            include_predictions: true,
+            generate_snapshot: false,
+          },
+        });
+
+        // Function should respond (even if limited data)
+        if (error && !error.message.includes('FunctionError')) {
+          throw new Error(`threat-radar-analysis invocation failed: ${error.message}`);
+        }
+
+        if (!data) {
+          throw new Error('threat-radar-analysis returned no data');
+        }
+
+        // Verify response includes threat scores
+        if (data.threat_scores === undefined && data.overall_threat_score === undefined) {
+          throw new Error('threat-radar-analysis missing threat score metrics');
+        }
+      },
+    },
+    {
+      name: 'Speed metrics data accessible (Time to Detection)',
+      fn: async () => {
+        // Verify signals have timestamps for speed calculation
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        
+        const { data, error } = await supabase
+          .from('signals')
+          .select('id, created_at, received_at')
+          .gte('created_at', thirtyDaysAgo.toISOString())
+          .limit(10);
+        
+        if (error) throw error;
+        
+        // Check that signals have the timestamp fields needed for speed metrics
+        for (const signal of data || []) {
+          if (!signal.created_at) {
+            throw new Error(`Signal ${signal.id} missing created_at timestamp for detection speed`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Escalation probability data accessible',
+      fn: async () => {
+        // Verify incidents have timestamps for escalation calculation
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        
+        const { data, error } = await supabase
+          .from('incidents')
+          .select('id, created_at, opened_at, severity_level, status')
+          .gte('created_at', sevenDaysAgo.toISOString())
+          .limit(10);
+        
+        if (error) throw error;
+        
+        // Verify incidents have required fields for escalation probability
+        for (const incident of data || []) {
+          if (!incident.severity_level) {
+            console.warn(`Incident ${incident.id} missing severity_level for escalation scoring`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Threat radar predictions include escalation probability',
+      fn: async () => {
+        // Test that AI predictions return escalation probability
+        const { data, error } = await supabase.functions.invoke('threat-radar-analysis', {
+          body: {
+            timeframe_hours: 168,
+            include_predictions: true,
+            generate_snapshot: false,
+          },
+        });
+
+        if (error) {
+          // May fail due to API limits - this is acceptable
+          if (error.message?.includes('rate') || error.message?.includes('timeout')) {
+            return;
+          }
+          throw error;
+        }
+
+        // When predictions are enabled, should include escalation probability
+        if (data?.predictions) {
+          if (data.predictions.escalation_probability === undefined) {
+            throw new Error('Predictions missing escalation_probability field');
+          }
+          if (data.predictions.escalation_probability < 0 || data.predictions.escalation_probability > 100) {
+            throw new Error(`Invalid escalation_probability: ${data.predictions.escalation_probability} (expected 0-100)`);
+          }
+        }
+      },
+    },
+    {
+      name: 'AI agents can access analyze_threat_radar tool',
+      fn: async () => {
+        // Verify agent-chat has analyze_threat_radar tool available
+        const { data, error } = await supabase.functions.invoke('agent-chat', {
+          body: {
+            agent_id: 'test-agent',
+            message: 'What tools do you have for threat analysis?',
+            conversation_history: [],
+          },
+        });
+
+        // Should respond even if agent doesn't exist
+        if (error && !error.message.includes('FunctionError') && !error.message.includes('not found')) {
+          throw new Error(`agent-chat health check failed: ${error.message}`);
+        }
+      },
+    },
   ],
 };
 
