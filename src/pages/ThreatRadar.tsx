@@ -2,7 +2,7 @@ import { PageLayout } from "@/components/PageLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { Loader2, Radar, RefreshCw, AlertTriangle, Shield, TrendingUp, MapPin, Activity, Eye, Zap, Target, Radio, Flame } from "lucide-react";
+import { Loader2, Radar, RefreshCw, AlertTriangle, Shield, TrendingUp, MapPin, Activity, Eye, Zap, Target, Radio, Flame, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,8 @@ import { PredictiveInsightsPanel } from "@/components/threat-radar/PredictiveIns
 import { ThreatTimelineChart } from "@/components/threat-radar/ThreatTimelineChart";
 import { WildfireMap, WildfireDataPanel } from "@/components/wildfire";
 import { AnticipationIndex } from "@/components/fortress";
+import { SpeedMetricsPanel } from "@/components/threat-radar/SpeedMetricsPanel";
+import { EscalationProbabilityCard } from "@/components/threat-radar/EscalationProbabilityCard";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
@@ -124,7 +126,9 @@ const ThreatRadar = () => {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <SpeedMetricsPanel clientId={selectedClientId || undefined} compact />
+          <EscalationProbabilityCard clientId={selectedClientId || undefined} compact />
           <AnticipationIndex clientId={selectedClientId || undefined} compact />
           <DashboardClientSelector />
           <Button 
@@ -151,6 +155,16 @@ const ThreatRadar = () => {
             isLoading={isLoadingRadar}
           />
         </ErrorBoundary>
+
+        {/* Speed & Escalation Metrics Row */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <ErrorBoundary context="Speed Metrics">
+            <SpeedMetricsPanel clientId={selectedClientId || undefined} />
+          </ErrorBoundary>
+          <ErrorBoundary context="Escalation Probability">
+            <EscalationProbabilityCard clientId={selectedClientId || undefined} />
+          </ErrorBoundary>
+        </div>
 
         {/* Main Visualization and Insights */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
