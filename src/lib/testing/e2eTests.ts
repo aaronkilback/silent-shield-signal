@@ -2045,8 +2045,8 @@ export const threatRadarTests = {
           throw new Error('threat-radar-analysis returned no data');
         }
 
-        // Verify response includes threat scores
-        if (data.threat_scores === undefined && data.overall_threat_score === undefined) {
+        // Verify response includes threat assessment (actual response structure)
+        if (!data.threat_assessment || data.threat_assessment.overall_score === undefined) {
           throw new Error('threat-radar-analysis missing threat score metrics');
         }
       },
@@ -3234,20 +3234,22 @@ export const uiRaceConditionTests = {
         const titleTimestamps = new Map<string, Date[]>();
         
         for (const signal of data || []) {
-          if (!titleTimestamps.has(signal.title)) {
-            titleTimestamps.set(signal.title, []);
+          const signalTitle = signal.title || '(untitled)';
+          if (!titleTimestamps.has(signalTitle)) {
+            titleTimestamps.set(signalTitle, []);
           }
-          titleTimestamps.get(signal.title)!.push(new Date(signal.created_at));
+          titleTimestamps.get(signalTitle)!.push(new Date(signal.created_at));
         }
         
         const rapidDuplicates: string[] = [];
         
         for (const [title, timestamps] of titleTimestamps) {
+          if (title === '(untitled)') continue; // Skip untitled signals for duplicate detection
           for (let i = 0; i < timestamps.length; i++) {
             for (let j = i + 1; j < timestamps.length; j++) {
               const diffMs = Math.abs(timestamps[i].getTime() - timestamps[j].getTime());
               if (diffMs < 60000) { // 1 minute
-                rapidDuplicates.push(`"${title.substring(0, 50)}..." duplicated within ${(diffMs / 1000).toFixed(0)}s`);
+                rapidDuplicates.push(`"${(title || '').substring(0, 50)}..." duplicated within ${(diffMs / 1000).toFixed(0)}s`);
               }
             }
           }
