@@ -353,7 +353,7 @@ Structure responses as: What's happening → What matters → Recommendation →
       body: JSON.stringify({
         model: 'gpt-4o-realtime-preview-2024-12-17',
         modalities: ['audio', 'text'],
-        voice: 'verse',
+        voice: 'onyx',
         input_audio_format: 'pcm16',
         output_audio_format: 'pcm16',
         instructions: instructions,
