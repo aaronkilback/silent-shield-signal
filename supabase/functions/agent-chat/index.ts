@@ -594,6 +594,31 @@ You have access to the FULL Fortress toolset. When you need to:
 - Create incidents → use create_incident tool
 - Generate briefs → use generate_intelligence_summary tool
 - Send messages to other users → use send_proactive_message tool
+- Get VIP/principal profiles → use get_principal_profile tool
+- Run predictive scenarios → use run_what_if_scenario tool
+- Analyze sentiment trends → use analyze_sentiment_drift tool
+- Configure alert preferences → use configure_principal_alerts tool
+
+PRINCIPAL INTELLIGENCE SUITE (VIP/EXECUTIVE PROTECTION):
+When dealing with VIP/principal protection scenarios:
+- Use get_principal_profile to retrieve comprehensive intelligence on a principal before briefings
+- Use run_what_if_scenario to simulate travel risks, physical threats, or reputation scenarios
+- Use analyze_sentiment_drift to track media/social momentum shifts around a principal
+- Use configure_principal_alerts to set personalized alert thresholds and quiet hours
+These tools enable proactive, personalized executive protection beyond reactive threat monitoring.
+
+CROSS-CULTURAL INTELLIGENCE RULES:
+When analyzing signals or content from non-Western sources:
+1. Consider cultural context: idioms, local political nuances, communication styles
+2. Flag content where literal translation may miss cultural cues
+3. Note regional-specific threat indicators (e.g., color symbolism, date significance)
+4. For international principal travel: include cultural briefing points
+5. Translate technical security terms appropriately for local context
+6. When analyzing content from Asia-Pacific, Middle East, Latin America, or Africa:
+   - Note local holidays, religious observances, or political anniversaries that may affect risk
+   - Consider face-saving dynamics in threat communications
+   - Be aware of government censorship affecting open-source intelligence
+   - Factor in local law enforcement reliability and corruption indices
 
 PROACTIVE MESSAGING (IMPORTANT):
 When a user asks you to "say hello to", "tell [someone] that", "send a message to", "welcome", or "greet" another user, you MUST use the send_proactive_message tool to queue the message for delivery. Do NOT just acknowledge the request - actually use the tool to send it. The message will be delivered to the recipient when they next log in.
@@ -961,6 +986,93 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               max_results: { type: "number", description: "Maximum results to return (default: 10)" },
             },
             required: ["query"],
+          }
+        }
+      },
+      // ═══════════════════════════════════════════════════════════════════════════
+      //           PRINCIPAL INTELLIGENCE SUITE TOOLS (Phase 6)
+      // ═══════════════════════════════════════════════════════════════════════════
+      {
+        type: "function",
+        function: {
+          name: "get_principal_profile",
+          description: "Retrieve comprehensive VIP/principal profile for personalized executive protection briefings. Returns travel patterns, properties, known adversaries, family members, digital footprint, and threat profile.",
+          parameters: {
+            type: "object",
+            properties: {
+              entity_id: { type: "string", description: "UUID of the VIP entity" },
+              entity_name: { type: "string", description: "Name of the VIP entity to search for" },
+            },
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "run_what_if_scenario",
+          description: "Run a predictive threat scenario for a principal. Combines principal context with destination threat data to assess impact of hypothetical situations like travel to risky locations, reputation changes, or physical security events.",
+          parameters: {
+            type: "object",
+            properties: {
+              entity_id: { type: "string", description: "UUID of the principal entity" },
+              scenario_type: { type: "string", enum: ["travel", "physical", "reputation", "combined"], description: "Type of scenario to simulate" },
+              hypothetical: {
+                type: "object",
+                description: "Hypothetical conditions to evaluate",
+                properties: {
+                  destination: { type: "string", description: "Destination location for travel scenarios" },
+                  date_range: {
+                    type: "object",
+                    properties: {
+                      start: { type: "string", description: "Start date (ISO format)" },
+                      end: { type: "string", description: "End date (ISO format)" },
+                    }
+                  },
+                  condition_change: { type: "string", description: "Describe the hypothetical change (e.g., 'social media trend intensifies by 50%')" },
+                },
+              },
+            },
+            required: ["entity_id", "scenario_type"],
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "analyze_sentiment_drift",
+          description: "Analyze sentiment trajectory for an entity over time. Detects momentum shifts in media/social coverage and calculates reputation risk scores. Use this to identify if sentiment around a principal is improving, stable, or declining.",
+          parameters: {
+            type: "object",
+            properties: {
+              entity_id: { type: "string", description: "UUID of the entity to analyze" },
+              time_windows: { type: "array", items: { type: "number" }, description: "Time windows in days to analyze (default: [7, 30, 90])" },
+            },
+            required: ["entity_id"],
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "configure_principal_alerts",
+          description: "Configure alert preferences for a principal including risk appetite, alert thresholds, preferred notification channels, and quiet hours. Use this when a client wants to customize how and when they receive alerts.",
+          parameters: {
+            type: "object",
+            properties: {
+              entity_id: { type: "string", description: "UUID of the principal entity" },
+              risk_appetite: { type: "string", enum: ["low", "medium", "high"], description: "Risk tolerance level (low = more alerts, high = fewer alerts)" },
+              alert_threshold: { type: "string", enum: ["any_disruption", "significant_threat", "life_safety_only"], description: "Minimum severity threshold for alerts" },
+              preferred_channels: { type: "array", items: { type: "string" }, description: "Notification channels (in_app, email, sms)" },
+              quiet_hours: {
+                type: "object",
+                properties: {
+                  start: { type: "string", description: "Start time (HH:MM format)" },
+                  end: { type: "string", description: "End time (HH:MM format)" },
+                  timezone: { type: "string", description: "Timezone (e.g., America/Edmonton)" },
+                }
+              },
+            },
+            required: ["entity_id"],
           }
         }
       },
@@ -1898,6 +2010,223 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               } 
             });
           }
+          
+        // ═══════════════════════════════════════════════════════════════════════════
+        //           PRINCIPAL INTELLIGENCE SUITE TOOL HANDLERS (Phase 6)
+        // ═══════════════════════════════════════════════════════════════════════════
+        
+        } else if (funcName === 'get_principal_profile') {
+          // Retrieve comprehensive VIP/principal profile
+          let entity = null;
+          
+          if (args.entity_id) {
+            const { data } = await supabase
+              .from('entities')
+              .select('*')
+              .eq('id', args.entity_id)
+              .eq('type', 'person')
+              .single();
+            entity = data;
+          } else if (args.entity_name) {
+            const { data } = await supabase
+              .from('entities')
+              .select('*')
+              .eq('type', 'person')
+              .or(`name.ilike.%${args.entity_name}%,aliases.cs.{${args.entity_name}}`)
+              .single();
+            entity = data;
+          }
+          
+          if (!entity) {
+            toolResults.push({ 
+              tool: 'get_principal_profile', 
+              result: { success: false, error: 'VIP entity not found' } 
+            });
+            continue;
+          }
+          
+          // Fetch relationships (family, adversaries)
+          const { data: relationships } = await supabase
+            .from('entity_relationships')
+            .select('*, related_entity:entities!entity_relationships_target_entity_id_fkey(id, name, type, risk_level)')
+            .eq('source_entity_id', entity.id);
+          
+          const familyMembers = relationships?.filter(r => 
+            ['family', 'spouse', 'child', 'parent', 'sibling'].includes(r.relationship_type)
+          ) || [];
+          const adversaries = relationships?.filter(r => 
+            ['adversary', 'threat', 'hostile', 'competitor'].includes(r.relationship_type)
+          ) || [];
+          
+          // Fetch traveler data if linked
+          const { data: travelerData } = await supabase
+            .from('travelers')
+            .select('*, itineraries(*)')
+            .or(`name.ilike.%${entity.name}%,email.ilike.%${entity.name}%`)
+            .limit(1)
+            .maybeSingle();
+          
+          // Fetch recent entity content for sentiment
+          const { data: recentContent } = await supabase
+            .from('entity_content')
+            .select('title, source, sentiment, published_date')
+            .eq('entity_id', entity.id)
+            .order('published_date', { ascending: false })
+            .limit(10);
+          
+          // Fetch alert preferences if they exist
+          const { data: alertPrefs } = await supabase
+            .from('principal_alert_preferences')
+            .select('*')
+            .eq('entity_id', entity.id)
+            .maybeSingle();
+          
+          // Count recent monitoring alerts
+          const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+          const { count: alertCount } = await supabase
+            .from('entity_content')
+            .select('*', { count: 'exact', head: true })
+            .eq('entity_id', entity.id)
+            .gte('created_at', thirtyDaysAgo);
+          
+          const attributes = entity.attributes || {};
+          
+          const profile = {
+            profile_summary: {
+              id: entity.id,
+              name: entity.name,
+              aliases: entity.aliases || [],
+              nationality: attributes.nationality || 'Unknown',
+              date_of_birth: attributes.date_of_birth || null,
+              risk_level: entity.risk_level || 'medium',
+              description: entity.description,
+            },
+            travel_patterns: {
+              frequent_destinations: attributes.travel_patterns?.frequent_destinations || [],
+              upcoming_trips: travelerData?.itineraries?.filter((i: any) => 
+                new Date(i.start_date) > new Date()
+              ) || [],
+              preferred_airlines: attributes.travel_patterns?.preferred_airlines || [],
+            },
+            properties: attributes.properties || [],
+            known_adversaries: adversaries.map((r: any) => ({
+              name: r.related_entity?.name || 'Unknown',
+              relationship: r.relationship_type,
+              threat_level: r.related_entity?.risk_level || 'unknown',
+              notes: r.notes,
+            })),
+            family_members: familyMembers.map((r: any) => ({
+              name: r.related_entity?.name || 'Unknown',
+              relationship: r.relationship_type,
+              social_exposure: r.related_entity?.risk_level === 'high' ? 'high' : 'moderate',
+            })),
+            digital_footprint: {
+              social_handles: attributes.digital_footprint?.social_handles || {},
+              email_providers: attributes.digital_footprint?.email_providers || [],
+              cloud_services: attributes.digital_footprint?.cloud_services || [],
+            },
+            movement_patterns: attributes.movement_patterns || {},
+            threat_profile: {
+              specific_concerns: attributes.threat_profile?.specific_concerns || [],
+              industry_threats: attributes.threat_profile?.industry_threats || [],
+              previous_incidents: attributes.threat_profile?.previous_incidents || [],
+            },
+            active_monitoring: {
+              enabled: entity.is_monitored || false,
+              radius_km: entity.monitoring_radius_km || 50,
+              alert_count_30d: alertCount || 0,
+            },
+            risk_appetite: alertPrefs ? {
+              threshold: alertPrefs.alert_threshold,
+              alert_frequency: alertPrefs.risk_appetite,
+            } : null,
+            recent_sentiment: recentContent?.slice(0, 5) || [],
+          };
+          
+          toolResults.push({ 
+            tool: 'get_principal_profile', 
+            result: { success: true, profile } 
+          });
+          
+        } else if (funcName === 'run_what_if_scenario') {
+          // Invoke the dedicated edge function
+          const { data: scenarioResult, error } = await supabase.functions.invoke('run-what-if-scenario', {
+            body: {
+              entity_id: args.entity_id,
+              scenario_type: args.scenario_type,
+              hypothetical: args.hypothetical,
+            }
+          });
+          
+          if (error) throw error;
+          
+          toolResults.push({ 
+            tool: 'run_what_if_scenario', 
+            result: { success: true, ...scenarioResult } 
+          });
+          
+        } else if (funcName === 'analyze_sentiment_drift') {
+          // Invoke the dedicated edge function
+          const { data: driftResult, error } = await supabase.functions.invoke('analyze-sentiment-drift', {
+            body: {
+              entity_id: args.entity_id,
+              time_windows: args.time_windows || [7, 30, 90],
+            }
+          });
+          
+          if (error) throw error;
+          
+          toolResults.push({ 
+            tool: 'analyze_sentiment_drift', 
+            result: { success: true, ...driftResult } 
+          });
+          
+        } else if (funcName === 'configure_principal_alerts') {
+          // Upsert principal alert preferences
+          const { data: existing } = await supabase
+            .from('principal_alert_preferences')
+            .select('id')
+            .eq('entity_id', args.entity_id)
+            .maybeSingle();
+          
+          const updateData: any = {};
+          if (args.risk_appetite) updateData.risk_appetite = args.risk_appetite;
+          if (args.alert_threshold) updateData.alert_threshold = args.alert_threshold;
+          if (args.preferred_channels) updateData.preferred_channels = args.preferred_channels;
+          if (args.quiet_hours) updateData.quiet_hours = args.quiet_hours;
+          updateData.updated_at = new Date().toISOString();
+          
+          let result;
+          if (existing) {
+            const { data, error } = await supabase
+              .from('principal_alert_preferences')
+              .update(updateData)
+              .eq('id', existing.id)
+              .select()
+              .single();
+            if (error) throw error;
+            result = data;
+          } else {
+            const { data, error } = await supabase
+              .from('principal_alert_preferences')
+              .insert({
+                entity_id: args.entity_id,
+                ...updateData,
+              })
+              .select()
+              .single();
+            if (error) throw error;
+            result = data;
+          }
+          
+          toolResults.push({ 
+            tool: 'configure_principal_alerts', 
+            result: { 
+              success: true, 
+              preferences: result,
+              message: `Alert preferences ${existing ? 'updated' : 'configured'} for principal`
+            } 
+          });
           
         } else {
           toolResults.push({ tool: funcName, result: { success: false, error: `Unknown tool: ${funcName}` } });
