@@ -1076,6 +1076,42 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           }
         }
       },
+      {
+        type: "function",
+        function: {
+          name: "read_client_monitoring_config",
+          description: "Read the OSINT monitoring configuration for a client, including monitoring keywords, competitors, supply chain entities, priority keywords, exclusions, and relevance thresholds. Use this to understand how a client's monitoring is configured before suggesting changes.",
+          parameters: {
+            type: "object",
+            properties: {
+              client_id: { type: "string", description: "UUID of the client to read config for (uses current client if not specified)" },
+              client_name: { type: "string", description: "Name of the client to search for if ID not known" },
+            },
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "update_client_monitoring_config",
+          description: "Update the OSINT monitoring configuration for a client. Can add/remove keywords, adjust relevance thresholds, configure competitors, supply chain entities, and exclusion patterns. Use read_client_monitoring_config first to understand current state.",
+          parameters: {
+            type: "object",
+            properties: {
+              client_id: { type: "string", description: "UUID of the client to update (uses current client if not specified)" },
+              monitoring_keywords: { type: "array", items: { type: "string" }, description: "Custom industry keywords to monitor" },
+              add_keywords: { type: "array", items: { type: "string" }, description: "Keywords to add to existing list (use instead of full replacement)" },
+              remove_keywords: { type: "array", items: { type: "string" }, description: "Keywords to remove from existing list" },
+              priority_keywords: { type: "array", items: { type: "string" }, description: "Critical terms that boost relevance (e.g., 'explosion', 'spill')" },
+              exclude_keywords: { type: "array", items: { type: "string" }, description: "Terms to filter out irrelevant content" },
+              competitor_names: { type: "array", items: { type: "string" }, description: "Competitor companies to track" },
+              supply_chain_entities: { type: "array", items: { type: "string" }, description: "Vendors, contractors, partners to monitor" },
+              min_relevance_score: { type: "number", description: "Minimum relevance threshold (30-90, default 50)" },
+              auto_create_incidents: { type: "boolean", description: "Auto-escalate high-relevance signals to incidents" },
+            },
+          }
+        }
+      },
     ];
 
     // Build messages array
@@ -2225,6 +2261,166 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               success: true, 
               preferences: result,
               message: `Alert preferences ${existing ? 'updated' : 'configured'} for principal`
+            } 
+          });
+          
+        // ═══════════════════════════════════════════════════════════════════════════
+        //           CLIENT MONITORING CONFIG TOOLS
+        // ═══════════════════════════════════════════════════════════════════════════
+        
+        } else if (funcName === 'read_client_monitoring_config') {
+          // Read client monitoring configuration
+          let clientData = null;
+          
+          if (args.client_id) {
+            const { data } = await supabase
+              .from('clients')
+              .select('id, name, monitoring_keywords, competitor_names, supply_chain_entities, monitoring_config')
+              .eq('id', args.client_id)
+              .single();
+            clientData = data;
+          } else if (args.client_name) {
+            const { data } = await supabase
+              .from('clients')
+              .select('id, name, monitoring_keywords, competitor_names, supply_chain_entities, monitoring_config')
+              .ilike('name', `%${args.client_name}%`)
+              .limit(1)
+              .maybeSingle();
+            clientData = data;
+          } else if (client_id) {
+            // Use current session client
+            const { data } = await supabase
+              .from('clients')
+              .select('id, name, monitoring_keywords, competitor_names, supply_chain_entities, monitoring_config')
+              .eq('id', client_id)
+              .single();
+            clientData = data;
+          }
+          
+          if (!clientData) {
+            toolResults.push({ 
+              tool: 'read_client_monitoring_config', 
+              result: { success: false, error: 'Client not found' } 
+            });
+            continue;
+          }
+          
+          const monitoringConfig = clientData.monitoring_config || {};
+          
+          toolResults.push({ 
+            tool: 'read_client_monitoring_config', 
+            result: { 
+              success: true,
+              client: {
+                id: clientData.id,
+                name: clientData.name,
+              },
+              configuration: {
+                monitoring_keywords: clientData.monitoring_keywords || [],
+                competitor_names: clientData.competitor_names || [],
+                supply_chain_entities: clientData.supply_chain_entities || [],
+                priority_keywords: monitoringConfig.priority_keywords || [],
+                exclude_keywords: monitoringConfig.exclude_keywords || [],
+                min_relevance_score: monitoringConfig.min_relevance_score ?? 50,
+                auto_create_incidents: monitoringConfig.auto_create_incidents ?? true,
+              },
+              summary: {
+                total_keywords: (clientData.monitoring_keywords || []).length,
+                total_competitors: (clientData.competitor_names || []).length,
+                total_supply_chain: (clientData.supply_chain_entities || []).length,
+                total_priority_keywords: (monitoringConfig.priority_keywords || []).length,
+                total_exclusions: (monitoringConfig.exclude_keywords || []).length,
+              }
+            } 
+          });
+          
+        } else if (funcName === 'update_client_monitoring_config') {
+          // Update client monitoring configuration
+          const targetClientId = args.client_id || client_id;
+          
+          if (!targetClientId) {
+            toolResults.push({ 
+              tool: 'update_client_monitoring_config', 
+              result: { success: false, error: 'No client specified' } 
+            });
+            continue;
+          }
+          
+          // Fetch current config first
+          const { data: currentClient, error: fetchError } = await supabase
+            .from('clients')
+            .select('monitoring_keywords, competitor_names, supply_chain_entities, monitoring_config')
+            .eq('id', targetClientId)
+            .single();
+          
+          if (fetchError || !currentClient) {
+            toolResults.push({ 
+              tool: 'update_client_monitoring_config', 
+              result: { success: false, error: 'Client not found' } 
+            });
+            continue;
+          }
+          
+          const currentConfig = currentClient.monitoring_config || {};
+          let currentKeywords = currentClient.monitoring_keywords || [];
+          
+          // Handle keyword additions/removals
+          if (args.add_keywords && args.add_keywords.length > 0) {
+            currentKeywords = [...new Set([...currentKeywords, ...args.add_keywords])];
+          }
+          if (args.remove_keywords && args.remove_keywords.length > 0) {
+            currentKeywords = currentKeywords.filter((k: string) => 
+              !args.remove_keywords.some((rk: string) => rk.toLowerCase() === k.toLowerCase())
+            );
+          }
+          
+          const updateData: any = {};
+          
+          // Update keywords (full replacement if provided, otherwise use modified list)
+          if (args.monitoring_keywords) {
+            updateData.monitoring_keywords = args.monitoring_keywords;
+          } else if (args.add_keywords || args.remove_keywords) {
+            updateData.monitoring_keywords = currentKeywords;
+          }
+          
+          if (args.competitor_names) updateData.competitor_names = args.competitor_names;
+          if (args.supply_chain_entities) updateData.supply_chain_entities = args.supply_chain_entities;
+          
+          // Update nested monitoring_config
+          const newConfig = { ...currentConfig };
+          if (args.priority_keywords) newConfig.priority_keywords = args.priority_keywords;
+          if (args.exclude_keywords) newConfig.exclude_keywords = args.exclude_keywords;
+          if (args.min_relevance_score !== undefined) newConfig.min_relevance_score = args.min_relevance_score;
+          if (args.auto_create_incidents !== undefined) newConfig.auto_create_incidents = args.auto_create_incidents;
+          
+          updateData.monitoring_config = newConfig;
+          
+          const { error: updateError } = await supabase
+            .from('clients')
+            .update(updateData)
+            .eq('id', targetClientId);
+          
+          if (updateError) throw updateError;
+          
+          // Build change summary
+          const changes: string[] = [];
+          if (args.monitoring_keywords) changes.push(`Set ${args.monitoring_keywords.length} monitoring keywords`);
+          if (args.add_keywords) changes.push(`Added ${args.add_keywords.length} keywords`);
+          if (args.remove_keywords) changes.push(`Removed ${args.remove_keywords.length} keywords`);
+          if (args.priority_keywords) changes.push(`Set ${args.priority_keywords.length} priority keywords`);
+          if (args.exclude_keywords) changes.push(`Set ${args.exclude_keywords.length} exclusion keywords`);
+          if (args.competitor_names) changes.push(`Set ${args.competitor_names.length} competitors`);
+          if (args.supply_chain_entities) changes.push(`Set ${args.supply_chain_entities.length} supply chain entities`);
+          if (args.min_relevance_score !== undefined) changes.push(`Set min relevance to ${args.min_relevance_score}%`);
+          if (args.auto_create_incidents !== undefined) changes.push(`Auto-create incidents: ${args.auto_create_incidents}`);
+          
+          toolResults.push({ 
+            tool: 'update_client_monitoring_config', 
+            result: { 
+              success: true, 
+              message: 'Monitoring configuration updated successfully',
+              changes,
+              updated_config: updateData,
             } 
           });
           
