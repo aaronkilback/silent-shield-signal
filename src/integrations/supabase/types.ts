@@ -4560,6 +4560,63 @@ export type Database = {
           },
         ]
       }
+      principal_alert_preferences: {
+        Row: {
+          alert_threshold: string | null
+          auto_escalate_after_minutes: number | null
+          created_at: string
+          entity_id: string
+          escalation_contacts: Json | null
+          id: string
+          preferred_channels: string[] | null
+          quiet_hours: Json | null
+          risk_appetite: string | null
+          tenant_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          alert_threshold?: string | null
+          auto_escalate_after_minutes?: number | null
+          created_at?: string
+          entity_id: string
+          escalation_contacts?: Json | null
+          id?: string
+          preferred_channels?: string[] | null
+          quiet_hours?: Json | null
+          risk_appetite?: string | null
+          tenant_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          alert_threshold?: string | null
+          auto_escalate_after_minutes?: number | null
+          created_at?: string
+          entity_id?: string
+          escalation_contacts?: Json | null
+          id?: string
+          preferred_channels?: string[] | null
+          quiet_hours?: Json | null
+          risk_appetite?: string | null
+          tenant_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "principal_alert_preferences_entity_id_fkey"
+            columns: ["entity_id"]
+            isOneToOne: true
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "principal_alert_preferences_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       processing_queue: {
         Row: {
           completed_at: string | null
