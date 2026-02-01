@@ -3220,6 +3220,186 @@ Examples of when to use:
         }
       }
     }
+  },
+  // ══════════════════════════════════════════════════════════════════════════
+  // PRINCIPAL INTELLIGENCE SUITE - Phase 7 Capabilities
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    type: "function",
+    function: {
+      name: "get_principal_profile",
+      description: `PRINCIPAL PROFILE RETRIEVAL: Consolidate all intelligence about a VIP/principal for personalized security briefings.
+
+RETURNS:
+- profile_summary: Name, aliases, nationality, DOB, risk_level, threat_score
+- travel_patterns: Frequent destinations, upcoming trips, preferred airlines
+- properties: Residences, offices, vacation homes with security status
+- known_adversaries: Identified threats with relationship and threat level
+- family_members: Household members with social exposure assessment
+- digital_footprint: Social handles, email providers, cloud services
+- movement_patterns: Regular routes, frequented locations
+- threat_profile: Specific concerns, industry threats, previous incidents
+- active_monitoring: Enabled status, radius, 30-day alert count
+- risk_appetite: Alert threshold preferences (if configured)
+
+USE WHEN:
+- Preparing executive protection briefings
+- Assessing VIP travel risks
+- Understanding principal's vulnerability profile
+- Before running what-if scenarios`,
+      parameters: {
+        type: "object",
+        properties: {
+          entity_id: { type: "string", description: "UUID of the principal entity" },
+          entity_name: { type: "string", description: "Name of the principal (alternative to entity_id)" }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_what_if_scenario",
+      description: `WHAT-IF SCENARIO ENGINE: Simulate hypothetical situations for principals and assess security impacts.
+
+SCENARIO TYPES:
+- travel: Assess risks of principal traveling to specific destination
+- physical: Analyze physical security implications of condition changes
+- reputation: Evaluate reputational impact of events or trends
+- combined: Full multi-domain impact assessment
+
+RETURNS:
+- scenario_description: Summary of the hypothetical situation
+- principal_context: Travel patterns, adversaries, properties
+- destination_analysis: Threat hotspots, weather, political stability
+- impact_assessment: Physical/reputational/operational risk levels
+- recommendations: Prioritized actions with rationale
+- escalation_triggers: Conditions requiring immediate response
+- simulation_confidence: Data quality score (0-100)
+
+USE WHEN:
+- Principal planning travel to high-risk destinations
+- Assessing impact of emerging threats on VIP
+- Pre-event security planning
+- Adversary activity increases`,
+      parameters: {
+        type: "object",
+        properties: {
+          entity_id: { type: "string", description: "UUID of the principal entity" },
+          scenario_type: { 
+            type: "string", 
+            enum: ["travel", "physical", "reputation", "combined"],
+            description: "Type of scenario to simulate" 
+          },
+          hypothetical: {
+            type: "object",
+            description: "Hypothetical conditions to simulate",
+            properties: {
+              destination: { type: "string", description: "Travel destination" },
+              date_range: { 
+                type: "object",
+                properties: {
+                  start: { type: "string" },
+                  end: { type: "string" }
+                }
+              },
+              condition_change: { type: "string", description: "Condition to simulate (e.g., 'social media trend intensifies by 50%')" }
+            }
+          }
+        },
+        required: ["entity_id"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "analyze_sentiment_drift",
+      description: `SENTIMENT DRIFT ANALYSIS: Track reputational momentum and detect concerning trend shifts for entities.
+
+ANALYZES:
+- Current sentiment distribution (positive/neutral/negative %)
+- Multi-window drift (7/30/90 day trends)
+- Momentum calculation (rate of sentiment change)
+- Key drivers of negative sentiment shifts
+- Alert triggers when thresholds crossed
+
+RETURNS:
+- entity_name: Subject of analysis
+- current_sentiment: { positive%, neutral%, negative% }
+- drift_analysis: Per-window trend, momentum, key_drivers
+- alert_triggers: Threshold violations with severity
+- key_content_samples: Recent content driving sentiment
+- reputation_risk_score: 0-100 composite score
+
+USE WHEN:
+- Monitoring VIP reputation
+- Detecting emerging negative press
+- Pre-travel reputation assessment
+- Tracking sentiment after incidents`,
+      parameters: {
+        type: "object",
+        properties: {
+          entity_id: { type: "string", description: "UUID of the entity to analyze" },
+          time_windows: {
+            type: "array",
+            items: { type: "number" },
+            description: "Days to analyze (default: [7, 30, 90])"
+          }
+        },
+        required: ["entity_id"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "configure_principal_alerts",
+      description: `CONFIGURE PRINCIPAL ALERT PREFERENCES: Set per-principal notification thresholds and delivery preferences.
+
+OPTIONS:
+- risk_appetite: low (conservative - more alerts), medium (balanced), high (aggressive - fewer alerts)
+- alert_threshold: any_disruption, significant_threat, life_safety_only
+- preferred_channels: [in_app, email, sms]
+- quiet_hours: Suppress non-critical alerts during specified hours
+
+USE WHEN:
+- Onboarding new VIP principal
+- Adjusting alert sensitivity
+- Setting up escalation contacts
+- Configuring communication preferences`,
+      parameters: {
+        type: "object",
+        properties: {
+          entity_id: { type: "string", description: "UUID of the principal entity" },
+          risk_appetite: { 
+            type: "string", 
+            enum: ["low", "medium", "high"],
+            description: "Risk tolerance level" 
+          },
+          alert_threshold: { 
+            type: "string", 
+            enum: ["any_disruption", "significant_threat", "life_safety_only"],
+            description: "Minimum severity to trigger alerts" 
+          },
+          preferred_channels: {
+            type: "array",
+            items: { type: "string" },
+            description: "Notification channels: in_app, email, sms"
+          },
+          quiet_hours: {
+            type: "object",
+            description: "Quiet hours configuration",
+            properties: {
+              start: { type: "string", description: "Start time (HH:MM)" },
+              end: { type: "string", description: "End time (HH:MM)" },
+              timezone: { type: "string", description: "Timezone (e.g., America/Edmonton)" }
+            }
+          }
+        },
+        required: ["entity_id"]
+      }
+    }
   }
 ];
 
@@ -10265,6 +10445,72 @@ The signal is now in the database with status 'triaged' and rules have been appl
       const { data: patterns, error } = await query;
       if (error) return { error: error.message };
       return { patterns, count: patterns?.length || 0 };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // PRINCIPAL INTELLIGENCE SUITE TOOLS
+    // ══════════════════════════════════════════════════════════════════════════
+
+    case "get_principal_profile": {
+      const { entity_id, entity_name } = args;
+      
+      let entity = null;
+      if (entity_id) {
+        const { data } = await supabaseClient.from("entities").select("*").eq("id", entity_id).single();
+        entity = data;
+      } else if (entity_name) {
+        const { data } = await supabaseClient.from("entities").select("*").or("type.eq.person,type.eq.vip").ilike("name", `%${entity_name}%`).limit(1).single();
+        entity = data;
+      }
+      if (!entity) return { error: "Principal entity not found" };
+
+      const { data: relationships } = await supabaseClient.from("entity_relationships").select("*, entity_b:entity_b_id(id, name, type, risk_level)").eq("entity_a_id", entity.id);
+      const { data: alertPrefs } = await supabaseClient.from("principal_alert_preferences").select("*").eq("entity_id", entity.id).maybeSingle();
+      const { data: recentContent } = await supabaseClient.from("entity_content").select("id, title, sentiment, source, published_date").eq("entity_id", entity.id).order("published_date", { ascending: false }).limit(10);
+      
+      const attrs = entity.attributes || {};
+      const familyMembers = (relationships || []).filter((r: any) => ["family", "spouse", "child", "parent"].includes(r.relationship_type?.toLowerCase())).map((r: any) => ({ name: r.entity_b?.name, relationship: r.relationship_type }));
+      const adversaries = (relationships || []).filter((r: any) => ["adversary", "competitor", "threat"].includes(r.relationship_type?.toLowerCase())).map((r: any) => ({ name: r.entity_b?.name, threat_level: r.entity_b?.risk_level || "medium" }));
+
+      return {
+        profile_summary: { id: entity.id, name: entity.name, aliases: entity.aliases, risk_level: entity.risk_level, threat_score: entity.threat_score },
+        travel_patterns: attrs.travel_patterns || {},
+        properties: attrs.properties || [],
+        known_adversaries: adversaries,
+        family_members: familyMembers,
+        digital_footprint: attrs.social_media || {},
+        threat_profile: { specific_concerns: attrs.threat_concerns || [], industry_threats: attrs.industry_threats || [] },
+        active_monitoring: { enabled: entity.active_monitoring_enabled, radius_km: entity.monitoring_radius_km },
+        risk_appetite: alertPrefs ? { threshold: alertPrefs.alert_threshold, risk_appetite: alertPrefs.risk_appetite } : null,
+        recent_sentiment: recentContent || []
+      };
+    }
+
+    case "run_what_if_scenario": {
+      const response = await supabaseClient.functions.invoke("run-what-if-scenario", { body: args });
+      if (response.error) return { error: response.error.message };
+      return response.data;
+    }
+
+    case "analyze_sentiment_drift": {
+      const response = await supabaseClient.functions.invoke("analyze-sentiment-drift", { body: args });
+      if (response.error) return { error: response.error.message };
+      return response.data;
+    }
+
+    case "configure_principal_alerts": {
+      const { entity_id, risk_appetite, alert_threshold, preferred_channels, quiet_hours } = args;
+      if (!entity_id) return { error: "entity_id is required" };
+
+      const updateData: any = { entity_id, updated_at: new Date().toISOString() };
+      if (risk_appetite) updateData.risk_appetite = risk_appetite;
+      if (alert_threshold) updateData.alert_threshold = alert_threshold;
+      if (preferred_channels) updateData.preferred_channels = preferred_channels;
+      if (quiet_hours) updateData.quiet_hours = quiet_hours;
+
+      const { data, error } = await supabaseClient.from("principal_alert_preferences").upsert(updateData, { onConflict: "entity_id" }).select().single();
+      if (error) return { error: error.message };
+      return { success: true, message: "Alert preferences updated", preferences: data };
     }
 
     default:
