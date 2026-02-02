@@ -74,12 +74,17 @@ const getSeverityIcon = (severity: string | null) => {
 };
 
 export const LiveEventFeed = () => {
-  const { selectedClientId } = useClientSelection();
+  const { selectedClientId, isContextReady } = useClientSelection();
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState<string>('7d'); // Default to last 7 days for live feed
 
   useEffect(() => {
+    // Wait for context to be ready before fetching
+    if (!isContextReady) {
+      return;
+    }
+
     // Fetch initial signals
     const fetchSignals = async () => {
       let query = supabase
@@ -132,7 +137,7 @@ export const LiveEventFeed = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [selectedClientId]);
+  }, [selectedClientId, isContextReady]);
 
   if (loading) {
     return (
