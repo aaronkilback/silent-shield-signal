@@ -51,6 +51,7 @@ export function ApiKeysManager() {
     queryFn: async () => {
       const { data: session } = await supabase.auth.getSession();
       const response = await supabase.functions.invoke("api-key-management", {
+        method: "GET",
         headers: { Authorization: `Bearer ${session.session?.access_token}` },
       });
       if (response.error) throw response.error;
