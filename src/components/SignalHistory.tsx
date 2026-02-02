@@ -335,8 +335,8 @@ export const SignalHistory = () => {
     // Tab-based filtering
     const recency = categorizeByRecency(signal);
     if (activeTab === 'recent') {
-      // Show today, this week, this month
-      if (!['today', 'thisWeek', 'thisMonth'].includes(recency)) return false;
+      // Show everything except 90+ day historical
+      if (!['today', 'thisWeek', 'thisMonth', 'recent'].includes(recency)) return false;
     } else if (activeTab === 'historical') {
       // Show only historical (90+ days old)
       if (recency !== 'historical') return false;
@@ -514,8 +514,8 @@ export const SignalHistory = () => {
                 </div>
               )}
 
-              {/* Older but not historical (for "all" tab) */}
-              {activeTab === 'all' && groupedSignals.recent.length > 0 && (
+              {/* Older but not historical (Last 90 Days) */}
+              {activeTab !== 'historical' && groupedSignals.recent.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="outline" className="opacity-70">Last 90 Days</Badge>
