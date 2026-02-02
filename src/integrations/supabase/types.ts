@@ -1663,6 +1663,373 @@ export type Database = {
           },
         ]
       }
+      consortia: {
+        Row: {
+          charter_document_url: string | null
+          classification_default:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          id: string
+          is_active: boolean | null
+          logo_url: string | null
+          metadata: Json | null
+          name: string
+          region: string | null
+          sector: string | null
+          sharing_granularity_default:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          updated_at: string | null
+        }
+        Insert: {
+          charter_document_url?: string | null
+          classification_default?:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          logo_url?: string | null
+          metadata?: Json | null
+          name: string
+          region?: string | null
+          sector?: string | null
+          sharing_granularity_default?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          updated_at?: string | null
+        }
+        Update: {
+          charter_document_url?: string | null
+          classification_default?:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          logo_url?: string | null
+          metadata?: Json | null
+          name?: string
+          region?: string | null
+          sector?: string | null
+          sharing_granularity_default?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "consortia_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      consortium_audit_log: {
+        Row: {
+          action: string
+          consortium_id: string
+          created_at: string | null
+          details: Json | null
+          id: string
+          ip_address: string | null
+          resource_id: string | null
+          resource_type: string | null
+          user_id: string | null
+        }
+        Insert: {
+          action: string
+          consortium_id: string
+          created_at?: string | null
+          details?: Json | null
+          id?: string
+          ip_address?: string | null
+          resource_id?: string | null
+          resource_type?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          action?: string
+          consortium_id?: string
+          created_at?: string | null
+          details?: Json | null
+          id?: string
+          ip_address?: string | null
+          resource_id?: string | null
+          resource_type?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "consortium_audit_log_consortium_id_fkey"
+            columns: ["consortium_id"]
+            isOneToOne: false
+            referencedRelation: "consortia"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consortium_audit_log_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      consortium_members: {
+        Row: {
+          client_id: string | null
+          consortium_id: string
+          id: string
+          invited_by: string | null
+          is_active: boolean | null
+          joined_at: string | null
+          max_classification:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          nda_signatory: string | null
+          nda_signed_at: string | null
+          role: Database["public"]["Enums"]["consortium_role"] | null
+          sharing_entities:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          sharing_incidents:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          sharing_investigations:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          sharing_signals:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          tenant_id: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          consortium_id: string
+          id?: string
+          invited_by?: string | null
+          is_active?: boolean | null
+          joined_at?: string | null
+          max_classification?:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          nda_signatory?: string | null
+          nda_signed_at?: string | null
+          role?: Database["public"]["Enums"]["consortium_role"] | null
+          sharing_entities?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          sharing_incidents?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          sharing_investigations?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          sharing_signals?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          tenant_id?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          consortium_id?: string
+          id?: string
+          invited_by?: string | null
+          is_active?: boolean | null
+          joined_at?: string | null
+          max_classification?:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          nda_signatory?: string | null
+          nda_signed_at?: string | null
+          role?: Database["public"]["Enums"]["consortium_role"] | null
+          sharing_entities?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          sharing_incidents?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          sharing_investigations?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          sharing_signals?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          tenant_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "consortium_members_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consortium_members_consortium_id_fkey"
+            columns: ["consortium_id"]
+            isOneToOne: false
+            referencedRelation: "consortia"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consortium_members_invited_by_fkey"
+            columns: ["invited_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consortium_members_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      consortium_share_rules: {
+        Row: {
+          approver_user_id: string | null
+          classification:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          consortium_member_id: string
+          created_at: string | null
+          created_by: string | null
+          granularity: Database["public"]["Enums"]["sharing_granularity"] | null
+          id: string
+          is_active: boolean | null
+          requires_approval: boolean | null
+          trigger_conditions: Json | null
+          trigger_type: string
+        }
+        Insert: {
+          approver_user_id?: string | null
+          classification?:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          consortium_member_id: string
+          created_at?: string | null
+          created_by?: string | null
+          granularity?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          id?: string
+          is_active?: boolean | null
+          requires_approval?: boolean | null
+          trigger_conditions?: Json | null
+          trigger_type: string
+        }
+        Update: {
+          approver_user_id?: string | null
+          classification?:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          consortium_member_id?: string
+          created_at?: string | null
+          created_by?: string | null
+          granularity?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          id?: string
+          is_active?: boolean | null
+          requires_approval?: boolean | null
+          trigger_conditions?: Json | null
+          trigger_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "consortium_share_rules_approver_user_id_fkey"
+            columns: ["approver_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consortium_share_rules_consortium_member_id_fkey"
+            columns: ["consortium_member_id"]
+            isOneToOne: false
+            referencedRelation: "consortium_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consortium_share_rules_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      consortium_user_access: {
+        Row: {
+          can_generate_reports: boolean | null
+          can_receive: boolean | null
+          can_share: boolean | null
+          consortium_member_id: string
+          granted_at: string | null
+          granted_by: string | null
+          id: string
+          is_point_of_contact: boolean | null
+          user_id: string
+        }
+        Insert: {
+          can_generate_reports?: boolean | null
+          can_receive?: boolean | null
+          can_share?: boolean | null
+          consortium_member_id: string
+          granted_at?: string | null
+          granted_by?: string | null
+          id?: string
+          is_point_of_contact?: boolean | null
+          user_id: string
+        }
+        Update: {
+          can_generate_reports?: boolean | null
+          can_receive?: boolean | null
+          can_share?: boolean | null
+          consortium_member_id?: string
+          granted_at?: string | null
+          granted_by?: string | null
+          id?: string
+          is_point_of_contact?: boolean | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "consortium_user_access_consortium_member_id_fkey"
+            columns: ["consortium_member_id"]
+            isOneToOne: false
+            referencedRelation: "consortium_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consortium_user_access_granted_by_fkey"
+            columns: ["granted_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consortium_user_access_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       content_violations: {
         Row: {
           action_taken: string
@@ -3506,6 +3873,87 @@ export type Database = {
           },
         ]
       }
+      intel_dissemination_log: {
+        Row: {
+          acknowledged_at: string | null
+          delivered_at: string | null
+          delivery_method: string
+          email_address: string | null
+          email_status: string | null
+          id: string
+          opened_at: string | null
+          product_id: string | null
+          recipient_member_id: string | null
+          recipient_user_id: string | null
+          shared_incident_id: string | null
+          shared_signal_id: string | null
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          delivered_at?: string | null
+          delivery_method: string
+          email_address?: string | null
+          email_status?: string | null
+          id?: string
+          opened_at?: string | null
+          product_id?: string | null
+          recipient_member_id?: string | null
+          recipient_user_id?: string | null
+          shared_incident_id?: string | null
+          shared_signal_id?: string | null
+        }
+        Update: {
+          acknowledged_at?: string | null
+          delivered_at?: string | null
+          delivery_method?: string
+          email_address?: string | null
+          email_status?: string | null
+          id?: string
+          opened_at?: string | null
+          product_id?: string | null
+          recipient_member_id?: string | null
+          recipient_user_id?: string | null
+          shared_incident_id?: string | null
+          shared_signal_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "intel_dissemination_log_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "shared_intel_products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "intel_dissemination_log_recipient_member_id_fkey"
+            columns: ["recipient_member_id"]
+            isOneToOne: false
+            referencedRelation: "consortium_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "intel_dissemination_log_recipient_user_id_fkey"
+            columns: ["recipient_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "intel_dissemination_log_shared_incident_id_fkey"
+            columns: ["shared_incident_id"]
+            isOneToOne: false
+            referencedRelation: "shared_incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "intel_dissemination_log_shared_signal_id_fkey"
+            columns: ["shared_signal_id"]
+            isOneToOne: false
+            referencedRelation: "shared_signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       intelligence_config: {
         Row: {
           description: string | null
@@ -4405,6 +4853,111 @@ export type Database = {
           },
         ]
       }
+      pending_shares: {
+        Row: {
+          consortium_id: string
+          created_at: string | null
+          id: string
+          proposed_classification:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          proposed_granularity:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          rejection_reason: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          sanitized_content: Json | null
+          share_rule_id: string | null
+          source_id: string
+          source_member_id: string
+          source_type: string
+          status: string | null
+          submitted_at: string | null
+          submitted_by: string | null
+        }
+        Insert: {
+          consortium_id: string
+          created_at?: string | null
+          id?: string
+          proposed_classification?:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          proposed_granularity?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          rejection_reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          sanitized_content?: Json | null
+          share_rule_id?: string | null
+          source_id: string
+          source_member_id: string
+          source_type: string
+          status?: string | null
+          submitted_at?: string | null
+          submitted_by?: string | null
+        }
+        Update: {
+          consortium_id?: string
+          created_at?: string | null
+          id?: string
+          proposed_classification?:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          proposed_granularity?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          rejection_reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          sanitized_content?: Json | null
+          share_rule_id?: string | null
+          source_id?: string
+          source_member_id?: string
+          source_type?: string
+          status?: string | null
+          submitted_at?: string | null
+          submitted_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pending_shares_consortium_id_fkey"
+            columns: ["consortium_id"]
+            isOneToOne: false
+            referencedRelation: "consortia"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pending_shares_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pending_shares_share_rule_id_fkey"
+            columns: ["share_rule_id"]
+            isOneToOne: false
+            referencedRelation: "consortium_share_rules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pending_shares_source_member_id_fkey"
+            columns: ["source_member_id"]
+            isOneToOne: false
+            referencedRelation: "consortium_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pending_shares_submitted_by_fkey"
+            columns: ["submitted_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       petronas_assets: {
         Row: {
           asset_name: string
@@ -5245,6 +5798,319 @@ export type Database = {
             columns: ["entity_id"]
             isOneToOne: false
             referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shared_incidents: {
+        Row: {
+          classification:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          consortium_id: string
+          coordinates: Json | null
+          description: string | null
+          facility_type: string | null
+          granularity: Database["public"]["Enums"]["sharing_granularity"] | null
+          id: string
+          incident_type: string | null
+          indicators: Json | null
+          is_active: boolean | null
+          metadata: Json | null
+          modus_operandi: string | null
+          occurred_at: string | null
+          region: string | null
+          severity: string | null
+          shared_at: string | null
+          shared_by: string | null
+          source_incident_id: string | null
+          source_member_id: string | null
+          threat_category: string | null
+          title: string
+        }
+        Insert: {
+          classification?:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          consortium_id: string
+          coordinates?: Json | null
+          description?: string | null
+          facility_type?: string | null
+          granularity?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          id?: string
+          incident_type?: string | null
+          indicators?: Json | null
+          is_active?: boolean | null
+          metadata?: Json | null
+          modus_operandi?: string | null
+          occurred_at?: string | null
+          region?: string | null
+          severity?: string | null
+          shared_at?: string | null
+          shared_by?: string | null
+          source_incident_id?: string | null
+          source_member_id?: string | null
+          threat_category?: string | null
+          title: string
+        }
+        Update: {
+          classification?:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          consortium_id?: string
+          coordinates?: Json | null
+          description?: string | null
+          facility_type?: string | null
+          granularity?:
+            | Database["public"]["Enums"]["sharing_granularity"]
+            | null
+          id?: string
+          incident_type?: string | null
+          indicators?: Json | null
+          is_active?: boolean | null
+          metadata?: Json | null
+          modus_operandi?: string | null
+          occurred_at?: string | null
+          region?: string | null
+          severity?: string | null
+          shared_at?: string | null
+          shared_by?: string | null
+          source_incident_id?: string | null
+          source_member_id?: string | null
+          threat_category?: string | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_incidents_consortium_id_fkey"
+            columns: ["consortium_id"]
+            isOneToOne: false
+            referencedRelation: "consortia"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_incidents_shared_by_fkey"
+            columns: ["shared_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_incidents_source_incident_id_fkey"
+            columns: ["source_incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_incidents_source_member_id_fkey"
+            columns: ["source_member_id"]
+            isOneToOne: false
+            referencedRelation: "consortium_members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shared_intel_products: {
+        Row: {
+          ai_generated: boolean | null
+          attachments: Json | null
+          audio_generated_at: string | null
+          audio_url: string | null
+          classification:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          consortium_id: string
+          content: string | null
+          content_html: string | null
+          created_at: string | null
+          created_by: string | null
+          disseminated_at: string | null
+          dissemination_method: string | null
+          id: string
+          is_draft: boolean | null
+          is_published: boolean | null
+          metadata: Json | null
+          period_end: string | null
+          period_start: string | null
+          product_type: Database["public"]["Enums"]["intel_product_type"]
+          published_at: string | null
+          recipient_count: number | null
+          source_incidents: string[] | null
+          source_signals: string[] | null
+          summary: string | null
+          title: string
+        }
+        Insert: {
+          ai_generated?: boolean | null
+          attachments?: Json | null
+          audio_generated_at?: string | null
+          audio_url?: string | null
+          classification?:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          consortium_id: string
+          content?: string | null
+          content_html?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          disseminated_at?: string | null
+          dissemination_method?: string | null
+          id?: string
+          is_draft?: boolean | null
+          is_published?: boolean | null
+          metadata?: Json | null
+          period_end?: string | null
+          period_start?: string | null
+          product_type: Database["public"]["Enums"]["intel_product_type"]
+          published_at?: string | null
+          recipient_count?: number | null
+          source_incidents?: string[] | null
+          source_signals?: string[] | null
+          summary?: string | null
+          title: string
+        }
+        Update: {
+          ai_generated?: boolean | null
+          attachments?: Json | null
+          audio_generated_at?: string | null
+          audio_url?: string | null
+          classification?:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          consortium_id?: string
+          content?: string | null
+          content_html?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          disseminated_at?: string | null
+          dissemination_method?: string | null
+          id?: string
+          is_draft?: boolean | null
+          is_published?: boolean | null
+          metadata?: Json | null
+          period_end?: string | null
+          period_start?: string | null
+          product_type?: Database["public"]["Enums"]["intel_product_type"]
+          published_at?: string | null
+          recipient_count?: number | null
+          source_incidents?: string[] | null
+          source_signals?: string[] | null
+          summary?: string | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_intel_products_consortium_id_fkey"
+            columns: ["consortium_id"]
+            isOneToOne: false
+            referencedRelation: "consortia"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_intel_products_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shared_signals: {
+        Row: {
+          applies_to_sector: string | null
+          classification:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          confidence_level: string | null
+          consortium_id: string
+          credibility: string | null
+          detected_at: string | null
+          entities_mentioned: string[] | null
+          expires_at: string | null
+          id: string
+          is_active: boolean | null
+          keywords: string[] | null
+          metadata: Json | null
+          region: string | null
+          relevance_score: number | null
+          shared_at: string | null
+          source_member_id: string | null
+          source_signal_id: string | null
+          summary: string | null
+          threat_type: string | null
+          title: string
+        }
+        Insert: {
+          applies_to_sector?: string | null
+          classification?:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          confidence_level?: string | null
+          consortium_id: string
+          credibility?: string | null
+          detected_at?: string | null
+          entities_mentioned?: string[] | null
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          keywords?: string[] | null
+          metadata?: Json | null
+          region?: string | null
+          relevance_score?: number | null
+          shared_at?: string | null
+          source_member_id?: string | null
+          source_signal_id?: string | null
+          summary?: string | null
+          threat_type?: string | null
+          title: string
+        }
+        Update: {
+          applies_to_sector?: string | null
+          classification?:
+            | Database["public"]["Enums"]["tlp_classification"]
+            | null
+          confidence_level?: string | null
+          consortium_id?: string
+          credibility?: string | null
+          detected_at?: string | null
+          entities_mentioned?: string[] | null
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          keywords?: string[] | null
+          metadata?: Json | null
+          region?: string | null
+          relevance_score?: number | null
+          shared_at?: string | null
+          source_member_id?: string | null
+          source_signal_id?: string | null
+          summary?: string | null
+          threat_type?: string | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_signals_consortium_id_fkey"
+            columns: ["consortium_id"]
+            isOneToOne: false
+            referencedRelation: "consortia"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_signals_source_member_id_fkey"
+            columns: ["source_member_id"]
+            isOneToOne: false
+            referencedRelation: "consortium_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shared_signals_source_signal_id_fkey"
+            columns: ["source_signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
             referencedColumns: ["id"]
           },
         ]
@@ -7435,6 +8301,10 @@ export type Database = {
         Args: { _user_id: string; _workspace_id: string }
         Returns: boolean
       }
+      can_share_to_consortium: {
+        Args: { _consortium_id: string; _user_id: string }
+        Returns: boolean
+      }
       can_submit_findings: {
         Args: { _user_id: string; _workspace_id: string }
         Returns: boolean
@@ -7457,8 +8327,17 @@ export type Database = {
         Args: { priority_level?: number; signal_id: string }
         Returns: string
       }
+      get_user_consortium_ids: { Args: { _user_id: string }; Returns: string[] }
       get_user_tenant_ids: { Args: { _user_id: string }; Returns: string[] }
       get_user_tenants: { Args: { p_user_id: string }; Returns: string[] }
+      has_consortium_role: {
+        Args: {
+          _consortium_id: string
+          _roles: Database["public"]["Enums"]["consortium_role"][]
+          _user_id: string
+        }
+        Returns: boolean
+      }
       has_mcm_permission: {
         Args: {
           _required_roles: Database["public"]["Enums"]["workspace_mcm_role"][]
@@ -7480,6 +8359,10 @@ export type Database = {
           _tenant_id: string
           _user_id: string
         }
+        Returns: boolean
+      }
+      is_consortium_member: {
+        Args: { _consortium_id: string; _user_id: string }
         Returns: boolean
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
@@ -7543,6 +8426,12 @@ export type Database = {
         | "iot_device"
         | "virtual_machine"
       business_criticality_level: "mission_critical" | "high" | "medium" | "low"
+      consortium_role:
+        | "owner"
+        | "administrator"
+        | "full_member"
+        | "associate"
+        | "observer"
       entity_type:
         | "person"
         | "organization"
@@ -7562,6 +8451,14 @@ export type Database = {
         | "contained"
         | "resolved"
         | "closed"
+      intel_product_type:
+        | "blof"
+        | "intel_briefing"
+        | "incident_digest"
+        | "threat_assessment"
+        | "situational_report"
+        | "warning_order"
+        | "flash_report"
       mission_phase:
         | "intake"
         | "briefing"
@@ -7588,6 +8485,12 @@ export type Database = {
       roe_audience: "INTERNAL" | "CLIENT"
       roe_classification: "PUBLIC" | "CONFIDENTIAL" | "RESTRICTED"
       roe_mode: "STRICT" | "STANDARD"
+      sharing_granularity:
+        | "full"
+        | "facility"
+        | "regional"
+        | "aggregate"
+        | "none"
       signal_status:
         | "new"
         | "triaged"
@@ -7605,6 +8508,12 @@ export type Database = {
         | "communications"
         | "legal"
       tenant_role: "owner" | "admin" | "analyst" | "viewer"
+      tlp_classification:
+        | "TLP:RED"
+        | "TLP:AMBER"
+        | "TLP:AMBER+STRICT"
+        | "TLP:GREEN"
+        | "TLP:CLEAR"
       validation_status: "PASS" | "WARN" | "FAIL" | "PENDING"
       vulnerability_severity:
         | "critical"
@@ -7761,6 +8670,13 @@ export const Constants = {
         "virtual_machine",
       ],
       business_criticality_level: ["mission_critical", "high", "medium", "low"],
+      consortium_role: [
+        "owner",
+        "administrator",
+        "full_member",
+        "associate",
+        "observer",
+      ],
       entity_type: [
         "person",
         "organization",
@@ -7781,6 +8697,15 @@ export const Constants = {
         "contained",
         "resolved",
         "closed",
+      ],
+      intel_product_type: [
+        "blof",
+        "intel_briefing",
+        "incident_digest",
+        "threat_assessment",
+        "situational_report",
+        "warning_order",
+        "flash_report",
       ],
       mission_phase: [
         "intake",
@@ -7811,6 +8736,13 @@ export const Constants = {
       roe_audience: ["INTERNAL", "CLIENT"],
       roe_classification: ["PUBLIC", "CONFIDENTIAL", "RESTRICTED"],
       roe_mode: ["STRICT", "STANDARD"],
+      sharing_granularity: [
+        "full",
+        "facility",
+        "regional",
+        "aggregate",
+        "none",
+      ],
       signal_status: [
         "new",
         "triaged",
@@ -7830,6 +8762,13 @@ export const Constants = {
         "legal",
       ],
       tenant_role: ["owner", "admin", "analyst", "viewer"],
+      tlp_classification: [
+        "TLP:RED",
+        "TLP:AMBER",
+        "TLP:AMBER+STRICT",
+        "TLP:GREEN",
+        "TLP:CLEAR",
+      ],
       validation_status: ["PASS", "WARN", "FAIL", "PENDING"],
       vulnerability_severity: [
         "critical",
