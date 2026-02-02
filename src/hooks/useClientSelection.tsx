@@ -18,11 +18,38 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
     return stored || null;
   });
   const [isContextReady, setIsContextReady] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const hasSetInitialContext = useRef(false);
   const previousClientId = useRef<string | null>(selectedClientId);
   const queryClient = useQueryClient();
 
+  // Track authentication state
   useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setIsAuthenticated(!!session?.user);
+    };
+    
+    checkAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(!!session?.user);
+      // Reset context tracking on auth change
+      if (!session?.user) {
+        hasSetInitialContext.current = false;
+        setIsContextReady(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    // Don't try to set client context if not authenticated
+    if (!isAuthenticated) {
+      return;
+    }
+
     const updateClientContext = async () => {
       // Only proceed if client has actually changed
       if (previousClientId.current === selectedClientId && hasSetInitialContext.current) {
@@ -63,7 +90,7 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
     };
     
     updateClientContext();
-  }, [selectedClientId, queryClient]);
+  }, [selectedClientId, queryClient, isAuthenticated]);
 
   return (
     <ClientSelectionContext.Provider value={{ selectedClientId, setSelectedClientId, isContextReady }}>
