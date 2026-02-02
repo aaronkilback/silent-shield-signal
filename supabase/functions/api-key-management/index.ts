@@ -72,6 +72,17 @@ serve(async (req) => {
 
   const url = new URL(req.url);
 
+  // Parse body only for methods that need it
+  let body: any = null;
+  if (req.method === 'POST' || req.method === 'PATCH') {
+    try {
+      const text = await req.text();
+      body = text ? JSON.parse(text) : {};
+    } catch {
+      body = {};
+    }
+  }
+
   try {
     if (req.method === 'GET') {
       // List all API keys (without the actual key values)
@@ -93,8 +104,7 @@ serve(async (req) => {
       );
 
     } else if (req.method === 'POST') {
-      const body = await req.json();
-      const { name, description, client_id, permissions, rate_limit_per_minute, expires_at } = body;
+      const { name, description, client_id, permissions, rate_limit_per_minute, expires_at } = body || {};
 
       if (!name) {
         return new Response(
@@ -172,7 +182,6 @@ serve(async (req) => {
         );
       }
 
-      const body = await req.json();
       const updateData: Record<string, any> = {};
 
       if (body.name !== undefined) updateData.name = body.name;
