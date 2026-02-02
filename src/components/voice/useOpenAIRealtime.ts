@@ -14,6 +14,7 @@ interface UseOpenAIRealtimeOptions {
 
 export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'speaking' | 'listening' | 'thinking'>('idle');
+  const statusRef = useRef(status);
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [agentResponse, setAgentResponse] = useState('');
@@ -36,6 +37,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   }, [options]);
 
   const updateStatus = useCallback((newStatus: typeof status) => {
+    statusRef.current = newStatus;
     setStatus(newStatus);
     optionsRef.current.onStatusChange?.(newStatus);
   }, []);
@@ -142,16 +144,17 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         // The server will automatically create a response due to turn_detection.create_response: true
         updateStatus('thinking');
         
-        // Fallback: if no response comes within 5 seconds, manually request one
+        // Fallback: if no response comes within 3 seconds, manually request one
         if (responseFallbackRef.current) {
           window.clearTimeout(responseFallbackRef.current);
         }
         responseFallbackRef.current = window.setTimeout(() => {
-          if (dcRef.current?.readyState === 'open' && status === 'thinking') {
+          // Use statusRef.current to get current value (not stale closure)
+          if (dcRef.current?.readyState === 'open' && statusRef.current === 'thinking') {
             console.log('[Voice] Fallback: manually requesting response after speech stopped');
             dcRef.current.send(JSON.stringify({ type: 'response.create' }));
           }
-        }, 5000);
+        }, 3000);
         break;
       
       case 'input_audio_buffer.committed':
