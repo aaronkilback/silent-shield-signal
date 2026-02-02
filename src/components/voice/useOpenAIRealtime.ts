@@ -25,6 +25,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const connectTimeoutRef = useRef<number | null>(null);
   const greetTimeoutRef = useRef<number | null>(null);
+  const responseFallbackRef = useRef<number | null>(null);
   const userHasSpokenRef = useRef(false);
   const greetedRef = useRef(false);
   
@@ -126,12 +127,36 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           window.clearTimeout(greetTimeoutRef.current);
           greetTimeoutRef.current = null;
         }
+        // Clear any pending fallback since user is speaking again
+        if (responseFallbackRef.current) {
+          window.clearTimeout(responseFallbackRef.current);
+          responseFallbackRef.current = null;
+        }
         updateStatus('listening');
         setIsAgentSpeaking(false);
         break;
 
       case 'input_audio_buffer.speech_stopped':
-        console.log('User stopped speaking');
+        console.log('User stopped speaking, waiting for transcription...');
+        // VAD detected end of speech - update status to show we're processing
+        // The server will automatically create a response due to turn_detection.create_response: true
+        updateStatus('thinking');
+        
+        // Fallback: if no response comes within 5 seconds, manually request one
+        if (responseFallbackRef.current) {
+          window.clearTimeout(responseFallbackRef.current);
+        }
+        responseFallbackRef.current = window.setTimeout(() => {
+          if (dcRef.current?.readyState === 'open' && status === 'thinking') {
+            console.log('[Voice] Fallback: manually requesting response after speech stopped');
+            dcRef.current.send(JSON.stringify({ type: 'response.create' }));
+          }
+        }, 5000);
+        break;
+      
+      case 'input_audio_buffer.committed':
+        console.log('Audio buffer committed to server');
+        updateStatus('thinking');
         break;
 
       case 'conversation.item.input_audio_transcription.completed':
@@ -188,6 +213,11 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
       case 'response.audio.delta':
         // Audio is handled by WebRTC track, but this indicates agent is speaking
+        // Clear fallback timer since we're getting a response
+        if (responseFallbackRef.current) {
+          window.clearTimeout(responseFallbackRef.current);
+          responseFallbackRef.current = null;
+        }
         setIsAgentSpeaking(true);
         updateStatus('speaking');
         break;
@@ -231,6 +261,11 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     if (greetTimeoutRef.current) {
       window.clearTimeout(greetTimeoutRef.current);
       greetTimeoutRef.current = null;
+    }
+
+    if (responseFallbackRef.current) {
+      window.clearTimeout(responseFallbackRef.current);
+      responseFallbackRef.current = null;
     }
 
     // Close data channel
