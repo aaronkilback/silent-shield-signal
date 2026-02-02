@@ -139,7 +139,7 @@ export const LiveEventFeed = () => {
     };
   }, [selectedClientId, isContextReady]);
 
-  if (loading) {
+  if (loading || !isContextReady) {
     return (
       <Card className="p-6 bg-card border-border">
         <div className="animate-pulse space-y-4">

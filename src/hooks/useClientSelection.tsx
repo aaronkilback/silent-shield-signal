@@ -47,12 +47,15 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Don't try to set client context if not authenticated
     if (!isAuthenticated) {
+      setIsContextReady(false);
       return;
     }
 
     const updateClientContext = async () => {
       // Only proceed if client has actually changed
       if (previousClientId.current === selectedClientId && hasSetInitialContext.current) {
+        // Already set, but make sure isContextReady is true
+        setIsContextReady(true);
         return;
       }
 
@@ -62,25 +65,28 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
 
       setIsContextReady(false);
 
-      if (selectedClientId) {
-        localStorage.setItem(STORAGE_KEY, selectedClientId);
-        console.log('[ClientContext] Setting client context:', selectedClientId);
-        const { error } = await supabase.rpc('set_current_client', { client_id_param: selectedClientId });
-        if (error) {
-          console.error('[ClientContext] Failed to set client context:', error);
+      try {
+        if (selectedClientId) {
+          localStorage.setItem(STORAGE_KEY, selectedClientId);
+          console.log('[ClientContext] Setting client context:', selectedClientId);
+          const { error } = await supabase.rpc('set_current_client', { client_id_param: selectedClientId });
+          if (error) {
+            console.error('[ClientContext] Failed to set client context:', error);
+          } else {
+            console.log('[ClientContext] Client context set successfully');
+          }
         } else {
-          console.log('[ClientContext] Client context set successfully');
+          localStorage.removeItem(STORAGE_KEY);
+          console.log('[ClientContext] Clearing client context');
+          const { error } = await supabase.rpc('set_current_client', { client_id_param: '' });
+          if (error) {
+            console.error('[ClientContext] Failed to clear client context:', error);
+          }
         }
-      } else {
-        localStorage.removeItem(STORAGE_KEY);
-        console.log('[ClientContext] Clearing client context');
-        const { error } = await supabase.rpc('set_current_client', { client_id_param: '' });
-        if (error) {
-          console.error('[ClientContext] Failed to clear client context:', error);
-        }
+      } finally {
+        // Always set context ready, even if RPC failed
+        setIsContextReady(true);
       }
-
-      setIsContextReady(true);
       
       // Invalidate all queries when client changes (not on initial mount)
       if (!isInitialMount) {
