@@ -10726,6 +10726,7 @@ ${tenantKnowledge.map(k => `[${k.knowledge_type?.toUpperCase() || 'CONTEXT'}]${k
 
     // Helper to limit message history to avoid token overflow and context confusion
     const limitMessageHistory = (msgs: any[], maxMessages: number = 10): any[] => {
+      if (!msgs || !Array.isArray(msgs)) return [];
       if (msgs.length <= maxMessages) return msgs;
       
       // Look for "New conversation started" markers and only keep messages after the last one
