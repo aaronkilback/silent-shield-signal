@@ -61,18 +61,18 @@ export function SecurityReportUpload() {
   const queryClient = useQueryClient();
 
   // Fetch previously uploaded security reports
-  const { data: storedReports, isLoading: isLoadingReports, refetch: refetchReports } = useQuery({
+  const { data: storedReports = [], isLoading: isLoadingReports, refetch: refetchReports } = useQuery({
     queryKey: ["security-reports"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("archival_documents")
         .select("id, filename, summary, created_at, tags, metadata")
-        .filter("tags", "cs", '{"travel-security"}')
+        .contains("tags", ["travel-security"])
         .order("created_at", { ascending: false })
         .limit(50);
 
       if (error) throw error;
-      return data as StoredReport[];
+      return (data || []) as StoredReport[];
     },
     staleTime: 0,
   });
