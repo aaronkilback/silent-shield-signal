@@ -234,3 +234,231 @@ verify_jwt = false
 
 [functions.verify-mfa-code]
 verify_jwt = false
+
+[functions.voice-tool-executor-v2]
+verify_jwt = false
+
+[functions.agent-chat]
+verify_jwt = true
+
+[functions.access-industry-standards]
+verify_jwt = true
+
+[functions.alert-delivery-secure]
+verify_jwt = false
+
+[functions.analyze-sentiment-drift]
+verify_jwt = true
+
+[functions.api-key-management]
+verify_jwt = true
+
+[functions.api-v1-agents]
+verify_jwt = true
+
+[functions.api-v1-clients]
+verify_jwt = true
+
+[functions.api-v1-signals]
+verify_jwt = true
+
+[functions.archive-completed-itineraries]
+verify_jwt = false
+
+[functions.audit-compliance-status]
+verify_jwt = true
+
+[functions.auto-enrich-entities]
+verify_jwt = false
+
+[functions.auto-summarize-incident]
+verify_jwt = false
+
+[functions.autonomous-source-health-manager]
+verify_jwt = false
+
+[functions.briefing-chat-response]
+verify_jwt = true
+
+[functions.briefing-query]
+verify_jwt = true
+
+[functions.bug-workflow-manager]
+verify_jwt = true
+
+[functions.cleanup-duplicate-signals]
+verify_jwt = false
+
+[functions.configure-entity-monitoring]
+verify_jwt = true
+
+[functions.correlate-entities]
+verify_jwt = false
+
+[functions.create-agent]
+verify_jwt = true
+
+[functions.create-entity]
+verify_jwt = true
+
+[functions.data-quality-monitor]
+verify_jwt = false
+
+[functions.detect-duplicates]
+verify_jwt = false
+
+[functions.entity-deep-scan]
+verify_jwt = true
+
+[functions.evaluate-countermeasure-impact]
+verify_jwt = true
+
+[functions.extract-signal-insights]
+verify_jwt = false
+
+[functions.generate-briefing-audio]
+verify_jwt = true
+
+[functions.generate-consortium-briefing]
+verify_jwt = true
+
+[functions.generate-incident-briefing]
+verify_jwt = true
+
+[functions.generate-learning-context]
+verify_jwt = false
+
+[functions.generate-security-briefing]
+verify_jwt = true
+
+[functions.guide-decision-tree]
+verify_jwt = true
+
+[functions.identify-critical-failure-points]
+verify_jwt = true
+
+[functions.manual-scan-trigger]
+verify_jwt = true
+
+[functions.map-policy-to-controls]
+verify_jwt = true
+
+[functions.model-geopolitical-risk]
+verify_jwt = true
+
+[functions.monitor-darkweb]
+verify_jwt = false
+
+[functions.monitor-domains]
+verify_jwt = false
+
+[functions.monitor-facebook]
+verify_jwt = false
+
+[functions.monitor-github]
+verify_jwt = false
+
+[functions.monitor-instagram]
+verify_jwt = false
+
+[functions.monitor-linkedin]
+verify_jwt = false
+
+[functions.monitor-news-google]
+verify_jwt = false
+
+[functions.monitor-pastebin]
+verify_jwt = false
+
+[functions.monitor-regional-apac]
+verify_jwt = false
+
+[functions.monitor-regulatory-changes]
+verify_jwt = false
+
+[functions.monitor-twitter]
+verify_jwt = false
+
+[functions.monitor-wildfire-comprehensive]
+verify_jwt = false
+
+[functions.oauth-token]
+verify_jwt = false
+
+[functions.optimize-defense-strategies]
+verify_jwt = true
+
+[functions.optimize-rule-thresholds]
+verify_jwt = false
+
+[functions.osint-web-search]
+verify_jwt = false
+
+[functions.parse-travel-security-report]
+verify_jwt = true
+
+[functions.perform-external-web-search]
+verify_jwt = false
+
+[functions.process-pending-documents]
+verify_jwt = false
+
+[functions.process-security-report]
+verify_jwt = true
+
+[functions.propose-new-monitoring-keywords]
+verify_jwt = false
+
+[functions.propose-security-investments]
+verify_jwt = true
+
+[functions.query-internal-context]
+verify_jwt = false
+
+[functions.query-legal-database]
+verify_jwt = false
+
+[functions.recommend-compliance-remediation]
+verify_jwt = true
+
+[functions.recommend-policy-adjustments]
+verify_jwt = true
+
+[functions.recommend-tactical-countermeasures]
+verify_jwt = true
+
+[functions.retrieve-regulatory-document]
+verify_jwt = true
+
+[functions.review-client-policy]
+verify_jwt = true
+
+[functions.run-task-force]
+verify_jwt = true
+
+[functions.run-what-if-scenario]
+verify_jwt = true
+
+[functions.simulate-attack-path]
+verify_jwt = true
+
+[functions.simulate-protest-escalation]
+verify_jwt = true
+
+[functions.threat-radar-analysis]
+verify_jwt = false
+
+[functions.track-mitigation-effectiveness]
+verify_jwt = true
+
+[functions.update-agent-configuration]
+verify_jwt = true
+
+[functions.vip-deep-scan]
+verify_jwt = true
+
+[functions.webhook-dispatcher]
+verify_jwt = false
+
+[functions.webhook-management]
+verify_jwt = true
