@@ -1,29 +1,17 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.1';
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { primary_signal_id, duplicate_signal_ids, similarity_scores, rationale } = await req.json();
 
     if (!primary_signal_id || !duplicate_signal_ids || duplicate_signal_ids.length === 0) {
-      return new Response(
-        JSON.stringify({ error: 'primary_signal_id and duplicate_signal_ids are required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('primary_signal_id and duplicate_signal_ids are required', 400);
     }
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
 
     console.log(`Creating merge proposal for primary signal ${primary_signal_id} with ${duplicate_signal_ids.length} duplicates`);
 
@@ -35,10 +23,7 @@ serve(async (req) => {
       .single();
 
     if (primaryError || !primarySignal) {
-      return new Response(
-        JSON.stringify({ error: 'Primary signal not found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('Primary signal not found', 404);
     }
 
     const { data: duplicateSignals, error: duplicateError } = await supabase
@@ -47,10 +32,7 @@ serve(async (req) => {
       .in('id', duplicate_signal_ids);
 
     if (duplicateError || !duplicateSignals || duplicateSignals.length === 0) {
-      return new Response(
-        JSON.stringify({ error: 'Duplicate signals not found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('Duplicate signals not found', 404);
     }
 
     // Create merge proposal
@@ -69,10 +51,7 @@ serve(async (req) => {
 
     if (insertError) {
       console.error('Error creating merge proposal:', insertError);
-      return new Response(
-        JSON.stringify({ error: 'Failed to create merge proposal', details: insertError.message }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse(`Failed to create merge proposal: ${insertError.message}`, 500);
     }
 
     console.log(`Created merge proposal ${proposal.id}`);
@@ -102,9 +81,6 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('Error in propose-signal-merge:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

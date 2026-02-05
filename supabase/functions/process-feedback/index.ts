@@ -1,21 +1,13 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { objectType, objectId, feedback, notes, userId } = await req.json();
     
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
 
     console.log(`Processing ${feedback} feedback for ${objectType} ${objectId}`);
 
@@ -34,7 +26,7 @@ Deno.serve(async (req) => {
 
     // Update object based on feedback
     if (objectType === 'signal') {
-      const updates: any = {};
+      const updates: Record<string, unknown> = {};
       
       if (feedback === 'relevant') {
         updates.relevance_score = 1.0;
@@ -123,24 +115,15 @@ Deno.serve(async (req) => {
 
     console.log(`Feedback processed successfully`);
 
-    return new Response(
-      JSON.stringify({ success: true }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({ success: true });
 
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error in process-feedback:', error);
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: error?.message || 'Unknown error'
-      }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
 
-async function updateEntitySuggestionLearning(supabase: any, suggestion: any, feedback: string) {
+async function updateEntitySuggestionLearning(supabase: ReturnType<typeof createServiceClient>, suggestion: Record<string, unknown>, feedback: string) {
   try {
     // Extract features from the entity suggestion
     const text = `${suggestion.suggested_name || ''} ${suggestion.context || ''} ${suggestion.suggested_type || ''}`.toLowerCase();
@@ -153,11 +136,11 @@ async function updateEntitySuggestionLearning(supabase: any, suggestion: any, fe
     
     // Add the entity type as a strong feature
     if (suggestion.suggested_type) {
-      features[`type:${suggestion.suggested_type.toLowerCase()}`] = 2;
+      features[`type:${String(suggestion.suggested_type).toLowerCase()}`] = 2;
     }
 
     // Add name pattern features (length, word count, etc.)
-    const nameWords = (suggestion.suggested_name || '').split(/\s+/).length;
+    const nameWords = (String(suggestion.suggested_name) || '').split(/\s+/).length;
     features[`name_words:${nameWords}`] = 1;
 
     const profileType = feedback === 'approved' 
@@ -173,7 +156,7 @@ async function updateEntitySuggestionLearning(supabase: any, suggestion: any, fe
 
     if (existingProfile) {
       // Update existing
-      const currentFeatures = existingProfile.features || {};
+      const currentFeatures = (existingProfile.features as Record<string, number>) || {};
       Object.entries(features).forEach(([key, value]) => {
         currentFeatures[key] = (currentFeatures[key] || 0) + value;
       });
@@ -182,7 +165,7 @@ async function updateEntitySuggestionLearning(supabase: any, suggestion: any, fe
         .from('learning_profiles')
         .update({
           features: currentFeatures,
-          sample_count: (existingProfile.sample_count || 0) + 1,
+          sample_count: ((existingProfile.sample_count as number) || 0) + 1,
           last_updated: new Date().toISOString()
         })
         .eq('id', existingProfile.id);
@@ -198,15 +181,15 @@ async function updateEntitySuggestionLearning(supabase: any, suggestion: any, fe
     }
 
     console.log(`Updated entity learning profile: ${profileType} for ${suggestion.suggested_name}`);
-  } catch (error: any) {
-    console.error('Error updating entity learning profiles:', error?.message);
+  } catch (error) {
+    console.error('Error updating entity learning profiles:', error instanceof Error ? error.message : error);
   }
 }
 
-async function updateLearningProfiles(supabase: any, objectType: string, objectId: string, feedback: string) {
+async function updateLearningProfiles(supabase: ReturnType<typeof createServiceClient>, objectType: string, objectId: string, feedback: string) {
   try {
     // Fetch the object
-    let objectData: any = null;
+    let objectData: Record<string, unknown> | null = null;
     
     if (objectType === 'signal') {
       const { data } = await supabase
@@ -244,7 +227,7 @@ async function updateLearningProfiles(supabase: any, objectType: string, objectI
 
     if (existingProfile) {
       // Update existing
-      const currentFeatures = existingProfile.features || {};
+      const currentFeatures = (existingProfile.features as Record<string, number>) || {};
       keywords.forEach(kw => {
         currentFeatures[kw] = (currentFeatures[kw] || 0) + 1;
       });
@@ -253,7 +236,7 @@ async function updateLearningProfiles(supabase: any, objectType: string, objectI
         .from('learning_profiles')
         .update({
           features: currentFeatures,
-          sample_count: (existingProfile.sample_count || 0) + 1,
+          sample_count: ((existingProfile.sample_count as number) || 0) + 1,
           last_updated: new Date().toISOString()
         })
         .eq('id', existingProfile.id);
@@ -274,7 +257,7 @@ async function updateLearningProfiles(supabase: any, objectType: string, objectI
     }
 
     console.log(`Updated learning profile: ${profileType}`);
-  } catch (error: any) {
-    console.error('Error updating learning profiles:', error?.message);
+  } catch (error) {
+    console.error('Error updating learning profiles:', error instanceof Error ? error.message : error);
   }
 }
