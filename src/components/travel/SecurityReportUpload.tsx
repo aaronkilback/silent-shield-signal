@@ -61,19 +61,20 @@ export function SecurityReportUpload() {
   const queryClient = useQueryClient();
 
   // Fetch previously uploaded security reports
-  const { data: storedReports, isLoading: isLoadingReports } = useQuery({
+  const { data: storedReports, isLoading: isLoadingReports, refetch: refetchReports } = useQuery({
     queryKey: ["security-reports"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("archival_documents")
         .select("id, filename, summary, created_at, tags, metadata")
-        .contains("tags", ["travel-security"])
+        .filter("tags", "cs", '{"travel-security"}')
         .order("created_at", { ascending: false })
         .limit(50);
 
       if (error) throw error;
       return data as StoredReport[];
     },
+    staleTime: 0,
   });
 
   const uploadMutation = useMutation({
@@ -106,17 +107,19 @@ export function SecurityReportUpload() {
       if (error) throw error;
       return data;
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       setSelectedFile(null);
       setProvider("");
       if (fileInputRef.current) fileInputRef.current.value = "";
+      
+      // Force refetch the reports list to ensure it includes all documents
+      await refetchReports();
       
       // Expand the newly uploaded report
       if (data.document_id) {
         setExpandedReportId(data.document_id);
       }
       
-      queryClient.invalidateQueries({ queryKey: ["security-reports"] });
       queryClient.invalidateQueries({ queryKey: ["travel-alerts"] });
       toast.success("Security report processed and intelligence extracted");
     },
