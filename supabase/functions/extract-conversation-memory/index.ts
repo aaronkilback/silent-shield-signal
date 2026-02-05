@@ -1,14 +1,13 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders });
   }
 
   try {
@@ -18,7 +17,6 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Get user from auth header
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(
@@ -46,9 +44,8 @@ serve(async (req) => {
       );
     }
 
-    console.log(`[extract-conversation-memory] Extracting memories from conversation: ${conversation_id}`);
+    console.log(`[MemoryExtract] Extracting memories from conversation: ${conversation_id}`);
 
-    // Fetch all messages from the conversation
     const { data: messages, error: messagesError } = await supabase
       .from('ai_assistant_messages')
       .select('role, content, created_at')
@@ -58,7 +55,7 @@ serve(async (req) => {
       .order('created_at', { ascending: true });
 
     if (messagesError) {
-      console.error('Failed to fetch messages:', messagesError);
+      console.error('[MemoryExtract] Failed to fetch messages:', messagesError);
       throw messagesError;
     }
 
@@ -69,33 +66,26 @@ serve(async (req) => {
       );
     }
 
-    // Prepare conversation text for summarization
     const conversationText = messages
       .map(m => `${m.role.toUpperCase()}: ${m.content}`)
       .join('\n\n');
 
-    // Use AI to extract key facts and decisions
     if (lovableApiKey) {
-      const extractionPrompt = `Analyze this conversation and extract key facts, decisions, and preferences that should be remembered for future conversations. Focus on:
-1. User preferences and settings
-2. Important decisions made
-3. Key facts about their work, clients, or projects
-4. Recurring themes or interests
+      const extractionPrompt = `Analyze this conversation and extract key facts, decisions, and preferences:
 
-Conversation:
 ${conversationText.substring(0, 8000)}
 
-Respond with a JSON object:
+Return JSON:
 {
-  "title": "Brief title for this conversation",
+  "title": "Brief title",
   "summary": "2-3 sentence summary",
-  "key_facts": ["fact 1", "fact 2", ...],
+  "key_facts": ["fact 1", ...],
   "user_preferences": ["preference 1", ...],
   "important_decisions": ["decision 1", ...]
 }`;
 
       try {
-        const aiResponse = await fetch('https://api.lovable.dev/api/ai/chat', {
+        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${lovableApiKey}`,
@@ -111,13 +101,11 @@ Respond with a JSON object:
           const aiData = await aiResponse.json();
           const responseContent = aiData.choices?.[0]?.message?.content || '';
           
-          // Parse the JSON response
           const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
             const extracted = JSON.parse(jsonMatch[0]);
             
-            // Save conversation summary
-            const { error: summaryError } = await supabase
+            await supabase
               .from('conversation_summaries')
               .upsert({
                 conversation_id,
@@ -128,15 +116,8 @@ Respond with a JSON object:
                 message_count: messages.length,
                 first_message_at: messages[0].created_at,
                 last_message_at: messages[messages.length - 1].created_at,
-              }, {
-                onConflict: 'conversation_id,user_id',
-              });
+              }, { onConflict: 'conversation_id,user_id' });
 
-            if (summaryError) {
-              console.error('Failed to save summary:', summaryError);
-            }
-
-            // Save individual memories
             const memories = [
               ...(extracted.key_facts || []).map((fact: string) => ({
                 user_id: user.id,
@@ -165,16 +146,10 @@ Respond with a JSON object:
             ];
 
             if (memories.length > 0) {
-              const { error: memoryError } = await supabase
-                .from('conversation_memory')
-                .insert(memories);
-
-              if (memoryError) {
-                console.error('Failed to save memories:', memoryError);
-              }
+              await supabase.from('conversation_memory').insert(memories);
             }
 
-            console.log(`[extract-conversation-memory] Extracted ${memories.length} memories`);
+            console.log(`[MemoryExtract] Extracted ${memories.length} memories`);
 
             return new Response(
               JSON.stringify({
@@ -188,12 +163,12 @@ Respond with a JSON object:
           }
         }
       } catch (aiError) {
-        console.error('AI extraction failed:', aiError);
+        console.error('[MemoryExtract] AI extraction failed:', aiError);
       }
     }
 
-    // Fallback: save basic summary without AI
-    const { error: summaryError } = await supabase
+    // Fallback without AI
+    await supabase
       .from('conversation_summaries')
       .upsert({
         conversation_id,
@@ -204,13 +179,7 @@ Respond with a JSON object:
         message_count: messages.length,
         first_message_at: messages[0].created_at,
         last_message_at: messages[messages.length - 1].created_at,
-      }, {
-        onConflict: 'conversation_id,user_id',
-      });
-
-    if (summaryError) {
-      console.error('Failed to save fallback summary:', summaryError);
-    }
+      }, { onConflict: 'conversation_id,user_id' });
 
     return new Response(
       JSON.stringify({ success: true, memories_extracted: 0, fallback: true }),
@@ -218,10 +187,9 @@ Respond with a JSON object:
     );
 
   } catch (error) {
-    console.error('[extract-conversation-memory] Error:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[MemoryExtract] Error:', error);
     return new Response(
-      JSON.stringify({ error: message }),
+      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

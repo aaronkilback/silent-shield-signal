@@ -1,4 +1,4 @@
-import { corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -13,13 +13,12 @@ Deno.serve(async (req) => {
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
-      console.error('LOVABLE_API_KEY not configured');
+      console.error('[VehicleImage] LOVABLE_API_KEY not configured');
       return errorResponse('AI service not configured', 500);
     }
 
-    console.log('Generating vehicle image with prompt:', prompt);
+    console.log('[VehicleImage] Generating vehicle image with prompt:', prompt.substring(0, 100));
 
-    // Call Lovable AI Gateway for image generation
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -40,17 +39,17 @@ Deno.serve(async (req) => {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('AI Gateway error:', response.status, errorText);
+      console.error('[VehicleImage] AI Gateway error:', response.status, errorText);
       
       if (response.status === 429) {
         return errorResponse('Rate limit exceeded. Please try again later.', 429);
       }
       
       if (response.status === 402) {
-        return errorResponse('Payment required. Please add credits to your Lovable workspace.', 402);
+        return errorResponse('Payment required. Please add credits.', 402);
       }
       
-      throw new Error(`AI Gateway error: ${response.status} ${errorText}`);
+      throw new Error(`AI Gateway error: ${response.status}`);
     }
 
     const data = await response.json();
@@ -60,12 +59,12 @@ Deno.serve(async (req) => {
       throw new Error('No image generated in response');
     }
 
-    console.log('Vehicle image generated successfully');
+    console.log('[VehicleImage] Vehicle image generated successfully');
 
     return successResponse({ imageUrl });
 
   } catch (error) {
-    console.error('Error in generate-vehicle-image:', error);
+    console.error('[VehicleImage] Error:', error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error occurred', 500);
   }
 });

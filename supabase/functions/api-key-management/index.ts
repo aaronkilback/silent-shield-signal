@@ -1,40 +1,34 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
 };
 
-// Generate a secure random API key
 function generateApiKey(): string {
   const prefix = 'fai_';
   const randomBytes = new Uint8Array(32);
   crypto.getRandomValues(randomBytes);
-  const key = Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-  return prefix + key;
+  return prefix + Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Hash the API key for storage
 async function hashApiKey(key: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(key);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders });
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
 
-  // Validate user authentication
   const authHeader = req.headers.get('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
     return new Response(
@@ -55,7 +49,6 @@ serve(async (req) => {
     );
   }
 
-  // Check if user is admin
   const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
   const { data: roles } = await serviceClient
     .from('user_roles')
@@ -72,20 +65,8 @@ serve(async (req) => {
 
   const url = new URL(req.url);
 
-  // Parse body only for methods that need it
-  let body: any = null;
-  if (req.method === 'POST' || req.method === 'PATCH') {
-    try {
-      const text = await req.text();
-      body = text ? JSON.parse(text) : {};
-    } catch {
-      body = {};
-    }
-  }
-
   try {
     if (req.method === 'GET') {
-      // List all API keys (without the actual key values)
       const { data: apiKeys, error } = await serviceClient
         .from('api_keys')
         .select(`
@@ -104,7 +85,8 @@ serve(async (req) => {
       );
 
     } else if (req.method === 'POST') {
-      const { name, description, client_id, permissions, rate_limit_per_minute, expires_at } = body || {};
+      const body = await req.json().catch(() => ({}));
+      const { name, description, client_id, permissions, rate_limit_per_minute, expires_at } = body;
 
       if (!name) {
         return new Response(
@@ -113,7 +95,6 @@ serve(async (req) => {
         );
       }
 
-      // Generate the API key
       const apiKey = generateApiKey();
       const keyHash = await hashApiKey(apiKey);
       const keyPrefix = apiKey.substring(0, 12) + '...';
@@ -136,14 +117,10 @@ serve(async (req) => {
 
       if (error) throw error;
 
-      // Return the API key only once - it will never be shown again
       return new Response(
         JSON.stringify({ 
-          data: {
-            ...created,
-            api_key: apiKey, // Only returned on creation!
-          },
-          message: 'API key created. Save this key securely - it will not be shown again.'
+          data: { ...created, api_key: apiKey },
+          message: 'API key created. Save this key securely.'
         }),
         { status: 201, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -159,11 +136,7 @@ serve(async (req) => {
         );
       }
 
-      const { error } = await serviceClient
-        .from('api_keys')
-        .delete()
-        .eq('id', keyId);
-
+      const { error } = await serviceClient.from('api_keys').delete().eq('id', keyId);
       if (error) throw error;
 
       return new Response(
@@ -182,6 +155,7 @@ serve(async (req) => {
         );
       }
 
+      const body = await req.json().catch(() => ({}));
       const updateData: Record<string, any> = {};
 
       if (body.name !== undefined) updateData.name = body.name;
@@ -189,7 +163,6 @@ serve(async (req) => {
       if (body.is_active !== undefined) updateData.is_active = body.is_active;
       if (body.permissions !== undefined) updateData.permissions = body.permissions;
       if (body.rate_limit_per_minute !== undefined) updateData.rate_limit_per_minute = body.rate_limit_per_minute;
-      if (body.expires_at !== undefined) updateData.expires_at = body.expires_at;
 
       const { data: updated, error } = await serviceClient
         .from('api_keys')
@@ -212,9 +185,9 @@ serve(async (req) => {
     );
 
   } catch (error) {
-    console.error('API key management error:', error);
+    console.error('[APIKeyManagement] Error:', error);
     return new Response(
-      JSON.stringify({ error: 'Internal server error', details: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ error: 'Internal server error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

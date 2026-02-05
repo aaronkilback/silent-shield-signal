@@ -1,22 +1,32 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
   'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
 };
 
-// Generate a random signing secret
 function generateSecret(): string {
   const randomBytes = new Uint8Array(32);
   crypto.getRandomValues(randomBytes);
   return 'whsec_' + Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-serve(async (req) => {
+async function generateSignature(payload: string, secret: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(secret);
+  const messageData = encoder.encode(payload);
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', cryptoKey, messageData);
+  const hashArray = Array.from(new Uint8Array(signature));
+  return 'sha256=' + hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders });
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -113,7 +123,6 @@ serve(async (req) => {
       if (testMatch) {
         const webhookId = testMatch[1];
         
-        // Get webhook config
         const { data: webhook, error: webhookError } = await serviceClient
           .from('webhooks')
           .select('*')
@@ -127,7 +136,6 @@ serve(async (req) => {
           );
         }
 
-        // Create test payload
         const testPayload = {
           event_type: 'test.ping',
           timestamp: new Date().toISOString(),
@@ -145,27 +153,16 @@ serve(async (req) => {
           }
         };
 
-        // Build headers
         const headers: Record<string, string> = {
           'Content-Type': 'application/json',
           'User-Agent': 'FortressAI-Webhook/1.0',
           'X-Fortress-Event': 'test.ping',
         };
 
-        // Add signature if secret exists
         if (webhook.secret) {
-          const encoder = new TextEncoder();
-          const keyData = encoder.encode(webhook.secret);
-          const messageData = encoder.encode(JSON.stringify(testPayload));
-          const cryptoKey = await crypto.subtle.importKey(
-            'raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
-          );
-          const signature = await crypto.subtle.sign('HMAC', cryptoKey, messageData);
-          const hashArray = Array.from(new Uint8Array(signature));
-          headers['X-Fortress-Signature'] = 'sha256=' + hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+          headers['X-Fortress-Signature'] = await generateSignature(JSON.stringify(testPayload), webhook.secret);
         }
 
-        // Add auth headers
         if (webhook.auth_type === 'bearer' && webhook.auth_credentials?.token) {
           headers['Authorization'] = `Bearer ${webhook.auth_credentials.token}`;
         }
@@ -209,7 +206,6 @@ serve(async (req) => {
         );
       }
 
-      // Generate signing secret
       const secret = generateSecret();
 
       const { data: created, error } = await serviceClient
@@ -263,7 +259,6 @@ serve(async (req) => {
       if (body.filter_conditions !== undefined) updateData.filter_conditions = body.filter_conditions;
       if (body.output_format !== undefined) updateData.output_format = body.output_format;
 
-      // Option to regenerate secret
       if (body.regenerate_secret) {
         updateData.secret = generateSecret();
       }
