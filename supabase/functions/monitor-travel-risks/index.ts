@@ -44,6 +44,100 @@ serve(async (req) => {
     // Process each itinerary with AI risk assessment
     for (const itinerary of itineraries || []) {
       const traveler = itinerary.travelers;
+      
+      // Query Fortress intelligence data for destination
+      const destinationCountry = itinerary.destination_country;
+      const destinationCity = itinerary.destination_city;
+      const departureDate = itinerary.departure_date;
+      const returnDate = itinerary.return_date;
+      
+      // Build location search terms
+      const locationTerms = [
+        destinationCountry,
+        destinationCity,
+        `${destinationCity}, ${destinationCountry}`,
+      ].filter(Boolean);
+      
+      // Query recent signals related to destination (last 30 days)
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      
+      const { data: relevantSignals } = await supabaseClient
+        .from("signals")
+        .select("title, content, category, severity, source_type, created_at, location")
+        .or(locationTerms.map(term => `location.ilike.%${term}%`).join(","))
+        .gte("created_at", thirtyDaysAgo.toISOString())
+        .order("created_at", { ascending: false })
+        .limit(50);
+      
+      // Query weather-related signals
+      const { data: weatherSignals } = await supabaseClient
+        .from("signals")
+        .select("title, content, severity, created_at, location")
+        .or(`category.eq.weather,category.eq.natural_disaster,source_type.eq.weather`)
+        .or(locationTerms.map(term => `location.ilike.%${term}%`).join(","))
+        .gte("created_at", thirtyDaysAgo.toISOString())
+        .limit(20);
+      
+      // Query security/threat signals
+      const { data: securitySignals } = await supabaseClient
+        .from("signals")
+        .select("title, content, severity, created_at, location, source_type")
+        .or(`category.eq.security,category.eq.threat,category.eq.terrorism,category.eq.civil_unrest,category.eq.crime`)
+        .or(locationTerms.map(term => `location.ilike.%${term}%`).join(","))
+        .gte("created_at", thirtyDaysAgo.toISOString())
+        .limit(30);
+      
+      // Query geopolitical/political signals
+      const { data: geopoliticalSignals } = await supabaseClient
+        .from("signals")
+        .select("title, content, severity, created_at, location")
+        .or(`category.eq.geopolitical,category.eq.political,category.eq.government,category.eq.regulatory`)
+        .or(locationTerms.map(term => `location.ilike.%${term}%`).join(","))
+        .gte("created_at", thirtyDaysAgo.toISOString())
+        .limit(20);
+      
+      // Query health-related signals
+      const { data: healthSignals } = await supabaseClient
+        .from("signals")
+        .select("title, content, severity, created_at, location")
+        .or(`category.eq.health,category.eq.pandemic,category.eq.disease`)
+        .or(locationTerms.map(term => `location.ilike.%${term}%`).join(","))
+        .gte("created_at", thirtyDaysAgo.toISOString())
+        .limit(15);
+      
+      // Query infrastructure/transportation signals
+      const { data: infrastructureSignals } = await supabaseClient
+        .from("signals")
+        .select("title, content, severity, created_at, location")
+        .or(`category.eq.infrastructure,category.eq.transportation,category.eq.aviation`)
+        .or(locationTerms.map(term => `location.ilike.%${term}%`).join(","))
+        .gte("created_at", thirtyDaysAgo.toISOString())
+        .limit(15);
+      
+      // Query active incidents in destination area
+      const { data: activeIncidents } = await supabaseClient
+        .from("incidents")
+        .select("title, description, severity, status, created_at, location")
+        .in("status", ["open", "investigating", "active"])
+        .or(locationTerms.map(term => `location.ilike.%${term}%`).join(","))
+        .limit(10);
+      
+      // Query travel alerts for this region (from our own system)
+      const { data: existingAlerts } = await supabaseClient
+        .from("travel_alerts")
+        .select("title, description, severity, alert_type, location, created_at")
+        .eq("is_active", true)
+        .or(locationTerms.map(term => `location.ilike.%${term}%`).join(","))
+        .limit(10);
+      
+      // Format intelligence data for AI
+      const formatSignals = (signals: any[] | null, label: string) => {
+        if (!signals || signals.length === 0) return `No recent ${label} intelligence.`;
+        return signals.map(s => 
+          `- [${s.severity?.toUpperCase() || 'INFO'}] ${s.title} (${new Date(s.created_at).toLocaleDateString()}): ${s.content?.substring(0, 200) || 'No details'}${s.location ? ` | Location: ${s.location}` : ''}`
+        ).join('\n');
+      };
 
       // Prepare context for AI analysis
       const context = {
@@ -63,9 +157,9 @@ serve(async (req) => {
         },
       };
 
-      const prompt = `Analyze this business travel itinerary for potential risks and disruptions based on CURRENT real-world conditions:
+      const prompt = `Analyze this business travel itinerary for potential risks using BOTH the Fortress intelligence data provided AND your knowledge of current world conditions:
 
-Trip Details:
+=== TRIP DETAILS ===
 - Name: ${context.trip.name}
 - Type: ${context.trip.type}
 - Departure: ${context.trip.departure}
@@ -77,55 +171,100 @@ Trip Details:
 Traveler: ${context.traveler.name}
 Current Location: ${context.traveler.current_location || "Unknown"}
 
-Analyze SPECIFIC risks for THIS travel route and destination:
+=== FORTRESS INTELLIGENCE DATA ===
+
+📍 DESTINATION SIGNALS (${relevantSignals?.length || 0} items):
+${formatSignals(relevantSignals, "destination")}
+
+🌦️ WEATHER & NATURAL DISASTER INTELLIGENCE (${weatherSignals?.length || 0} items):
+${formatSignals(weatherSignals, "weather/disaster")}
+
+🔒 SECURITY & THREAT INTELLIGENCE (${securitySignals?.length || 0} items):
+${formatSignals(securitySignals, "security/threat")}
+
+🌍 GEOPOLITICAL INTELLIGENCE (${geopoliticalSignals?.length || 0} items):
+${formatSignals(geopoliticalSignals, "geopolitical")}
+
+🏥 HEALTH INTELLIGENCE (${healthSignals?.length || 0} items):
+${formatSignals(healthSignals, "health")}
+
+🚧 INFRASTRUCTURE & TRANSPORTATION (${infrastructureSignals?.length || 0} items):
+${formatSignals(infrastructureSignals, "infrastructure")}
+
+⚠️ ACTIVE INCIDENTS IN REGION (${activeIncidents?.length || 0} items):
+${activeIncidents?.map(i => `- [${i.severity?.toUpperCase()}] ${i.title}: ${i.description?.substring(0, 150) || 'No details'}`).join('\n') || 'No active incidents.'}
+
+🔔 EXISTING TRAVEL ALERTS (${existingAlerts?.length || 0} items):
+${existingAlerts?.map(a => `- [${a.severity?.toUpperCase()}] ${a.alert_type}: ${a.title}`).join('\n') || 'No existing alerts.'}
+
+=== ANALYSIS REQUIREMENTS ===
+
+Synthesize the Fortress intelligence data above with your knowledge to assess:
 
 1. **Flight Risks**: 
-   - Check for known delays/cancellations on these specific flight routes
    - Weather conditions affecting departure/arrival airports
-   - Airline operational issues
+   - Known airline operational issues or strikes
+   - Airport disruptions or closures
 
-2. **Destination-Specific Risks**:
-   - Security alerts or travel advisories for ${context.trip.destination}
-   - Political stability and civil unrest
-   - Crime rates in destination city
-   - Local health concerns or disease outbreaks
+2. **Destination-Specific Security Risks**:
+   - Active security threats from intelligence data
+   - Political stability and civil unrest indicators
+   - Crime patterns and safety concerns
+   - Terrorism risk level
 
 3. **Weather & Natural Disasters**:
+   - Current weather warnings from Fortress data
    - Seasonal weather patterns for travel dates
-   - Hurricane/typhoon season risks
-   - Earthquake/volcanic activity in region
-   - Flooding or extreme weather forecasts
+   - Hurricane/typhoon/monsoon season risks
+   - Earthquake/volcanic activity
+   - Wildfire risks
 
 4. **Health & Safety**:
+   - Disease outbreaks from health intelligence
    - Vaccination requirements
-   - Local health advisories
    - Medical facility accessibility
-   - Food/water safety concerns
+   - Water/food safety
 
-5. **Infrastructure & Transportation**:
-   - Airport strikes or disruptions
-   - Local transportation reliability
+5. **Geopolitical Factors**:
+   - Government travel advisories
+   - Diplomatic tensions
+   - Economic instability
+   - Regulatory changes affecting travelers
+
+6. **Infrastructure & Transportation**:
+   - Ground transportation reliability
    - Hotel area safety
-   - Infrastructure quality
+   - Communication infrastructure
+   - Power/utility stability
 
-Only create alerts for GENUINE, REALISTIC risks based on the specific destination and travel dates. Do not create generic or hypothetical risks.
+PRIORITIZE alerts from Fortress intelligence data. Only create alerts for GENUINE risks - do not fabricate hypothetical scenarios.
 
-Respond with a JSON object containing:
+Respond with a JSON object:
 {
   "risk_level": "low|medium|high|critical",
   "alerts": [
     {
-      "type": "flight_delay|flight_cancellation|weather|security|health|natural_disaster|infrastructure|other",
+      "type": "flight_delay|flight_cancellation|weather|security|health|natural_disaster|infrastructure|geopolitical|other",
       "severity": "low|medium|high|critical",
       "title": "Brief title",
-      "description": "Detailed description with specific facts",
+      "description": "Detailed description citing specific Fortress intelligence or verified information",
       "location": "Affected location",
       "affected_flights": ["flight codes if applicable"],
       "recommended_actions": ["Specific actionable steps"],
-      "source": "Source of information"
+      "source": "Fortress Intelligence|AI Assessment|Combined Analysis",
+      "fortress_signal_count": 0
     }
   ],
-  "assessment": "Overall risk assessment summary with specific details about this destination and route"
+  "assessment": "Overall risk assessment summary with specific references to Fortress intelligence data",
+  "data_sources_analyzed": {
+    "destination_signals": ${relevantSignals?.length || 0},
+    "weather_signals": ${weatherSignals?.length || 0},
+    "security_signals": ${securitySignals?.length || 0},
+    "geopolitical_signals": ${geopoliticalSignals?.length || 0},
+    "health_signals": ${healthSignals?.length || 0},
+    "infrastructure_signals": ${infrastructureSignals?.length || 0},
+    "active_incidents": ${activeIncidents?.length || 0}
+  }
 }`;
 
       // Call AI for risk assessment
