@@ -1,24 +1,14 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { file, filename, mimeType } = await req.json();
     
     if (!file || !filename) {
-      return new Response(
-        JSON.stringify({ error: 'File and filename are required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('File and filename are required', 400);
     }
 
     console.log('Processing entities document:', filename, mimeType);
@@ -35,26 +25,17 @@ serve(async (req) => {
       text = pdfText.replace(/[^\x20-\x7E\n]/g, ' ').trim();
       
       if (!text || text.length < 50) {
-        return new Response(
-          JSON.stringify({ error: 'Unable to extract text from PDF' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('Unable to extract text from PDF', 400);
       }
     } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || filename.endsWith('.docx')) {
       const docxText = new TextDecoder().decode(binaryData);
       text = docxText.replace(/[^\x20-\x7E\n]/g, ' ').trim();
       
       if (!text || text.length < 50) {
-        return new Response(
-          JSON.stringify({ error: 'Unable to extract text from DOCX' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('Unable to extract text from DOCX', 400);
       }
     } else {
-      return new Response(
-        JSON.stringify({ error: 'Unsupported file type. Please upload TXT, CSV, PDF, or DOCX files.' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('Unsupported file type. Please upload TXT, CSV, PDF, or DOCX files.', 400);
     }
 
     console.log('Extracted text length:', text.length);
@@ -161,10 +142,7 @@ ${text}`
 
     console.log(`Extracted ${entities.length} entities`);
 
-    // Create Supabase client
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
 
     // Get user from auth header
     const authHeader = req.headers.get('Authorization');
@@ -197,7 +175,6 @@ ${text}`
           return 'domain';
         case 'ip_address':
           return 'ip_address';
-        // Map unsupported extracted types to the closest supported type for approval flow
         case 'email':
         case 'phone':
         case 'vehicle':
@@ -234,7 +211,6 @@ ${text}`
         }
       })();
 
-      // Slightly boost confidence if the name appears multiple times
       const occurrences = (text.match(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
       return Math.min(0.95, base + Math.min(0.2, occurrences * 0.05));
     };
@@ -280,20 +256,14 @@ ${text}`
 
     console.log(`Successfully inserted ${insertedSuggestions.length} entity suggestions`);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        message: `Successfully created ${insertedSuggestions.length} entity suggestions`,
-        suggestions: insertedSuggestions,
-        uploadId,
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      message: `Successfully created ${insertedSuggestions.length} entity suggestions`,
+      suggestions: insertedSuggestions,
+      uploadId,
+    });
   } catch (error) {
     console.error('Error in parse-entities-document function:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

@@ -1,31 +1,19 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { files, tags, clientId, userId } = await req.json();
     
     if (!files || !Array.isArray(files) || files.length === 0) {
-      return new Response(
-        JSON.stringify({ error: 'Files array is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('Files array is required', 400);
     }
 
     console.log(`Processing ${files.length} archival documents`);
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
 
     const results = [];
     const errors = [];
@@ -36,8 +24,8 @@ serve(async (req) => {
         
         console.log(`Processing: ${filename}`);
 
-        // CRITICAL: Absolute size check - reject files over 1.5MB before ANY processing
-        const estimatedSize = file.length * 0.75; // base64 to bytes
+        // Size check - reject files over 1.5MB
+        const estimatedSize = file.length * 0.75;
         const sizeMB = (estimatedSize / (1024 * 1024)).toFixed(2);
         
         if (estimatedSize > 1.5 * 1024 * 1024) {
@@ -48,7 +36,6 @@ serve(async (req) => {
         const sizeKB = (estimatedSize / 1024).toFixed(1);
         console.log(`File size: ${sizeKB} KB - proceeding with upload`);
 
-        // Process all files regardless of size (under the limit)
         console.log(`Processing content for ${filename}`);
         const binaryData = Uint8Array.from(atob(file), c => c.charCodeAt(0));
 
@@ -57,12 +44,10 @@ serve(async (req) => {
         let keywords: string[] = [];
 
         if (mimeType === 'text/plain' || filename.endsWith('.txt')) {
-          // Only first 20KB for text files
           const maxBytes = Math.min(binaryData.length, 20000);
           text = new TextDecoder().decode(binaryData.slice(0, maxBytes));
           cleanSummary = text.substring(0, 150).trim();
           
-          // Extract keywords from small text
           const words = text.toLowerCase()
             .replace(/[^\w\s]/g, ' ')
             .split(/\s+/)
@@ -83,7 +68,7 @@ serve(async (req) => {
           cleanSummary = `${fileType} - ${sizeKB} KB`;
         }
 
-        // Generate simple content hash from metadata (not full content)
+        // Generate simple content hash from metadata
         const hashInput = `${filename}-${sizeKB}-${mimeType}`;
         const encoder = new TextEncoder();
         const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(hashInput));
@@ -168,8 +153,6 @@ serve(async (req) => {
           archival_document_id: document.id
         });
 
-        // Entity suggestions will be created by process-stored-document edge function
-        // which uses AI for proper entity extraction
         console.log(`Document ${filename} saved - entity processing will happen in background`);
         
         results.push({
@@ -190,21 +173,15 @@ serve(async (req) => {
 
     console.log(`Batch complete: ${results.length} succeeded, ${errors.length} failed`);
 
-    return new Response(
-      JSON.stringify({ 
-        success: true,
-        processed: results.length,
-        failed: errors.length,
-        results: results,
-        errors: errors
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({ 
+      success: true,
+      processed: results.length,
+      failed: errors.length,
+      results: results,
+      errors: errors
+    });
   } catch (error) {
     console.error('Error in process-archival-documents function:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

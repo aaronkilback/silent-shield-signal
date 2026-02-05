@@ -1,49 +1,34 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseClient = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-      {
-        global: {
-          headers: { Authorization: req.headers.get("Authorization")! },
-        },
-      }
-    );
+    const supabase = createServiceClient();
 
     const { filePath } = await req.json();
 
     if (!filePath) {
-      throw new Error("File path is required");
+      return errorResponse('File path is required', 400);
     }
 
     console.log("Processing itinerary:", filePath);
 
     // Download the file from storage
-    const { data: fileData, error: downloadError } = await supabaseClient
+    const { data: fileData, error: downloadError } = await supabase
       .storage
       .from("travel-documents")
       .download(filePath);
 
     if (downloadError || !fileData) {
       console.error("Download error:", downloadError);
-      throw new Error(`Failed to download file: ${downloadError?.message}`);
+      return errorResponse(`Failed to download file: ${downloadError?.message}`, 400);
     }
 
     console.log("File downloaded, converting to base64...");
 
-    // Convert PDF to base64 for AI processing (avoid spread operator for large files)
+    // Convert PDF to base64 for AI processing
     const arrayBuffer = await fileData.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
     
@@ -65,7 +50,6 @@ serve(async (req) => {
 
     console.log("Calling AI to parse itinerary with structured segments");
 
-    // Send PDF directly to AI with the structured parsing prompt
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -105,8 +89,8 @@ Output a single, valid JSON object in this EXACT schema:
 }
 
 Rules:
-- CRITICAL: Extract the traveler/passenger name from the document. Look for "Passenger:", "Traveler:", "Guest:", "Name:", or names listed on tickets/reservations.
-- traveler_name should be the FULL NAME of the person traveling (e.g., "John Smith", "JANE DOE").
+- CRITICAL: Extract the traveler/passenger name from the document.
+- traveler_name should be the FULL NAME of the person traveling.
 - Always return VALID JSON. No comments, no trailing commas, no markdown.
 - Use ISO date format: YYYY-MM-DD for start_date and end_date.
 - Use YYYY-MM-DD HH:MM (24h) for start_datetime and end_datetime.
@@ -219,7 +203,6 @@ Rules:
 
     const itineraryData = JSON.parse(toolCall.function.arguments);
     
-    // Log the parsed itinerary
     console.log("=== PARSED ITINERARY ===");
     console.log(JSON.stringify(itineraryData, null, 2));
     console.log("Traveler:", itineraryData.traveler_name);
@@ -228,15 +211,9 @@ Rules:
     console.log("Segments:", itineraryData.segments.length);
     console.log("=======================");
 
-    return new Response(
-      JSON.stringify({ success: true, data: itineraryData }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return successResponse({ success: true, data: itineraryData });
   } catch (error) {
     console.error("Error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);
   }
 });

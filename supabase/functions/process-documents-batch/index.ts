@@ -1,12 +1,7 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 // Access EdgeRuntime from global scope
 declare const EdgeRuntime: any;
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
 
 interface ProcessRequest {
   documentIds: string[];
@@ -19,14 +14,11 @@ addEventListener('beforeunload', (ev) => {
 });
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = createServiceClient();
 
     const { documentIds, clearExistingSuggestions }: ProcessRequest = await req.json();
 
@@ -67,7 +59,12 @@ Deno.serve(async (req) => {
     };
 
     // Start background processing without blocking response
-    EdgeRuntime.waitUntil(processDocuments());
+    if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
+      EdgeRuntime.waitUntil(processDocuments());
+    } else {
+      // Fallback: run inline but don't await
+      processDocuments().catch(err => console.error('Background processing error:', err));
+    }
 
     // Return immediately
     return new Response(
@@ -78,18 +75,12 @@ Deno.serve(async (req) => {
       }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 202 // Accepted - processing in background
+        status: 202
       }
     );
 
   } catch (error: any) {
     console.error('Error in batch processing:', error);
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500 
-      }
-    );
+    return errorResponse(error.message || 'Unknown error', 500);
   }
 });
