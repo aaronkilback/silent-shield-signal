@@ -14,13 +14,24 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   try {
+    const body = await req.json();
+    
+    // Health check endpoint for pipeline tests
+    if (body.health_check) {
+      return successResponse({ 
+        status: 'healthy', 
+        function: 'threat-radar-analysis',
+        timestamp: new Date().toISOString() 
+      });
+    }
+    
     const { 
       client_id, 
       timeframe_hours = 168, // Default 7 days
       focus_areas = ['radical_activity', 'sentiment', 'precursors', 'infrastructure'],
       include_predictions = true,
       generate_snapshot = true
-    }: ThreatRadarRequest = await req.json();
+    }: ThreatRadarRequest = body;
 
     console.log('Threat Radar Analysis:', { client_id, timeframe_hours, focus_areas });
 

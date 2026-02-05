@@ -11,6 +11,20 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const body = await req.json();
+    
+    // Health check endpoint for pipeline tests
+    if (body.health_check) {
+      return new Response(
+        JSON.stringify({ 
+          status: 'healthy', 
+          function: 'generate-report',
+          timestamp: new Date().toISOString() 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
     const authHeader = req.headers.get('Authorization')!;
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',

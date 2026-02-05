@@ -343,7 +343,21 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { agent_id, message, conversation_history = [], client_id } = await req.json();
+    const body = await req.json();
+    
+    // Health check endpoint for pipeline tests
+    if (body.health_check || body.test_mode) {
+      return new Response(
+        JSON.stringify({ 
+          status: 'healthy', 
+          function: 'agent-chat',
+          timestamp: new Date().toISOString() 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    const { agent_id, message, conversation_history = [], client_id } = body;
     console.log('Agent chat request:', { agent_id, message_length: message?.length, client_id });
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');

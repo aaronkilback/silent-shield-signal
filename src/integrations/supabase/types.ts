@@ -5000,6 +5000,45 @@ export type Database = {
         }
         Relationships: []
       }
+      pipeline_test_results: {
+        Row: {
+          created_at: string
+          duration_ms: number | null
+          error_message: string | null
+          error_stack: string | null
+          id: string
+          metadata: Json | null
+          pipeline: string
+          status: string
+          test_name: string
+          test_run_id: string
+        }
+        Insert: {
+          created_at?: string
+          duration_ms?: number | null
+          error_message?: string | null
+          error_stack?: string | null
+          id?: string
+          metadata?: Json | null
+          pipeline: string
+          status: string
+          test_name: string
+          test_run_id: string
+        }
+        Update: {
+          created_at?: string
+          duration_ms?: number | null
+          error_message?: string | null
+          error_stack?: string | null
+          id?: string
+          metadata?: Json | null
+          pipeline?: string
+          status?: string
+          test_name?: string
+          test_run_id?: string
+        }
+        Relationships: []
+      }
       playbooks: {
         Row: {
           created_at: string

@@ -88,6 +88,19 @@ Deno.serve(async (req) => {
 
     // Validate input
     const rawBody = await req.json();
+    
+    // Health check endpoint for pipeline tests
+    if (rawBody.health_check) {
+      return new Response(
+        JSON.stringify({ 
+          status: 'healthy', 
+          function: 'ingest-signal',
+          timestamp: new Date().toISOString() 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
     const validationResult = SignalInputSchema.safeParse(rawBody);
     
     if (!validationResult.success) {

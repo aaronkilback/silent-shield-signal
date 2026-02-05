@@ -57,7 +57,21 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { documentId } = await req.json();
+    const body = await req.json();
+    
+    // Health check endpoint for pipeline tests
+    if (body.health_check) {
+      return new Response(
+        JSON.stringify({ 
+          status: 'healthy', 
+          function: 'process-stored-document',
+          timestamp: new Date().toISOString() 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    const { documentId } = body;
     
     if (!documentId) {
       return new Response(
