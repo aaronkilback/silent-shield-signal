@@ -40,6 +40,170 @@ serve(async (req) => {
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY not configured");
     }
+    
+    const PERPLEXITY_API_KEY = Deno.env.get("PERPLEXITY_API_KEY");
+    
+    // Helper function to get real-time flight status via Perplexity
+    async function getFlightStatus(flightNumbers: string[], departureDate: string): Promise<any> {
+      if (!PERPLEXITY_API_KEY || !flightNumbers || flightNumbers.length === 0) {
+        return null;
+      }
+      
+      try {
+        const flightQuery = flightNumbers.join(", ");
+        const response = await fetch("https://api.perplexity.ai/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "sonar",
+            messages: [
+              {
+                role: "system",
+                content: "You are a flight status analyst. Provide accurate, real-time flight status information. Return structured JSON data only."
+              },
+              {
+                role: "user",
+                content: `Get the current real-time status for these flights scheduled around ${departureDate}: ${flightQuery}
+
+For each flight, provide:
+- Flight number
+- Airline
+- Route (origin → destination airports)
+- Scheduled departure time
+- Actual/estimated departure time
+- Status (on-time, delayed, cancelled, diverted, landed, in-flight)
+- Delay duration if applicable
+- Gate information if available
+- Any disruption reasons (weather, mechanical, crew, etc.)
+
+Return as JSON: { "flights": [...], "airport_conditions": {...}, "weather_impacts": [...] }`
+              }
+            ],
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "flight_status",
+                schema: {
+                  type: "object",
+                  properties: {
+                    flights: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          flight_number: { type: "string" },
+                          airline: { type: "string" },
+                          origin: { type: "string" },
+                          destination: { type: "string" },
+                          scheduled_departure: { type: "string" },
+                          actual_departure: { type: "string" },
+                          status: { type: "string" },
+                          delay_minutes: { type: "number" },
+                          delay_reason: { type: "string" },
+                          gate: { type: "string" }
+                        }
+                      }
+                    },
+                    airport_conditions: {
+                      type: "object",
+                      properties: {
+                        delays: { type: "array", items: { type: "string" } },
+                        closures: { type: "array", items: { type: "string" } },
+                        weather_alerts: { type: "array", items: { type: "string" } }
+                      }
+                    },
+                    weather_impacts: {
+                      type: "array",
+                      items: { type: "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }),
+        });
+        
+        if (!response.ok) {
+          console.error("Perplexity flight status error:", await response.text());
+          return null;
+        }
+        
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content;
+        
+        if (content) {
+          try {
+            return JSON.parse(content);
+          } catch {
+            console.error("Failed to parse flight status JSON");
+            return null;
+          }
+        }
+        return null;
+      } catch (error) {
+        console.error("Error fetching flight status:", error);
+        return null;
+      }
+    }
+    
+    // Helper function to get destination intelligence via Perplexity
+    async function getDestinationIntelligence(city: string, country: string, travelDates: string): Promise<any> {
+      if (!PERPLEXITY_API_KEY) {
+        return null;
+      }
+      
+      try {
+        const response = await fetch("https://api.perplexity.ai/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "sonar",
+            messages: [
+              {
+                role: "system",
+                content: "You are a travel security analyst providing real-time destination intelligence. Focus on current events, safety conditions, and travel advisories. Return structured JSON only."
+              },
+              {
+                role: "user",
+                content: `Provide current travel intelligence for ${city}, ${country} for travel around ${travelDates}:
+
+1. Current travel advisories and safety level
+2. Recent security incidents or threats (last 7 days)
+3. Current weather conditions and forecasts
+4. Active protests, strikes, or civil unrest
+5. Health alerts or disease outbreaks
+6. Infrastructure issues (transportation strikes, airport conditions)
+7. Major events that could affect travel
+8. Current geopolitical situation
+
+Return as JSON: { "safety_level": "low|medium|high|critical", "advisories": [...], "current_threats": [...], "weather": {...}, "civil_unrest": [...], "health_alerts": [...], "infrastructure": [...], "events": [...], "geopolitical": {...} }`
+              }
+            ],
+            search_recency_filter: "week",
+          }),
+        });
+        
+        if (!response.ok) {
+          console.error("Perplexity destination intel error:", await response.text());
+          return null;
+        }
+        
+        const data = await response.json();
+        return {
+          content: data.choices?.[0]?.message?.content,
+          citations: data.citations || []
+        };
+      } catch (error) {
+        console.error("Error fetching destination intelligence:", error);
+        return null;
+      }
+    }
 
     // Process each itinerary with AI risk assessment
     for (const itinerary of itineraries || []) {
@@ -131,12 +295,54 @@ serve(async (req) => {
         .or(locationTerms.map(term => `location.ilike.%${term}%`).join(","))
         .limit(10);
       
+      // Fetch real-time flight status via Perplexity
+      const flightStatus = await getFlightStatus(
+        itinerary.flight_numbers || [],
+        departureDate
+      );
+      
+      // Fetch real-time destination intelligence via Perplexity
+      const destinationIntel = await getDestinationIntelligence(
+        destinationCity,
+        destinationCountry,
+        `${departureDate} to ${returnDate}`
+      );
+      
+      console.log("=== PERPLEXITY DATA ===");
+      console.log("Flight status:", flightStatus ? "Retrieved" : "Not available");
+      console.log("Destination intel:", destinationIntel ? "Retrieved" : "Not available");
+      
       // Format intelligence data for AI
       const formatSignals = (signals: any[] | null, label: string) => {
         if (!signals || signals.length === 0) return `No recent ${label} intelligence.`;
         return signals.map(s => 
           `- [${s.severity?.toUpperCase() || 'INFO'}] ${s.title} (${new Date(s.created_at).toLocaleDateString()}): ${s.content?.substring(0, 200) || 'No details'}${s.location ? ` | Location: ${s.location}` : ''}`
         ).join('\n');
+      };
+      
+      // Format flight status data
+      const formatFlightStatus = () => {
+        if (!flightStatus?.flights || flightStatus.flights.length === 0) {
+          return "No real-time flight data available.";
+        }
+        return flightStatus.flights.map((f: any) => 
+          `- ${f.flight_number} (${f.airline}): ${f.origin} → ${f.destination}
+     Status: ${f.status?.toUpperCase() || 'UNKNOWN'}
+     Scheduled: ${f.scheduled_departure || 'N/A'} | Actual: ${f.actual_departure || 'N/A'}
+     ${f.delay_minutes ? `Delay: ${f.delay_minutes} minutes (${f.delay_reason || 'Unknown reason'})` : ''}
+     ${f.gate ? `Gate: ${f.gate}` : ''}`
+        ).join('\n');
+      };
+      
+      // Format airport conditions
+      const formatAirportConditions = () => {
+        if (!flightStatus?.airport_conditions) return "No airport conditions data.";
+        const conditions = flightStatus.airport_conditions;
+        const parts = [];
+        if (conditions.delays?.length) parts.push(`Delays: ${conditions.delays.join(', ')}`);
+        if (conditions.closures?.length) parts.push(`Closures: ${conditions.closures.join(', ')}`);
+        if (conditions.weather_alerts?.length) parts.push(`Weather Alerts: ${conditions.weather_alerts.join(', ')}`);
+        return parts.length > 0 ? parts.join('\n') : "No significant airport conditions.";
       };
 
       // Prepare context for AI analysis
@@ -157,7 +363,7 @@ serve(async (req) => {
         },
       };
 
-      const prompt = `Analyze this business travel itinerary for potential risks using BOTH the Fortress intelligence data provided AND your knowledge of current world conditions:
+      const prompt = `Analyze this business travel itinerary for potential risks using ALL intelligence data provided:
 
 === TRIP DETAILS ===
 - Name: ${context.trip.name}
@@ -170,6 +376,21 @@ serve(async (req) => {
 
 Traveler: ${context.traveler.name}
 Current Location: ${context.traveler.current_location || "Unknown"}
+
+=== REAL-TIME FLIGHT STATUS (via Perplexity) ===
+✈️ FLIGHT STATUS:
+${formatFlightStatus()}
+
+🛫 AIRPORT CONDITIONS:
+${formatAirportConditions()}
+
+🌤️ WEATHER IMPACTS:
+${flightStatus?.weather_impacts?.join('\n') || 'No weather impact data.'}
+
+=== REAL-TIME DESTINATION INTELLIGENCE (via Perplexity) ===
+${destinationIntel?.content || 'No real-time destination intelligence available.'}
+
+${destinationIntel?.citations?.length ? `Sources: ${destinationIntel.citations.slice(0, 5).join(', ')}` : ''}
 
 === FORTRESS INTELLIGENCE DATA ===
 
@@ -199,9 +420,10 @@ ${existingAlerts?.map(a => `- [${a.severity?.toUpperCase()}] ${a.alert_type}: ${
 
 === ANALYSIS REQUIREMENTS ===
 
-Synthesize the Fortress intelligence data above with your knowledge to assess:
+Synthesize ALL data sources (real-time Perplexity data + Fortress intelligence) to assess:
 
-1. **Flight Risks**: 
+1. **Flight Risks** (PRIORITY - use real-time flight status data):
+   - Current flight delays or cancellations from Perplexity data
    - Weather conditions affecting departure/arrival airports
    - Known airline operational issues or strikes
    - Airport disruptions or closures
@@ -213,7 +435,7 @@ Synthesize the Fortress intelligence data above with your knowledge to assess:
    - Terrorism risk level
 
 3. **Weather & Natural Disasters**:
-   - Current weather warnings from Fortress data
+   - Current weather warnings from Fortress and Perplexity data
    - Seasonal weather patterns for travel dates
    - Hurricane/typhoon/monsoon season risks
    - Earthquake/volcanic activity
@@ -237,7 +459,7 @@ Synthesize the Fortress intelligence data above with your knowledge to assess:
    - Communication infrastructure
    - Power/utility stability
 
-PRIORITIZE alerts from Fortress intelligence data. Only create alerts for GENUINE risks - do not fabricate hypothetical scenarios.
+PRIORITIZE real-time flight status data from Perplexity when available. Create alerts for GENUINE risks based on verified data.
 
 Respond with a JSON object:
 {
@@ -247,16 +469,18 @@ Respond with a JSON object:
       "type": "flight_delay|flight_cancellation|weather|security|health|natural_disaster|infrastructure|geopolitical|other",
       "severity": "low|medium|high|critical",
       "title": "Brief title",
-      "description": "Detailed description citing specific Fortress intelligence or verified information",
+      "description": "Detailed description citing specific data sources",
       "location": "Affected location",
       "affected_flights": ["flight codes if applicable"],
       "recommended_actions": ["Specific actionable steps"],
-      "source": "Fortress Intelligence|AI Assessment|Combined Analysis",
+      "source": "Perplexity Real-Time|Fortress Intelligence|Combined Analysis",
       "fortress_signal_count": 0
     }
   ],
-  "assessment": "Overall risk assessment summary with specific references to Fortress intelligence data",
+  "assessment": "Overall risk assessment summary with specific data references",
   "data_sources_analyzed": {
+    "perplexity_flight_status": ${flightStatus ? "true" : "false"},
+    "perplexity_destination_intel": ${destinationIntel ? "true" : "false"},
     "destination_signals": ${relevantSignals?.length || 0},
     "weather_signals": ${weatherSignals?.length || 0},
     "security_signals": ${securitySignals?.length || 0},
