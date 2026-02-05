@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 interface BlockedTerm {
   id: string;
@@ -25,17 +19,14 @@ interface ContentCheckResult {
   message?: string;
 }
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const authHeader = req.headers.get("Authorization");
     
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
 
     // Get user from auth header
     let userId: string | null = null;
@@ -48,10 +39,7 @@ serve(async (req) => {
     const { content, content_type, tenant_id, action_type } = await req.json();
 
     if (!content) {
-      return new Response(
-        JSON.stringify({ error: "Content is required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return errorResponse("Content is required", 400);
     }
 
     // Rate limit check if user is authenticated
@@ -86,10 +74,7 @@ serve(async (req) => {
     if (termsError) {
       console.error('[Guardian] Error fetching blocked terms:', termsError);
       // Fail open - allow content if we can't check
-      return new Response(
-        JSON.stringify({ allowed: true, violations: [], action: 'allow' }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return successResponse({ allowed: true, violations: [], action: 'allow' });
     }
 
     // Check content against blocked terms
@@ -170,17 +155,11 @@ serve(async (req) => {
       message
     };
 
-    return new Response(
-      JSON.stringify(result),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return successResponse(result);
 
   } catch (error) {
     console.error("[Guardian] Error:", error);
     // Fail open on errors
-    return new Response(
-      JSON.stringify({ allowed: true, violations: [], action: 'allow' }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return successResponse({ allowed: true, violations: [], action: 'allow' });
   }
 });

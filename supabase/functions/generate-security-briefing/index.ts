@@ -1,21 +1,15 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
+import { corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { city, country, travel_dates } = await req.json();
 
     if (!city || !country) {
-      throw new Error("City and country are required");
+      return errorResponse("City and country are required", 400);
     }
 
     const supabaseClient = createClient(
@@ -299,25 +293,12 @@ Create a professional security briefing with:
 
     console.log("Generated briefing for:", briefing.location);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        briefing,
-      }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return successResponse({
+      success: true,
+      briefing,
+    });
   } catch (error) {
     console.error("Error generating security briefing:", error);
-    return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);
   }
 });

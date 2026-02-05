@@ -1,21 +1,19 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    
+    if (!lovableApiKey) {
+      throw new Error("LOVABLE_API_KEY not configured");
+    }
+    
+    const supabase = createServiceClient();
 
     const { incident_id, format = "executive" } = await req.json();
 
@@ -320,38 +318,32 @@ Include specific technical details, TTPs, and actionable steps. Use security ter
     const aiResult = await aiResponse.json();
     const briefing = aiResult.choices[0].message.content;
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        incident_id,
-        format,
-        briefing: {
-          content: briefing,
-          incident_summary: {
-            title: incident.title,
-            priority: incident.priority,
-            status: incident.status,
-            client: incident.clients?.name,
-            age_minutes: ageMinutes,
-          },
-          metrics: {
-            time_to_acknowledge_minutes: timeToAcknowledge,
-            time_to_resolve_hours: timeToResolve,
-            signals_count: linkedSignals?.length || 0,
-            entities_count: incidentEntities?.length || 0,
-            alerts_sent: alerts?.length || 0,
-          },
+    return successResponse({
+      success: true,
+      incident_id,
+      format,
+      briefing: {
+        content: briefing,
+        incident_summary: {
+          title: incident.title,
+          priority: incident.priority,
+          status: incident.status,
+          client: incident.clients?.name,
+          age_minutes: ageMinutes,
         },
-        timestamp: new Date().toISOString(),
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+        metrics: {
+          time_to_acknowledge_minutes: timeToAcknowledge,
+          time_to_resolve_hours: timeToResolve,
+          signals_count: linkedSignals?.length || 0,
+          entities_count: incidentEntities?.length || 0,
+          alerts_sent: alerts?.length || 0,
+        },
+      },
+      timestamp: new Date().toISOString(),
+    });
 
   } catch (error) {
     console.error("[generate-incident-briefing] Error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return errorResponse(error instanceof Error ? error.message : String(error), 500);
   }
 });

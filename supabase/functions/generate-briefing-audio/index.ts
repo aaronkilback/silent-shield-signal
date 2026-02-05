@@ -1,34 +1,23 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 interface GenerateAudioRequest {
   content: string;
   title: string;
 }
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
     const openaiApiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return errorResponse("Unauthorized", 401);
     }
 
     const userClient = createClient(supabaseUrl, supabaseAnonKey, {
@@ -37,20 +26,14 @@ serve(async (req) => {
 
     const { data: { user }, error: authError } = await userClient.auth.getUser();
     if (authError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return errorResponse("Unauthorized", 401);
     }
 
     const body: GenerateAudioRequest = await req.json();
     const { content, title } = body;
 
     if (!content) {
-      return new Response(JSON.stringify({ error: "Content is required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return errorResponse("Content is required", 400);
     }
 
     // Clean content for TTS - remove markdown, special characters
@@ -122,7 +105,7 @@ serve(async (req) => {
     }
 
     // Upload to storage
-    const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
+    const serviceClient = createServiceClient();
     
     const fileName = `briefings/${user.id}/${Date.now()}-${title.replace(/[^a-zA-Z0-9]/g, "_").substring(0, 50)}.mp3`;
     
@@ -142,25 +125,13 @@ serve(async (req) => {
       .from("tenant-files")
       .getPublicUrl(fileName);
 
-    return new Response(
-      JSON.stringify({
-        audio_url: urlData.publicUrl,
-        duration_estimate: Math.ceil(cleanContent.length / 15), // Rough estimate: ~15 chars/second
-        chunks_processed: chunks.length,
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return successResponse({
+      audio_url: urlData.publicUrl,
+      duration_estimate: Math.ceil(cleanContent.length / 15), // Rough estimate: ~15 chars/second
+      chunks_processed: chunks.length,
+    });
   } catch (error) {
     console.error("Error generating audio:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);
   }
 });

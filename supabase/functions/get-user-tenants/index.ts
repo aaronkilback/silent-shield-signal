@@ -1,27 +1,18 @@
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
 
     // Get user from auth header
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
-      return new Response(
-        JSON.stringify({ error: 'Authorization required' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('Authorization required', 401);
     }
 
     // Extract token and create client
@@ -33,14 +24,11 @@ Deno.serve(async (req) => {
     // CRITICAL: Must pass token explicitly when verify_jwt=false
     const { data: { user }, error: userError } = await userClient.auth.getUser(token);
     if (userError || !user) {
-      return new Response(
-        JSON.stringify({ error: 'Invalid authentication' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('Invalid authentication', 401);
     }
 
     // Use service role client to get tenant memberships
-    const adminClient = createClient(supabaseUrl, supabaseServiceKey);
+    const adminClient = createServiceClient();
 
     const { data: memberships, error: membershipsError } = await adminClient
       .from('tenant_users')
@@ -59,10 +47,7 @@ Deno.serve(async (req) => {
 
     if (membershipsError) {
       console.error('Memberships fetch error:', membershipsError);
-      return new Response(
-        JSON.stringify({ error: 'Failed to fetch tenants' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('Failed to fetch tenants', 500);
     }
 
     // Transform the data - tenants is an object (single record from join), cast through unknown
@@ -79,19 +64,13 @@ Deno.serve(async (req) => {
       };
     }).filter(t => t.id && t.status === 'active') || [];
 
-    return new Response(
-      JSON.stringify({
-        tenants,
-        has_tenants: tenants.length > 0
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      tenants,
+      has_tenants: tenants.length > 0
+    });
 
   } catch (error) {
     console.error('Get user tenants error:', error);
-    return new Response(
-      JSON.stringify({ error: 'Internal server error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse('Internal server error', 500);
   }
 });
