@@ -1,11 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+import { corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 interface GenerateBriefingRequest {
   consortium_id: string;
@@ -14,22 +8,22 @@ interface GenerateBriefingRequest {
   classification: string;
 }
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-    const openaiApiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+
+    if (!LOVABLE_API_KEY) {
+      throw new Error("LOVABLE_API_KEY not configured");
+    }
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return errorResponse("Unauthorized", 401);
     }
 
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -38,10 +32,7 @@ serve(async (req) => {
 
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return errorResponse("Unauthorized", 401);
     }
 
     const body: GenerateBriefingRequest = await req.json();
@@ -92,7 +83,7 @@ serve(async (req) => {
       confidence_level: s.confidence_level,
     })) || [];
 
-    // Generate briefing using OpenAI
+    // Generate briefing using Lovable AI Gateway
     const productTypePrompts: Record<string, string> = {
       blof: `Generate a Business Level Operational Focus (BLOF) report. This is an executive summary focused on:
 - Key operational impacts and business risks
@@ -183,14 +174,14 @@ ${JSON.stringify(signalSummary, null, 2)}
 
 If there are no incidents or signals, generate a report noting the quiet period but maintaining vigilance for emerging threats in the ${consortium.region || "operational"} area.`;
 
-    const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${openaiApiKey}`,
+        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o",
+        model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
@@ -200,13 +191,13 @@ If there are no incidents or signals, generate a report noting the quiet period 
       }),
     });
 
-    if (!openaiResponse.ok) {
-      const errorText = await openaiResponse.text();
-      throw new Error(`OpenAI API error: ${errorText}`);
+    if (!aiResponse.ok) {
+      const errorText = await aiResponse.text();
+      throw new Error(`AI Gateway error: ${errorText}`);
     }
 
-    const openaiData = await openaiResponse.json();
-    const generatedContent = openaiData.choices[0]?.message?.content || "";
+    const aiData = await aiResponse.json();
+    const generatedContent = aiData.choices[0]?.message?.content || "";
 
     // Convert to basic HTML
     const contentHtml = generatedContent
@@ -235,27 +226,15 @@ If there are no incidents or signals, generate a report noting the quiet period 
 
     const suggestedTitle = `${typeLabels[product_type] || "Intelligence Report"} - ${consortium.region || consortium.name} - ${dateStr}`;
 
-    return new Response(
-      JSON.stringify({
-        content: generatedContent,
-        content_html: contentHtml,
-        suggested_title: suggestedTitle,
-        incidents_included: incidentSummary.length,
-        signals_included: signalSummary.length,
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return successResponse({
+      content: generatedContent,
+      content_html: contentHtml,
+      suggested_title: suggestedTitle,
+      incidents_included: incidentSummary.length,
+      signals_included: signalSummary.length,
+    });
   } catch (error) {
     console.error("Error generating briefing:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);
   }
 });

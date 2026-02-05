@@ -1,28 +1,17 @@
-import "https://deno.land/x/xhr@0.1.0/mod.ts";
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import pdfParse from "https://esm.sh/pdf-parse@1.1.1";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { createHash } from "https://deno.land/std@0.177.0/node/crypto.ts";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
 
 const CHUNK_SIZE = 4000; // characters per chunk
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { sourceType, sourceData, sourceId } = await req.json();
     
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
 
     console.log(`Processing ${sourceType} ingestion`);
 
@@ -69,13 +58,9 @@ serve(async (req) => {
         const binaryData = Uint8Array.from(atob(fileData), c => c.charCodeAt(0));
 
         if (fileType === 'application/pdf') {
-          try {
-            const pdfData = await pdfParse(binaryData);
-            extractedText = pdfData.text;
-            metadata.pages = pdfData.numpages;
-          } catch (error: any) {
-            throw new Error(`PDF parsing failed: ${error?.message || 'Unknown error'}`);
-          }
+          // For PDF, we'll store it and let process-intelligence-document handle parsing
+          extractedText = `[PDF Document: ${fileName}]`;
+          metadata.requiresProcessing = true;
         } else if (fileType.includes('text') || fileType.includes('document')) {
           const decoder = new TextDecoder();
           extractedText = decoder.decode(binaryData);
@@ -103,15 +88,12 @@ serve(async (req) => {
       .single();
 
     if (existingDoc) {
-      return new Response(
-        JSON.stringify({ 
-          success: true,
-          duplicate: true,
-          documentId: existingDoc.id,
-          message: 'Document already exists'
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return successResponse({ 
+        success: true,
+        duplicate: true,
+        documentId: existingDoc.id,
+        message: 'Document already exists'
+      });
     }
 
     // Determine if chunking is needed
@@ -183,24 +165,15 @@ serve(async (req) => {
 
     console.log(`Successfully ingested document: ${parentDoc.id}`);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        documentId: parentDoc.id,
-        chunks: chunkIds.length,
-        message: `Document ingested successfully with ${chunkIds.length} chunk(s)`
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      documentId: parentDoc.id,
+      chunks: chunkIds.length,
+      message: `Document ingested successfully with ${chunkIds.length} chunk(s)`
+    });
 
   } catch (error) {
     console.error('Error in ingest-intelligence:', error);
-    return new Response(
-      JSON.stringify({ 
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

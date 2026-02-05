@@ -1,21 +1,17 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    
+    if (!lovableApiKey) {
+      throw new Error("LOVABLE_API_KEY not configured");
+    }
+    
+    const supabase = createServiceClient();
 
     const { incident_id, current_state, user_response } = await req.json();
 
@@ -161,27 +157,21 @@ Generate a dynamic decision tree node that guides the analyst through optimal re
     const nextStateMatch = guidance.match(/next state[:\s]+(\w+)/i);
     const recommendedNextState = nextStateMatch ? nextStateMatch[1] : 'investigation_phase';
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        incident_id,
-        current_state,
-        guidance: {
-          content: guidance,
-          recommended_next_state: recommendedNextState,
-          available_playbooks: playbooks?.map(p => ({ key: p.key, title: p.title })) || [],
-          escalation_options: escalationRules?.slice(0, 3) || [],
-        },
-        timestamp: new Date().toISOString(),
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return successResponse({
+      success: true,
+      incident_id,
+      current_state,
+      guidance: {
+        content: guidance,
+        recommended_next_state: recommendedNextState,
+        available_playbooks: playbooks?.map(p => ({ key: p.key, title: p.title })) || [],
+        escalation_options: escalationRules?.slice(0, 3) || [],
+      },
+      timestamp: new Date().toISOString(),
+    });
 
   } catch (error) {
     console.error("[guide-decision-tree] Error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return errorResponse(error instanceof Error ? error.message : String(error), 500);
   }
 });
