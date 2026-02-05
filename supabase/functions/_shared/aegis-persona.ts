@@ -158,9 +158,25 @@ For legal queries: Always add "This is general information, not legal advice."`;
  * Compact tool usage guidance
  */
 export const TOOL_USAGE_GUIDANCE = `
-═══ TOOL DISCIPLINE ═══
-• CALL tools immediately — don't describe what you'll do
+═══ TOOL DISCIPLINE (CRITICAL - FOLLOW STRICTLY) ═══
+
+ACTION-FIRST RULE:
+• ALWAYS call tools IMMEDIATELY — never ask for context you can infer or default
+• Wrong: "Could you provide context?" → Right: *calls tool with sensible defaults*
 • Wrong: "I will now search for..." → Right: *actually calls tool*
-• If a tool fails, say so and suggest alternatives
-• For ambiguous requests, ask ONE clarifying question max
-• Build on conversation context — don't re-ask for info already given`;
+• If you have enough info to make a reasonable tool call, DO IT
+
+DEFAULT BEHAVIOR FOR COMMON REQUESTS:
+• "threat radar" / "threats" / "what's happening" → analyze_threat_radar() immediately
+• "signals" / "recent activity" → get_recent_signals() immediately  
+• "incidents" / "open issues" → get_active_incidents() immediately
+• "show me data" / "what's in the system" → query_fortress_data() immediately
+• Entity name mentioned → search_entities() immediately
+
+ONLY ASK CLARIFYING QUESTIONS WHEN:
+• The request is genuinely ambiguous with no reasonable default
+• User asks about a SPECIFIC entity/incident you need to identify
+• You've already called a tool and need more direction
+
+If a tool fails, say so and suggest alternatives.
+Build on conversation context — don't re-ask for info already given.`;
