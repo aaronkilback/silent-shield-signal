@@ -1,21 +1,12 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createServiceClient();
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
 
     const { client_operation_flow, threat_scenario } = await req.json();
 
@@ -175,31 +166,25 @@ Provide a structured, actionable failure point analysis with specific technical 
     const criticalPointsCount = (failureAnalysis.match(/Critical Failure Point/gi) || []).length;
     const spofsCount = (failureAnalysis.match(/Single Point of Failure/gi) || []).length;
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        operation_context: clientData ? clientData.name : client_operation_flow,
-        threat_scenario,
-        failure_analysis: {
-          full_analysis: failureAnalysis,
-          critical_points_identified: criticalPointsCount,
-          single_points_of_failure: spofsCount,
-          historical_context: {
-            total_incidents_analyzed: incidents?.length || 0,
-            top_failure_types: topFailureTypes,
-            disruption_signals: disruptionSignals?.length || 0,
-          },
+    return successResponse({
+      success: true,
+      operation_context: clientData ? clientData.name : client_operation_flow,
+      threat_scenario,
+      failure_analysis: {
+        full_analysis: failureAnalysis,
+        critical_points_identified: criticalPointsCount,
+        single_points_of_failure: spofsCount,
+        historical_context: {
+          total_incidents_analyzed: incidents?.length || 0,
+          top_failure_types: topFailureTypes,
+          disruption_signals: disruptionSignals?.length || 0,
         },
-        timestamp: new Date().toISOString(),
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+      },
+      timestamp: new Date().toISOString(),
+    });
 
   } catch (error) {
     console.error("[identify-critical-failure-points] Error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return errorResponse(error instanceof Error ? error.message : String(error), 500);
   }
 });
