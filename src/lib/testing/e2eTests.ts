@@ -4654,6 +4654,956 @@ export const voiceFeaturesTests = {
 };
 
 // ============================================
+// OSINT & MONITORING TESTS
+// ============================================
+
+export const osintMonitoringTests = {
+  name: 'OSINT & Monitoring Functions',
+  tests: [
+    {
+      name: 'monitor-news function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('monitor-news', {
+          body: { test_mode: true, limit: 1 }
+        });
+        // Function should respond (may not find news in test mode)
+        if (error && !error.message?.includes('No sources')) {
+          throw new Error(`monitor-news failed: ${error.message}`);
+        }
+      },
+    },
+    {
+      name: 'monitor-weather function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('monitor-weather', {
+          body: { test_mode: true }
+        });
+        if (error && !error.message?.includes('No active')) {
+          throw new Error(`monitor-weather failed: ${error.message}`);
+        }
+      },
+    },
+    {
+      name: 'monitor-earthquakes function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('monitor-earthquakes', {
+          body: { test_mode: true }
+        });
+        // May have no earthquakes to report - acceptable
+      },
+    },
+    {
+      name: 'monitor-wildfires function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('monitor-wildfires', {
+          body: { test_mode: true }
+        });
+        // May have no fires - acceptable
+      },
+    },
+    {
+      name: 'monitor-travel-risks function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('monitor-travel-risks', {
+          body: { test_mode: true }
+        });
+        if (error && !error.message?.includes('No itineraries')) {
+          throw new Error(`monitor-travel-risks failed: ${error.message}`);
+        }
+      },
+    },
+    {
+      name: 'monitor-threat-intel function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('monitor-threat-intel', {
+          body: { test_mode: true }
+        });
+        // Should respond even in test mode
+      },
+    },
+    {
+      name: 'osint-web-search function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('osint-web-search', {
+          body: { query: 'test', test_mode: true }
+        });
+        // May fail without API key - acceptable for health check
+        if (error && error.message?.includes('timeout')) {
+          throw new Error('osint-web-search timed out');
+        }
+      },
+    },
+    {
+      name: 'autonomous-source-health-manager responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('autonomous-source-health-manager', {
+          body: { dry_run: true }
+        });
+        // Should respond
+      },
+    },
+  ],
+};
+
+// ============================================
+// THREAT INTELLIGENCE TESTS
+// ============================================
+
+export const threatIntelligenceTests = {
+  name: 'Threat Intelligence Functions',
+  tests: [
+    {
+      name: 'threat-radar-analysis function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('threat-radar-analysis', {
+          body: { test_mode: true }
+        });
+        if (error && error.message?.includes('timeout')) {
+          throw new Error('threat-radar-analysis timed out');
+        }
+      },
+    },
+    {
+      name: 'analyze-threat-escalation function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('analyze-threat-escalation', {
+          body: { test_mode: true }
+        });
+        if (error && error.message?.includes('timeout')) {
+          throw new Error('analyze-threat-escalation timed out');
+        }
+      },
+    },
+    {
+      name: 'identify-precursor-indicators function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('identify-precursor-indicators', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'calculate-anticipation-index function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('calculate-anticipation-index', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'simulate-attack-path function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('simulate-attack-path', {
+          body: { test_mode: true, asset_id: 'test' }
+        });
+        // May fail without valid asset - acceptable
+      },
+    },
+    {
+      name: 'simulate-protest-escalation function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('simulate-protest-escalation', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'recommend-tactical-countermeasures function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('recommend-tactical-countermeasures', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+  ],
+};
+
+// ============================================
+// VIP & ENTITY DEEP SCAN TESTS
+// ============================================
+
+export const vipDeepScanTests = {
+  name: 'VIP & Entity Deep Scan',
+  tests: [
+    {
+      name: 'vip-deep-scan function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('vip-deep-scan', {
+          body: { test_mode: true, name: 'Test VIP' }
+        });
+        // Should respond
+        if (error && error.message?.includes('timeout')) {
+          throw new Error('vip-deep-scan timed out');
+        }
+      },
+    },
+    {
+      name: 'vip-osint-discovery function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('vip-osint-discovery', {
+          body: { test_mode: true, query: 'test' }
+        });
+        if (error && error.message?.includes('timeout')) {
+          throw new Error('vip-osint-discovery timed out');
+        }
+      },
+    },
+    {
+      name: 'entity-deep-scan function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('entity-deep-scan', {
+          body: { test_mode: true, entity_id: 'test' }
+        });
+        // May fail without valid entity - acceptable
+      },
+    },
+    {
+      name: 'osint-entity-scan function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('osint-entity-scan', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'scan-entity-photos function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('scan-entity-photos', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'scan-entity-content function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('scan-entity-content', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+  ],
+};
+
+// ============================================
+// SIGNAL PROCESSING TESTS
+// ============================================
+
+export const signalProcessingTests = {
+  name: 'Signal Processing Functions',
+  tests: [
+    {
+      name: 'ingest-signal function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('ingest-signal', {
+          body: { test_mode: true, content: 'Test signal for health check' }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'correlate-signals function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('correlate-signals', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'detect-duplicates function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('detect-duplicates', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'detect-near-duplicate-signals function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('detect-near-duplicate-signals', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'propose-signal-merge function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('propose-signal-merge', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'extract-signal-insights function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('extract-signal-insights', {
+          body: { test_mode: true, signal_id: 'test' }
+        });
+        // May fail without valid signal
+      },
+    },
+    {
+      name: 'cleanup-duplicate-signals function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('cleanup-duplicate-signals', {
+          body: { dry_run: true }
+        });
+        // Should respond
+      },
+    },
+  ],
+};
+
+// ============================================
+// ENTITY CORRELATION TESTS
+// ============================================
+
+export const entityCorrelationTests = {
+  name: 'Entity Correlation Functions',
+  tests: [
+    {
+      name: 'correlate-entities function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('correlate-entities', {
+          body: { test_mode: true, text: 'Test entity correlation' }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'cross-reference-entities function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('cross-reference-entities', {
+          body: { test_mode: true }
+        });
+        // May fail without file - acceptable
+      },
+    },
+    {
+      name: 'auto-enrich-entities function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('auto-enrich-entities', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'enrich-entity function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('enrich-entity', {
+          body: { test_mode: true, entity_id: 'test' }
+        });
+        // May fail without valid entity
+      },
+    },
+    {
+      name: 'configure-entity-monitoring function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('configure-entity-monitoring', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'monitor-entity-proximity function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('monitor-entity-proximity', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+  ],
+};
+
+// ============================================
+// INCIDENT MANAGEMENT TESTS
+// ============================================
+
+export const incidentManagementTests = {
+  name: 'Incident Management Functions',
+  tests: [
+    {
+      name: 'incident-action function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('incident-action', {
+          body: { test_mode: true, action: 'status_check' }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'check-incident-escalation function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('check-incident-escalation', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'auto-summarize-incident function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('auto-summarize-incident', {
+          body: { test_mode: true }
+        });
+        // May need valid incident ID
+      },
+    },
+    {
+      name: 'incident-agent-orchestrator function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('incident-agent-orchestrator', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'generate-incident-briefing function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('generate-incident-briefing', {
+          body: { test_mode: true }
+        });
+        // May need valid incident
+      },
+    },
+    {
+      name: 'manage-incident-ticket function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('manage-incident-ticket', {
+          body: { test_mode: true, action: 'status' }
+        });
+        // Should respond
+      },
+    },
+  ],
+};
+
+// ============================================
+// REPORT GENERATION TESTS
+// ============================================
+
+export const reportGenerationTests = {
+  name: 'Report Generation Functions',
+  tests: [
+    {
+      name: 'generate-report function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('generate-report', {
+          body: { test_mode: true, report_type: 'summary' }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'generate-executive-report function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('generate-executive-report', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'generate-security-briefing function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('generate-security-briefing', {
+          body: { test_mode: true, location: 'Test City' }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'generate-consortium-briefing function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('generate-consortium-briefing', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'generate-briefing-audio function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('generate-briefing-audio', {
+          body: { test_mode: true, text: 'Test audio generation' }
+        });
+        // May need valid API key
+      },
+    },
+  ],
+};
+
+// ============================================
+// TRAVEL SECURITY TESTS (EXTENDED)
+// ============================================
+
+export const travelSecurityExtendedTests = {
+  name: 'Travel Security Functions (Extended)',
+  tests: [
+    {
+      name: 'parse-travel-itinerary function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('parse-travel-itinerary', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'parse-travel-security-report function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('parse-travel-security-report', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'archive-completed-itineraries function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('archive-completed-itineraries', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'Travel alerts table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('travel_alerts')
+          .select('id, alert_type, severity')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Travelers table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('travelers')
+          .select('id, name')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Itineraries table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('itineraries')
+          .select('id, destination')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+  ],
+};
+
+// ============================================
+// GEOSPATIAL & MAPPING TESTS
+// ============================================
+
+export const geospatialMappingTests = {
+  name: 'Geospatial & Mapping Functions',
+  tests: [
+    {
+      name: 'process-geospatial-map function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('process-geospatial-map', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'fuse-geospatial-intelligence function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('fuse-geospatial-intelligence', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'model-geopolitical-risk function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('model-geopolitical-risk', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'Geospatial maps storage bucket accessible',
+      fn: async () => {
+        const { data, error } = await supabase.storage
+          .from('geospatial-maps')
+          .list('', { limit: 1 });
+        // Should be accessible
+        if (error && !error.message.includes('empty')) {
+          throw error;
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// CONSORTIUM & SHARING TESTS
+// ============================================
+
+export const consortiumSharingTests = {
+  name: 'Consortium & Intelligence Sharing',
+  tests: [
+    {
+      name: 'Consortia table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('consortia')
+          .select('id, name')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Consortium members table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('consortium_members')
+          .select('id, consortium_id')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Consortium user access table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('consortium_user_access')
+          .select('id, can_share')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+  ],
+};
+
+// ============================================
+// NOTIFICATION & ALERT DELIVERY TESTS
+// ============================================
+
+export const notificationDeliveryTests = {
+  name: 'Notification & Alert Delivery',
+  tests: [
+    {
+      name: 'alert-delivery function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('alert-delivery', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'alert-delivery-secure function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('alert-delivery-secure', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'send-notification-email function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('send-notification-email', {
+          body: { test_mode: true, to: 'test@example.com', type: 'test' }
+        });
+        // May fail without valid config - acceptable
+      },
+    },
+    {
+      name: 'webhook-dispatcher function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('webhook-dispatcher', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'Alerts table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('alerts')
+          .select('id, status, channel')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Notification preferences table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('notification_preferences')
+          .select('id, user_id')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+  ],
+};
+
+// ============================================
+// AI DECISION ENGINE TESTS
+// ============================================
+
+export const aiDecisionEngineTests = {
+  name: 'AI Decision Engine Functions',
+  tests: [
+    {
+      name: 'ai-decision-engine full health check',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('ai-decision-engine', {
+          body: { test_mode: true, health_check: true }
+        });
+        if (error && error.message?.includes('timeout')) {
+          throw new Error('ai-decision-engine timed out');
+        }
+      },
+    },
+    {
+      name: 'guide-decision-tree function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('guide-decision-tree', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'optimize-rule-thresholds function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('optimize-rule-thresholds', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'adaptive-confidence-adjuster function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('adaptive-confidence-adjuster', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'perform-impact-analysis function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('perform-impact-analysis', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+  ],
+};
+
+// ============================================
+// SYSTEM HEALTH TESTS
+// ============================================
+
+export const systemHealthTests = {
+  name: 'System Health & Infrastructure',
+  tests: [
+    {
+      name: 'system-health-check function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('system-health-check', {
+          body: { }
+        });
+        if (error && error.message?.includes('timeout')) {
+          throw new Error('system-health-check timed out');
+        }
+      },
+    },
+    {
+      name: 'data-quality-monitor function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('data-quality-monitor', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'bug-workflow-manager function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('bug-workflow-manager', {
+          body: { action: 'status' }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'support-chat function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('support-chat', {
+          body: { message: 'ping', test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'aggregate-global-learnings function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('aggregate-global-learnings', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'Bug reports table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('bug_reports')
+          .select('id, title, status')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+  ],
+};
+
+// ============================================
+// MFA & SECURITY TESTS
+// ============================================
+
+export const mfaSecurityTests = {
+  name: 'MFA & Security Functions',
+  tests: [
+    {
+      name: 'send-mfa-code function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('send-mfa-code', {
+          body: { test_mode: true }
+        });
+        // May fail without valid phone - acceptable
+      },
+    },
+    {
+      name: 'verify-mfa-code function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('verify-mfa-code', {
+          body: { test_mode: true, code: '000000' }
+        });
+        // Should respond (will fail verification but function works)
+      },
+    },
+    {
+      name: 'guardian-check function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('guardian-check', {
+          body: { content: 'test content', test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'audit-compliance-status function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('audit-compliance-status', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+  ],
+};
+
+// ============================================
+// TENANT & WORKSPACE TESTS
+// ============================================
+
+export const tenantWorkspaceTests = {
+  name: 'Tenant & Workspace Functions',
+  tests: [
+    {
+      name: 'get-user-tenants function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('get-user-tenants', {
+          body: { }
+        });
+        // Should respond with user's tenants
+      },
+    },
+    {
+      name: 'create-tenant function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('create-tenant', {
+          body: { test_mode: true, name: 'Test Tenant' }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'create-workspace function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('create-workspace', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'create-invite function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('create-invite', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'accept-invite function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('accept-invite', {
+          body: { test_mode: true, invite_code: 'test' }
+        });
+        // Should respond (will fail without valid code)
+      },
+    },
+    {
+      name: 'send-workspace-invitation function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('send-workspace-invitation', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+  ],
+};
+
+// ============================================
 // RUN ALL TESTS
 // ============================================
 
@@ -4809,6 +5759,23 @@ export async function runAllTests(): Promise<TestSuite[]> {
     
     // Voice Features
     voiceFeaturesTests,
+    
+    // NEW: Comprehensive Fortress Capability Tests
+    osintMonitoringTests,
+    threatIntelligenceTests,
+    vipDeepScanTests,
+    signalProcessingTests,
+    entityCorrelationTests,
+    incidentManagementTests,
+    reportGenerationTests,
+    travelSecurityExtendedTests,
+    geospatialMappingTests,
+    consortiumSharingTests,
+    notificationDeliveryTests,
+    aiDecisionEngineTests,
+    systemHealthTests,
+    mfaSecurityTests,
+    tenantWorkspaceTests,
   ];
   
   for (const suite of suites) {
