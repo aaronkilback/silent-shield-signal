@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 interface SentimentMetrics {
   positive: number;
@@ -64,24 +58,18 @@ function calculateDrift(
   return { trend, momentum: Math.round(momentum * 100) / 100, key_drivers: keyDrivers };
 }
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { entity_id, time_windows } = await req.json();
 
     if (!entity_id) {
-      return new Response(
-        JSON.stringify({ error: "entity_id is required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return errorResponse("entity_id is required", 400);
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
 
     // Get entity info
     const { data: entity, error: entityError } = await supabase
@@ -91,10 +79,7 @@ serve(async (req) => {
       .single();
 
     if (entityError || !entity) {
-      return new Response(
-        JSON.stringify({ error: "Entity not found" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return errorResponse("Entity not found", 404);
     }
 
     const windows = time_windows || [7, 30, 90];
@@ -198,14 +183,9 @@ serve(async (req) => {
       windows_analyzed: windows,
     };
 
-    return new Response(JSON.stringify(response), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return successResponse(response);
   } catch (error) {
     console.error("Sentiment drift analysis error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);
   }
 });

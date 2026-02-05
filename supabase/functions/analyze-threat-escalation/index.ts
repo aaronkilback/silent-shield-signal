@@ -1,24 +1,14 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { signal_id, lookback_days = 30 } = await req.json();
     console.log('Analyzing threat escalation for signal:', signal_id);
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabaseClient = createServiceClient();
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
@@ -99,24 +89,18 @@ Provide:
 
     console.log('Threat escalation analysis complete');
 
-    return new Response(
-      JSON.stringify({
-        signal_id,
-        escalation_analysis: analysis,
-        historical_context: {
-          similar_signals_count: historicalSignals?.length || 0,
-          incidents_count: historicalIncidents?.length || 0,
-          escalated_incidents: historicalIncidents?.filter(i => i.severity_level === 'high').length || 0
-        },
-        analyzed_at: new Date().toISOString()
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      signal_id,
+      escalation_analysis: analysis,
+      historical_context: {
+        similar_signals_count: historicalSignals?.length || 0,
+        incidents_count: historicalIncidents?.length || 0,
+        escalated_incidents: historicalIncidents?.filter(i => i.severity_level === 'high').length || 0
+      },
+      analyzed_at: new Date().toISOString()
+    });
   } catch (error) {
     console.error('Error in analyze-threat-escalation:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
