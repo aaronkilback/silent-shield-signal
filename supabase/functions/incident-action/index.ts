@@ -1,4 +1,4 @@
-import { corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 Deno.serve(async (req) => {
@@ -21,10 +21,14 @@ Deno.serve(async (req) => {
 
     const { incident_id, action, note } = await req.json();
     
-    console.log(`Performing action ${action} on incident ${incident_id}`);
+    if (!incident_id || !action) {
+      return errorResponse('incident_id and action are required', 400);
+    }
+
+    console.log(`[IncidentAction] Performing action ${action} on incident ${incident_id}`);
 
     const now = new Date().toISOString();
-    const updates: any = {};
+    const updates: any = { updated_at: now };
     const timelineEntry: any = {
       timestamp: now,
       user_id: user.id,
@@ -32,7 +36,7 @@ Deno.serve(async (req) => {
       note: note || ''
     };
 
-    // Calculate MTTD, MTTC, MTTR based on action
+    // Calculate updates based on action
     switch (action) {
       case 'acknowledge':
         updates.acknowledged_at = now;
@@ -46,6 +50,15 @@ Deno.serve(async (req) => {
         updates.resolved_at = now;
         updates.status = 'resolved';
         break;
+      case 'escalate':
+        updates.status = 'escalated';
+        break;
+      case 'reopen':
+        updates.status = 'open';
+        updates.resolved_at = null;
+        break;
+      default:
+        return errorResponse(`Unknown action: ${action}`, 400);
     }
 
     // Get current incident to append to timeline
@@ -55,20 +68,22 @@ Deno.serve(async (req) => {
       .eq('id', incident_id)
       .single();
 
-    if (fetchError) throw fetchError;
+    if (fetchError) {
+      console.error('[IncidentAction] Error fetching incident:', fetchError);
+      throw fetchError;
+    }
 
     const timeline = Array.isArray(incident.timeline_json) 
       ? [...incident.timeline_json, timelineEntry]
       : [timelineEntry];
 
     updates.timeline_json = timeline;
-    updates.updated_at = now;
 
-    // Calculate metrics
+    // Calculate MTTA (Mean Time to Acknowledge)
     const openedAt = new Date(incident.opened_at);
     if (action === 'acknowledge' && !incident.acknowledged_at) {
-      const mtta = (new Date(now).getTime() - openedAt.getTime()) / 1000 / 60; // minutes
-      console.log(`MTTA: ${mtta.toFixed(2)} minutes`);
+      const mttaMinutes = (new Date(now).getTime() - openedAt.getTime()) / 1000 / 60;
+      console.log(`[IncidentAction] MTTA: ${mttaMinutes.toFixed(2)} minutes`);
     }
 
     // Update incident
@@ -79,11 +94,16 @@ Deno.serve(async (req) => {
       .select()
       .single();
 
-    if (updateError) throw updateError;
+    if (updateError) {
+      console.error('[IncidentAction] Error updating incident:', updateError);
+      throw updateError;
+    }
+
+    console.log(`[IncidentAction] Incident ${incident_id} updated to status: ${updates.status}`);
 
     return successResponse({ incident: updated });
   } catch (error) {
-    console.error('Error in incident-action:', error);
+    console.error('[IncidentAction] Error:', error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

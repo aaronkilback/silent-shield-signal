@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -13,9 +13,9 @@ Deno.serve(async (req) => {
 
     const supabase = createServiceClient();
 
-    console.log(`Creating merge proposal for primary signal ${primary_signal_id} with ${duplicate_signal_ids.length} duplicates`);
+    console.log(`[SignalMerge] Creating merge proposal for primary signal ${primary_signal_id} with ${duplicate_signal_ids.length} duplicates`);
 
-    // Verify signals exist
+    // Verify primary signal exists
     const { data: primarySignal, error: primaryError } = await supabase
       .from('signals')
       .select('id, normalized_text, category, severity, created_at')
@@ -23,15 +23,18 @@ Deno.serve(async (req) => {
       .single();
 
     if (primaryError || !primarySignal) {
+      console.error('[SignalMerge] Primary signal not found:', primaryError);
       return errorResponse('Primary signal not found', 404);
     }
 
+    // Verify duplicate signals exist
     const { data: duplicateSignals, error: duplicateError } = await supabase
       .from('signals')
       .select('id, normalized_text, category, severity, created_at')
       .in('id', duplicate_signal_ids);
 
     if (duplicateError || !duplicateSignals || duplicateSignals.length === 0) {
+      console.error('[SignalMerge] Duplicate signals not found:', duplicateError);
       return errorResponse('Duplicate signals not found', 404);
     }
 
@@ -50,37 +53,34 @@ Deno.serve(async (req) => {
       .single();
 
     if (insertError) {
-      console.error('Error creating merge proposal:', insertError);
+      console.error('[SignalMerge] Error creating merge proposal:', insertError);
       return errorResponse(`Failed to create merge proposal: ${insertError.message}`, 500);
     }
 
-    console.log(`Created merge proposal ${proposal.id}`);
+    console.log(`[SignalMerge] Created merge proposal ${proposal.id}`);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        proposal_id: proposal.id,
-        primary_signal: {
-          id: primarySignal.id,
-          text: primarySignal.normalized_text?.substring(0, 200),
-          category: primarySignal.category,
-          severity: primarySignal.severity,
-        },
-        duplicates: duplicateSignals.map((s, idx) => ({
-          id: s.id,
-          text: s.normalized_text?.substring(0, 200),
-          category: s.category,
-          severity: s.severity,
-          similarity: similarity_scores?.[idx] || 0,
-        })),
-        status: 'pending',
-        message: `Merge proposal created successfully. Awaiting human review.`,
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      proposal_id: proposal.id,
+      primary_signal: {
+        id: primarySignal.id,
+        text: primarySignal.normalized_text?.substring(0, 200),
+        category: primarySignal.category,
+        severity: primarySignal.severity,
+      },
+      duplicates: duplicateSignals.map((s, idx) => ({
+        id: s.id,
+        text: s.normalized_text?.substring(0, 200),
+        category: s.category,
+        severity: s.severity,
+        similarity: similarity_scores?.[idx] || 0,
+      })),
+      status: 'pending',
+      message: `Merge proposal created successfully. Awaiting human review.`,
+    });
 
   } catch (error) {
-    console.error('Error in propose-signal-merge:', error);
+    console.error('[SignalMerge] Error:', error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

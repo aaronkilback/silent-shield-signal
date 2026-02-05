@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -6,21 +6,21 @@ Deno.serve(async (req) => {
 
   try {
     const { countermeasure_plan, threat_scenario_id } = await req.json();
-    console.log('Evaluating countermeasure impact for scenario:', threat_scenario_id);
+    console.log('[CountermeasureImpact] Evaluating countermeasure impact for scenario:', threat_scenario_id);
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+      return errorResponse('LOVABLE_API_KEY not configured', 500);
     }
 
     const supabase = createServiceClient();
 
-    // Fetch threat scenario details (could be a signal or incident)
+    // Fetch threat scenario details
     let scenarioData = null;
     if (threat_scenario_id) {
       const { data: signal } = await supabase
         .from('signals')
-        .select('*')
+        .select('id, title, normalized_text, severity, category, rule_category')
         .eq('id', threat_scenario_id)
         .single();
       
@@ -29,15 +29,14 @@ Deno.serve(async (req) => {
       } else {
         const { data: incident } = await supabase
           .from('incidents')
-          .select('*')
+          .select('id, title, severity_level, incident_type, priority, description')
           .eq('id', threat_scenario_id)
           .single();
         scenarioData = incident;
       }
     }
 
-    const evaluationPrompt = `
-You are a tactical defense analyst evaluating the effectiveness of proposed countermeasures against a specific threat scenario.
+    const evaluationPrompt = `You are a tactical defense analyst evaluating the effectiveness of proposed countermeasures against a specific threat scenario.
 
 COUNTERMEASURE PLAN:
 ${JSON.stringify(countermeasure_plan, null, 2)}
@@ -60,9 +59,9 @@ Consider:
 - Physical/cyber attack vectors
 - Operational environment constraints
 - Resource availability and deployment speed
-- Potential for circumvention or adaptation by threat actors
+- Potential for circumvention by threat actors
 
-Provide a structured evaluation that helps security teams prioritize and sequence countermeasure deployment.`;
+Provide a structured evaluation that helps security teams prioritize countermeasure deployment.`;
 
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
@@ -81,18 +80,18 @@ Provide a structured evaluation that helps security teams prioritize and sequenc
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('AI Gateway error:', response.status, errorText);
-      throw new Error('AI Gateway error');
+      console.error('[CountermeasureImpact] AI Gateway error:', response.status, errorText);
+      return errorResponse('AI Gateway error', 500);
     }
 
     const data = await response.json();
     const evaluation = data.choices?.[0]?.message?.content;
 
     if (!evaluation) {
-      throw new Error('No evaluation generated');
+      return errorResponse('No evaluation generated', 500);
     }
 
-    console.log('Countermeasure impact evaluation completed');
+    console.log('[CountermeasureImpact] Evaluation completed');
 
     return successResponse({ 
       threat_scenario_id,
@@ -100,7 +99,7 @@ Provide a structured evaluation that helps security teams prioritize and sequenc
       evaluated_at: new Date().toISOString()
     });
   } catch (error) {
-    console.error('Error in evaluate-countermeasure-impact:', error);
+    console.error('[CountermeasureImpact] Error:', error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error occurred', 500);
   }
 });

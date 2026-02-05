@@ -1,24 +1,21 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-api-key',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-api-key, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
 };
 
-// Hash the API key for comparison
 async function hashApiKey(key: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(key);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders });
   }
 
   if (req.method !== 'GET') {
@@ -33,7 +30,6 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
-    // Check for API key in header
     const apiKey = req.headers.get('x-api-key');
     
     if (!apiKey) {
@@ -43,7 +39,6 @@ serve(async (req) => {
       );
     }
 
-    // Validate API key
     const keyHash = await hashApiKey(apiKey);
     const { data: validKey, error: keyError } = await supabase
       .from('api_keys')
@@ -58,7 +53,6 @@ serve(async (req) => {
       );
     }
 
-    // Check permission
     const permissions = validKey.permissions as string[];
     if (!permissions.includes('read:agents') && !permissions.includes('read:*')) {
       return new Response(
@@ -67,70 +61,39 @@ serve(async (req) => {
       );
     }
 
-    // Update last_used_at
-    await supabase
-      .from('api_keys')
-      .update({ last_used_at: new Date().toISOString() })
-      .eq('id', validKey.id);
+    await supabase.from('api_keys').update({ last_used_at: new Date().toISOString() }).eq('id', validKey.id);
 
-    // Parse query params
     const url = new URL(req.url);
     const activeOnly = url.searchParams.get('active') !== 'false';
     const specialty = url.searchParams.get('specialty');
 
-    // Fetch agents
     let query = supabase
       .from('ai_agents')
       .select(`
-        id,
-        codename,
-        call_sign,
-        specialty,
-        persona,
-        mission_scope,
-        interaction_style,
-        avatar_color,
-        avatar_image,
-        header_name,
-        is_active,
-        is_client_facing,
-        input_sources,
-        output_types,
-        created_at,
-        updated_at
+        id, codename, call_sign, specialty, persona, mission_scope,
+        interaction_style, avatar_color, avatar_image, header_name,
+        is_active, is_client_facing, input_sources, output_types,
+        created_at, updated_at
       `)
       .order('codename');
 
-    if (activeOnly) {
-      query = query.eq('is_active', true);
-    }
-
-    if (specialty) {
-      query = query.ilike('specialty', `%${specialty}%`);
-    }
+    if (activeOnly) query = query.eq('is_active', true);
+    if (specialty) query = query.ilike('specialty', `%${specialty}%`);
 
     const { data: agents, error } = await query;
 
-    if (error) {
-      throw error;
-    }
+    if (error) throw error;
 
     return new Response(
       JSON.stringify({
         data: agents,
-        meta: {
-          count: agents.length,
-          timestamp: new Date().toISOString(),
-        }
+        meta: { count: agents.length, timestamp: new Date().toISOString() }
       }),
-      { 
-        status: 200, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
-    console.error('API agents error:', error);
+    console.error('[APIAgents] Error:', error);
     return new Response(
       JSON.stringify({ error: 'Internal server error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -6,28 +6,26 @@ Deno.serve(async (req) => {
 
   try {
     const { jurisdiction, industry_sector } = await req.json();
-    console.log('Monitoring regulatory changes for:', jurisdiction, industry_sector);
+    console.log('[RegulatoryChanges] Monitoring for:', jurisdiction, industry_sector);
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+      return errorResponse('LOVABLE_API_KEY not configured', 500);
     }
 
-    const analysisPrompt = `
-You are a regulatory compliance analyst tracking security, privacy, and environmental regulations for a specific industry and jurisdiction.
+    const analysisPrompt = `You are a regulatory compliance analyst tracking security, privacy, and environmental regulations for a specific industry and jurisdiction.
 
-JURISDICTION: ${jurisdiction}
-INDUSTRY SECTOR: ${industry_sector}
+JURISDICTION: ${jurisdiction || 'Canada (Federal, BC, Alberta)'}
+INDUSTRY SECTOR: ${industry_sector || 'Energy/Critical Infrastructure'}
 
 TASK:
 Identify and analyze recent regulatory changes and upcoming requirements that impact security operations and compliance obligations. Provide:
 
 1. RECENT REGULATORY CHANGES (Last 12 months):
    - Security & data protection regulations
-   - Privacy laws (e.g., GDPR, PIPEDA, state privacy laws)
+   - Privacy laws (PIPEDA, provincial laws)
    - Environmental regulations affecting operations
    - Critical infrastructure protection requirements
-   - Industry-specific security standards
    
    For each regulation:
    - Regulation name and reference
@@ -50,7 +48,6 @@ Identify and analyze recent regulatory changes and upcoming requirements that im
 4. CROSS-BORDER CONSIDERATIONS:
    - International data transfer restrictions
    - Multi-jurisdictional compliance requirements
-   - Conflicting regulatory frameworks
 
 5. COMPLIANCE IMPACT ASSESSMENT:
    - New security controls required
@@ -64,7 +61,7 @@ Identify and analyze recent regulatory changes and upcoming requirements that im
    - Industry associations and guidance sources
    - Recommended monitoring cadence
 
-Focus on regulations with direct security, privacy, or operational risk implications for ${industry_sector} organizations operating in ${jurisdiction}.`;
+Focus on regulations with direct security, privacy, or operational risk implications.`;
 
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
@@ -83,27 +80,27 @@ Focus on regulations with direct security, privacy, or operational risk implicat
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('AI Gateway error:', response.status, errorText);
-      throw new Error('AI Gateway error');
+      console.error('[RegulatoryChanges] AI Gateway error:', response.status, errorText);
+      return errorResponse('AI Gateway error', 500);
     }
 
     const data = await response.json();
     const analysis = data.choices?.[0]?.message?.content;
 
     if (!analysis) {
-      throw new Error('No analysis generated');
+      return errorResponse('No analysis generated', 500);
     }
 
-    console.log('Regulatory change monitoring completed');
+    console.log('[RegulatoryChanges] Analysis completed');
 
     return successResponse({ 
-      jurisdiction,
-      industry_sector,
+      jurisdiction: jurisdiction || 'Canada',
+      industry_sector: industry_sector || 'Energy',
       regulatory_analysis: analysis,
       analyzed_at: new Date().toISOString()
     });
   } catch (error) {
-    console.error('Error in monitor-regulatory-changes:', error);
+    console.error('[RegulatoryChanges] Error:', error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error occurred', 500);
   }
 });

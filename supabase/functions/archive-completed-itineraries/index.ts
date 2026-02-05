@@ -1,14 +1,13 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response("ok", { headers: corsHeaders });
   }
 
   try {
@@ -24,7 +23,6 @@ serve(async (req) => {
 
     const now = new Date().toISOString();
 
-    // Get all itineraries that should be archived
     const { data: itineraries, error: fetchError } = await supabaseClient
       .from("itineraries")
       .select("id, trip_type, departure_date, return_date, trip_name, status")
@@ -33,11 +31,10 @@ serve(async (req) => {
 
     if (fetchError) throw fetchError;
 
-    console.log(`Found ${itineraries?.length || 0} itineraries to archive`);
+    console.log(`[ArchiveItineraries] Found ${itineraries?.length || 0} itineraries to archive`);
 
     let archivedCount = 0;
 
-    // Update each itinerary to completed status
     for (const itinerary of itineraries || []) {
       const shouldArchive = 
         itinerary.trip_type === "one_way" 
@@ -51,9 +48,9 @@ serve(async (req) => {
           .eq("id", itinerary.id);
 
         if (updateError) {
-          console.error(`Failed to archive itinerary ${itinerary.id}:`, updateError);
+          console.error(`[ArchiveItineraries] Failed to archive ${itinerary.id}:`, updateError);
         } else {
-          console.log(`Archived itinerary: ${itinerary.trip_name} (${itinerary.id})`);
+          console.log(`[ArchiveItineraries] Archived: ${itinerary.trip_name}`);
           archivedCount++;
         }
       }
@@ -65,20 +62,13 @@ serve(async (req) => {
         archivedCount,
         message: `Successfully archived ${archivedCount} itineraries`,
       }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("Error archiving itineraries:", error);
+    console.error("[ArchiveItineraries] Error:", error);
     return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });

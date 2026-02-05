@@ -1,28 +1,20 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY is not configured");
+      return errorResponse("LOVABLE_API_KEY is not configured", 500);
     }
 
     const { action, audioData, conversationHistory } = await req.json();
 
-    console.log(`Voice conversation action: ${action}`);
+    console.log(`[GeminiVoice] Action: ${action}`);
 
     if (action === "initialize") {
-      // Initialize voice session with system prompt
       const systemPrompt = `You are an intelligent security intelligence assistant for the Fortress platform.
 
 Fortress is a comprehensive security intelligence and threat monitoring system that helps security teams:
@@ -39,31 +31,16 @@ When users ask questions, provide concise, actionable security guidance. You can
 - Navigate platform features
 - Interpret monitoring data and risk levels
 
-Be professional, security-focused, and conversational in your voice responses. Keep responses brief but informative, as this is a voice conversation.`;
+Be professional, security-focused, and conversational in your voice responses. Keep responses brief but informative.`;
 
-      return new Response(
-        JSON.stringify({ 
-          status: "initialized",
-          systemPrompt 
-        }),
-        {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
+      return successResponse({ status: "initialized", systemPrompt });
     }
 
     if (action === "process_audio" && audioData) {
-      // Process audio through Gemini with voice capabilities
       const messages = [
-        {
-          role: "system",
-          content: "You are a security intelligence assistant. Respond naturally and conversationally."
-        },
+        { role: "system", content: "You are a security intelligence assistant. Respond naturally and conversationally." },
         ...(conversationHistory || []),
-        {
-          role: "user",
-          content: "Audio input received"
-        }
+        { role: "user", content: "Audio input received" }
       ];
 
       const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -81,40 +58,26 @@ Be professional, security-focused, and conversational in your voice responses. K
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("AI gateway error:", response.status, errorText);
-        throw new Error(`AI gateway error: ${errorText}`);
+        console.error("[GeminiVoice] AI gateway error:", response.status, errorText);
+        return errorResponse(`AI gateway error: ${errorText}`, 500);
       }
 
       const data = await response.json();
       const assistantMessage = data.choices[0].message.content;
 
-      console.log("Generated voice response");
+      console.log("[GeminiVoice] Generated voice response");
 
-      return new Response(
-        JSON.stringify({ 
-          transcription: audioData.transcription || "Voice input processed",
-          response: assistantMessage,
-          status: "processed"
-        }),
-        {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
+      return successResponse({ 
+        transcription: audioData.transcription || "Voice input processed",
+        response: assistantMessage,
+        status: "processed"
+      });
     }
 
-    throw new Error("Invalid action or missing audioData");
+    return errorResponse("Invalid action or missing audioData", 400);
 
   } catch (error) {
-    console.error("Error in gemini-voice-conversation:", error);
-    return new Response(
-      JSON.stringify({ 
-        error: error instanceof Error ? error.message : "Unknown error",
-        status: "error"
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    console.error("[GeminiVoice] Error:", error);
+    return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);
   }
 });

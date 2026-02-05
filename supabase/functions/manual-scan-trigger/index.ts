@@ -7,7 +7,7 @@ Deno.serve(async (req) => {
   try {
     const supabase = createServiceClient();
 
-    console.log('Manual scan trigger initiated');
+    console.log('[ManualScan] Initiating manual scan trigger');
 
     // List of available monitors
     const monitors = [
@@ -33,11 +33,12 @@ Deno.serve(async (req) => {
     // Trigger each monitor
     for (const monitor of monitors) {
       try {
-        console.log(`Triggering ${monitor}...`);
+        console.log(`[ManualScan] Triggering ${monitor}...`);
         
         const { data, error } = await supabase.functions.invoke(monitor, {
           body: { 
-            manual_trigger: true
+            manual_trigger: true,
+            triggered_at: new Date().toISOString()
           }
         });
 
@@ -45,13 +46,13 @@ Deno.serve(async (req) => {
           monitor,
           status: error ? 'error' : 'success',
           error: error?.message,
-          data
+          data: data ? { message: data.message || 'Completed' } : null
         });
 
-        console.log(`${monitor}: ${error ? 'failed' : 'completed'}`);
+        console.log(`[ManualScan] ${monitor}: ${error ? 'failed' : 'completed'}`);
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-        console.error(`Error invoking ${monitor}:`, err);
+        console.error(`[ManualScan] Error invoking ${monitor}:`, err);
         results.push({
           monitor,
           status: 'error',
@@ -62,6 +63,22 @@ Deno.serve(async (req) => {
 
     const successCount = results.filter(r => r.status === 'success').length;
     const errorCount = results.filter(r => r.status === 'error').length;
+
+    // Log to audit
+    try {
+      await supabase.from('audit_events').insert({
+        action: 'manual_scan_triggered',
+        resource: 'monitors',
+        metadata: {
+          monitors_count: monitors.length,
+          success_count: successCount,
+          error_count: errorCount,
+          triggered_at: new Date().toISOString()
+        }
+      });
+    } catch (logError) {
+      console.error('[ManualScan] Failed to log audit event:', logError);
+    }
 
     return successResponse({
       success: true,
@@ -76,7 +93,7 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Error in manual-scan-trigger:', error);
+    console.error('[ManualScan] Error:', error);
     return errorResponse(errorMessage, 500);
   }
 });

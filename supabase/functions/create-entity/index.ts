@@ -1,17 +1,13 @@
-import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 interface CreateEntityRequest {
-  // Required fields
   name: string;
   type: "person" | "organization" | "location" | "vehicle" | "asset" | "event" | "threat_group";
-  
-  // Optional fields
   description?: string;
   aliases?: string[];
   risk_level?: "low" | "medium" | "high" | "critical";
@@ -19,32 +15,23 @@ interface CreateEntityRequest {
   threat_indicators?: string[];
   associations?: string[];
   attributes?: Record<string, unknown>;
-  
-  // Address fields (for locations)
   address_street?: string;
   address_city?: string;
   address_province?: string;
   address_postal_code?: string;
   address_country?: string;
-  
-  // Monitoring configuration
   current_location?: string;
   active_monitoring_enabled?: boolean;
   monitoring_radius_km?: number;
-  
-  // Client association
   client_id?: string;
-  
-  // Workflow options
-  direct_create?: boolean; // If true, create entity directly. If false, create as suggestion.
+  direct_create?: boolean;
   confidence_score?: number;
-  source_context?: string; // Context about why this entity is being created
+  source_context?: string;
 }
 
-serve(async (req: Request) => {
-  // Handle CORS preflight
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response("ok", { headers: corsHeaders });
   }
 
   try {
@@ -54,33 +41,25 @@ serve(async (req: Request) => {
 
     const body: CreateEntityRequest = await req.json();
 
-    // Validate required fields
     if (!body.name || !body.type) {
       return new Response(
         JSON.stringify({
           success: false,
           error: "Missing required fields: 'name' and 'type' are required",
-          required_fields: ["name", "type"],
           valid_types: ["person", "organization", "location", "vehicle", "asset", "event", "threat_group"]
         }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Normalize type to match database enum
     const validTypes = ["person", "organization", "location", "vehicle", "asset", "event", "threat_group"];
     if (!validTypes.includes(body.type)) {
       return new Response(
-        JSON.stringify({
-          success: false,
-          error: `Invalid entity type: '${body.type}'`,
-          valid_types: validTypes
-        }),
+        JSON.stringify({ success: false, error: `Invalid entity type: '${body.type}'`, valid_types: validTypes }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Check if entity already exists (case-insensitive)
     const { data: existing } = await supabase
       .from("entities")
       .select("id, name, type, risk_level, is_active")
@@ -93,40 +72,16 @@ serve(async (req: Request) => {
         JSON.stringify({
           success: false,
           error: `Entity "${existing.name}" already exists`,
-          existing_entity: {
-            id: existing.id,
-            name: existing.name,
-            type: existing.type,
-            risk_level: existing.risk_level,
-            is_active: existing.is_active
-          },
+          existing_entity: existing,
           suggestion: "Use update-entity or enrich-entity to modify existing entities"
         }),
         { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Check aliases for potential duplicates
-    if (body.aliases && body.aliases.length > 0) {
-      for (const alias of body.aliases) {
-        const { data: aliasMatch } = await supabase
-          .from("entities")
-          .select("id, name, aliases")
-          .or(`name.ilike.${alias},aliases.cs.{${alias}}`)
-          .limit(1)
-          .maybeSingle();
-
-        if (aliasMatch) {
-          console.log(`Warning: Alias "${alias}" may match existing entity "${aliasMatch.name}"`);
-        }
-      }
-    }
-
-    // Determine workflow: direct creation or suggestion-based
-    const directCreate = body.direct_create ?? true; // Default to direct creation for Aegis
+    const directCreate = body.direct_create ?? true;
 
     if (directCreate) {
-      // Direct entity creation
       const entityData = {
         name: body.name,
         type: body.type,
@@ -158,24 +113,14 @@ serve(async (req: Request) => {
         .single();
 
       if (createError) {
-        console.error("Failed to create entity:", createError);
+        console.error("[CreateEntity] Failed to create entity:", createError);
         return new Response(
-          JSON.stringify({
-            success: false,
-            error: `Failed to create entity: ${createError.message}`,
-            details: createError
-          }),
+          JSON.stringify({ success: false, error: `Failed to create entity: ${createError.message}` }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      console.log(`Entity created: ${newEntity.name} (${newEntity.type}) - ID: ${newEntity.id}`);
-
-      // If monitoring is enabled, trigger initial OSINT scan suggestion
-      let osintNote = null;
-      if (body.active_monitoring_enabled) {
-        osintNote = "Active monitoring enabled. Use 'osint-entity-scan' to perform initial intelligence collection.";
-      }
+      console.log(`[CreateEntity] Created: ${newEntity.name} (${newEntity.type}) - ID: ${newEntity.id}`);
 
       return new Response(
         JSON.stringify({
@@ -183,18 +128,15 @@ serve(async (req: Request) => {
           message: `Entity "${newEntity.name}" created successfully`,
           entity: newEntity,
           workflow: "direct_creation",
-          osint_note: osintNote,
           next_steps: [
             "Use 'enrich-entity' to gather additional intelligence",
             "Use 'osint-entity-scan' to collect web content and photos",
-            "Configure monitoring keywords via 'update-osint-source-config'",
-            "Link to signals/incidents as they are detected"
+            "Configure monitoring keywords via 'update-osint-source-config'"
           ]
         }),
         { status: 201, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     } else {
-      // Suggestion-based workflow (for human review)
       const suggestionData = {
         suggested_name: body.name,
         suggested_type: body.type,
@@ -208,10 +150,9 @@ serve(async (req: Request) => {
           ...body.attributes
         },
         source_type: "aegis_ai",
-        // entity_suggestions.source_id is a UUID in the database
         source_id: crypto.randomUUID(),
         confidence: body.confidence_score ?? 0.85,
-        context: body.source_context || `Created via create-entity function: ${body.description || 'No description provided'}`,
+        context: body.source_context || `Created via create-entity function`,
         status: "pending"
       };
 
@@ -222,41 +163,27 @@ serve(async (req: Request) => {
         .single();
 
       if (suggestionError) {
-        console.error("Failed to create entity suggestion:", suggestionError);
+        console.error("[CreateEntity] Failed to create suggestion:", suggestionError);
         return new Response(
-          JSON.stringify({
-            success: false,
-            error: `Failed to create entity suggestion: ${suggestionError.message}`,
-            details: suggestionError
-          }),
+          JSON.stringify({ success: false, error: `Failed to create entity suggestion: ${suggestionError.message}` }),
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-
-      console.log(`Entity suggestion created: ${newSuggestion.suggested_name} - ID: ${newSuggestion.id}`);
 
       return new Response(
         JSON.stringify({
           success: true,
           message: `Entity suggestion "${newSuggestion.suggested_name}" created for analyst review`,
           suggestion: newSuggestion,
-          workflow: "suggestion_review",
-          next_steps: [
-            "Suggestion will appear in the Entities → Suggestions tab",
-            "Analyst can approve, reject, or merge with existing entity",
-            "Once approved, entity will be active in the system"
-          ]
+          workflow: "suggestion_review"
         }),
         { status: 201, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
   } catch (error) {
-    console.error("create-entity error:", error);
+    console.error("[CreateEntity] Error:", error);
     return new Response(
-      JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error occurred"
-      }),
+      JSON.stringify({ success: false, error: error instanceof Error ? error.message : "Unknown error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
