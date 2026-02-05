@@ -82,6 +82,7 @@ serve(async (req) => {
 Output a single, valid JSON object in this EXACT schema:
 
 {
+  "traveler_name": "",
   "trip_title": "",
   "start_date": "",
   "end_date": "",
@@ -104,6 +105,8 @@ Output a single, valid JSON object in this EXACT schema:
 }
 
 Rules:
+- CRITICAL: Extract the traveler/passenger name from the document. Look for "Passenger:", "Traveler:", "Guest:", "Name:", or names listed on tickets/reservations.
+- traveler_name should be the FULL NAME of the person traveling (e.g., "John Smith", "JANE DOE").
 - Always return VALID JSON. No comments, no trailing commas, no markdown.
 - Use ISO date format: YYYY-MM-DD for start_date and end_date.
 - Use YYYY-MM-DD HH:MM (24h) for start_datetime and end_datetime.
@@ -137,6 +140,10 @@ Rules:
               parameters: {
                 type: "object",
                 properties: {
+                  traveler_name: {
+                    type: "string",
+                    description: "Full name of the traveler/passenger from the document"
+                  },
                   trip_title: { 
                     type: "string", 
                     description: "Descriptive title with origin/destination and dates" 
@@ -184,7 +191,7 @@ Rules:
                     }
                   }
                 },
-                required: ["trip_title", "start_date", "end_date", "segments"]
+                required: ["traveler_name", "trip_title", "start_date", "end_date", "segments"]
               }
             }
           }
@@ -215,6 +222,7 @@ Rules:
     // Log the parsed itinerary
     console.log("=== PARSED ITINERARY ===");
     console.log(JSON.stringify(itineraryData, null, 2));
+    console.log("Traveler:", itineraryData.traveler_name);
     console.log("Trip:", itineraryData.trip_title);
     console.log("Dates:", itineraryData.start_date, "to", itineraryData.end_date);
     console.log("Segments:", itineraryData.segments.length);

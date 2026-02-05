@@ -119,6 +119,29 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
       if (data?.success && data?.data) {
         const parsed = data.data;
         
+        // Auto-match traveler by name if found in PDF
+        if (parsed.traveler_name && travelers) {
+          const parsedName = parsed.traveler_name.toLowerCase().trim();
+          console.log("Looking for traveler:", parsedName);
+          
+          const matchedTraveler = travelers.find((t) => {
+            const travelerName = t.name.toLowerCase().trim();
+            // Check for exact match or partial match (first/last name)
+            return travelerName === parsedName || 
+                   parsedName.includes(travelerName) || 
+                   travelerName.includes(parsedName);
+          });
+          
+          if (matchedTraveler) {
+            console.log("Matched traveler:", matchedTraveler.name);
+            setSelectedTraveler(matchedTraveler.id);
+            toast.info(`Traveler auto-selected: ${matchedTraveler.name}`);
+          } else {
+            console.log("No traveler match found for:", parsed.traveler_name);
+            toast.warning(`Traveler "${parsed.traveler_name}" not found. Please select manually.`);
+          }
+        }
+        
         // Auto-fill form fields from segment-based structure
         const form = document.getElementById("itinerary-form") as HTMLFormElement;
         if (form) {
@@ -132,7 +155,6 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
           console.log("=== ITINERARY PARSING DEBUG ===");
           console.log("Full parsed data:", JSON.stringify(parsed, null, 2));
           console.log("Flight segments:", JSON.stringify(flightSegments, null, 2));
-          console.log("Hotel segments:", JSON.stringify(hotelSegments, null, 2));
           
           // Determine trip type and locations
           let tripType = "international";
