@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 // Helper to fetch principal profile data
 async function getPrincipalProfile(supabase: any, entityId?: string, entityName?: string) {
@@ -156,33 +150,24 @@ async function getPrincipalProfile(supabase: any, entityId?: string, entityName?
   };
 }
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { entity_id, scenario_type, hypothetical } = await req.json();
     
     if (!entity_id) {
-      return new Response(
-        JSON.stringify({ error: "entity_id is required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return errorResponse("entity_id is required", 400);
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
 
     // Get principal profile
     const principalProfile = await getPrincipalProfile(supabase, entity_id);
     if (principalProfile.error) {
-      return new Response(
-        JSON.stringify({ error: principalProfile.error }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return errorResponse(principalProfile.error, 404);
     }
 
     // Build scenario context
@@ -327,16 +312,10 @@ Format your response as valid JSON.`;
       simulation_confidence: aiAnalysis?.simulation_confidence || 50
     };
 
-    return new Response(
-      JSON.stringify(response),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return successResponse(response);
 
   } catch (error) {
     console.error("What-if scenario error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);
   }
 });

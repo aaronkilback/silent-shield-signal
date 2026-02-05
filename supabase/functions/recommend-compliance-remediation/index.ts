@@ -1,23 +1,14 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { client_id, compliance_gap_description, risk_score } = await req.json();
     console.log('Recommending compliance remediation for client:', client_id);
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
@@ -150,21 +141,15 @@ Provide a practical, implementable remediation plan prioritized by risk reductio
 
     console.log('Compliance remediation plan generated');
 
-    return new Response(
-      JSON.stringify({ 
-        client_id,
-        compliance_gap: compliance_gap_description,
-        risk_score,
-        remediation_plan: remediationPlan,
-        generated_at: new Date().toISOString()
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({ 
+      client_id,
+      compliance_gap: compliance_gap_description,
+      risk_score,
+      remediation_plan: remediationPlan,
+      generated_at: new Date().toISOString()
+    });
   } catch (error) {
     console.error('Error in recommend-compliance-remediation:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error occurred' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error occurred', 500);
   }
 });

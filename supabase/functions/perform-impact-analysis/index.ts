@@ -1,30 +1,17 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { signal_id, threat_actor_id } = await req.json();
 
     if (!signal_id) {
-      return new Response(
-        JSON.stringify({ error: "signal_id is required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return errorResponse("signal_id is required", 400);
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
-    );
+    const supabase = createServiceClient();
 
     console.log("Performing impact analysis for signal:", signal_id);
 
@@ -48,10 +35,7 @@ serve(async (req) => {
       .single();
 
     if (signalError || !signal) {
-      return new Response(
-        JSON.stringify({ error: "Signal not found" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return errorResponse("Signal not found", 404);
     }
 
     // Fetch related entities
@@ -190,20 +174,10 @@ serve(async (req) => {
 
     console.log("Impact analysis completed. Risk score:", riskScore);
 
-    return new Response(JSON.stringify(result), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return successResponse(result);
   } catch (error) {
     console.error("Error in perform-impact-analysis:", error);
-    return new Response(
-      JSON.stringify({ 
-        error: error instanceof Error ? error.message : "Unknown error" 
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);
   }
 });
 

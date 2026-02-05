@@ -1,24 +1,14 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { threat_type, client_id, timeframe_hours = 168 } = await req.json(); // Default 7 days
     console.log('Identifying precursor indicators:', { threat_type, client_id });
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabaseClient = createServiceClient();
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
@@ -108,27 +98,21 @@ Identify:
 
     console.log('Precursor indicator analysis complete');
 
-    return new Response(
-      JSON.stringify({
-        threat_type,
-        client_id,
-        timeframe_hours,
-        precursor_analysis: analysis,
-        intelligence_summary: {
-          total_signals: recentSignals?.length || 0,
-          sources: Object.keys(signalsBySource),
-          high_priority_count: recentSignals?.filter(s => s.priority === 'high' || s.priority === 'critical').length || 0,
-          entity_mentions: entityMentions?.length || 0
-        },
-        analyzed_at: new Date().toISOString()
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      threat_type,
+      client_id,
+      timeframe_hours,
+      precursor_analysis: analysis,
+      intelligence_summary: {
+        total_signals: recentSignals?.length || 0,
+        sources: Object.keys(signalsBySource),
+        high_priority_count: recentSignals?.filter(s => s.priority === 'high' || s.priority === 'critical').length || 0,
+        entity_mentions: entityMentions?.length || 0
+      },
+      analyzed_at: new Date().toISOString()
+    });
   } catch (error) {
     console.error('Error in identify-precursor-indicators:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
