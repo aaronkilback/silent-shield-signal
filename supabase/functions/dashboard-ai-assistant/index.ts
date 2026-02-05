@@ -9002,16 +9002,53 @@ The signal is now in the database with status 'triaged' and rules have been appl
         results.monitoring_history = monData || [];
       }
 
-      // Query travel
+      // Query travel (itineraries)
       if (query_type === 'travel' || query_type === 'comprehensive') {
-        let travelQ = supabaseClient.from('itineraries').select('id, trip_name, traveler_id, travelers(first_name, last_name), destination_country, destination_city, departure_date, return_date, risk_level, status');
+        let travelQ = supabaseClient
+          .from('itineraries')
+          .select(
+            'id, trip_name, trip_type, traveler_id, travelers(name, email), origin_city, origin_country, destination_country, destination_city, departure_date, return_date, risk_level, status, file_path',
+          );
         travelQ = applyFilters(travelQ);
         if (filters.keywords?.length) {
-          const kf = filters.keywords.map((k: string) => `destination_country.ilike.%${k}%,destination_city.ilike.%${k}%,trip_name.ilike.%${k}%`).join(',');
+          const kf = filters.keywords
+            .map(
+              (k: string) =>
+                `destination_country.ilike.%${k}%,destination_city.ilike.%${k}%,origin_country.ilike.%${k}%,origin_city.ilike.%${k}%,trip_name.ilike.%${k}%`,
+            )
+            .join(',');
           travelQ = travelQ.or(kf);
         }
-        const { data: travelData } = await travelQ.order('departure_date', { ascending: false });
-        results.travel = travelData || [];
+
+        const { data: travelData, error: travelError } = await travelQ
+          .order('departure_date', { ascending: false })
+          .limit(limit);
+
+        if (travelError) {
+          console.error('[query_fortress_data] travel query error:', travelError);
+          throw travelError;
+        }
+
+        console.log(`[query_fortress_data] travel itineraries returned: ${travelData?.length || 0}`);
+
+        // Attach short-lived signed URLs for itinerary documents when available
+        const travelWithLinks = await Promise.all(
+          (travelData || []).map(async (it: any) => {
+            if (!it?.file_path) return it;
+
+            const { data: signedData, error: signedError } = await supabaseClient.storage
+              .from('travel-documents')
+              .createSignedUrl(it.file_path, 60 * 10);
+
+            if (signedError || !signedData?.signedUrl) {
+              return { ...it, itinerary_file: { path: it.file_path, signed_url: null } };
+            }
+
+            return { ...it, itinerary_file: { path: it.file_path, signed_url: signedData.signedUrl } };
+          }),
+        );
+
+        results.travel = travelWithLinks;
       }
 
       // Format output
@@ -11414,7 +11451,27 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
       }
 
       // Check for forced query_fortress_data execution
-      const forcedQuery = extractPlannedFortressQueryFromText(firstMessage.content);
+      let forcedQuery = extractPlannedFortressQueryFromText(firstMessage.content);
+
+      // Reliability: if user explicitly asked for travel itineraries and the model didn't call tools,
+      // force a travel query so we can return real itinerary records instead of a generic failure/refusal.
+      if (!forcedQuery) {
+        const lastUserMessage = limitedMessages.filter((m: any) => m.role === "user").pop();
+        const lastUserText =
+          typeof lastUserMessage?.content === "string" ? lastUserMessage.content : "";
+
+        const wantsItineraries = /\bitinerar(y|ies)\b/i.test(lastUserText);
+        if (wantsItineraries) {
+          forcedQuery = {
+            query_type: "travel",
+            output_format: "detailed",
+            filters: { limit: 50 },
+            reason_for_access: "User requested access to travel itineraries.",
+          };
+          console.log("FORCING query_fortress_data (itinerary access request)", { lastUserText });
+        }
+      }
+
       if (forcedQuery) {
         console.log("FORCING query_fortress_data (model described query but returned no tool_calls)", forcedQuery);
         const forcedResult = await executeTool("query_fortress_data", forcedQuery, supabaseClient, authenticatedUserId);
