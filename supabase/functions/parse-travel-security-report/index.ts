@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 // Helper to convert Uint8Array to base64 without stack overflow
@@ -33,10 +33,23 @@ serve(async (req) => {
       throw new Error("Backend keys not configured");
     }
 
-    // Auth client (respects user session)
+    // Auth client (validates the Bearer token from the request)
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const token = authHeader.startsWith("Bearer ")
+      ? authHeader.slice("Bearer ".length)
+      : authHeader;
+
+    if (!token) {
+      throw new Error("Unauthorized");
+    }
+
     const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
       global: {
-        headers: { Authorization: req.headers.get("Authorization") ?? "" },
+        headers: { Authorization: `Bearer ${token}` },
+      },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
       },
     });
 
@@ -44,7 +57,7 @@ serve(async (req) => {
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
     // Require an authenticated user so the report can be persistently visible via RLS
-    const { data: userData, error: userError } = await supabaseAuth.auth.getUser();
+    const { data: userData, error: userError } = await supabaseAuth.auth.getUser(token);
     if (userError) {
       console.error("Failed to load user:", userError);
       throw new Error("Unauthorized");
