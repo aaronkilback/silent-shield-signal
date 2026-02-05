@@ -1,20 +1,11 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
 
     const { client_id, observed_trends, lookback_days = 30 } = await req.json();
 
@@ -80,7 +71,7 @@ serve(async (req) => {
 
     if (recentSignals) {
       for (const signal of recentSignals) {
-        const keywords = extractKeywords(signal.normalized_text);
+        const keywords = extractKeywords(signal.normalized_text || '');
         for (const kw of keywords) {
           if (!existingKeywords.some(ek => ek.toLowerCase() === kw.toLowerCase())) {
             if (!keywordFrequency.has(kw)) {
@@ -100,7 +91,7 @@ serve(async (req) => {
     
     if (crossClientSignals) {
       for (const signal of crossClientSignals) {
-        const keywords = extractKeywords(signal.normalized_text);
+        const keywords = extractKeywords(signal.normalized_text || '');
         for (const kw of keywords) {
           if (!emergingKeywords.has(kw)) {
             emergingKeywords.set(kw, { count: 0, clients: new Set(), signals: [] });
@@ -141,7 +132,7 @@ serve(async (req) => {
 
     // Add emerging cross-client keywords
     const sortedEmerging = Array.from(emergingKeywords.entries())
-      .filter(([kw, data]) => data.clients.size >= 2 && data.count >= 5)
+      .filter(([_kw, data]) => data.clients.size >= 2 && data.count >= 5)
       .sort((a, b) => b[1].count - a[1].count)
       .slice(0, 5);
 
@@ -167,25 +158,19 @@ serve(async (req) => {
       });
     }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        client_id,
-        client_name: client.name,
-        existing_keywords: existingKeywords,
-        proposals,
-        analysis_period_days: lookback_days,
-        signals_analyzed: recentSignals?.length || 0,
-        timestamp: new Date().toISOString(),
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return successResponse({
+      success: true,
+      client_id,
+      client_name: client.name,
+      existing_keywords: existingKeywords,
+      proposals,
+      analysis_period_days: lookback_days,
+      signals_analyzed: recentSignals?.length || 0,
+      timestamp: new Date().toISOString(),
+    });
 
   } catch (error) {
     console.error("[propose-new-monitoring-keywords] Error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return errorResponse(error instanceof Error ? error.message : String(error), 500);
   }
 });
