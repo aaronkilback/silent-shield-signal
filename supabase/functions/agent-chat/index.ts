@@ -1,5 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
 import { getAntiHallucinationPrompt } from "../_shared/anti-hallucination.ts";
 import { 
@@ -338,7 +337,7 @@ function generateFallbackResponse(toolResults: { tool: string; result: any }[]):
   return fallback || 'No data available for the requested briefing.';
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
