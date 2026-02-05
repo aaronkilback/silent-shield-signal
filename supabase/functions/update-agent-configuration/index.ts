@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 interface AgentConfigUpdate {
   agent_id: string;
@@ -27,31 +21,22 @@ interface AgentConfigUpdate {
   requested_by?: string;
 }
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
     const { agent_id, updates, reason, requested_by }: AgentConfigUpdate = await req.json();
 
     if (!agent_id) {
-      return new Response(
-        JSON.stringify({ error: 'agent_id is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('agent_id is required', 400);
     }
 
     if (!updates || Object.keys(updates).length === 0) {
-      return new Response(
-        JSON.stringify({ error: 'updates object is required and must contain at least one field' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('updates object is required and must contain at least one field', 400);
     }
+
+    const supabase = createServiceClient();
 
     // Fetch current agent configuration for audit trail
     const { data: currentAgent, error: fetchError } = await supabase
@@ -61,10 +46,7 @@ serve(async (req) => {
       .single();
 
     if (fetchError || !currentAgent) {
-      return new Response(
-        JSON.stringify({ error: `Agent not found: ${agent_id}` }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse(`Agent not found: ${agent_id}`, 404);
     }
 
     // Allowed fields for update (safety filter)
@@ -88,10 +70,7 @@ serve(async (req) => {
     }
 
     if (Object.keys(sanitizedUpdates).length === 0) {
-      return new Response(
-        JSON.stringify({ error: 'No valid fields to update', allowed_fields: allowedFields }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse(`No valid fields to update. Allowed fields: ${allowedFields.join(', ')}`, 400);
     }
 
     // Add updated_at timestamp
@@ -107,10 +86,7 @@ serve(async (req) => {
 
     if (updateError) {
       console.error('Update error:', updateError);
-      return new Response(
-        JSON.stringify({ error: 'Failed to update agent', details: updateError.message }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse(`Failed to update agent: ${updateError.message}`, 500);
     }
 
     // Create audit log entry in intelligence_config
@@ -145,23 +121,16 @@ serve(async (req) => {
 
     console.log(`[AUDIT] Agent ${currentAgent.codename} (${agent_id}) configuration updated:`, changesLog);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        message: `Agent "${updatedAgent.codename}" configuration updated successfully`,
-        agent: updatedAgent,
-        changes: changesLog,
-        audit_key: auditKey
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      message: `Agent "${updatedAgent.codename}" configuration updated successfully`,
+      agent: updatedAgent,
+      changes: changesLog,
+      audit_key: auditKey
+    });
 
   } catch (error: unknown) {
     console.error('Error in update-agent-configuration:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(
-      JSON.stringify({ error: 'Internal server error', details: message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(`Internal server error: ${message}`, 500);
   }
 });

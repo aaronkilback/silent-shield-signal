@@ -1,15 +1,8 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.1';
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { 
@@ -22,15 +15,10 @@ serve(async (req) => {
     } = await req.json();
 
     if (!source_id) {
-      return new Response(
-        JSON.stringify({ error: 'source_id is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('source_id is required', 400);
     }
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
 
     // Get current source configuration
     const { data: source, error: fetchError } = await supabase
@@ -40,10 +28,7 @@ serve(async (req) => {
       .single();
 
     if (fetchError || !source) {
-      return new Response(
-        JSON.stringify({ error: 'Source not found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('Source not found', 404);
     }
 
     const config = source.config || {};
@@ -123,32 +108,22 @@ serve(async (req) => {
 
     if (updateError) {
       console.error('Error updating source:', updateError);
-      return new Response(
-        JSON.stringify({ error: 'Failed to update source', details: updateError.message }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse(`Failed to update source: ${updateError.message}`, 500);
     }
 
     console.log(`Updated source ${source_id}:`, changes);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        source_id,
-        source_name: source.name,
-        changes,
-        audit_entry: auditEntry,
-        reversible: true,
-        message: `Successfully updated source configuration with ${changes.length} change(s)`
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      source_id,
+      source_name: source.name,
+      changes,
+      audit_entry: auditEntry,
+      reversible: true,
+      message: `Successfully updated source configuration with ${changes.length} change(s)`
+    });
 
   } catch (error) {
     console.error('Error in update-osint-source-config:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
