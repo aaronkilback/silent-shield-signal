@@ -1,21 +1,10 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
-
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-  );
+  const supabase = createServiceClient();
 
   const googleApiKey = Deno.env.get('GOOGLE_SEARCH_API_KEY');
   const googleEngineId = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
@@ -47,12 +36,10 @@ serve(async (req) => {
         })
         .eq('id', historyEntry?.id);
 
-      return new Response(JSON.stringify({ 
+      return successResponse({ 
         success: false, 
         error: 'Google Search API not configured',
         fallback: 'Use monitor-news for RSS-based fallback'
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
@@ -211,14 +198,12 @@ serve(async (req) => {
 
     console.log(`Google News monitoring complete. Scanned ${itemsScanned} items, created ${signalsCreated} signals.`);
 
-    return new Response(JSON.stringify({
+    return successResponse({
       success: true,
       items_scanned: itemsScanned,
       signals_created: signalsCreated,
       clients_monitored: clients?.length || 0,
       sample_results: searchResults.slice(0, 5)
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
@@ -235,11 +220,6 @@ serve(async (req) => {
       })
       .eq('id', historyEntry?.id);
 
-    return new Response(JSON.stringify({ 
-      error: errorMessage 
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return errorResponse(errorMessage, 500);
   }
 });

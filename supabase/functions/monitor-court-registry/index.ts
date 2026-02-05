@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 const COURT_KEYWORDS = [
   'fraud', 'theft', 'assault', 'breach', 'violation', 'charge', 'convicted',
@@ -12,18 +6,14 @@ const COURT_KEYWORDS = [
   'bankruptcy', 'foreclosure', 'lien', 'damages', 'negligence', 'liability'
 ];
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     console.log('Starting court registry monitoring scan');
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabaseClient = createServiceClient();
 
     // Fetch all clients and entities
     const { data: clients } = await supabaseClient.from('clients').select('*');
@@ -35,10 +25,7 @@ serve(async (req) => {
     // 1. BC Court Services Daily Court Lists
     try {
       console.log('Monitoring BC Court Services...');
-      // Note: BC Court Services uses CSO (Court Services Online) which requires authentication
-      // This is a placeholder for the structure - in production you'd need proper API access
       
-      // For now, we'll monitor the public bulletins RSS if available
       const bcCourtResponse = await fetch('https://www.courthouselibrary.ca/news-events/rss');
       if (bcCourtResponse.ok) {
         const courtText = await bcCourtResponse.text();
@@ -100,7 +87,6 @@ serve(async (req) => {
         for (const item of sccItems.slice(0, 10)) {
           const content = `${item.title} ${item.description}`.toLowerCase();
           
-          // Check for keyword matches
           const hasKeyword = COURT_KEYWORDS.some(keyword => content.includes(keyword));
           
           if (hasKeyword) {
@@ -150,12 +136,6 @@ serve(async (req) => {
     // 3. Check entities in court databases (placeholder for future integration)
     try {
       console.log('Checking for court case mentions...');
-      // This would integrate with:
-      // - CanLII (Canadian Legal Information Institute)
-      // - Provincial court databases
-      // - PACER equivalents
-      // Note: These require proper API access and authentication
-      
       sources.push('Court Database Search (placeholder)');
     } catch (error) {
       console.error('Error checking court databases:', error);
@@ -163,22 +143,16 @@ serve(async (req) => {
 
     console.log(`Court registry monitoring complete. Created ${signalsCreated} signals from ${sources.length} sources`);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        message: `Scanned ${sources.length} court registry sources`,
-        signalsCreated,
-        sources
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      message: `Scanned ${sources.length} court registry sources`,
+      signalsCreated,
+      sources
+    });
 
   } catch (error) {
     console.error('Court registry monitoring error:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
 

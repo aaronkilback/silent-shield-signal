@@ -1,11 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
 
 // Threat keywords to search for
 const THREAT_KEYWORDS = [
@@ -14,16 +8,12 @@ const THREAT_KEYWORDS = [
   'security alert', 'active shooter', 'fire', 'accident', 'hazard'
 ];
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabase = createServiceClient();
 
     console.log('Starting entity proximity monitoring...');
 
@@ -42,15 +32,12 @@ serve(async (req) => {
 
     if (!entities || entities.length === 0) {
       console.log('No entities with active monitoring found');
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          message: 'No entities with active monitoring enabled',
-          entities_scanned: 0,
-          signals_created: 0
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return successResponse({ 
+        success: true, 
+        message: 'No entities with active monitoring enabled',
+        entities_scanned: 0,
+        signals_created: 0
+      });
     }
 
     console.log(`Found ${entities.length} entities to monitor`);
@@ -61,10 +48,7 @@ serve(async (req) => {
 
     if (!searchApiKey || !searchEngineId) {
       console.error('Google Search API credentials not configured');
-      return new Response(
-        JSON.stringify({ error: 'Search API not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('Search API not configured', 500);
     }
 
     // Monitor each entity
@@ -225,21 +209,15 @@ serve(async (req) => {
 
     console.log(`Entity proximity monitoring completed. Created ${totalSignals} signals.`);
 
-    return new Response(
-      JSON.stringify({ 
-        success: true,
-        entities_scanned: entities.length,
-        signals_created: totalSignals
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({ 
+      success: true,
+      entities_scanned: entities.length,
+      signals_created: totalSignals
+    });
 
   } catch (error) {
     console.error('Entity proximity monitoring error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(
-      JSON.stringify({ error: errorMessage }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(errorMessage, 500);
   }
 });

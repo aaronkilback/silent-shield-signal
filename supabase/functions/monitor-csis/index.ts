@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 const SECURITY_KEYWORDS = [
   'espionage', 'terrorism', 'cybersecurity', 'foreign interference', 'threat',
@@ -12,18 +6,14 @@ const SECURITY_KEYWORDS = [
   'ransomware', 'malware', 'phishing', 'data breach', 'critical infrastructure'
 ];
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     console.log('Starting CSIS (Canadian Security Intelligence Service) monitoring scan');
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabaseClient = createServiceClient();
 
     // Fetch all clients
     const { data: clients, error: clientsError } = await supabaseClient
@@ -46,15 +36,12 @@ serve(async (req) => {
         for (const item of csisItems.slice(0, 15)) {
           const content = `${item.title} ${item.description}`.toLowerCase();
           
-          // Check if it's security-relevant
           const hasSecurityKeyword = SECURITY_KEYWORDS.some(keyword => 
             content.includes(keyword.toLowerCase())
           );
           
           if (hasSecurityKeyword) {
-            // Match against all clients (national security affects everyone)
             for (const client of clients) {
-              // Check if client's industry or name is mentioned
               const isRelevant = client.name.toLowerCase().split(' ').some((word: string) => 
                 word.length > 3 && content.includes(word)
               ) || (client.industry && content.includes(client.industry.toLowerCase()));
@@ -90,7 +77,6 @@ serve(async (req) => {
         const cyberItems = parseAtomFeed(cyberText);
         
         for (const item of cyberItems.slice(0, 20)) {
-          // Cyber security alerts are relevant to all clients
           for (const client of clients) {
             await createSignal(supabaseClient, {
               client_id: client.id,
@@ -122,7 +108,6 @@ serve(async (req) => {
         for (const item of psItems.slice(0, 10)) {
           const content = `${item.title} ${item.description}`.toLowerCase();
           
-          // Check for security relevance
           const hasSecurityKeyword = SECURITY_KEYWORDS.some(keyword => 
             content.includes(keyword.toLowerCase())
           );
@@ -157,22 +142,16 @@ serve(async (req) => {
 
     console.log(`CSIS monitoring complete. Created ${signalsCreated} signals from ${sources.length} sources`);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        message: `Scanned ${sources.length} CSIS/security intelligence sources`,
-        signalsCreated,
-        sources
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      message: `Scanned ${sources.length} CSIS/security intelligence sources`,
+      signalsCreated,
+      sources
+    });
 
   } catch (error) {
     console.error('CSIS monitoring error:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
 

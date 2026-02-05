@@ -1,11 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 interface RSSItem {
   title: string;
@@ -31,15 +24,11 @@ function parseRSS(xmlText: string): RSSItem[] {
   return items;
 }
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
-  const supabaseClient = createClient(
-    Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-  );
+  const supabaseClient = createServiceClient();
 
   // Create monitoring history entry
   const { data: historyEntry, error: historyError } = await supabaseClient
@@ -53,12 +42,7 @@ serve(async (req) => {
 
   if (historyError || !historyEntry) {
     console.error('Failed to create monitoring history entry:', historyError);
-    return new Response(JSON.stringify({ 
-      error: 'Failed to initialize monitoring'
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return errorResponse('Failed to initialize monitoring', 500);
   }
 
   try {
@@ -88,13 +72,11 @@ serve(async (req) => {
         })
         .eq('id', historyEntry.id);
 
-      return new Response(JSON.stringify({ 
+      return successResponse({ 
         success: true, 
         message: 'No RSS sources configured',
         sources_scanned: 0,
         signals_created: 0
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
@@ -167,7 +149,7 @@ serve(async (req) => {
         // Process each RSS item - ingest for AI analysis
         for (const item of items.slice(0, 10)) {
           try {
-            // FIX 1: Check if this URL has already been ingested to prevent duplicates
+            // Check if this URL has already been ingested to prevent duplicates
             const { data: existingDoc } = await supabaseClient
               .from('ingested_documents')
               .select('id')
@@ -243,13 +225,11 @@ serve(async (req) => {
 
     console.log(`RSS monitoring completed. Scanned ${totalItems} items, created ${totalSignals} signals`);
 
-    return new Response(JSON.stringify({
+    return successResponse({
       success: true,
       sources_scanned: rssSources.length,
       items_scanned: totalItems,
       signals_created: totalSignals
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
@@ -274,12 +254,6 @@ serve(async (req) => {
       })
       .eq('id', historyEntry.id);
 
-    return new Response(JSON.stringify({ 
-      error: errorMessage,
-      details: error instanceof Error ? error.stack : undefined
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return errorResponse(errorMessage, 500);
   }
 });
