@@ -4539,7 +4539,7 @@ export const voiceFeaturesTests = {
     {
       name: 'Voice tool executor responds',
       fn: async () => {
-        const { data, error } = await supabase.functions.invoke('voice-tool-executor', {
+        const { data, error } = await supabase.functions.invoke('voice-tool-executor-v2', {
           body: { 
             tool_name: 'get_current_threats',
             arguments: {}
@@ -4556,7 +4556,7 @@ export const voiceFeaturesTests = {
     {
       name: 'Voice memory tools available',
       fn: async () => {
-        const { data, error } = await supabase.functions.invoke('voice-tool-executor', {
+        const { data, error } = await supabase.functions.invoke('voice-tool-executor-v2', {
           body: { 
             tool_name: 'get_user_memory',
             arguments: {}
@@ -4605,7 +4605,7 @@ export const voiceFeaturesTests = {
     {
       name: 'Voice tool query_fortress_data works',
       fn: async () => {
-        const { data, error } = await supabase.functions.invoke('voice-tool-executor', {
+        const { data, error } = await supabase.functions.invoke('voice-tool-executor-v2', {
           body: { 
             tool_name: 'query_fortress_data',
             arguments: { query: 'recent signals', data_type: 'signals' }
@@ -4619,7 +4619,7 @@ export const voiceFeaturesTests = {
     {
       name: 'Voice search_web tool responds',
       fn: async () => {
-        const { data, error } = await supabase.functions.invoke('voice-tool-executor', {
+        const { data, error } = await supabase.functions.invoke('voice-tool-executor-v2', {
           body: { 
             tool_name: 'search_web',
             arguments: { query: 'test query' }
