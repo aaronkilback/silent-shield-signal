@@ -1,6 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { z } from "npm:zod@3.22.4";
 import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
 
 const corsHeaders = {
@@ -76,7 +75,7 @@ function applyRules(text: string) {
   };
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
