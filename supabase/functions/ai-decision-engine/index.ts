@@ -65,12 +65,26 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const body = await req.json();
+    
+    // Health check endpoint for pipeline tests
+    if (body.health_check || body.action === 'health_check') {
+      return new Response(
+        JSON.stringify({ 
+          status: 'healthy', 
+          function: 'ai-decision-engine',
+          timestamp: new Date().toISOString() 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { signal_id, force_ai = false } = await req.json();
+    const { signal_id, force_ai = false } = body;
 
     // Get signal details
     const { data: signal, error: signalError } = await supabase

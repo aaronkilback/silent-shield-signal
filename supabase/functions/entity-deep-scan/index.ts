@@ -49,7 +49,21 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { entity_id } = await req.json();
+    const body = await req.json();
+    
+    // Health check endpoint for pipeline tests
+    if (body.health_check) {
+      return new Response(
+        JSON.stringify({ 
+          status: 'healthy', 
+          function: 'entity-deep-scan',
+          timestamp: new Date().toISOString() 
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    const { entity_id } = body;
     
     if (!entity_id) {
       throw new Error('entity_id is required');
