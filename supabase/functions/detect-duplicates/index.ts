@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 // Simple SHA-256 hash function
 async function hashContent(text: string): Promise<string> {
@@ -128,10 +122,9 @@ function calculateEntitySimilarity(name1: string, name2: string): { score: numbe
   return { score: levenshtein, method: 'levenshtein' };
 }
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const {
@@ -147,17 +140,12 @@ serve(async (req) => {
     } = await req.json();
     
     if (!type || !content) {
-      return new Response(
-        JSON.stringify({ error: 'type and content are required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('type and content are required', 400);
     }
 
     console.log(`Checking duplicates for ${type}${client_id ? ` (client: ${client_id})` : ''}`);
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
 
     const signalMeta: {
       near_duplicate_threshold_used?: number;
@@ -422,27 +410,21 @@ serve(async (req) => {
 
     const nearDuplicateMatch = type === 'signal' && duplicates.length > 0;
 
-    return new Response(
-      JSON.stringify({
-        isDuplicate: duplicates.length > 0,
-        exactMatch: false,
-        nearDuplicateMatch,
-        duplicates: duplicates,
-        count: duplicates.length,
-        contentHash: contentHash,
-        near_duplicate_threshold_used:
-          type === 'signal' ? signalMeta.near_duplicate_threshold_used : undefined,
-        lookback_days_used:
-          type === 'signal' ? signalMeta.lookback_days_used : undefined,
-        semantic_used: type === 'signal' ? signalMeta.semantic_used : undefined,
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      isDuplicate: duplicates.length > 0,
+      exactMatch: false,
+      nearDuplicateMatch,
+      duplicates: duplicates,
+      count: duplicates.length,
+      contentHash: contentHash,
+      near_duplicate_threshold_used:
+        type === 'signal' ? signalMeta.near_duplicate_threshold_used : undefined,
+      lookback_days_used:
+        type === 'signal' ? signalMeta.lookback_days_used : undefined,
+      semantic_used: type === 'signal' ? signalMeta.semantic_used : undefined,
+    });
   } catch (error) {
     console.error('Error in detect-duplicates function:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

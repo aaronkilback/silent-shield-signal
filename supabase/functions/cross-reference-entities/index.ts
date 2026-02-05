@@ -1,11 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import * as XLSX from 'https://esm.sh/xlsx@0.18.5';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 async function extractNamesFromPDF(base64Data: string, columnName: string): Promise<string[]> {
   const openaiKey = Deno.env.get('OPENAI_API_KEY');
@@ -98,10 +91,12 @@ function extractNamesFromExcel(bytes: Uint8Array, columnName: string): string[] 
   return names;
 }
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+// Import xlsx dynamically
+import * as XLSX from 'npm:xlsx@0.18.5';
+
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { fileData, columnName, fileType } = await req.json();
@@ -110,10 +105,7 @@ serve(async (req) => {
       throw new Error('No file data provided');
     }
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabaseClient = createServiceClient();
 
     let names: string[] = [];
     const isPDF = fileType === 'application/pdf' || fileData.includes('data:application/pdf');
@@ -198,27 +190,18 @@ serve(async (req) => {
     const matchCount = results.filter(r => r.matched).length;
     console.log(`Found ${matchCount} matches out of ${names.length} names`);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        results,
-        summary: {
-          total: names.length,
-          matched: matchCount,
-          unmatched: names.length - matchCount
-        }
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      results,
+      summary: {
+        total: names.length,
+        matched: matchCount,
+        unmatched: names.length - matchCount
+      }
+    });
 
   } catch (error) {
     console.error('Cross-reference error:', error);
-    return new Response(
-      JSON.stringify({ 
-        error: error instanceof Error ? error.message : 'Unknown error',
-        success: false 
-      }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
