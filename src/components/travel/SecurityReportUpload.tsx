@@ -1,13 +1,15 @@
 import { useState, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
+import { formatFunctionInvokeErrorAsync } from "@/lib/functionInvokeError";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Upload, FileText, Loader2, CheckCircle, AlertTriangle, Building2, Trash2, Clock } from "lucide-react";
+import { Upload, FileText, Loader2, AlertTriangle, Building2, Trash2, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -54,6 +56,7 @@ const REPORT_PROVIDERS = [
 ];
 
 export function SecurityReportUpload() {
+  const { user, loading } = useAuth();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [provider, setProvider] = useState<string>("");
   const [expandedReportId, setExpandedReportId] = useState<string | null>(null);
@@ -61,8 +64,14 @@ export function SecurityReportUpload() {
   const queryClient = useQueryClient();
 
   // Fetch previously uploaded security reports
-  const { data: storedReports = [], isLoading: isLoadingReports, refetch: refetchReports } = useQuery({
-    queryKey: ["security-reports"],
+  const {
+    data: storedReports = [],
+    isLoading: isLoadingReports,
+    refetch: refetchReports,
+    isError: isReportsError,
+  } = useQuery({
+    queryKey: ["security-reports", user?.id],
+    enabled: !!user && !loading,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("archival_documents")
@@ -75,10 +84,15 @@ export function SecurityReportUpload() {
       return (data || []) as StoredReport[];
     },
     staleTime: 0,
+    placeholderData: (prev) => prev ?? [],
   });
 
   const uploadMutation = useMutation({
     mutationFn: async ({ file, provider }: { file: File; provider: string }) => {
+      if (!user) {
+        throw new Error("Please sign in to upload reports.");
+      }
+
       // Upload file to storage
       const fileName = `${Date.now()}_${file.name}`;
       const { data: uploadData, error: uploadError } = await supabase.storage
@@ -93,7 +107,7 @@ export function SecurityReportUpload() {
         new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
       );
 
-      // Call edge function to parse and extract intelligence
+      // Call backend function to parse and extract intelligence
       const { data, error } = await supabase.functions.invoke("parse-travel-security-report", {
         body: {
           file_base64: base64,
@@ -104,7 +118,10 @@ export function SecurityReportUpload() {
         },
       });
 
-      if (error) throw error;
+      if (error) {
+        throw new Error(await formatFunctionInvokeErrorAsync(error));
+      }
+
       return data;
     },
     onSuccess: async (data) => {
@@ -157,6 +174,10 @@ export function SecurityReportUpload() {
   };
 
   const handleUpload = () => {
+    if (!user) {
+      toast.error("Please sign in to upload reports");
+      return;
+    }
     if (!selectedFile || !provider) {
       toast.error("Please select a file and provider");
       return;
@@ -262,6 +283,12 @@ export function SecurityReportUpload() {
           {isLoadingReports ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : isReportsError ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <AlertTriangle className="h-12 w-12 mx-auto mb-2 opacity-50" />
+              <p>Unable to load reports</p>
+              <p className="text-sm">Please try again in a moment</p>
             </div>
           ) : storedReports && storedReports.length > 0 ? (
             <div className="space-y-4">
