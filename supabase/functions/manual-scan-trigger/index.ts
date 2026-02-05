@@ -1,20 +1,11 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabase = createServiceClient();
 
     console.log('Manual scan trigger initiated');
 
@@ -44,7 +35,7 @@ Deno.serve(async (req) => {
       try {
         console.log(`Triggering ${monitor}...`);
         
-        const { data, error } = await supabaseClient.functions.invoke(monitor, {
+        const { data, error } = await supabase.functions.invoke(monitor, {
           body: { 
             manual_trigger: true
           }
@@ -72,35 +63,20 @@ Deno.serve(async (req) => {
     const successCount = results.filter(r => r.status === 'success').length;
     const errorCount = results.filter(r => r.status === 'error').length;
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        message: `Triggered ${monitors.length} monitors`,
-        summary: {
-          total: monitors.length,
-          successful: successCount,
-          failed: errorCount
-        },
-        results
-      }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200 
-      }
-    );
+    return successResponse({
+      success: true,
+      message: `Triggered ${monitors.length} monitors`,
+      summary: {
+        total: monitors.length,
+        successful: successCount,
+        failed: errorCount
+      },
+      results
+    });
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('Error in manual-scan-trigger:', error);
-    return new Response(
-      JSON.stringify({ 
-        error: errorMessage,
-        success: false
-      }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500
-      }
-    );
+    return errorResponse(errorMessage, 500);
   }
 });

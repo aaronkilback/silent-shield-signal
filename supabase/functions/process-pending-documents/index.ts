@@ -1,31 +1,21 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabase = createServiceClient();
 
     console.log('Fetching pending documents...');
 
     // Get all pending documents
-    const { data: pendingDocs, error: fetchError } = await supabaseClient
+    const { data: pendingDocs, error: fetchError } = await supabase
       .from('ingested_documents')
       .select('id, title, created_at')
       .eq('processing_status', 'pending')
       .order('created_at', { ascending: true })
-      .limit(50); // Process in batches
+      .limit(50);
 
     if (fetchError) {
       throw fetchError;
@@ -41,7 +31,7 @@ serve(async (req) => {
       try {
         console.log(`Processing document: ${doc.title}`);
         
-        const { error: invokeError } = await supabaseClient.functions.invoke(
+        const { error: invokeError } = await supabase.functions.invoke(
           'process-intelligence-document',
           {
             body: { documentId: doc.id }
@@ -65,26 +55,15 @@ serve(async (req) => {
 
     console.log(`Batch complete: ${processed} processed, ${failed} failed`);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        total: pendingDocs?.length || 0,
-        processed,
-        failed
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      total: pendingDocs?.length || 0,
+      processed,
+      failed
+    });
 
   } catch (error) {
     console.error('Error:', error);
-    return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : 'Unknown error'
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

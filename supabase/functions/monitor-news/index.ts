@@ -1,10 +1,5 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createServiceClient, handleCors, successResponse, errorResponse, corsHeaders } from "../_shared/supabase-client.ts";
 import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
 
 // Security-related keywords to filter news
 const SECURITY_KEYWORDS = [
@@ -28,15 +23,11 @@ const REPUTATIONAL_KEYWORDS = [
 ];
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabase = createServiceClient();
 
     // Create monitoring history entry
     const { data: historyEntry, error: historyError } = await supabase
@@ -99,22 +90,20 @@ Deno.serve(async (req) => {
     const searchQueries: string[] = [];
     for (const client of clients || []) {
       if (client.monitoring_keywords && client.monitoring_keywords.length > 0) {
-        // Take more keywords per client
         searchQueries.push(...client.monitoring_keywords.slice(0, 5));
       }
-      // Add client name as search query
       searchQueries.push(client.name);
     }
 
-    // Add more general security and business topics
+    // Add general security and business topics
     searchQueries.push(
       'security breach', 'cyber attack', 'ransomware', 'data leak',
       'environmental protest', 'corporate controversy', 'regulatory fine',
       'activist campaign', 'supply chain disruption'
     );
 
-    // Use Google News RSS feed with client-specific queries - process more queries
-    for (const query of searchQueries.slice(0, 20)) { // Increased from 10 to 20
+    // Use Google News RSS feed with client-specific queries
+    for (const query of searchQueries.slice(0, 20)) {
       try {
         const feedUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}+when:1d&hl=en-US&gl=US&ceid=US:en`;
         const response = await fetch(feedUrl);
@@ -123,7 +112,7 @@ Deno.serve(async (req) => {
         const xmlText = await response.text();
         const items = xmlText.match(/<item>(.*?)<\/item>/gs) || [];
         
-        for (const item of items.slice(0, 5)) { // Increased from 3 to 5
+        for (const item of items.slice(0, 5)) {
           const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/);
           const descMatch = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/);
           const linkMatch = item.match(/<link>(.*?)<\/link>/);
@@ -136,19 +125,17 @@ Deno.serve(async (req) => {
           const fullContent = `${title}\n\n${description}`.toLowerCase();
 
           try {
-            // CRITICAL: Check if content matches ANY client's keywords
+            // Check if content matches ANY client's keywords
             let matchedClient = null;
             let matchedKeywords: string[] = [];
             
             for (const client of clients || []) {
-              // Check direct client name match
               if (fullContent.includes(client.name.toLowerCase())) {
                 matchedClient = client;
                 matchedKeywords.push(`client_name:${client.name}`);
                 break;
               }
               
-              // Check monitoring keywords
               if (client.monitoring_keywords && client.monitoring_keywords.length > 0) {
                 const foundKeywords = client.monitoring_keywords.filter((keyword: string) => 
                   fullContent.includes(keyword.toLowerCase())
@@ -163,9 +150,8 @@ Deno.serve(async (req) => {
               }
             }
 
-            // Only process if we have a matched client
             if (matchedClient) {
-              // CRITICAL FIX: Generate content hash BEFORE checking for duplicates
+              // Generate content hash for deduplication
               const contentToHash = `${link}|${title}`;
               const encoder = new TextEncoder();
               const data = encoder.encode(contentToHash);
@@ -182,7 +168,7 @@ Deno.serve(async (req) => {
 
               if (existingSignal) {
                 console.log(`Skipping duplicate news signal: ${title.substring(0, 50)}...`);
-                continue; // Skip duplicate
+                continue;
               }
 
               let category = 'news';
@@ -207,7 +193,7 @@ Deno.serve(async (req) => {
                   category,
                   severity,
                   location: 'Google News',
-                  content_hash: contentHash, // CRITICAL: Include content hash
+                  content_hash: contentHash,
                   raw_json: {
                     source: 'news',
                     url: link,
@@ -244,7 +230,6 @@ Deno.serve(async (req) => {
               if (!ingestError) {
                 documentsIngested++;
                 
-                // Trigger AI processing in background
                 supabase.functions.invoke('process-intelligence-document', {
                   body: { document_id: null, content: `${title}\n\n${description}`, metadata: { url: link } }
                 }).catch(err => console.error('Failed to trigger processing:', err));
@@ -281,23 +266,16 @@ Deno.serve(async (req) => {
         .eq('id', historyEntry.id);
     }
 
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        clients_scanned: clients?.length || 0,
-          signals_created: signalsCreated + documentsIngested,
-        source: 'security-news'
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({ 
+      success: true, 
+      clients_scanned: clients?.length || 0,
+      signals_created: signalsCreated + documentsIngested,
+      source: 'security-news'
+    });
   } catch (error) {
     console.error('Error in news monitoring:', error);
     
-    // Update monitoring history on error
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabase = createServiceClient();
     
     try {
       const { data: failedEntry } = await supabase
@@ -323,9 +301,6 @@ Deno.serve(async (req) => {
       console.error('Failed to update monitoring history:', updateError);
     }
     
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

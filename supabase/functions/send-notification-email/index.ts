@@ -1,11 +1,7 @@
 import { Resend } from "npm:resend@2.0.0";
+import { handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
 
 interface NotificationEmailRequest {
   to: string;
@@ -130,9 +126,8 @@ const getEmailContent = (type: string, data: any) => {
 };
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { to, type, data }: NotificationEmailRequest = await req.json();
@@ -152,21 +147,9 @@ Deno.serve(async (req) => {
 
     console.log(`Email sent successfully to ${to}:`, emailResponse);
 
-    return new Response(
-      JSON.stringify({ success: true, data: emailResponse }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return successResponse({ success: true, data: emailResponse });
   } catch (error: any) {
     console.error("Error sending notification email:", error);
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return errorResponse(error.message, 500);
   }
 });
