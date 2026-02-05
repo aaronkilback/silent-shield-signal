@@ -4,7 +4,7 @@
 // Every claim must have a source artifact. No simulated, placeholder, invented,
 // or assumed data. If data cannot be verified, say "Not verified".
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 // ═══════════════════════════════════════════════════════════════════════════
 //                         TYPES & INTERFACES

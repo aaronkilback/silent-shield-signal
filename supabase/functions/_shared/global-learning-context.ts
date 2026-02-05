@@ -5,7 +5,7 @@
  * make better decisions based on patterns seen across all tenants.
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 export interface GlobalInsight {
   id: string;

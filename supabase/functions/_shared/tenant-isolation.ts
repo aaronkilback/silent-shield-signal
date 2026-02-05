@@ -1,6 +1,6 @@
 // Tenant Isolation & Security Utilities for Edge Functions
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 /**
  * Tenant validation result

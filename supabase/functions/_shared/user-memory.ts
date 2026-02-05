@@ -1,7 +1,7 @@
 // User Memory Helper - Fetches persistent context for Aegis AI
 // This provides hybrid memory: global preferences + client-specific project context
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 export interface UserPreferences {
   communication_style: string | null;

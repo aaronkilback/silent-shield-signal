@@ -1,7 +1,7 @@
 // Unified monitoring infrastructure for edge functions
 // Consolidates common patterns from monitor-* functions
 
-import { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
