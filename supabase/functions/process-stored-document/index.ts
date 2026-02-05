@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { encode as base64Encode } from "https://deno.land/std@0.224.0/encoding/base64.ts";
+import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -338,7 +338,7 @@ Deno.serve(async (req) => {
             let docxRef: string | null = signedDocUrl;
             if (useBase64Fallback) {
               const docxBytes = await fileData.arrayBuffer();
-              const base64Docx = base64Encode(new Uint8Array(docxBytes).buffer);
+              const base64Docx = encodeBase64(new Uint8Array(docxBytes));
               docxRef = `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${base64Docx}`;
               console.log(`Sending DOCX as base64 (${(base64Docx.length / 1024 / 1024).toFixed(2)}MB)`);
             }
@@ -584,7 +584,7 @@ Deno.serve(async (req) => {
           
           // Helper: perform OCR on a byte range (full PDF or a sliced portion)
           const ocrChunk = async (chunkBytes: Uint8Array, label: string): Promise<string> => {
-            const chunkBase64 = base64Encode(new Uint8Array(chunkBytes).buffer as ArrayBuffer);
+            const chunkBase64 = encodeBase64(new Uint8Array(chunkBytes));
             const payloadMB = chunkBase64.length / (1024 * 1024);
             console.log(`OCR ${label}: sending ${payloadMB.toFixed(2)}MB payload...`);
             
@@ -659,7 +659,7 @@ INSTRUCTIONS:
           if (!textContent || textContent.length < 100) {
             console.log('Flash OCR returned minimal content, trying Gemini Pro fallback...');
             const proBytes = fileSizeMB > MAX_CHUNK_MB ? pdfUint8.slice(0, MAX_CHUNK_MB * 1024 * 1024) : pdfUint8;
-            const proBase64 = base64Encode(new Uint8Array(proBytes).buffer as ArrayBuffer);
+            const proBase64 = encodeBase64(new Uint8Array(proBytes));
             const proResp = await fetchWithRetry(
               'https://ai.gateway.lovable.dev/v1/chat/completions',
               {
