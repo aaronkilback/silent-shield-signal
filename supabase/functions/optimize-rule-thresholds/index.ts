@@ -1,20 +1,11 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
 
     const { rule_id, feedback_data, auto_apply = false } = await req.json();
 
@@ -170,7 +161,6 @@ serve(async (req) => {
     if (auto_apply && recommendedAdjustments.recommendations.some(r => r.priority === "high")) {
       console.log(`[optimize-rule-thresholds] Auto-applying high priority recommendations for rule ${rule_id}`);
       
-      // For now, we log the intent - actual rule modification would require more sophisticated logic
       appliedChanges = {
         status: "pending_approval",
         message: "High-priority optimizations identified. Auto-apply requires manual approval for safety.",
@@ -178,23 +168,17 @@ serve(async (req) => {
       };
     }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        rule_id,
-        rule_name: rule.name,
-        analysis: recommendedAdjustments,
-        applied_changes: appliedChanges,
-        timestamp: new Date().toISOString(),
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return successResponse({
+      success: true,
+      rule_id,
+      rule_name: rule.name,
+      analysis: recommendedAdjustments,
+      applied_changes: appliedChanges,
+      timestamp: new Date().toISOString(),
+    });
 
   } catch (error) {
     console.error("[optimize-rule-thresholds] Error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return errorResponse(error instanceof Error ? error.message : String(error), 500);
   }
 });
