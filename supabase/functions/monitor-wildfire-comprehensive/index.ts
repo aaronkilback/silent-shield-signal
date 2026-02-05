@@ -1,11 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
 
 // Data source configurations
 const DATA_SOURCES = {
@@ -60,7 +54,6 @@ interface FireDataResult {
 // Fetch NASA FIRMS data
 async function fetchNASAFIRMS(region: string = 'world', days: number = 1): Promise<FireDataResult> {
   try {
-    // VIIRS provides better resolution than MODIS
     const url = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/c6/VIIRS_SNPP_NRT/${region}/${days}`;
     
     const response = await fetch(url, {
@@ -83,14 +76,13 @@ async function fetchNASAFIRMS(region: string = 'world', days: number = 1): Promi
       const fire: Record<string, any> = {};
       headers.forEach((h, idx) => fire[h.trim()] = values[idx]?.trim());
       
-      // Only include high confidence detections
       if (parseInt(fire.confidence || '0') >= 70) {
         fires.push({
           latitude: parseFloat(fire.latitude),
           longitude: parseFloat(fire.longitude),
           brightness: parseFloat(fire.bright_ti4 || fire.brightness),
           confidence: parseInt(fire.confidence),
-          frp: parseFloat(fire.frp), // Fire Radiative Power in MW
+          frp: parseFloat(fire.frp),
           acq_date: fire.acq_date,
           acq_time: fire.acq_time,
           satellite: fire.satellite,
@@ -142,7 +134,6 @@ async function fetchFireWeatherAlerts(): Promise<FireDataResult> {
 // Fetch NIFC Active Fire Perimeters (GeoJSON)
 async function fetchFirePerimeters(): Promise<FireDataResult> {
   try {
-    // NIFC provides active fire perimeters as GeoJSON
     const response = await fetch(
       'https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters/FeatureServer/0/query?where=1%3D1&outFields=*&f=geojson&resultRecordCount=100',
       { headers: { 'User-Agent': 'Fortress-Security-Intelligence-Platform' } }
@@ -174,27 +165,23 @@ async function fetchFirePerimeters(): Promise<FireDataResult> {
 // Canadian Fire Weather Index from Environment Canada
 async function fetchCanadianFireWeather(): Promise<FireDataResult> {
   try {
-    // Environment Canada provides fire weather data
     const response = await fetch(
       'https://dd.weather.gc.ca/bulletins/alphanumeric/latest/FW/CWTO/',
       { headers: { 'User-Agent': 'Fortress-Security-Intelligence-Platform' } }
     );
 
-    // Note: This is a simplified implementation - actual parsing would need
-    // to handle EC's bulletin format
     if (!response.ok) {
-      // Return mock FWI data structure for demonstration
       return { 
         source: 'CANADIAN_FWI', 
         data: [{
           region: 'British Columbia',
           fwi_rating: 'High',
-          ffmc: 89, // Fine Fuel Moisture Code
-          dmc: 45,  // Duff Moisture Code
-          dc: 320,  // Drought Code
-          isi: 8,   // Initial Spread Index
-          bui: 78,  // Build Up Index
-          fwi: 24,  // Fire Weather Index
+          ffmc: 89,
+          dmc: 45,
+          dc: 320,
+          isi: 8,
+          bui: 78,
+          fwi: 24,
           source: 'Environment_Canada_FWI'
         }], 
         success: true 
@@ -217,7 +204,6 @@ function calculateFireRisk(
   let riskScore = 0;
   const factors: string[] = [];
 
-  // Active fires nearby
   if (fires.length > 0) {
     const highConfidenceFires = fires.filter(f => f.confidence >= 90);
     riskScore += Math.min(highConfidenceFires.length * 15, 40);
@@ -226,35 +212,30 @@ function calculateFireRisk(
     }
   }
 
-  // Red flag warnings
   const redFlags = weatherAlerts.filter(a => a.event === 'Red Flag Warning');
   if (redFlags.length > 0) {
     riskScore += 25;
     factors.push(`${redFlags.length} Red Flag Warning(s) active`);
   }
 
-  // Fire weather watches
   const fireWatches = weatherAlerts.filter(a => a.event === 'Fire Weather Watch');
   if (fireWatches.length > 0) {
     riskScore += 15;
     factors.push(`${fireWatches.length} Fire Weather Watch(es) active`);
   }
 
-  // Large active perimeters
   const largeFires = perimeters.filter(p => p.acres > 1000 && p.containment < 50);
   if (largeFires.length > 0) {
     riskScore += largeFires.length * 10;
     factors.push(`${largeFires.length} large uncontained fire(s) in region`);
   }
 
-  // High FWI conditions
   const highFWI = fwi.filter(f => f.fwi >= 20);
   if (highFWI.length > 0) {
     riskScore += 15;
     factors.push('High Fire Weather Index conditions');
   }
 
-  // Determine risk level
   let riskLevel = 'Low';
   if (riskScore >= 70) riskLevel = 'Extreme';
   else if (riskScore >= 50) riskLevel = 'High';
@@ -263,16 +244,12 @@ function calculateFireRisk(
   return { riskLevel, riskScore: Math.min(riskScore, 100), factors };
 }
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabase = createServiceClient();
 
     const body = await req.json().catch(() => ({}));
     const { client_id, region = 'world', include_fuel_data = true } = body;
@@ -316,13 +293,11 @@ serve(async (req) => {
     let signalsCreated = 0;
     const sourceStatuses: Record<string, { success: boolean; count: number; error?: string }> = {};
 
-    // Track source statuses
     sourceStatuses.NASA_FIRMS = { success: firmsData.success, count: firmsData.data.length, error: firmsData.error };
     sourceStatuses.WEATHER_STATIONS = { success: weatherData.success, count: weatherData.data.length, error: weatherData.error };
     sourceStatuses.FIRE_PERIMETERS = { success: perimeterData.success, count: perimeterData.data.length, error: perimeterData.error };
     sourceStatuses.FUEL_DATA = { success: fwiData.success, count: fwiData.data.length, error: 'error' in fwiData ? fwiData.error : undefined };
 
-    // Calculate overall risk
     const riskAssessment = calculateFireRisk(
       firmsData.data,
       weatherData.data,
@@ -333,7 +308,6 @@ serve(async (req) => {
     // Create signals for each client
     for (const client of clients || []) {
       try {
-        // Create comprehensive wildfire intelligence signal
         if (firmsData.data.length > 0 || weatherData.data.length > 0 || perimeterData.data.length > 0) {
           const signalText = `Wildfire Intelligence Update: Risk Level ${riskAssessment.riskLevel} (${riskAssessment.riskScore}/100). ` +
             `Active Fires: ${firmsData.data.length} detected via NASA FIRMS. ` +
@@ -427,23 +401,17 @@ serve(async (req) => {
 
     console.log(`Comprehensive wildfire monitoring complete. Created ${signalsCreated} signals.`);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        clients_scanned: clients?.length || 0,
-        signals_created: signalsCreated,
-        risk_assessment: riskAssessment,
-        data_sources: sourceStatuses,
-        source_descriptions: DATA_SOURCES
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      clients_scanned: clients?.length || 0,
+      signals_created: signalsCreated,
+      risk_assessment: riskAssessment,
+      data_sources: sourceStatuses,
+      source_descriptions: DATA_SOURCES
+    });
 
   } catch (error) {
     console.error('Error in comprehensive wildfire monitoring:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

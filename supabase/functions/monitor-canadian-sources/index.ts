@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 interface Client {
   id: string;
@@ -28,15 +22,11 @@ interface RelevanceMatch {
   matchType: string[];
 }
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
-  const supabaseClient = createClient(
-    Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-  );
+  const supabaseClient = createServiceClient();
 
   // Create monitoring history entry
   const { data: historyEntry, error: historyError } = await supabaseClient
@@ -79,7 +69,6 @@ serve(async (req) => {
         for (const client of clients) {
           const match = calculateRelevance(client, content, 'RCMP Gazette');
           
-          // Lower threshold to catch more potential signals (was 50)
           if (match.score >= (client.monitoring_config?.min_relevance_score || 35)) {
             await createSignal(supabaseClient, {
               client_id: client.id,
@@ -115,7 +104,6 @@ serve(async (req) => {
         for (const client of clients) {
           const match = calculateRelevance(client, content, 'BC Energy Regulator');
           
-          // Lower threshold to catch more potential signals (was 50)
           if (match.score >= (client.monitoring_config?.min_relevance_score || 35)) {
             await createSignal(supabaseClient, {
               client_id: client.id,
@@ -154,16 +142,13 @@ serve(async (req) => {
         .eq('id', historyEntry.id);
     }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        message: `Scanned ${sources.length} Canadian sources with enhanced relevance scoring`,
-        signalsCreated,
-        sources,
-        historyId: historyEntry?.id
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      message: `Scanned ${sources.length} Canadian sources with enhanced relevance scoring`,
+      signalsCreated,
+      sources,
+      historyId: historyEntry?.id
+    });
 
   } catch (error) {
     console.error('Canadian sources monitoring error:', error);
@@ -180,10 +165,7 @@ serve(async (req) => {
         .eq('id', historyEntry.id);
     }
 
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
 
@@ -352,7 +334,6 @@ function extractTag(xml: string, tag: string): string {
 function determineSeverity(text: string, relevanceScore: number): string {
   const lowerText = text.toLowerCase();
   
-  // High relevance with critical keywords
   if (relevanceScore >= 80 && (
     lowerText.includes('critical') || lowerText.includes('emergency') || 
     lowerText.includes('severe') || lowerText.includes('explosion') ||
@@ -361,14 +342,12 @@ function determineSeverity(text: string, relevanceScore: number): string {
     return 'critical';
   }
   
-  // High relevance or serious keywords
   if (relevanceScore >= 70 || lowerText.includes('violation') || 
       lowerText.includes('fine') || lowerText.includes('incident') ||
       lowerText.includes('spill') || lowerText.includes('leak')) {
     return 'high';
   }
   
-  // Medium relevance or warning keywords
   if (relevanceScore >= 60 || lowerText.includes('warning') || 
       lowerText.includes('advisory') || lowerText.includes('concern')) {
     return 'medium';

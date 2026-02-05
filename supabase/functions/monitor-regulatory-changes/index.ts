@@ -1,14 +1,8 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { jurisdiction, industry_sector } = await req.json();
@@ -102,20 +96,14 @@ Focus on regulations with direct security, privacy, or operational risk implicat
 
     console.log('Regulatory change monitoring completed');
 
-    return new Response(
-      JSON.stringify({ 
-        jurisdiction,
-        industry_sector,
-        regulatory_analysis: analysis,
-        analyzed_at: new Date().toISOString()
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({ 
+      jurisdiction,
+      industry_sector,
+      regulatory_analysis: analysis,
+      analyzed_at: new Date().toISOString()
+    });
   } catch (error) {
     console.error('Error in monitor-regulatory-changes:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error occurred' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error occurred', 500);
   }
 });
