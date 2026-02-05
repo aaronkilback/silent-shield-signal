@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 interface RegulatoryDocumentRequest {
   jurisdiction: string;
@@ -14,7 +8,7 @@ interface RegulatoryDocumentRequest {
 }
 
 // Known regulatory documents and their key information
-const REGULATORY_DOCUMENTS: Record<string, Record<string, any>> = {
+const REGULATORY_DOCUMENTS: Record<string, Record<string, Record<string, unknown>>> = {
   'BC': {
     'Security Services Act': {
       full_name: 'Security Services Act, SBC 2007, c 30',
@@ -134,16 +128,13 @@ const REGULATORY_DOCUMENTS: Record<string, Record<string, any>> = {
   },
 };
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createServiceClient();
     const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const { 
       jurisdiction, 
@@ -153,10 +144,7 @@ serve(async (req) => {
     }: RegulatoryDocumentRequest = await req.json();
 
     if (!jurisdiction || !document_name) {
-      return new Response(
-        JSON.stringify({ error: 'jurisdiction and document_name are required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('jurisdiction and document_name are required', 400);
     }
 
     // Normalize jurisdiction
@@ -269,10 +257,7 @@ Format as structured JSON:
 }`;
 
     if (!lovableApiKey) {
-      return new Response(
-        JSON.stringify({ error: 'LOVABLE_API_KEY not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('LOVABLE_API_KEY not configured', 500);
     }
 
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -295,10 +280,7 @@ Format as structured JSON:
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
       console.error('AI API error:', errorText);
-      return new Response(
-        JSON.stringify({ error: 'Failed to retrieve document information', details: errorText }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse(`Failed to retrieve document information: ${errorText}`, 500);
     }
 
     const aiData = await aiResponse.json();
@@ -318,25 +300,18 @@ Format as structured JSON:
       documentDetails = { raw_response: responseContent };
     }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        request: { jurisdiction, document_name, section_or_part },
-        registry_info: documentInfo,
-        document_details: documentDetails,
-        knowledge_base_matches: kbDocs || [],
-        retrieved_at: new Date().toISOString(),
-        disclaimer: 'This is a summary for reference purposes. Always verify against official government sources for the most current and authoritative version of any regulatory document.'
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      request: { jurisdiction, document_name, section_or_part },
+      registry_info: documentInfo,
+      document_details: documentDetails,
+      knowledge_base_matches: kbDocs || [],
+      retrieved_at: new Date().toISOString(),
+      disclaimer: 'This is a summary for reference purposes. Always verify against official government sources for the most current and authoritative version of any regulatory document.'
+    });
 
-  } catch (error: unknown) {
+  } catch (error) {
     console.error('Error in retrieve-regulatory-document:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(
-      JSON.stringify({ error: 'Internal server error', details: message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
