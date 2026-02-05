@@ -1,29 +1,19 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { investigationId } = await req.json();
     console.log('Suggesting cross-references for investigation:', investigationId);
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-
-    if (!supabaseUrl || !supabaseKey || !LOVABLE_API_KEY) {
-      throw new Error('Missing required environment variables');
+    if (!LOVABLE_API_KEY) {
+      return errorResponse('LOVABLE_API_KEY not configured', 500);
     }
 
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
 
     // Get current investigation details
     const { data: currentInvestigation, error: currentError } = await supabase
@@ -32,7 +22,9 @@ serve(async (req) => {
       .eq('id', investigationId)
       .single();
 
-    if (currentError) throw currentError;
+    if (currentError || !currentInvestigation) {
+      return errorResponse('Investigation not found', 404);
+    }
 
     // Get all other investigations
     const { data: allInvestigations, error: allError } = await supabase
@@ -40,13 +32,12 @@ serve(async (req) => {
       .select('id, file_number, synopsis, information, client_id')
       .neq('id', investigationId);
 
-    if (allError) throw allError;
+    if (allError) {
+      return errorResponse(`Failed to fetch investigations: ${allError.message}`, 500);
+    }
 
     if (!allInvestigations || allInvestigations.length === 0) {
-      return new Response(
-        JSON.stringify({ suggestions: [] }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return successResponse({ suggestions: [] });
     }
 
     // Prepare context for AI
@@ -98,27 +89,21 @@ Maximum 5 suggestions.`;
 
     if (!response.ok) {
       if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('Rate limit exceeded. Please try again later.', 429);
       }
       if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: 'Payment required. Please add credits to your workspace.' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('Payment required. Please add credits to your workspace.', 402);
       }
       const errorText = await response.text();
       console.error('AI Gateway error:', response.status, errorText);
-      throw new Error('AI Gateway error');
+      return errorResponse('AI Gateway error', 500);
     }
 
     const data = await response.json();
     const aiResponse = data.choices?.[0]?.message?.content;
 
     if (!aiResponse) {
-      throw new Error('No response from AI');
+      return errorResponse('No response from AI', 500);
     }
 
     // Parse AI response - handle potential markdown code blocks
@@ -150,15 +135,9 @@ Maximum 5 suggestions.`;
 
     console.log('AI suggested cross-references:', validatedSuggestions.length);
 
-    return new Response(
-      JSON.stringify({ suggestions: validatedSuggestions }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({ suggestions: validatedSuggestions });
   } catch (error) {
     console.error('Error in suggest-investigation-references:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error occurred' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error occurred', 500);
   }
 });

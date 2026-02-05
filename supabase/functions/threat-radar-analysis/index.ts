@@ -1,11 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { getAntiHallucinationPrompt, getCriticalDateContext, categorizeIncidentsByAge } from "../_shared/anti-hallucination.ts";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
 
 interface ThreatRadarRequest {
   client_id?: string;
@@ -15,10 +9,9 @@ interface ThreatRadarRequest {
   generate_snapshot?: boolean;
 }
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { 
@@ -31,14 +24,11 @@ serve(async (req) => {
 
     console.log('Threat Radar Analysis:', { client_id, timeframe_hours, focus_areas });
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabase = createServiceClient();
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+      return errorResponse('LOVABLE_API_KEY not configured', 500);
     }
 
     const timeframeCutoff = new Date(Date.now() - timeframe_hours * 60 * 60 * 1000).toISOString();
@@ -56,7 +46,7 @@ serve(async (req) => {
       existingRadicalResult
     ] = await Promise.all([
       // Recent signals with emphasis on threat-related
-      supabaseClient
+      supabase
         .from('signals')
         .select('id, normalized_text, rule_category, rule_tags, signal_type, rule_priority, severity, confidence, created_at, location')
         .gte('created_at', timeframeCutoff)
@@ -64,7 +54,7 @@ serve(async (req) => {
         .limit(500),
       
       // Recent incidents
-      supabaseClient
+      supabase
         .from('incidents')
         .select('id, title, summary, priority, status, incident_type, severity_level, created_at')
         .gte('created_at', timeframeCutoff)
@@ -72,7 +62,7 @@ serve(async (req) => {
         .limit(100),
       
       // High-threat entities
-      supabaseClient
+      supabase
         .from('entities')
         .select('id, name, type, threat_score, risk_level, threat_indicators, active_monitoring_enabled, current_location')
         .or('threat_score.gte.50,risk_level.eq.high,risk_level.eq.critical')
@@ -80,7 +70,7 @@ serve(async (req) => {
         .limit(100),
       
       // Recent entity mentions
-      supabaseClient
+      supabase
         .from('entity_mentions')
         .select('id, entity_id, confidence, context, detected_at, signal_id')
         .gte('detected_at', timeframeCutoff)
@@ -88,7 +78,7 @@ serve(async (req) => {
         .limit(200),
       
       // Critical infrastructure assets
-      supabaseClient
+      supabase
         .from('internal_assets')
         .select('id, asset_name, asset_type, business_criticality, location, is_internet_facing, owner_team')
         .or('business_criticality.eq.mission_critical,business_criticality.eq.high')
@@ -96,14 +86,14 @@ serve(async (req) => {
         .limit(100),
       
       // Client context if provided
-      client_id ? supabaseClient
+      client_id ? supabase
         .from('clients')
         .select('id, name, industry, high_value_assets, locations, threat_profile, monitoring_keywords')
         .eq('id', client_id)
         .single() : Promise.resolve({ data: null }),
       
       // Existing precursor indicators
-      supabaseClient
+      supabase
         .from('threat_precursor_indicators')
         .select('*')
         .eq('status', 'active')
@@ -111,7 +101,7 @@ serve(async (req) => {
         .limit(50),
       
       // Existing sentiment tracking
-      supabaseClient
+      supabase
         .from('sentiment_tracking')
         .select('*')
         .gte('measurement_period_end', timeframeCutoff)
@@ -119,7 +109,7 @@ serve(async (req) => {
         .limit(50),
       
       // Existing radical activity
-      supabaseClient
+      supabase
         .from('radical_activity_tracking')
         .select('*')
         .in('status', ['new', 'monitoring', 'escalated'])
@@ -182,8 +172,6 @@ serve(async (req) => {
 
     // =================================================================
     // IMPROVED THREAT SCORING - Based on signal intelligence, NOT incident counts
-    // Incidents are OUTCOMES, not predictive indicators. Threat level should be
-    // based on ACTIONABLE intelligence: signals, precursors, and entity activity.
     // =================================================================
 
     // Calculate recency weight - recent signals matter more
@@ -200,7 +188,7 @@ serve(async (req) => {
     // Score signals by severity with recency weighting
     const severityWeight = { critical: 25, high: 15, medium: 5, low: 2, info: 1 };
     
-    // Radical Activity: weighted by signal severity AND recency (not just count)
+    // Radical Activity: weighted by signal severity AND recency
     const radicalActivityScore = Math.min(100, Math.round(
       radicalSignals.reduce((acc: number, s: any) => {
         const weight = severityWeight[s.severity as keyof typeof severityWeight] || 5;
@@ -210,7 +198,7 @@ serve(async (req) => {
       (existingRadical.filter((r: any) => r.threat_level === 'high' || r.threat_level === 'critical').length * 10)
     ));
 
-    // Sentiment Volatility: based on actual volatility metrics, not social signal counts
+    // Sentiment Volatility: based on actual volatility metrics
     const sentimentVolatilityScore = Math.min(100, Math.round(
       existingSentiment.length > 0
         ? existingSentiment.reduce((acc: number, s: any) => acc + (s.sentiment_volatility || 0) * 100, 0) / existingSentiment.length
@@ -218,7 +206,6 @@ serve(async (req) => {
     ));
 
     // Precursor Activity: PRIMARY driver of predictive threat assessment
-    // Precursors ARE the leading indicators - weight them heavily
     const precursorActivityScore = Math.min(100, Math.round(
       existingPrecursors.reduce((acc: number, p: any) => {
         const severityMult = p.severity_level === 'critical' ? 30 : p.severity_level === 'high' ? 20 : 10;
@@ -227,20 +214,17 @@ serve(async (req) => {
       }, 0)
     ));
 
-    // Infrastructure Risk: based on SIGNAL intelligence about infrastructure, NOT past incidents
-    // Incidents are lagging indicators - using them inflates threat level incorrectly
+    // Infrastructure Risk: based on SIGNAL intelligence about infrastructure
     const infrastructureRiskScore = Math.min(100, Math.round(
       infrastructureSignals.reduce((acc: number, s: any) => {
         const weight = severityWeight[s.severity as keyof typeof severityWeight] || 5;
         const recency = getRecencyWeight(s.created_at);
         return acc + (weight * recency);
       }, 0) +
-      // Add exposure factor for internet-facing critical assets (static risk)
       (criticalAssets.filter((a: any) => a.is_internet_facing && a.business_criticality === 'mission_critical').length * 3)
     ));
 
     // Calculate overall threat score with BALANCED weights
-    // Precursors get highest weight as they are true LEADING indicators
     const overallThreatScore = Math.round(
       (radicalActivityScore * 0.25) +     // Radical signals: 25%
       (sentimentVolatilityScore * 0.15) + // Sentiment volatility: 15%
@@ -249,14 +233,13 @@ serve(async (req) => {
     );
 
     // Determine threat level with CONSERVATIVE thresholds
-    // Avoid false alarms from low-value signal accumulation
     let overallThreatLevel = 'low';
     if (overallThreatScore >= 75) overallThreatLevel = 'critical';
     else if (overallThreatScore >= 55) overallThreatLevel = 'high';
     else if (overallThreatScore >= 35) overallThreatLevel = 'elevated';
     else if (overallThreatScore >= 15) overallThreatLevel = 'moderate';
 
-    // Calculate threat momentum (is it getting worse or better?)
+    // Calculate threat momentum
     const recentSignals = signals.filter((s: any) => getRecencyWeight(s.created_at) >= 0.7).length;
     const olderSignals = signals.filter((s: any) => getRecencyWeight(s.created_at) < 0.7).length;
     const threatMomentum = recentSignals > olderSignals * 1.5 ? 'rising' : 
@@ -397,62 +380,59 @@ Provide concise, actionable intelligence assessments focused on proactive threat
         recommendedActions.push({ action: 'Increase monitoring of dark web channels', priority: 'high' });
       }
       if (infrastructureRiskScore >= 50) {
-        recommendedActions.push({ action: 'Deploy additional physical security to critical assets', priority: 'high' });
+        recommendedActions.push({ action: 'Review physical security at critical assets', priority: 'high' });
       }
-      if (sentimentVolatilityScore >= 50) {
-        recommendedActions.push({ action: 'Activate social media monitoring surge', priority: 'medium' });
+      if (precursorActivityScore >= 40) {
+        recommendedActions.push({ action: 'Deploy additional surveillance on active precursors', priority: 'medium' });
       }
-      if (precursorActivityScore >= 50) {
-        recommendedActions.push({ action: 'Brief executive leadership on emerging threats', priority: 'high' });
+      if (sentimentVolatilityScore >= 40) {
+        recommendedActions.push({ action: 'Monitor social media sentiment trends', priority: 'medium' });
       }
 
-      const { data: snapshot, error: snapshotError } = await supabaseClient
-        .from('threat_radar_snapshots')
+      // Save snapshot
+      const { data: snapshot, error: snapshotError } = await supabase
+        .from('client_risk_snapshots')
         .insert({
-          client_id,
-          snapshot_type: 'automatic',
-          overall_threat_level: overallThreatLevel,
-          threat_score: overallThreatScore,
-          radical_activity_score: radicalActivityScore,
-          sentiment_volatility_score: sentimentVolatilityScore,
-          precursor_activity_score: precursorActivityScore,
-          infrastructure_risk_score: infrastructureRiskScore,
-          radical_mentions_count: radicalSignals.length,
-          sentiment_shift_detected: sentimentVolatilityScore >= 40,
-          precursor_patterns_detected: existingPrecursors.length,
-          critical_assets_at_risk: criticalAssets.slice(0, 10).map((a: any) => a.asset_name),
-          predicted_escalation_probability: predictions?.escalation_probability || overallThreatScore,
-          predicted_timeline_hours: predictions?.predicted_timeframe === 'days' ? 72 : predictions?.predicted_timeframe === 'weeks' ? 168 : 720,
+          client_id: client_id || null,
+          risk_score: overallThreatScore,
+          snapshot_data: {
+            threat_level: overallThreatLevel,
+            scores: {
+              radical_activity: radicalActivityScore,
+              sentiment_volatility: sentimentVolatilityScore,
+              precursor_activity: precursorActivityScore,
+              infrastructure_risk: infrastructureRiskScore
+            },
+            momentum: threatMomentum,
+            signal_counts: {
+              total: signals.length,
+              radical: radicalSignals.length,
+              dark_web: darkWebSignals.length,
+              social: socialSignals.length,
+              infrastructure: infrastructureSignals.length
+            },
+            entity_counts: {
+              high_threat: highThreatEntities.length,
+              mentions: entityMentions.length
+            },
+            predictions
+          },
           key_indicators: keyIndicators,
-          recommended_actions: recommendedActions,
-          data_sources: Object.keys(signalsBySource),
-          ai_analysis_summary: aiAnalysis?.substring(0, 2000)
+          recommended_actions: recommendedActions
         })
         .select('id')
         .single();
 
-      if (snapshot) {
+      if (!snapshotError && snapshot) {
         snapshotId = snapshot.id;
       }
     }
 
-    // Build response
-    const response = {
-      timestamp: new Date().toISOString(),
-      timeframe_hours,
-      client_id,
-      snapshot_id: snapshotId,
-      
-      // Overall assessment with Silent Shield metrics
+    return successResponse({
       threat_assessment: {
-        overall_level: overallThreatLevel,
         overall_score: overallThreatScore,
-        // Silent Shield Executive Metrics
-        threat_momentum: threatMomentum, // rising / stable / declining
-        signal_confidence: overallThreatScore >= 50 && signals.length >= 10 ? 'high' : 
-                           overallThreatScore >= 25 && signals.length >= 5 ? 'medium' : 'low',
-        exposure_readiness: criticalAssets.length > 0 && existingPrecursors.length < 3 ? 'prepared' :
-                            existingPrecursors.length < 5 ? 'partial' : 'unprepared',
+        threat_level: overallThreatLevel,
+        momentum: threatMomentum,
         scores: {
           radical_activity: radicalActivityScore,
           sentiment_volatility: sentimentVolatilityScore,
@@ -460,73 +440,24 @@ Provide concise, actionable intelligence assessments focused on proactive threat
           infrastructure_risk: infrastructureRiskScore
         }
       },
-
-      // Intelligence summary
       intelligence_summary: {
-        total_signals: signals.length,
-        signals_by_source: Object.fromEntries(Object.entries(signalsBySource).map(([k, v]) => [k, v.length])),
-        signals_by_severity: Object.fromEntries(Object.entries(signalsBySeverity).map(([k, v]) => [k, v.length])),
-        dark_web_signals: darkWebSignals.length,
-        social_media_signals: socialSignals.length,
-        radical_signals: radicalSignals.length,
-        infrastructure_signals: infrastructureSignals.length,
-        geo_located_signals: geoSignals.length
+        signals_analyzed: signals.length,
+        high_threat_entities: highThreatEntities.length,
+        active_precursors: existingPrecursors.length,
+        critical_assets: criticalAssets.length,
+        timeframe_hours
       },
-
-      // High-threat items
-      high_threat_entities: highThreatEntities.slice(0, 10),
-      active_precursors: existingPrecursors.slice(0, 10),
-      critical_assets: criticalAssets.slice(0, 10),
-      recent_incidents: incidents.filter((i: any) => i.priority === 'P1' || i.priority === 'P2').slice(0, 5),
-
-      // Geo-intelligence
-      geo_intelligence: {
-        geo_signals_count: geoSignals.length,
-        hotspots: geoSignals.slice(0, 20).map((s: any) => ({
-          location: s.location,
-          severity: s.severity,
-          category: s.rule_category
-        }))
+      category_breakdown: {
+        by_source: Object.fromEntries(Object.entries(signalsBySource).map(([k, v]) => [k, v.length])),
+        by_severity: Object.fromEntries(Object.entries(signalsBySeverity).map(([k, v]) => [k, v.length])),
+        by_category: Object.fromEntries(Object.entries(signalsByCategory).map(([k, v]) => [k, v.length]))
       },
-
-      // Predictions
       predictions,
-
-      // Top alerts
-      top_alerts: [
-        ...radicalSignals.slice(0, 3).map((s: any) => ({
-          type: 'radical_activity',
-          title: s.normalized_text?.substring(0, 150),
-          severity: s.severity,
-          source: s.signal_type,
-          created_at: s.created_at
-        })),
-        ...infrastructureSignals.slice(0, 3).map((s: any) => ({
-          type: 'infrastructure_threat',
-          title: s.normalized_text?.substring(0, 150),
-          severity: s.severity,
-          source: s.signal_type,
-          created_at: s.created_at
-        }))
-      ]
-    };
-
-    console.log('Threat Radar Analysis complete:', {
-      overall_score: overallThreatScore,
-      overall_level: overallThreatLevel,
-      signals_analyzed: signals.length
+      snapshot_id: snapshotId,
+      generated_at: new Date().toISOString()
     });
-
-    return new Response(
-      JSON.stringify(response),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
-
   } catch (error) {
     console.error('Error in threat-radar-analysis:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error occurred', 500);
   }
 });

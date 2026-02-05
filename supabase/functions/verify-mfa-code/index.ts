@@ -1,46 +1,29 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.4';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = createServiceClient();
 
     // Get auth user from request
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Not authenticated' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return errorResponse('Not authenticated', 401);
     }
 
     const token = authHeader.replace('Bearer ', '');
     const { data: { user }, error: userError } = await supabase.auth.getUser(token);
     
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: 'Invalid session' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return errorResponse('Invalid session', 401);
     }
 
     const { code, purpose } = await req.json();
 
     if (!code || code.length !== 6) {
-      return new Response(JSON.stringify({ error: 'Invalid code format' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return errorResponse('Invalid code format', 400);
     }
 
     // Find valid code
@@ -57,17 +40,11 @@ Deno.serve(async (req) => {
 
     if (codeError) {
       console.error('Error fetching code:', codeError);
-      return new Response(JSON.stringify({ error: 'Verification failed' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return errorResponse('Verification failed', 500);
     }
 
     if (!codeRecord) {
-      return new Response(JSON.stringify({ error: 'Invalid or expired code' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return errorResponse('Invalid or expired code', 400);
     }
 
     // Mark code as used
@@ -88,29 +65,19 @@ Deno.serve(async (req) => {
 
       if (updateError) {
         console.error('Failed to update MFA settings:', updateError);
-        return new Response(JSON.stringify({ error: 'Failed to enable MFA' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+        return errorResponse('Failed to enable MFA', 500);
       }
     }
 
     console.log(`MFA code verified for user ${user.id}, purpose: ${purpose}`);
 
-    return new Response(JSON.stringify({ 
-      success: true, 
+    return successResponse({ 
       verified: true,
       mfa_enabled: purpose === 'enrollment'
-    }), {
-      status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
     console.error('Error in verify-mfa-code:', error);
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return errorResponse('Internal server error', 500);
   }
 });

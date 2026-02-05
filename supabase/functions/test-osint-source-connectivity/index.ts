@@ -1,48 +1,29 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { source_id } = await req.json();
 
     if (!source_id) {
-      return new Response(
-        JSON.stringify({ error: 'source_id is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('source_id is required', 400);
     }
+
+    const supabase = createServiceClient();
 
     // Get source configuration from database
-    const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const { data: source, error: sourceError } = await supabase
+      .from('sources')
+      .select('*')
+      .eq('id', source_id)
+      .single();
 
-    const sourceResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/sources?id=eq.${source_id}&select=*`,
-      {
-        headers: {
-          'apikey': SUPABASE_SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        },
-      }
-    );
-
-    const sources = await sourceResponse.json();
-    if (!sources || sources.length === 0) {
-      return new Response(
-        JSON.stringify({ error: 'Source not found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    if (sourceError || !source) {
+      return errorResponse('Source not found', 404);
     }
 
-    const source = sources[0];
     const config = source.config || {};
     const url = config.url || config.feedUrl;
 
@@ -144,9 +125,6 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('Error in test-osint-source-connectivity:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

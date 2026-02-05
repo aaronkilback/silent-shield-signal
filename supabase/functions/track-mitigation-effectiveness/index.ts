@@ -1,40 +1,35 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
-
     const { playbook_id, incident_id } = await req.json();
 
     console.log(`[track-mitigation-effectiveness] Tracking playbook ${playbook_id} for incident ${incident_id}`);
 
+    const supabase = createServiceClient();
+
+    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    if (!LOVABLE_API_KEY) {
+      return errorResponse('LOVABLE_API_KEY not configured', 500);
+    }
+
     // Fetch playbook
     const { data: playbook, error: playbookError } = await supabase
-      .from("playbooks")
-      .select("*")
-      .eq("id", playbook_id)
+      .from('playbooks')
+      .select('*')
+      .eq('id', playbook_id)
       .single();
 
     if (playbookError || !playbook) {
-      throw new Error(`Playbook not found: ${playbook_id}`);
+      return errorResponse(`Playbook not found: ${playbook_id}`, 404);
     }
 
     // Fetch incident with outcome
     const { data: incident, error: incidentError } = await supabase
-      .from("incidents")
+      .from('incidents')
       .select(`
         *,
         incident_outcomes(
@@ -46,16 +41,16 @@ serve(async (req) => {
           improvement_suggestions
         )
       `)
-      .eq("id", incident_id)
+      .eq('id', incident_id)
       .single();
 
     if (incidentError || !incident) {
-      throw new Error(`Incident not found: ${incident_id}`);
+      return errorResponse(`Incident not found: ${incident_id}`, 404);
     }
 
     // Fetch all incidents where this playbook was used
     const { data: historicalIncidents, error: historyError } = await supabase
-      .from("incidents")
+      .from('incidents')
       .select(`
         id,
         priority,
@@ -68,7 +63,7 @@ serve(async (req) => {
       .limit(50);
 
     if (historyError) {
-      console.error("[track-mitigation-effectiveness] History fetch error:", historyError);
+      console.error('[track-mitigation-effectiveness] History fetch error:', historyError);
     }
 
     // Calculate effectiveness metrics
@@ -82,7 +77,7 @@ serve(async (req) => {
 
     if (historicalIncidents) {
       for (const hist of historicalIncidents) {
-        if (hist.status === "resolved" || hist.status === "closed") {
+        if (hist.status === 'resolved' || hist.status === 'closed') {
           successfulResolutions++;
         }
         if (hist.incident_outcomes && hist.incident_outcomes.length > 0) {
@@ -180,21 +175,21 @@ ANALYSIS REQUIREMENTS:
 Provide actionable, specific recommendations that can be implemented to improve playbook effectiveness and incident response outcomes.`;
 
     // Call AI for effectiveness analysis
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
+    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
       headers: {
-        "Authorization": `Bearer ${lovableApiKey}`,
-        "Content-Type": "application/json",
+        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: 'google/gemini-2.5-flash',
         messages: [
           {
-            role: "system",
-            content: "You are a security operations effectiveness expert. Analyze playbook effectiveness using quantitative metrics and qualitative insights to provide actionable recommendations for continuous improvement."
+            role: 'system',
+            content: 'You are a security operations effectiveness expert. Analyze playbook effectiveness using quantitative metrics and qualitative insights to provide actionable recommendations for continuous improvement.'
           },
           {
-            role: "user",
+            role: 'user',
             content: trackingPrompt
           }
         ],
@@ -203,7 +198,8 @@ Provide actionable, specific recommendations that can be implemented to improve 
 
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
-      throw new Error(`AI API error: ${aiResponse.status} - ${errorText}`);
+      console.error('AI API error:', aiResponse.status, errorText);
+      return errorResponse(`AI API error: ${aiResponse.status}`, 500);
     }
 
     const aiResult = await aiResponse.json();
@@ -213,35 +209,28 @@ Provide actionable, specific recommendations that can be implemented to improve 
     const ratingMatch = effectivenessAnalysis.match(/Rating[:\s]+(\d)/i);
     const effectivenessRating = ratingMatch ? parseInt(ratingMatch[1]) : 3;
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        playbook_id,
-        playbook_name: playbook.title,
-        incident_id,
-        effectiveness_tracking: {
-          analysis: effectivenessAnalysis,
-          rating: effectivenessRating,
-          metrics: {
-            total_uses: totalUses,
-            success_rate: (successRate * 100).toFixed(1) + "%",
-            false_positive_rate: (falsePositiveRate * 100).toFixed(1) + "%",
-            accuracy_rate: (accuracyRate * 100).toFixed(1) + "%",
-            average_response_time_minutes: Math.round(averageResponseTime / 60),
-            current_response_time_minutes: currentResponseTime ? Math.round(currentResponseTime / 60) : null,
-          },
-          current_incident_outcome: currentOutcome,
+    return successResponse({
+      playbook_id,
+      playbook_name: playbook.title,
+      incident_id,
+      effectiveness_tracking: {
+        analysis: effectivenessAnalysis,
+        rating: effectivenessRating,
+        metrics: {
+          total_uses: totalUses,
+          success_rate: (successRate * 100).toFixed(1) + '%',
+          false_positive_rate: (falsePositiveRate * 100).toFixed(1) + '%',
+          accuracy_rate: (accuracyRate * 100).toFixed(1) + '%',
+          average_response_time_minutes: Math.round(averageResponseTime / 60),
+          current_response_time_minutes: currentResponseTime ? Math.round(currentResponseTime / 60) : null,
         },
-        timestamp: new Date().toISOString(),
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+        current_incident_outcome: currentOutcome,
+      },
+      timestamp: new Date().toISOString(),
+    });
 
   } catch (error) {
-    console.error("[track-mitigation-effectiveness] Error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    console.error('[track-mitigation-effectiveness] Error:', error);
+    return errorResponse(error instanceof Error ? error.message : String(error), 500);
   }
 });
