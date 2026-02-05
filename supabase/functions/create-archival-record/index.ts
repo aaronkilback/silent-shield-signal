@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 // Access EdgeRuntime from global scope for background tasks
 // (In some runtimes this may be undefined, so we guard usage.)
