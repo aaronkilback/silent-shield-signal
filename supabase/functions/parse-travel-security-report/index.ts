@@ -1,71 +1,29 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
-
-// Helper to convert Uint8Array to base64 without stack overflow
-function uint8ToBase64(uint8: Uint8Array): string {
-  const chunkSize = 8192;
-  let result = '';
-  for (let i = 0; i < uint8.length; i += chunkSize) {
-    const chunk = uint8.subarray(i, Math.min(i + chunkSize, uint8.length));
-    result += String.fromCharCode(...chunk);
-  }
-  return btoa(result);
-}
-
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { file_base64, file_name, file_type, provider, storage_path } = await req.json();
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
-    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const supabase = createServiceClient();
 
-    if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceKey) {
-      throw new Error("Backend keys not configured");
-    }
-
-    // Auth client (validates the Bearer token from the request)
+    // Auth client validation
     const authHeader = req.headers.get("Authorization") ?? "";
     const token = authHeader.startsWith("Bearer ")
       ? authHeader.slice("Bearer ".length)
       : authHeader;
 
     if (!token) {
-      throw new Error("Unauthorized");
+      return errorResponse("Unauthorized", 401);
     }
 
-    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
-      global: {
-        headers: { Authorization: `Bearer ${token}` },
-      },
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    });
-
-    // Admin client (bypasses RLS); we still enforce auth via supabaseAuth above
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
-
-    // Require an authenticated user so the report can be persistently visible via RLS
-    const { data: userData, error: userError } = await supabaseAuth.auth.getUser(token);
-    if (userError) {
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !userData?.user) {
       console.error("Failed to load user:", userError);
-      throw new Error("Unauthorized");
+      return errorResponse("Unauthorized", 401);
     }
-    if (!userData?.user) {
-      throw new Error("Unauthorized");
-    }
-
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
@@ -82,20 +40,18 @@ File name: ${file_name}
 Extract the following information in a structured JSON format:
 
 {
-  "source_provider": "The company that produced this report (e.g., International SOS, Control Risks)",
-  "report_type": "Type of report (e.g., Security Briefing, Weekly Report, Travel Advisory)",
+  "source_provider": "The company that produced this report",
+  "report_type": "Type of report",
   "location": {
     "city": "Primary city covered",
     "country": "Country",
     "region": "Region if applicable"
   },
-  "risk_rating": "Overall risk rating (e.g., LOW, MEDIUM, HIGH, EXTREME)",
-  "key_risks": ["Array of key risk categories mentioned (e.g., Crime, Terrorism, Natural Hazards)"],
-  "latest_developments": ["Array of recent security developments or alerts mentioned"],
+  "risk_rating": "Overall risk rating (LOW, MEDIUM, HIGH, EXTREME)",
+  "key_risks": ["Array of key risk categories mentioned"],
+  "latest_developments": ["Array of recent security developments or alerts"],
   "security_advice": ["Array of key security recommendations"],
-  "emergency_contacts": [
-    {"name": "Contact name/org", "number": "Phone number"}
-  ],
+  "emergency_contacts": [{"name": "Contact name/org", "number": "Phone number"}],
   "valid_date": "Date the report was generated or is valid for",
   "incidents_mentioned": [
     {
@@ -110,7 +66,6 @@ Extract the following information in a structured JSON format:
 
 Parse the document content carefully and extract all relevant security intelligence.`;
 
-    // Send to AI for parsing with vision
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -214,7 +169,7 @@ Parse the document content carefully and extract all relevant security intellige
     console.log("Parsed report:", JSON.stringify(parsedReport, null, 2));
 
     // Store the parsed report in the archival_documents table
-    const { data: insertData, error: insertError } = await supabaseAdmin
+    const { data: insertData, error: insertError } = await supabase
       .from("archival_documents")
       .insert({
         filename: file_name,
@@ -245,7 +200,7 @@ Parse the document content carefully and extract all relevant security intellige
     // Create signals from incidents mentioned in the report
     if (parsedReport.incidents_mentioned && parsedReport.incidents_mentioned.length > 0) {
       for (const incident of parsedReport.incidents_mentioned) {
-        await supabaseAdmin.from("signals").insert({
+        await supabase.from("signals").insert({
           title: `[${parsedReport.source_provider}] ${incident.type}: ${incident.location}`,
           content: incident.description,
           source_type: "third_party_report",
@@ -271,7 +226,7 @@ Parse the document content carefully and extract all relevant security intellige
                             development.toLowerCase().includes("disruption");
         
         if (isActionable) {
-          await supabaseAdmin.from("travel_alerts").insert({
+          await supabase.from("travel_alerts").insert({
             alert_type: "security",
             severity: parsedReport.risk_rating?.toLowerCase() === "high" ? "high" : "medium",
             title: `${parsedReport.source_provider}: Security Update`,
@@ -284,26 +239,13 @@ Parse the document content carefully and extract all relevant security intellige
       }
     }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        parsed_report: parsedReport,
-        document_id: insertData?.id,
-      }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return successResponse({
+      success: true,
+      parsed_report: parsedReport,
+      document_id: insertData?.id,
+    });
   } catch (error) {
     console.error("Error processing travel security report:", error);
-    return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);
   }
 });

@@ -1,70 +1,41 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-// Input validation schema
-const ClientDataSchema = z.object({
-  clientData: z.object({
-    name: z.string().min(1).max(200).optional(),
-    organization: z.string().max(200).optional(),
-    contact_email: z.string().email().max(255).optional(),
-    contact_phone: z.string().max(50).optional(),
-    industry: z.string().max(100).optional(),
-    employee_count: z.union([z.number(), z.string()]).optional(),
-    locations: z.union([z.array(z.string()), z.string()]).optional(),
-    high_value_assets: z.union([z.array(z.string()), z.string()]).optional(),
-  }).passthrough() // Allow additional fields from various forms
-});
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabase = createServiceClient();
 
-    // Validate input
     const rawBody = await req.json();
-    const validationResult = ClientDataSchema.safeParse(rawBody);
+    const { clientData } = rawBody;
     
-    if (!validationResult.success) {
-      console.error('Validation error:', validationResult.error);
-      return new Response(
-        JSON.stringify({ 
-          error: 'Invalid client data', 
-          details: validationResult.error.errors 
-        }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    if (!clientData) {
+      return errorResponse('Client data is required', 400);
     }
 
-    const { clientData } = validationResult.data;
-    
+    // Basic validation
+    const name = clientData.name || clientData['Client Name'] || clientData['Name'] || '';
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return errorResponse('Client name is required', 400);
+    }
+
     console.log('Processing client onboarding data:', clientData);
 
-    // Extract and normalize data from various Google Form field names
+    // Extract and normalize data from various form field names
     const normalizedData = {
-      name: clientData.name || (clientData as any)['Client Name'] || (clientData as any)['Name'] || '',
-      organization: clientData.organization || (clientData as any)['Organization'] || (clientData as any)['Company'] || '',
-      contact_email: clientData.contact_email || (clientData as any)['Email'] || (clientData as any)['Contact Email'] || '',
-      contact_phone: clientData.contact_phone || (clientData as any)['Phone'] || (clientData as any)['Contact Phone'] || '',
-      industry: clientData.industry || (clientData as any)['Industry'] || (clientData as any)['Business Type'] || '',
-      employee_count: parseInt(String(clientData.employee_count || (clientData as any)['Number of Employees'] || '0')),
+      name: name.trim(),
+      organization: clientData.organization || clientData['Organization'] || clientData['Company'] || '',
+      contact_email: clientData.contact_email || clientData['Email'] || clientData['Contact Email'] || '',
+      contact_phone: clientData.contact_phone || clientData['Phone'] || clientData['Contact Phone'] || '',
+      industry: clientData.industry || clientData['Industry'] || clientData['Business Type'] || '',
+      employee_count: parseInt(String(clientData.employee_count || clientData['Number of Employees'] || '0')),
       locations: Array.isArray(clientData.locations) 
         ? clientData.locations 
-        : String(clientData.locations || (clientData as any)['Locations'] || '').split(',').map((l: string) => l.trim()).filter(Boolean),
+        : String(clientData.locations || clientData['Locations'] || '').split(',').map((l: string) => l.trim()).filter(Boolean),
       high_value_assets: Array.isArray(clientData.high_value_assets)
         ? clientData.high_value_assets
-        : String(clientData.high_value_assets || (clientData as any)['High-Value Assets'] || '').split(',').map((a: string) => a.trim()).filter(Boolean),
+        : String(clientData.high_value_assets || clientData['High-Value Assets'] || '').split(',').map((a: string) => a.trim()).filter(Boolean),
       onboarding_data: clientData,
     };
 
@@ -137,19 +108,12 @@ Respond ONLY with valid JSON.`
 
     console.log('Client onboarded:', client.id);
 
-    return new Response(
-      JSON.stringify({ 
-        client_id: client.id, 
-        risk_assessment: riskAssessment 
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({ 
+      client_id: client.id, 
+      risk_assessment: riskAssessment 
+    });
   } catch (error) {
     console.error('Error in process-client-onboarding:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(
-      JSON.stringify({ error: errorMessage }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

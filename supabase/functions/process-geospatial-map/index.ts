@@ -1,9 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 interface ProcessRequest {
   mapId: string;
@@ -11,22 +6,16 @@ interface ProcessRequest {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const supabase = createClient(supabaseUrl, supabaseKey);
+  const supabase = createServiceClient();
 
   try {
     const { mapId, storagePath }: ProcessRequest = await req.json();
 
     if (!mapId || !storagePath) {
-      return new Response(
-        JSON.stringify({ error: 'Missing mapId or storagePath' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('Missing mapId or storagePath', 400);
     }
 
     // Update status to processing
@@ -47,6 +36,8 @@ Deno.serve(async (req) => {
           throw new Error(`Failed to get signed URL: ${signedUrlError?.message}`);
         }
 
+        const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY') || '';
+
         // Use AI to extract asset information from the map
         const extractionPrompt = `You are analyzing a georeferenced PDF map of Petronas Canada assets. 
 Extract ALL identifiable assets, facilities, roads, pipelines, and infrastructure from this map.
@@ -62,11 +53,11 @@ For each asset, provide:
 Return as JSON array of assets. Be thorough - extract every identifiable feature.`;
 
         // Call Lovable AI for extraction
-        const aiResponse = await fetch('https://lovable.dev/api/ai', {
+        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${Deno.env.get('LOVABLE_API_KEY') || ''}`
+            'Authorization': `Bearer ${LOVABLE_API_KEY}`
           },
           body: JSON.stringify({
             model: 'google/gemini-2.5-pro',
@@ -174,20 +165,14 @@ Return as JSON array of assets. Be thorough - extract every identifiable feature
       await backgroundTask();
     }
 
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        message: 'Processing started',
-        mapId 
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({ 
+      success: true, 
+      message: 'Processing started',
+      mapId 
+    });
 
   } catch (error) {
     console.error('Error:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Processing failed' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Processing failed', 500);
   }
 });

@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 interface WebSearchParams {
   query: string;
@@ -42,31 +36,25 @@ interface WebSearchResponse {
   reliability_note: string;
 }
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { query, time_range, geographic_focus, max_results } = await req.json() as WebSearchParams;
     
     if (!query) {
-      return new Response(
-        JSON.stringify({ error: "Query is required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return errorResponse("Query is required", 400);
     }
 
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const GOOGLE_SEARCH_API_KEY = Deno.env.get("GOOGLE_SEARCH_API_KEY");
     const GOOGLE_SEARCH_ENGINE_ID = Deno.env.get("GOOGLE_SEARCH_ENGINE_ID");
     
-    const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+    const supabase = createServiceClient();
 
     console.log(`[perform-external-web-search] Query: "${query}", Geographic focus: ${geographic_focus || 'global'}`);
 
-    // Step 1: ALWAYS search internal Fortress data first (this is REAL data)
+    // Step 1: ALWAYS search internal Fortress data first
     const internalResults = await searchInternalFortressData(supabase, query, geographic_focus, max_results || 10);
     
     // Step 2: Try real Google search if API keys are configured
@@ -123,7 +111,6 @@ serve(async (req) => {
       reliability_note: reliabilityNote,
     };
 
-    // If no real data found at all, return explicit no-data response
     if (internalResults.signals.length === 0 && 
         internalResults.entities.length === 0 && 
         externalResults.length === 0) {
@@ -134,20 +121,10 @@ serve(async (req) => {
 
     console.log(`[perform-external-web-search] Response: ${response.data_source}, ${internalResults.signals.length} internal signals, ${externalResults.length} external sources`);
 
-    return new Response(
-      JSON.stringify(response),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return successResponse(response);
   } catch (error) {
     console.error("[perform-external-web-search] Error:", error);
-    return new Response(
-      JSON.stringify({ 
-        error: error instanceof Error ? error.message : "Unknown error",
-        data_source: "no_data",
-        reliability_note: "Search failed. Do not fabricate information."
-      }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);
   }
 });
 
@@ -159,7 +136,7 @@ async function searchInternalFortressData(
 ): Promise<{ signals: any[]; entities: any[]; documents: any[] }> {
   const keywords = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
   
-  // Search signals - using correct column names from schema
+  // Search signals
   let signalsQuery = supabase
     .from("signals")
     .select("id, title, description, signal_type, severity, created_at, source_id")
@@ -236,12 +213,9 @@ async function performRealGoogleSearch(
   const data = await response.json();
   const items = data.items || [];
   
-  // Extract publication date from multiple possible sources
   const extractPublishedDate = (item: any): string | undefined => {
-    // Try various metadata fields for publication date
     const metatags = item.pagemap?.metatags?.[0] || {};
     
-    // Common date fields in order of reliability
     const dateFields = [
       metatags["article:published_time"],
       metatags["og:article:published_time"],
@@ -256,14 +230,13 @@ async function performRealGoogleSearch(
       if (dateStr) {
         try {
           const parsed = new Date(dateStr);
-          if (!isNaN(parsed.getTime())) {
-            return parsed.toISOString().split('T')[0]; // Return YYYY-MM-DD
+          if (!isNaN(parsed.getTime()) && parsed <= new Date()) {
+            return parsed.toISOString().split('T')[0];
           }
-        } catch { /* continue */ }
+        } catch { continue; }
       }
     }
     
-    // Try to extract date from URL patterns like /2025/01/15/ or -2025-01-15
     const urlDateMatch = item.link?.match(/\/(\d{4})\/(\d{1,2})\/(\d{1,2})\/|[-_](\d{4})[-_](\d{1,2})[-_](\d{1,2})/);
     if (urlDateMatch) {
       const year = urlDateMatch[1] || urlDateMatch[4];
@@ -274,29 +247,9 @@ async function performRealGoogleSearch(
       }
     }
     
-    // Try to extract from snippet text patterns like "Jan 15, 2025" or "2025-01-15"
-    const snippetDatePatterns = [
-      /(\d{4}-\d{2}-\d{2})/,
-      /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2}),?\s+(\d{4})/i,
-      /(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/i,
-    ];
-    
-    for (const pattern of snippetDatePatterns) {
-      const match = item.snippet?.match(pattern);
-      if (match) {
-        try {
-          const parsed = new Date(match[0]);
-          if (!isNaN(parsed.getTime())) {
-            return parsed.toISOString().split('T')[0];
-          }
-        } catch { /* continue */ }
-      }
-    }
-    
     return undefined;
   };
   
-  // Calculate age classification
   const classifyAge = (dateStr: string | undefined): 'current' | 'historical' | 'dated' | 'unknown' => {
     if (!dateStr) return 'unknown';
     try {
@@ -349,7 +302,6 @@ function buildSummaryFromRealData(
   }
   
   if (externalResults.length > 0) {
-    // Categorize by age
     const current = externalResults.filter(r => (r as any).age_classification === 'current');
     const historical = externalResults.filter(r => (r as any).age_classification === 'historical');
     const dated = externalResults.filter(r => (r as any).age_classification === 'dated');
@@ -363,7 +315,6 @@ function buildSummaryFromRealData(
     
     parts.push(`${externalResults.length} external web sources found: ${summary.join(', ')}.`);
     
-    // Add warning if mostly old content
     const oldCount = historical.length + dated.length + unknown.length;
     if (oldCount > current.length) {
       parts.push("⚠️ NOTE: Most results are historical - may not reflect current situation.");
