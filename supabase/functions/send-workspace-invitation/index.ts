@@ -1,27 +1,20 @@
-import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { Resend } from "https://esm.sh/resend@2.0.0";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { Resend } from "npm:resend@2.0.0";
+import { corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
 
 interface InvitationRequest {
   workspaceId: string;
   email: string;
-  mcmRole?: string;  // MCM role (team_commander, primary_investigator, etc.)
+  mcmRole?: string;
   systemRole?: string;
-  // Legacy support
   role?: string;
 }
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
@@ -29,10 +22,7 @@ serve(async (req) => {
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return errorResponse("Unauthorized", 401);
     }
 
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -41,19 +31,13 @@ serve(async (req) => {
 
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return errorResponse("Unauthorized", 401);
     }
 
     const { workspaceId, email, mcmRole, systemRole, role }: InvitationRequest = await req.json();
 
     if (!workspaceId || !email) {
-      return new Response(JSON.stringify({ error: "workspaceId and email are required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return errorResponse("workspaceId and email are required", 400);
     }
 
     // Get workspace details
@@ -64,10 +48,7 @@ serve(async (req) => {
       .single();
 
     if (workspaceError || !workspace) {
-      return new Response(JSON.stringify({ error: "Workspace not found" }), {
-        status: 404,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return errorResponse("Workspace not found", 404);
     }
 
     // Get inviter's profile
@@ -79,7 +60,7 @@ serve(async (req) => {
 
     const inviterName = inviterProfile?.name || "A team member";
 
-    // MCM role labels for display
+    // MCM role labels
     const mcmRoleLabels: Record<string, string> = {
       team_commander: "Team Commander",
       primary_investigator: "Primary Investigator",
@@ -90,7 +71,7 @@ serve(async (req) => {
     };
 
     const effectiveMcmRole = mcmRole || "investigator";
-    const effectiveRole = role || "contributor"; // Legacy role
+    const effectiveRole = role || "contributor";
 
     // Create invitation record
     const { data: invitation, error: invitationError } = await supabase
@@ -108,15 +89,10 @@ serve(async (req) => {
 
     if (invitationError) {
       console.error("Invitation creation error:", invitationError);
-      return new Response(JSON.stringify({ error: invitationError.message }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return errorResponse(invitationError.message, 500);
     }
 
     const mcmRoleLabel = mcmRoleLabels[effectiveMcmRole] || effectiveMcmRole;
-
-    // Build signup URL with invitation token
     const appUrl = Deno.env.get("APP_URL") || "https://silent-shield-signal.lovable.app";
     const signupUrl = `${appUrl}/auth?invite=${invitation.token}`;
 
@@ -134,14 +110,12 @@ serve(async (req) => {
         </head>
         <body style="margin: 0; padding: 0; background-color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
           <div style="max-width: 560px; margin: 0 auto; padding: 40px 20px;">
-            <!-- Header -->
             <div style="text-align: center; margin-bottom: 32px;">
               <div style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); padding: 12px 20px; border-radius: 12px;">
-                <span style="color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">🛡️ Fortress</span>
+                <span style="color: #ffffff; font-size: 24px; font-weight: 700;">🛡️ Fortress</span>
               </div>
             </div>
             
-            <!-- Main Card -->
             <div style="background: #1e293b; border-radius: 16px; padding: 40px; border: 1px solid #334155;">
               <h1 style="color: #f8fafc; font-size: 24px; font-weight: 600; margin: 0 0 8px 0; text-align: center;">
                 You've Been Invited to Collaborate
@@ -151,20 +125,11 @@ serve(async (req) => {
                 ${inviterName} wants you on the team
               </p>
               
-              <!-- Workspace Card -->
               <div style="background: #0f172a; border-radius: 12px; padding: 20px; margin-bottom: 24px; border: 1px solid #334155;">
-                <div style="display: flex; align-items: center; gap: 12px;">
-                  <div style="background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); width: 48px; height: 48px; border-radius: 10px; display: flex; align-items: center; justify-content: center;">
-                    <span style="color: #ffffff; font-size: 20px;">📁</span>
-                  </div>
-                  <div>
-                    <p style="color: #f8fafc; font-size: 16px; font-weight: 600; margin: 0;">${workspace.title}</p>
-                    <p style="color: #94a3b8; font-size: 13px; margin: 4px 0 0 0;">Investigation Workspace</p>
-                  </div>
-                </div>
+                <p style="color: #f8fafc; font-size: 16px; font-weight: 600; margin: 0;">📁 ${workspace.title}</p>
+                <p style="color: #94a3b8; font-size: 13px; margin: 4px 0 0 0;">Investigation Workspace</p>
               </div>
               
-              <!-- Role Badge -->
               <div style="text-align: center; margin-bottom: 24px;">
                 <span style="display: inline-block; background: #1e3a5f; color: #60a5fa; padding: 8px 16px; border-radius: 20px; font-size: 14px; font-weight: 500;">
                   Your Role: ${mcmRoleLabel}
@@ -175,20 +140,17 @@ serve(async (req) => {
                 Join the workspace to collaborate on intelligence gathering, incident management, and investigations with your team.
               </p>
               
-              <!-- CTA Button -->
               <div style="text-align: center; margin-bottom: 32px;">
                 <a href="${signupUrl}" style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: #ffffff; font-weight: 600; text-decoration: none; padding: 16px 40px; border-radius: 10px; font-size: 16px; box-shadow: 0 4px 14px rgba(59, 130, 246, 0.4);">
                   Accept & Join Workspace
                 </a>
               </div>
               
-              <!-- Expiry Note -->
               <p style="color: #64748b; font-size: 13px; text-align: center; margin: 0;">
                 ⏰ This invitation expires in 7 days
               </p>
             </div>
             
-            <!-- Footer -->
             <div style="text-align: center; margin-top: 32px;">
               <p style="color: #475569; font-size: 12px; margin: 0 0 8px 0;">
                 Didn't expect this invitation? You can safely ignore this email.
@@ -205,19 +167,14 @@ serve(async (req) => {
 
     console.log("Email sent successfully:", emailResponse);
 
-    return new Response(JSON.stringify({ 
-      success: true, 
+    return successResponse({
+      success: true,
       invitation: { id: invitation.id },
-      message: `Invitation sent to ${email}` 
-    }), {
-      status: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      message: `Invitation sent to ${email}`
     });
+
   } catch (error: any) {
     console.error("Error in send-workspace-invitation:", error);
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return errorResponse(error.message, 500);
   }
 });

@@ -1,21 +1,16 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createServiceClient();
+    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+
+    if (!LOVABLE_API_KEY) {
+      return errorResponse('LOVABLE_API_KEY not configured', 500);
+    }
 
     const { signal_id, escalation_factors } = await req.json();
 
@@ -29,7 +24,7 @@ serve(async (req) => {
       .single();
 
     if (signalError || !signal) {
-      throw new Error(`Signal not found: ${signal_id}`);
+      return errorResponse(`Signal not found: ${signal_id}`, 404);
     }
 
     // Fetch historical protest/demonstration signals
@@ -67,7 +62,7 @@ serve(async (req) => {
           escalatedCount++;
         }
         if (incident.incident_outcomes && incident.incident_outcomes.length > 0) {
-          if (incident.incident_outcomes[0].outcome_type === "violence") {
+          if ((incident.incident_outcomes as any)[0].outcome_type === "violence") {
             violentCount++;
           }
         }
@@ -84,8 +79,8 @@ CURRENT PROTEST SIGNAL:
 - Signal Text: ${signal.normalized_text}
 - Severity: ${signal.severity}
 - Category: ${signal.category}
-- Location Context: ${signal.clients?.locations?.join(', ') || 'Unknown'}
-- Industry Impact: ${signal.clients?.industry || 'Unknown'}
+- Location Context: ${(signal.clients as any)?.locations?.join(', ') || 'Unknown'}
+- Industry Impact: ${(signal.clients as any)?.industry || 'Unknown'}
 - Detected: ${signal.created_at}
 
 ESCALATION FACTORS PROVIDED:
@@ -98,11 +93,11 @@ HISTORICAL PROTEST PATTERNS:
 - Recent Incidents: ${totalIncidents} incidents in past period
 
 RECENT SIMILAR PROTESTS:
-${historicalProtests && historicalProtests.length > 0 ? historicalProtests.slice(0, 5).map(p => `- [${p.severity}] ${p.normalized_text.substring(0, 100)}...`).join('\n') : 'No recent protest data'}
+${historicalProtests && historicalProtests.length > 0 ? historicalProtests.slice(0, 5).map(p => `- [${p.severity}] ${(p.normalized_text || '').substring(0, 100)}...`).join('\n') : 'No recent protest data'}
 
 ANALYSIS REQUIREMENTS:
 1. **Escalation Likelihood**: Rate the probability of escalation (Low/Medium/High/Critical) with percentage
-2. **Escalation Triggers**: Identify specific factors that could trigger escalation (police response, counter-protesters, weather, time of day, grievance severity)
+2. **Escalation Triggers**: Identify specific factors that could trigger escalation
 3. **Potential Outcomes**:
    - Peaceful dispersal (likelihood %)
    - Prolonged occupation (likelihood %)
@@ -110,7 +105,7 @@ ANALYSIS REQUIREMENTS:
    - Violence/clashes (likelihood %)
    - Operational disruption to client (likelihood %, duration estimate)
 4. **Timeline Forecast**: Predict how long the protest will last (hours/days/weeks)
-5. **Geographic Spread**: Will it remain localized or spread to other locations?
+5. **Geographic Spread**: Will it remain localized or spread?
 6. **Impact Assessment**:
    - Direct impact on client operations
    - Reputational risk
@@ -125,7 +120,7 @@ Provide a data-driven, realistic escalation forecast with specific probabilities
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${lovableApiKey}`,
+        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -156,33 +151,27 @@ Provide a data-driven, realistic escalation forecast with specific probabilities
     const violenceMatch = escalationAnalysis.match(/Violence[\/\w\s]*:[:\s]+(\d+)%/i);
     const timelineMatch = escalationAnalysis.match(/Timeline[:\s]+([^\n]+)/i);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        signal_id,
-        signal_text: signal.normalized_text.substring(0, 150),
-        escalation_forecast: {
-          full_analysis: escalationAnalysis,
-          escalation_likelihood: likelihoodMatch ? likelihoodMatch[1] : "Medium",
-          escalation_probability: likelihoodMatch ? parseInt(likelihoodMatch[2]) : 50,
-          violence_probability: violenceMatch ? parseInt(violenceMatch[1]) : Math.round(historicalViolenceRate * 100),
-          estimated_duration: timelineMatch ? timelineMatch[1] : "Unknown",
-          historical_context: {
-            similar_protests: historicalProtests?.length || 0,
-            historical_escalation_rate: (historicalEscalationRate * 100).toFixed(1) + "%",
-            historical_violence_rate: (historicalViolenceRate * 100).toFixed(1) + "%",
-          },
+    return successResponse({
+      success: true,
+      signal_id,
+      signal_text: (signal.normalized_text || '').substring(0, 150),
+      escalation_forecast: {
+        full_analysis: escalationAnalysis,
+        escalation_likelihood: likelihoodMatch ? likelihoodMatch[1] : "Medium",
+        escalation_probability: likelihoodMatch ? parseInt(likelihoodMatch[2]) : 50,
+        violence_probability: violenceMatch ? parseInt(violenceMatch[1]) : Math.round(historicalViolenceRate * 100),
+        estimated_duration: timelineMatch ? timelineMatch[1] : "Unknown",
+        historical_context: {
+          similar_protests: historicalProtests?.length || 0,
+          historical_escalation_rate: (historicalEscalationRate * 100).toFixed(1) + "%",
+          historical_violence_rate: (historicalViolenceRate * 100).toFixed(1) + "%",
         },
-        timestamp: new Date().toISOString(),
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+      },
+      timestamp: new Date().toISOString(),
+    });
 
   } catch (error) {
     console.error("[simulate-protest-escalation] Error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return errorResponse(error instanceof Error ? error.message : String(error), 500);
   }
 });

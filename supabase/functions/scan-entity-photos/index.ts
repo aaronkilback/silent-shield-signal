@@ -1,68 +1,68 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { entityId } = await req.json();
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    if (!entityId) {
+      return errorResponse('entityId is required', 400);
+    }
+
+    const supabase = createServiceClient();
+    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    const GOOGLE_API_KEY = Deno.env.get('GOOGLE_SEARCH_API_KEY');
+    const GOOGLE_CX = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
 
     // Get entity details
-    const { data: entity, error: entityError } = await supabaseClient
+    const { data: entity, error: entityError } = await supabase
       .from('entities')
       .select('*')
       .eq('id', entityId)
       .single();
 
     if (entityError || !entity) {
-      throw new Error('Entity not found');
+      return errorResponse('Entity not found', 404);
     }
 
     console.log(`Scanning for photos of: ${entity.name} (${entity.type})`);
 
+    if (!GOOGLE_API_KEY || !GOOGLE_CX) {
+      return errorResponse('Google Search API credentials not configured', 500);
+    }
+
     // Get ONLY approved photos (positive feedback) to use as references
-    // This prevents propagating initial incorrect matches
-    const { data: existingPhotos } = await supabaseClient
+    const { data: existingPhotos } = await supabase
       .from('entity_photos')
       .select('storage_path, feedback_rating, source')
       .eq('entity_id', entityId)
-      .eq('feedback_rating', 1) // Only use photos that user has approved
+      .eq('feedback_rating', 1)
       .order('created_at', { ascending: false })
-      .limit(5); // Limit to 5 approved reference photos
-    
+      .limit(5);
+
     // Get all photos with feedback for learning patterns
-    const { data: allPhotosWithFeedback } = await supabaseClient
+    const { data: allPhotosWithFeedback } = await supabase
       .from('entity_photos')
       .select('feedback_rating, source')
       .eq('entity_id', entityId)
       .not('feedback_rating', 'is', null);
-    
+
     const approvedPhotos = allPhotosWithFeedback?.filter(p => p.feedback_rating === 1) || [];
     const rejectedPhotos = allPhotosWithFeedback?.filter(p => p.feedback_rating === -1) || [];
 
     const referenceImages: Array<{ base64: string; mimeType: string }> = [];
-    
+
     if (existingPhotos && existingPhotos.length > 0) {
       console.log(`Found ${existingPhotos.length} existing photos, loading as references`);
-      
+
       for (const photo of existingPhotos) {
         try {
-          const { data: photoData } = await supabaseClient.storage
+          const { data: photoData } = await supabase.storage
             .from('entity-photos')
             .download(photo.storage_path);
-          
+
           if (photoData) {
             const photoBuffer = await photoData.arrayBuffer();
             const photoBase64 = btoa(
@@ -78,13 +78,11 @@ serve(async (req) => {
         }
       }
       console.log(`Successfully loaded ${referenceImages.length} reference photos for comparison`);
-    } else {
-      console.log('No reference photos found - will accept professional photos');
     }
 
     // Build search query
     let searchQuery = `"${entity.name}"`;
-    
+
     if (entity.type === 'person') {
       searchQuery += ' professional photo OR headshot OR portrait OR board director OR LinkedIn profile';
       if (entity.attributes && entity.attributes.company) {
@@ -97,36 +95,28 @@ serve(async (req) => {
     if (entity.aliases && entity.aliases.length > 0) {
       searchQuery += ` OR "${entity.aliases[0]}"`;
     }
-    
+
     searchQuery += ' -stock -clipart -illustration';
 
     console.log(`Search query: ${searchQuery}`);
 
-    const GOOGLE_API_KEY = Deno.env.get('GOOGLE_SEARCH_API_KEY');
-    const GOOGLE_CX = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
-    
-    if (!GOOGLE_API_KEY || !GOOGLE_CX) {
-      throw new Error('Google Search API credentials not configured');
-    }
-
     // Collect all image URLs
-    const imageUrls: Array<{url: string, source: string, title: string}> = [];
-    const seenUrls = new Set<string>(); // Track URLs to prevent duplicates
+    const imageUrls: Array<{ url: string; source: string; title: string }> = [];
+    const seenUrls = new Set<string>();
 
-    // STEP 1: Search web pages and extract images
+    // Web search for images
     const webSearchUrl = new URL('https://www.googleapis.com/customsearch/v1');
     webSearchUrl.searchParams.set('key', GOOGLE_API_KEY);
     webSearchUrl.searchParams.set('cx', GOOGLE_CX);
     webSearchUrl.searchParams.set('q', searchQuery);
     webSearchUrl.searchParams.set('num', '10');
 
-    console.log('Searching web pages...');
     const webResponse = await fetch(webSearchUrl.toString());
-    
+
     if (webResponse.ok) {
       const webData = await webResponse.json();
       console.log(`Found ${webData.items?.length || 0} web pages`);
-      
+
       for (const page of webData.items || []) {
         if (page.pagemap?.cse_image) {
           for (const img of page.pagemap.cse_image) {
@@ -140,38 +130,24 @@ serve(async (req) => {
             }
           }
         }
-        if (page.pagemap?.metatags) {
-          for (const meta of page.pagemap.metatags) {
-            if (meta['og:image'] && !seenUrls.has(meta['og:image'])) {
-              seenUrls.add(meta['og:image']);
-              imageUrls.push({
-                url: meta['og:image'],
-                source: page.displayLink,
-                title: page.title
-              });
-            }
-          }
-        }
       }
     }
 
-    // STEP 2: Direct image search
+    // Direct image search
     const imgSearchUrl = new URL('https://www.googleapis.com/customsearch/v1');
     imgSearchUrl.searchParams.set('key', GOOGLE_API_KEY);
     imgSearchUrl.searchParams.set('cx', GOOGLE_CX);
     imgSearchUrl.searchParams.set('q', searchQuery);
     imgSearchUrl.searchParams.set('searchType', 'image');
     imgSearchUrl.searchParams.set('num', '10');
-    imgSearchUrl.searchParams.set('safe', 'off');
     imgSearchUrl.searchParams.set('imgType', 'photo');
 
-    console.log('Searching direct images...');
     const imgResponse = await fetch(imgSearchUrl.toString());
-    
+
     if (imgResponse.ok) {
       const imgData = await imgResponse.json();
       console.log(`Found ${imgData.items?.length || 0} direct images`);
-      
+
       for (const item of imgData.items || []) {
         if (!seenUrls.has(item.link)) {
           seenUrls.add(item.link);
@@ -184,92 +160,56 @@ serve(async (req) => {
       }
     }
 
-    // STEP 3: LinkedIn-specific search for persons
-    if (entity.type === 'person') {
-      const linkedinSearchUrl = new URL('https://www.googleapis.com/customsearch/v1');
-      linkedinSearchUrl.searchParams.set('key', GOOGLE_API_KEY);
-      linkedinSearchUrl.searchParams.set('cx', GOOGLE_CX);
-      linkedinSearchUrl.searchParams.set('q', `site:linkedin.com "${entity.name}" profile photo`);
-      linkedinSearchUrl.searchParams.set('searchType', 'image');
-      linkedinSearchUrl.searchParams.set('num', '10');
-      linkedinSearchUrl.searchParams.set('imgType', 'photo');
-
-      console.log('Searching LinkedIn profiles...');
-      const linkedinResponse = await fetch(linkedinSearchUrl.toString());
-      
-      if (linkedinResponse.ok) {
-        const linkedinData = await linkedinResponse.json();
-        console.log(`Found ${linkedinData.items?.length || 0} LinkedIn images`);
-        
-        for (const item of linkedinData.items || []) {
-          if (!seenUrls.has(item.link)) {
-            seenUrls.add(item.link);
-            imageUrls.push({
-              url: item.link,
-              source: 'linkedin.com',
-              title: item.title || 'LinkedIn Profile'
-            });
-          }
-        }
-      }
-    }
-
     console.log(`Total images to process: ${imageUrls.length}`);
 
-    // Blocked domains - removed LinkedIn to allow professional profile photos
+    // Blocked domains
     const blockedDomains = [
       'facebook.com', 'instagram.com', 'twitter.com',
       'pinterest.com', 'gettyimages.com', 'shutterstock.com', 'istockphoto.com'
     ];
 
     let photosAdded = 0;
-    const errors = [];
+    const errors: string[] = [];
     const startTime = Date.now();
-    const MAX_PROCESSING_TIME = 28000; // Increased to 28 seconds
-    const MAX_IMAGES_TO_PROCESS = 15; // Increased to process more diverse results
-    const MAX_IMAGE_SIZE = 2000000; // Increased to 2MB to allow news site images
-    
-    // Prioritize news sources and diverse domains
+    const MAX_PROCESSING_TIME = 28000;
+    const MAX_IMAGES_TO_PROCESS = 15;
+    const MAX_IMAGE_SIZE = 2000000;
+
+    // Prioritize news sources
     const sortedImages = imageUrls.sort((a, b) => {
-      const aIsNews = a.source.includes('news') || a.source.includes('post') || a.source.includes('times') || a.source.includes('journal');
-      const bIsNews = b.source.includes('news') || b.source.includes('post') || b.source.includes('times') || b.source.includes('journal');
+      const aIsNews = a.source.includes('news') || a.source.includes('post') || a.source.includes('times');
+      const bIsNews = b.source.includes('news') || b.source.includes('post') || b.source.includes('times');
       if (aIsNews && !bIsNews) return -1;
       if (!aIsNews && bIsNews) return 1;
       return 0;
     });
 
-    // Limit images to process
     const imagesToProcess = sortedImages.slice(0, MAX_IMAGES_TO_PROCESS);
-    console.log(`Processing ${imagesToProcess.length} of ${imageUrls.length} images`);
 
-    // Process each image
     for (const item of imagesToProcess) {
-      // Check time budget
       if (Date.now() - startTime > MAX_PROCESSING_TIME) {
         console.log('Time budget exceeded, stopping early');
         break;
       }
-      
-      // Stop if we have enough photos
+
       if (photosAdded >= 8) {
         console.log('Found enough photos, stopping');
         break;
       }
+
       try {
         const imageUrl = new URL(item.url);
         const isBlocked = blockedDomains.some(d => imageUrl.hostname.includes(d));
-        
+
         if (isBlocked) {
           console.log(`Skipped blocked domain: ${imageUrl.hostname}`);
           continue;
         }
-        
-        console.log(`Processing: ${item.url} (source: ${item.source})`);
-        
+
+        console.log(`Processing: ${item.url}`);
+
         const imageResponse = await fetch(item.url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; FortressAI/1.0)'
-          },
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FortressAI/1.0)' },
           redirect: 'follow'
         });
 
@@ -280,244 +220,148 @@ serve(async (req) => {
 
         const imageBlob = await imageResponse.blob();
         const imageBuffer = await imageBlob.arrayBuffer();
-        
-        if (imageBuffer.byteLength < 1000) {
-          console.log(`Image too small: ${imageBuffer.byteLength} bytes`);
+
+        if (imageBuffer.byteLength < 1000 || imageBuffer.byteLength > MAX_IMAGE_SIZE) {
+          console.log(`Image size out of range: ${imageBuffer.byteLength} bytes`);
           continue;
         }
-        
-        if (imageBuffer.byteLength > MAX_IMAGE_SIZE) {
-          console.log(`Image too large: ${imageBuffer.byteLength} bytes, skipping`);
-          continue;
-        }
-        
-        console.log(`Downloaded: ${imageBuffer.byteLength} bytes`);
-        
+
         // AI verification
-        const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
         if (LOVABLE_API_KEY) {
-          try {
-            const base64Image = btoa(
-              new Uint8Array(imageBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-            );
-            
-            const mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
-            
-            // Build AI prompt based on whether we have reference photos
-            const aiContent = [];
-            let verificationPrompt = '';
-            
-            // Add user feedback context to improve AI decisions
-            let feedbackContext = '';
-            if (approvedPhotos.length > 0 || rejectedPhotos.length > 0) {
-              feedbackContext = '\n\nUser feedback from previous scans:';
-              if (approvedPhotos.length > 0) {
-                const approvedSources = [...new Set(approvedPhotos.map(p => p.source).filter(Boolean))];
-                feedbackContext += `\n- User has approved ${approvedPhotos.length} photo(s) from sources like: ${approvedSources.join(', ')}`;
-              }
-              if (rejectedPhotos.length > 0) {
-                const rejectedSources = [...new Set(rejectedPhotos.map(p => p.source).filter(Boolean))];
-                feedbackContext += `\n- User has rejected ${rejectedPhotos.length} photo(s) from sources like: ${rejectedSources.join(', ')}`;
-              }
-              feedbackContext += '\n\nPlease use this feedback pattern to make better decisions.';
+          const base64Image = btoa(
+            new Uint8Array(imageBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+          );
+
+          const mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
+          const aiContent: any[] = [];
+          let verificationPrompt = '';
+
+          // Build feedback context
+          let feedbackContext = '';
+          if (approvedPhotos.length > 0 || rejectedPhotos.length > 0) {
+            feedbackContext = '\n\nUser feedback from previous scans:';
+            if (approvedPhotos.length > 0) {
+              const approvedSources = [...new Set(approvedPhotos.map(p => p.source).filter(Boolean))];
+              feedbackContext += `\n- User has approved ${approvedPhotos.length} photo(s) from sources like: ${approvedSources.join(', ')}`;
             }
-            
-            if (referenceImages.length > 0) {
-              // Compare with user-approved reference photos
-              verificationPrompt = entity.type === 'person'
-                ? `I'm showing you ${referenceImages.length} user-approved reference photo(s) of "${entity.name}", followed by a new candidate photo. Does the candidate photo (the LAST image) show the SAME PERSON as the reference photos? Answer YES only if they are clearly the same person with matching facial features. Answer NO if different person, or if the candidate is a logo, illustration, or unrelated.${feedbackContext}`
-                : `I'm showing you ${referenceImages.length} user-approved reference photo(s) of "${entity.name}", followed by a new candidate. Does the candidate (the LAST image) show the SAME organization/entity as the references? Answer YES only if they match. Answer NO if different or unrelated.${feedbackContext}`;
-              
-              aiContent.push({ type: 'text', text: verificationPrompt });
-              
-              // Add all reference images
-              for (let i = 0; i < referenceImages.length; i++) {
-                aiContent.push({
-                  type: 'image_url',
-                  image_url: { url: `data:${referenceImages[i].mimeType};base64,${referenceImages[i].base64}` }
-                });
-              }
-              
-              aiContent.push({ type: 'text', text: 'Candidate photo to compare:' });
+            if (rejectedPhotos.length > 0) {
+              const rejectedSources = [...new Set(rejectedPhotos.map(p => p.source).filter(Boolean))];
+              feedbackContext += `\n- User has rejected ${rejectedPhotos.length} photo(s) from sources like: ${rejectedSources.join(', ')}`;
+            }
+          }
+
+          if (referenceImages.length > 0) {
+            verificationPrompt = entity.type === 'person'
+              ? `I'm showing you ${referenceImages.length} user-approved reference photo(s) of "${entity.name}", followed by a new candidate photo. Does the candidate photo (the LAST image) show the SAME PERSON as the reference photos? Answer YES only if they are clearly the same person. Answer NO if different person or unrelated.${feedbackContext}`
+              : `I'm showing you ${referenceImages.length} reference photo(s) of "${entity.name}", followed by a new candidate. Does the candidate match? Answer YES or NO.${feedbackContext}`;
+
+            aiContent.push({ type: 'text', text: verificationPrompt });
+
+            for (const ref of referenceImages) {
               aiContent.push({
                 type: 'image_url',
-                image_url: { url: `data:${mimeType};base64,${base64Image}` }
+                image_url: { url: `data:${ref.mimeType};base64,${ref.base64}` }
               });
-            } else {
-              // No user-approved reference photos - require name verification from image context
-              // Be VERY strict: only approve if the image clearly identifies the person by name
-              verificationPrompt = entity.type === 'person' 
-                ? `This image was found in a web search for "${entity.name}". 
-
-CRITICAL: You must verify this is actually a photo OF "${entity.name}" specifically, not just any person.
-
-Look for:
-- Text/captions in or near the image mentioning "${entity.name}"
-- LinkedIn profile photos where the name "${entity.name}" is visible
-- News article photos with caption mentioning "${entity.name}"
-- Corporate headshots with name overlay
-
-Answer YES ONLY if you can confirm this specific image is of "${entity.name}".
-Answer NO if:
-- It could be any random person
-- The name doesn't match or isn't visible
-- It's a logo, illustration, stock photo, or group photo
-- You cannot verify the identity from the image itself
-
-When in doubt, answer NO.${feedbackContext}`
-                : `Is this a professional photo or logo of the organization "${entity.name}"? Answer YES if it clearly represents "${entity.name}". Answer NO if it's unrelated, stock, or doesn't match the organization name.${feedbackContext}`;
-              
-              aiContent.push(
-                { type: 'text', text: verificationPrompt },
-                {
-                  type: 'image_url',
-                  image_url: { url: `data:${mimeType};base64,${base64Image}` }
-                }
-              );
             }
-            
-            const verifyResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                model: 'google/gemini-2.5-flash',
-                messages: [
-                  {
-                    role: 'user',
-                    content: aiContent
-                  }
-                ],
-                max_tokens: 10
-              })
-            });
 
-            if (verifyResponse.ok) {
-              const verifyData = await verifyResponse.json();
-              const aiAnswer = verifyData.choices[0]?.message?.content?.trim().toUpperCase();
-              
-              console.log(`AI verification: ${aiAnswer}`);
-              
-              if (aiAnswer !== 'YES') {
-                const rejectReason = referenceImages.length > 0
-                  ? `AI rejected - does not match ${referenceImages.length} reference photo(s)`
-                  : 'AI rejected - not a suitable professional photo';
-                console.log(rejectReason);
-                errors.push(`Rejected ${item.url}: ${aiAnswer || 'AI said NO'}`);
-                continue;
-              }
-              
-              const approvalMsg = referenceImages.length > 0
-                ? `AI approved - matches ${referenceImages.length} reference photo(s) from ${item.source}`
-                : `AI approved image from ${item.source}`;
-              console.log(approvalMsg);
-            } else {
-              console.log('AI verification request failed, skipping image');
+            aiContent.push({ type: 'text', text: 'Candidate photo to compare:' });
+            aiContent.push({
+              type: 'image_url',
+              image_url: { url: `data:${mimeType};base64,${base64Image}` }
+            });
+          } else {
+            verificationPrompt = entity.type === 'person'
+              ? `This image was found searching for "${entity.name}". Is this a professional photo OF this specific person "${entity.name}"? Answer YES only if you can verify identity. Answer NO if uncertain.${feedbackContext}`
+              : `Is this a photo/logo of "${entity.name}"? Answer YES or NO.${feedbackContext}`;
+
+            aiContent.push(
+              { type: 'text', text: verificationPrompt },
+              { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+            );
+          }
+
+          const verifyResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'google/gemini-2.5-flash',
+              messages: [{ role: 'user', content: aiContent }],
+              max_tokens: 10
+            })
+          });
+
+          if (verifyResponse.ok) {
+            const verifyData = await verifyResponse.json();
+            const aiAnswer = verifyData.choices[0]?.message?.content?.trim().toUpperCase();
+
+            console.log(`AI verification: ${aiAnswer}`);
+
+            if (aiAnswer !== 'YES') {
+              console.log('AI rejected image');
               continue;
             }
-          } catch (aiError) {
-            console.error('AI verification error:', aiError);
+          } else {
+            console.log('AI verification failed, skipping');
             continue;
           }
-        } else {
-          console.log('No LOVABLE_API_KEY, accepting image without verification');
         }
-        
+
         // Save image
         const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
         const ext = contentType.split('/')[1]?.split(';')[0] || 'jpg';
-        const fileName = `${entityId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
+        const fileName = `${entityId}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
 
-        const { error: uploadError } = await supabaseClient.storage
+        const { error: uploadError } = await supabase.storage
           .from('entity-photos')
-          .upload(fileName, imageBuffer, {
-            contentType: contentType,
-            upsert: false
-          });
+          .upload(fileName, imageBuffer, { contentType, upsert: false });
 
         if (uploadError) {
           console.error('Upload error:', uploadError);
+          errors.push(`Failed to upload: ${uploadError.message}`);
           continue;
         }
 
-        const { error: dbError } = await supabaseClient
+        // Insert record
+        const { error: dbError } = await supabase
           .from('entity_photos')
           .insert({
             entity_id: entityId,
             storage_path: fileName,
-            caption: item.title || null,
             source: item.source,
-            created_by: null
+            source_url: item.url,
+            is_primary: photosAdded === 0 && !existingPhotos?.length,
+            metadata: { title: item.title, ai_verified: true }
           });
 
         if (dbError) {
-          console.error('DB error:', dbError);
-          await supabaseClient.storage.from('entity-photos').remove([fileName]);
+          console.error('Database error:', dbError);
+          errors.push(`Failed to save record: ${dbError.message}`);
           continue;
         }
 
         photosAdded++;
-        console.log(`Successfully added photo ${photosAdded}`);
+        console.log(`Successfully added photo from ${item.source}`);
 
       } catch (error) {
         console.error(`Error processing ${item.url}:`, error);
-        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        errors.push(`Failed: ${errorMsg}`);
+        errors.push(`Failed: ${error instanceof Error ? error.message : 'Unknown'}`);
       }
     }
 
     console.log(`Photo scan complete. Added ${photosAdded} photos`);
-    
-    // Diagnostic summary
-    const diagnostics = {
-      totalFound: imageUrls.length,
-      processed: Math.min(imageUrls.length, MAX_IMAGES_TO_PROCESS),
-      approved: photosAdded,
-      rejected: errors.length,
-      referencePhotosUsed: referenceImages.length,
-      feedbackAvailable: approvedPhotos.length + rejectedPhotos.length
-    };
-    
-    console.log('Scan diagnostics:', JSON.stringify(diagnostics, null, 2));
-    console.log('Sample rejections:', errors.slice(0, 3));
-    
-    let message = `Successfully added ${photosAdded} photos for ${entity.name}`;
-    if (imageUrls.length > MAX_IMAGES_TO_PROCESS) {
-      message += `. Found ${imageUrls.length} total images, processed ${MAX_IMAGES_TO_PROCESS} to stay within time limits`;
-    }
-    if (referenceImages.length > 0) {
-      message += `. Used ${referenceImages.length} existing photos for comparison`;
-    }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        photosAdded,
-        diagnostics: {
-          totalFound: imageUrls.length,
-          processed: Math.min(imageUrls.length, MAX_IMAGES_TO_PROCESS),
-          approved: photosAdded,
-          rejected: errors.length,
-          referencePhotosUsed: referenceImages.length,
-          feedbackAvailable: approvedPhotos.length + rejectedPhotos.length,
-          timeoutReached: errors.some(e => e.includes('Time budget'))
-        },
-        sampleRejections: errors.slice(0, 5),
-        message
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      photosAdded,
+      errors: errors.length > 0 ? errors : undefined,
+      message: `Successfully added ${photosAdded} photos for ${entity.name}`
+    });
 
   } catch (error) {
     console.error('Photo scan error:', error);
-    return new Response(
-      JSON.stringify({ 
-        error: error instanceof Error ? error.message : 'Unknown error',
-        success: false 
-      }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

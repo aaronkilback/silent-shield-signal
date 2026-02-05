@@ -1,48 +1,31 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.4';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = createServiceClient();
 
     // Get auth user from request
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Not authenticated' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return errorResponse('Not authenticated', 401);
     }
 
     const token = authHeader.replace('Bearer ', '');
     const { data: { user }, error: userError } = await supabase.auth.getUser(token);
-    
+
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: 'Invalid session' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return errorResponse('Invalid session', 401);
     }
 
     const { phone_number, purpose } = await req.json();
 
-    // Validate phone number format (basic E.164 validation)
+    // Validate phone number format (E.164)
     const phoneRegex = /^\+[1-9]\d{1,14}$/;
     if (!phoneRegex.test(phone_number)) {
-      return new Response(JSON.stringify({ error: 'Invalid phone number format. Use E.164 format (e.g., +12025551234)' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return errorResponse('Invalid phone number format. Use E.164 format (e.g., +12025551234)', 400);
     }
 
     // Generate 6-digit code
@@ -67,10 +50,7 @@ Deno.serve(async (req) => {
 
     if (insertError) {
       console.error('Failed to store code:', insertError);
-      return new Response(JSON.stringify({ error: 'Failed to generate code' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return errorResponse('Failed to generate code', 500);
     }
 
     // Send SMS via Twilio
@@ -80,13 +60,10 @@ Deno.serve(async (req) => {
 
     if (!twilioAccountSid || !twilioAuthToken || !twilioFromNumber) {
       console.error('Twilio credentials not configured');
-      return new Response(JSON.stringify({ error: 'SMS service not configured' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return errorResponse('SMS service not configured', 500);
     }
 
-    const message = purpose === 'enrollment' 
+    const message = purpose === 'enrollment'
       ? `Your Fortress verification code is: ${code}. This code expires in 10 minutes.`
       : `Your Fortress login code is: ${code}. This code expires in 10 minutes.`;
 
@@ -109,10 +86,7 @@ Deno.serve(async (req) => {
     if (!twilioResponse.ok) {
       const twilioError = await twilioResponse.text();
       console.error('Twilio error:', twilioError);
-      return new Response(JSON.stringify({ error: 'Failed to send SMS' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return errorResponse('Failed to send SMS', 500);
     }
 
     // If enrolling, update/upsert the phone number
@@ -129,20 +103,14 @@ Deno.serve(async (req) => {
 
     console.log(`MFA code sent to ${phone_number.slice(0, -4)}**** for user ${user.id}`);
 
-    return new Response(JSON.stringify({ 
-      success: true, 
+    return successResponse({
+      success: true,
       message: 'Verification code sent',
       expires_at: expiresAt.toISOString()
-    }), {
-      status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
     console.error('Error in send-mfa-code:', error);
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return errorResponse('Internal server error', 500);
   }
 });

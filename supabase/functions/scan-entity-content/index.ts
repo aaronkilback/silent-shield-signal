@@ -1,33 +1,27 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
     const { entityId, searchType = 'news' } = await req.json();
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    if (!entityId) {
+      return errorResponse('entityId is required', 400);
+    }
+
+    const supabase = createServiceClient();
 
     // Get entity details
-    const { data: entity, error: entityError } = await supabaseClient
+    const { data: entity, error: entityError } = await supabase
       .from('entities')
       .select('*')
       .eq('id', entityId)
       .single();
 
     if (entityError || !entity) {
-      throw new Error('Entity not found');
+      return errorResponse('Entity not found', 404);
     }
 
     console.log(`Scanning for ${searchType} content about: ${entity.name} (${entity.type})`);
@@ -54,7 +48,7 @@ serve(async (req) => {
     const GOOGLE_CX = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
     
     if (!GOOGLE_API_KEY || !GOOGLE_CX) {
-      throw new Error('Google Search API credentials not configured');
+      return errorResponse('Google Search API credentials not configured', 500);
     }
 
     const searchUrl = new URL('https://www.googleapis.com/customsearch/v1');
@@ -62,7 +56,7 @@ serve(async (req) => {
     searchUrl.searchParams.set('cx', GOOGLE_CX);
     searchUrl.searchParams.set('q', searchQuery);
     searchUrl.searchParams.set('num', '10');
-    searchUrl.searchParams.set('sort', 'date'); // Most recent first
+    searchUrl.searchParams.set('sort', 'date');
 
     console.log(`Searching for: ${searchQuery}`);
 
@@ -71,14 +65,14 @@ serve(async (req) => {
     if (!searchResponse.ok) {
       const errorText = await searchResponse.text();
       console.error('Google Search API error:', errorText);
-      throw new Error(`Google Search API returned ${searchResponse.status}`);
+      return errorResponse(`Google Search API returned ${searchResponse.status}`, 500);
     }
 
     const searchData = await searchResponse.json();
     console.log(`Found ${searchData.items?.length || 0} results`);
 
     let contentAdded = 0;
-    const errors = [];
+    const errors: string[] = [];
 
     // Process each search result
     for (const item of searchData.items || []) {
@@ -115,7 +109,7 @@ serve(async (req) => {
         if (titleLower === nameLower) relevanceScore = 100;
 
         // Insert into database
-        const { error: dbError } = await supabaseClient
+        const { error: dbError } = await supabase
           .from('entity_content')
           .insert({
             entity_id: entityId,
@@ -125,13 +119,13 @@ serve(async (req) => {
             source: new URL(item.link).hostname,
             published_date: publishedDate,
             excerpt: item.snippet || null,
-            content_text: item.snippet || null, // We'll have full content later with web scraping
+            content_text: item.snippet || null,
             relevance_score: relevanceScore,
             metadata: {
               image: item.pagemap?.cse_image?.[0]?.src || null,
               thumbnail: item.pagemap?.cse_thumbnail?.[0]?.src || null,
             },
-            created_by: null // System-generated
+            created_by: null
           });
 
         if (dbError) {
@@ -157,24 +151,15 @@ serve(async (req) => {
 
     console.log(`Content scan complete. Added ${contentAdded} items`);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        contentAdded,
-        errors: errors.length > 0 ? errors : undefined,
-        message: `Successfully added ${contentAdded} articles/content for ${entity.name}`
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      contentAdded,
+      errors: errors.length > 0 ? errors : undefined,
+      message: `Successfully added ${contentAdded} articles/content for ${entity.name}`
+    });
 
   } catch (error) {
     console.error('Content scan error:', error);
-    return new Response(
-      JSON.stringify({ 
-        error: error instanceof Error ? error.message : 'Unknown error',
-        success: false 
-      }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
