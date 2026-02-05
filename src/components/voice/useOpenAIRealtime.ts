@@ -53,7 +53,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     optionsRef.current.onToolCall?.(toolName, toolArgs);
     
     try {
-      const { data, error } = await supabase.functions.invoke('voice-tool-executor', {
+      const { data, error } = await supabase.functions.invoke('voice-tool-executor-v2', {
         body: { tool_name: toolName, arguments: toolArgs }
       });
       
