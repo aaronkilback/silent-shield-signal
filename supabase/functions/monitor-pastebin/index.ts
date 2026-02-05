@@ -1,11 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
 
 const LEAK_KEYWORDS = [
   'database dump', 'sql dump', 'leaked', 'hacked',
@@ -13,16 +7,12 @@ const LEAK_KEYWORDS = [
   'customer data', 'breach', 'exposed', 'dump'
 ];
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabase = createServiceClient();
 
     console.log('Starting Pastebin monitoring scan...');
 
@@ -55,16 +45,13 @@ serve(async (req) => {
 
       if (!response.ok) {
         console.log(`Pastebin fetch failed: ${response.status}`);
-        return new Response(
-          JSON.stringify({
-            success: true,
-            clients_scanned: clients?.length || 0,
-            signals_created: 0,
-            source: 'pastebin',
-            note: 'Pastebin unavailable'
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return successResponse({
+          success: true,
+          clients_scanned: clients?.length || 0,
+          signals_created: 0,
+          source: 'pastebin',
+          note: 'Pastebin unavailable'
+        });
       }
 
       const html = await response.text();
@@ -139,21 +126,15 @@ serve(async (req) => {
 
     console.log(`Pastebin monitoring complete. Created ${signalsCreated} signals.`);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        clients_scanned: clients?.length || 0,
-        signals_created: signalsCreated,
-        source: 'pastebin'
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      clients_scanned: clients?.length || 0,
+      signals_created: signalsCreated,
+      source: 'pastebin'
+    });
 
   } catch (error) {
     console.error('Error in Pastebin monitoring:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

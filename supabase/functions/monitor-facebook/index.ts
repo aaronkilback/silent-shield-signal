@@ -1,21 +1,14 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { captureMediaFromContent, createMediaAttachments } from '../_shared/media-capture.ts';
 import { 
   extractMentions, 
   extractHashtags, 
   parseEngagement,
-  parseComments,
   isHighPriorityContent,
   detectPostType,
   extractEventDetails,
   extractAuthorFromUrl 
 } from '../_shared/social-media-parser.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
 
 // Activism and protest-related keywords
 const ACTIVISM_KEYWORDS = [
@@ -25,16 +18,12 @@ const ACTIVISM_KEYWORDS = [
   'campaign', 'PRGT', 'LNG', 'Coastal GasLink', 'CGL'
 ];
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabase = createServiceClient();
 
     console.log('Starting Facebook monitoring scan...');
 
@@ -113,7 +102,6 @@ serve(async (req) => {
     }
 
     // PART 2: Entity-focused searches - ALL monitored entities (not just those with FB handles)
-    // Search by name for all monitored entities regardless of whether they have FB handles
     const allMonitoredEntities = watchedEntities || [];
     
     for (const entity of allMonitoredEntities) {
@@ -158,25 +146,19 @@ serve(async (req) => {
 
     console.log(`Facebook monitoring complete. Ran ${totalSearches} searches. Created ${signalsCreated} signals. Captured ${mediaCaptures} media files.`);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        clients_scanned: clients?.length || 0,
-        entities_scanned: allMonitoredEntities.length,
-        searches_executed: totalSearches,
-        signals_created: signalsCreated,
-        media_captured: mediaCaptures,
-        source: 'facebook'
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      clients_scanned: clients?.length || 0,
+      entities_scanned: allMonitoredEntities.length,
+      searches_executed: totalSearches,
+      signals_created: signalsCreated,
+      media_captured: mediaCaptures,
+      source: 'facebook'
+    });
 
   } catch (error) {
     console.error('Error in Facebook monitoring:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
 

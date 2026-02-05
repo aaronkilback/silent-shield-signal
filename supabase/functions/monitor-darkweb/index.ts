@@ -1,11 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
 
 const BREACH_KEYWORDS = [
   'database', 'dump', 'leaked', 'breach', 'hacked',
@@ -13,15 +7,11 @@ const BREACH_KEYWORDS = [
   'stolen', 'exposed', 'compromised', 'ransomware'
 ];
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-  );
+  const supabase = createServiceClient();
 
   const { data: historyEntry } = await supabase
     .from('monitoring_history')
@@ -138,15 +128,12 @@ serve(async (req) => {
         .eq('id', historyEntry.id);
     }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        clients_scanned: clients?.length || 0,
-        signals_created: signalsCreated,
-        source: 'darkweb'
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      clients_scanned: clients?.length || 0,
+      signals_created: signalsCreated,
+      source: 'darkweb'
+    });
 
   } catch (error) {
     console.error('Error in dark web monitoring:', error);
@@ -162,9 +149,6 @@ serve(async (req) => {
         .eq('id', historyEntry.id);
     }
 
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

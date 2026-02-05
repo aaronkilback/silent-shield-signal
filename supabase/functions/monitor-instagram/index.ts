@@ -1,5 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { 
   extractMediaUrls, 
   downloadAndStoreMedia, 
@@ -14,11 +13,6 @@ import {
   isHighPriorityContent,
   detectPostType
 } from '../_shared/social-media-parser.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
 
 // Activism and protest-related keywords to monitor
 const ACTIVISM_KEYWORDS = [
@@ -36,16 +30,12 @@ const ACTIVIST_ORGANIZATIONS = [
   'Wilderness Committee', 'EcoJustice', 'Pembina Institute'
 ];
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabase = createServiceClient();
 
     console.log('Starting Instagram monitoring scan...');
 
@@ -188,25 +178,19 @@ serve(async (req) => {
 
     console.log(`Instagram monitoring complete. Ran ${totalSearches} searches. Created ${signalsCreated} signals. Downloaded ${mediaDownloaded} media files.`);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        clients_scanned: clients?.length || 0,
-        entities_scanned: watchedEntities?.length || 0,
-        searches_executed: totalSearches,
-        signals_created: signalsCreated,
-        media_downloaded: mediaDownloaded,
-        source: 'instagram'
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      clients_scanned: clients?.length || 0,
+      entities_scanned: watchedEntities?.length || 0,
+      searches_executed: totalSearches,
+      signals_created: signalsCreated,
+      media_downloaded: mediaDownloaded,
+      source: 'instagram'
+    });
 
   } catch (error) {
     console.error('Error in Instagram monitoring:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
 
@@ -264,25 +248,23 @@ async function processSearch(
       }
     }
 
-    console.log(`Found ${instagramUrls.length} Instagram URLs to fetch`);
+    console.log(`Found ${instagramUrls.length} Instagram URLs to process`);
 
-    // Process each Instagram URL - fetch actual page content
+    // Process each Instagram URL
     for (const instagramUrl of instagramUrls.slice(0, 5)) {
       processedUrls.add(instagramUrl);
       
       try {
-        // Fetch the actual Instagram page to get post content
-        const postData = await fetchInstagramPost(instagramUrl);
+        // Extract content from URL context in search results
+        const urlContext = extractUrlContext(html, instagramUrl);
         
-        if (!postData || !postData.caption) {
+        if (!urlContext || urlContext.length < 30) {
           console.log(`No content extracted from ${instagramUrl}`);
           continue;
         }
 
-        const { caption, authorHandle, authorName, mediaUrls, comments, engagement, postType, postDate } = postData;
-
         // Check for relevance
-        const lowerCaption = caption.toLowerCase();
+        const lowerCaption = urlContext.toLowerCase();
         const isRelevant = 
           ACTIVISM_KEYWORDS.some(k => lowerCaption.includes(k.toLowerCase())) ||
           ACTIVIST_ORGANIZATIONS.some(org => lowerCaption.includes(org.toLowerCase())) ||
@@ -291,26 +273,6 @@ async function processSearch(
         if (!isRelevant) {
           console.log(`Content not relevant, skipping`);
           continue;
-        }
-
-        // Check if content is historical (older than 90 days) - flag but don't skip
-        const maxAgeMs = 90 * 24 * 60 * 60 * 1000; // 90 days
-        const now = Date.now();
-        let isHistorical = false;
-        let historicalDate: Date | null = null;
-        
-        if (postDate && (now - postDate.getTime() > maxAgeMs)) {
-          isHistorical = true;
-          historicalDate = postDate;
-          console.log(`Flagging as historical: post from ${postDate.toISOString().split('T')[0]} (${authorHandle || sourceName})`);
-        }
-        
-        // Also check for dates mentioned in caption that indicate old events
-        const contentDate = extractDateFromContent(caption);
-        if (contentDate && (now - contentDate.getTime() > maxAgeMs)) {
-          isHistorical = true;
-          historicalDate = contentDate;
-          console.log(`Flagging as historical: references event from ${contentDate.toISOString().split('T')[0]}`);
         }
 
         // Check for duplicates
@@ -326,10 +288,11 @@ async function processSearch(
         }
 
         // Extract structured data
-        const mentions = extractMentions(caption);
-        const hashtags = extractHashtags(caption);
-        const eventDetails = extractEventDetails(caption);
-        const isHighPriority = isHighPriorityContent(caption);
+        const mentions = extractMentions(urlContext);
+        const hashtags = extractHashtags(urlContext);
+        const eventDetails = extractEventDetails(urlContext);
+        const isHighPriority = isHighPriorityContent(urlContext);
+        const postType = detectPostType(instagramUrl, urlContext);
 
         // Determine category
         let category = 'social_media';
@@ -339,21 +302,17 @@ async function processSearch(
           category = 'activism';
         }
 
-        // Create ingested document with FULL post data
+        // Create ingested document
         const { data: doc, error: docError } = await supabase
           .from('ingested_documents')
           .insert({
-            title: `Instagram ${postType}: ${authorHandle || sourceName}`,
-            raw_text: caption,
+            title: `Instagram ${postType}: ${sourceName}`,
+            raw_text: urlContext,
             source_url: instagramUrl,
-            post_caption: caption,
-            author_handle: authorHandle,
-            author_name: authorName || sourceName,
+            post_caption: urlContext,
+            author_name: sourceName,
             mentions: mentions,
             hashtags: hashtags,
-            engagement_metrics: engagement,
-            comments: comments.slice(0, 20), // Store top 20 comments
-            media_urls: mediaUrls,
             media_type: postType,
             metadata: {
               source: 'instagram',
@@ -364,12 +323,7 @@ async function processSearch(
               search_type: sourceType,
               search_query: query,
               category: category,
-              has_media: mediaUrls.length > 0,
-              media_count: mediaUrls.length,
-              comment_count: comments.length,
               is_high_priority: isHighPriority,
-              is_historical: isHistorical,
-              historical_date: historicalDate?.toISOString() || null,
               event_details: eventDetails,
               detected_keywords: ACTIVISM_KEYWORDS.filter(k => lowerCaption.includes(k.toLowerCase())),
               detected_organizations: ACTIVIST_ORGANIZATIONS.filter(org => lowerCaption.includes(org.toLowerCase())),
@@ -381,32 +335,6 @@ async function processSearch(
           .single();
 
         if (!docError && doc) {
-          // Download and store media files
-          let storedMediaCount = 0;
-          for (const mediaUrl of mediaUrls.slice(0, 5)) {
-            try {
-              const mediaFile = await downloadAndStoreMedia(supabase, mediaUrl, 'instagram');
-              if (mediaFile) {
-                storedMediaCount++;
-                await createMediaAttachments(supabase, 'document', doc.id, [mediaFile]);
-                
-                // Set thumbnail
-                if (mediaFile.type === 'image' && storedMediaCount === 1) {
-                  await supabase
-                    .from('ingested_documents')
-                    .update({ thumbnail_url: mediaFile.storageUrl })
-                    .eq('id', doc.id);
-                }
-              }
-            } catch (mediaError) {
-              console.log(`Failed to download media: ${mediaError}`);
-            }
-          }
-          
-          if (storedMediaCount > 0) {
-            onMediaDownloaded(storedMediaCount);
-          }
-          
           // Link to entity
           if (entityId) {
             await supabase
@@ -425,7 +353,7 @@ async function processSearch(
           });
           
           onSignalCreated(1);
-          console.log(`✓ Ingested Instagram ${postType}: @${authorHandle} - "${caption.substring(0, 80)}..." (${comments.length} comments, ${mediaUrls.length} media)`);
+          console.log(`✓ Ingested Instagram ${postType}: ${sourceName} - "${urlContext.substring(0, 80)}..."`);
         }
 
       } catch (postError) {
@@ -445,231 +373,21 @@ async function processSearch(
   }
 }
 
-// Extract date from content text (e.g., "January 28, 2020" or "on March 15, 2019")
-function extractDateFromContent(text: string): Date | null {
-  // Match patterns like "January 28, 2020" or "28 January 2020" or "Jan 2020"
-  const datePatterns = [
-    /(?:on\s+)?(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+20\d{2}/i,
-    /(?:on\s+)?\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December),?\s+20\d{2}/i,
-    /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+20\d{2}/i,
-    /(?:in\s+)?(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2}/i,
-    /\d{1,2}\/\d{1,2}\/20\d{2}/,
-    /20\d{2}-\d{2}-\d{2}/
-  ];
+function extractUrlContext(html: string, url: string): string {
+  // Find text near the URL in search results
+  const urlIndex = html.indexOf(url);
+  if (urlIndex === -1) return '';
   
-  for (const pattern of datePatterns) {
-    const match = text.match(pattern);
-    if (match) {
-      try {
-        const parsed = new Date(match[0].replace(/^(?:on|in)\s+/i, ''));
-        if (!isNaN(parsed.getTime())) {
-          return parsed;
-        }
-      } catch {
-        // Continue to next pattern
-      }
-    }
-  }
+  // Get surrounding context
+  const start = Math.max(0, urlIndex - 500);
+  const end = Math.min(html.length, urlIndex + 500);
+  const context = html.substring(start, end);
   
-  // Check for year mentions like "2020" or "2019" without month
-  const yearMatch = text.match(/\b20(1[0-9]|2[0-4])\b/);
-  if (yearMatch) {
-    const year = parseInt(yearMatch[0], 10);
-    const currentYear = new Date().getFullYear();
-    // If mentioning a year more than 1 year ago, flag as potentially old
-    if (currentYear - year > 1) {
-      return new Date(year, 0, 1); // Return Jan 1 of that year
-    }
-  }
-  
-  return null;
-}
-
-// Fetch actual Instagram post content by scraping the page
-async function fetchInstagramPost(url: string): Promise<{
-  caption: string;
-  authorHandle: string;
-  authorName: string;
-  mediaUrls: string[];
-  comments: Array<{ author: string; text: string }>;
-  engagement: { likes?: number; comments?: number; views?: number };
-  postType: 'image' | 'video' | 'reel' | 'carousel';
-  postDate: Date | null;
-} | null> {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-
-    // Use a mobile user agent for better content access
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-      signal: controller.signal,
-    }).finally(() => clearTimeout(timeout));
-
-    if (!response.ok) {
-      console.log(`Failed to fetch Instagram post: ${response.status}`);
-      return null;
-    }
-
-    const html = await response.text();
-    
-    // Extract data from Instagram's embedded JSON (meta tags and script data)
-    let caption = '';
-    let authorHandle = '';
-    let authorName = '';
-    const mediaUrls: string[] = [];
-    const comments: Array<{ author: string; text: string }> = [];
-    let engagement: { likes?: number; comments?: number; views?: number } = {};
-    let postType: 'image' | 'video' | 'reel' | 'carousel' = 'image';
-    let postDate: Date | null = null;
-
-    // Extract from og:description meta tag (contains caption)
-    const descMatch = html.match(/<meta\s+(?:property|name)="og:description"\s+content="([^"]+)"/i) ||
-                      html.match(/<meta\s+content="([^"]+)"\s+(?:property|name)="og:description"/i);
-    if (descMatch) {
-      caption = descMatch[1]
-        .replace(/&quot;/g, '"')
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&#x27;/g, "'")
-        .replace(/&nbsp;/g, ' ');
-    }
-
-    // Extract from title tag as backup
-    if (!caption) {
-      const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
-      if (titleMatch) {
-        caption = titleMatch[1]
-          .replace(/ on Instagram:?\s*"?/i, '')
-          .replace(/"?\s*•\s*Instagram.*$/i, '')
-          .trim();
-      }
-    }
-
-    // Extract author from URL or meta tags
-    const authorUrlMatch = url.match(/instagram\.com\/([a-zA-Z0-9_\.]+)\//);
-    if (authorUrlMatch) {
-      authorHandle = authorUrlMatch[1];
-    }
-    
-    // Try to get author from caption (usually at start)
-    const authorCaptionMatch = caption.match(/^@?([a-zA-Z0-9_\.]+):/);
-    if (authorCaptionMatch) {
-      authorHandle = authorCaptionMatch[1];
-    }
-
-    // Get author name from og:title
-    const titleAuthorMatch = html.match(/<meta\s+(?:property|name)="og:title"\s+content="([^"]+)"/i);
-    if (titleAuthorMatch) {
-      const parts = titleAuthorMatch[1].split(/\s+on\s+Instagram/i);
-      if (parts[0]) {
-        authorName = parts[0].trim();
-      }
-    }
-
-    // Extract media URLs from og:image and og:video
-    const imageMatch = html.match(/<meta\s+(?:property|name)="og:image"\s+content="([^"]+)"/gi);
-    if (imageMatch) {
-      for (const match of imageMatch) {
-        const urlMatch = match.match(/content="([^"]+)"/);
-        if (urlMatch && urlMatch[1]) {
-          mediaUrls.push(urlMatch[1].replace(/&amp;/g, '&'));
-        }
-      }
-    }
-
-    const videoMatch = html.match(/<meta\s+(?:property|name)="og:video"\s+content="([^"]+)"/i);
-    if (videoMatch) {
-      mediaUrls.push(videoMatch[1].replace(/&amp;/g, '&'));
-      postType = 'video';
-    }
-
-    // Detect post type from URL
-    if (url.includes('/reel/')) {
-      postType = 'reel';
-    } else if (url.includes('/tv/')) {
-      postType = 'video';
-    }
-
-    // Try to extract engagement from page text
-    const likesMatch = caption.match(/(\d+(?:,\d+)?(?:\.\d+)?[KkMm]?)\s*likes?/i) ||
-                       html.match(/(\d+(?:,\d+)?(?:\.\d+)?[KkMm]?)\s*likes?/i);
-    if (likesMatch) {
-      engagement.likes = parseEngagementNumber(likesMatch[1]);
-    }
-
-    const commentsMatch = html.match(/(\d+(?:,\d+)?)\s*comments?/i);
-    if (commentsMatch) {
-      engagement.comments = parseInt(commentsMatch[1].replace(/,/g, ''), 10);
-    }
-
-    const viewsMatch = html.match(/(\d+(?:,\d+)?(?:\.\d+)?[KkMm]?)\s*views?/i);
-    if (viewsMatch) {
-      engagement.views = parseEngagementNumber(viewsMatch[1]);
-    }
-
-    // Try to extract comments from page (limited visibility without auth)
-    const commentPattern = /@([a-zA-Z0-9_\.]+)\s+([^@]+?)(?=@[a-zA-Z0-9_\.]|$)/g;
-    let commentMatch;
-    while ((commentMatch = commentPattern.exec(html)) !== null && comments.length < 10) {
-      const text = commentMatch[2].replace(/<[^>]+>/g, '').trim();
-      if (text.length > 5 && text.length < 500) {
-        comments.push({
-          author: commentMatch[1],
-          text: text
-        });
-      }
-    }
-
-    // Try to extract post date from meta tags or page content
-    const dateTimeMatch = html.match(/<time[^>]*datetime="([^"]+)"/i) ||
-                          html.match(/"uploadDate":\s*"([^"]+)"/i) ||
-                          html.match(/"dateCreated":\s*"([^"]+)"/i);
-    if (dateTimeMatch) {
-      try {
-        postDate = new Date(dateTimeMatch[1]);
-        if (isNaN(postDate.getTime())) postDate = null;
-      } catch {
-        postDate = null;
-      }
-    }
-
-    // Return null if we couldn't extract meaningful content
-    if (!caption || caption.length < 10) {
-      console.log('Could not extract caption from Instagram post');
-      return null;
-    }
-
-    return {
-      caption,
-      authorHandle,
-      authorName,
-      mediaUrls,
-      comments,
-      engagement,
-      postType,
-      postDate
-    };
-
-  } catch (error) {
-    console.error('Error fetching Instagram post:', error);
-    return null;
-  }
-}
-
-function parseEngagementNumber(str: string): number {
-  const cleaned = str.replace(/,/g, '');
-  const multiplier = cleaned.match(/[KkMm]$/);
-  const num = parseFloat(cleaned.replace(/[KkMm]$/, ''));
-  
-  if (multiplier) {
-    if (multiplier[0].toLowerCase() === 'k') return Math.round(num * 1000);
-    if (multiplier[0].toLowerCase() === 'm') return Math.round(num * 1000000);
-  }
-  return Math.round(num);
+  // Clean HTML
+  return context
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&[^;]+;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .substring(0, 500);
 }
