@@ -58,7 +58,8 @@ export const EntityCrossReferenceDialog = ({ open, onOpenChange }: EntityCrossRe
         const { data, error } = await supabase.functions.invoke('cross-reference-entities', {
           body: {
             fileData: base64,
-            columnName: columnName
+            columnName: columnName,
+            fileType: file.type
           }
         });
 
@@ -99,17 +100,17 @@ export const EntityCrossReferenceDialog = ({ open, onOpenChange }: EntityCrossRe
           <Alert>
             <FileSpreadsheet className="w-4 h-4" />
             <AlertDescription>
-              Upload an Excel file (.xlsx, .xls) with a list of names to check against your entities database.
+              Upload an Excel file (.xlsx, .xls) or PDF with a list of names to check against your entities database. PDFs will be parsed using AI.
             </AlertDescription>
           </Alert>
 
           <div className="space-y-4">
             <div>
-              <Label htmlFor="file-upload">Excel File</Label>
+              <Label htmlFor="file-upload">File (Excel or PDF)</Label>
               <Input
                 id="file-upload"
                 type="file"
-                accept=".xlsx,.xls"
+                accept=".xlsx,.xls,.pdf"
                 onChange={handleFileChange}
                 disabled={isProcessing}
               />
