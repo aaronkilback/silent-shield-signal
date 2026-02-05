@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 interface LegalQueryRequest {
   jurisdiction: string;
@@ -15,16 +9,13 @@ interface LegalQueryRequest {
   max_results?: number;
 }
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createServiceClient();
     const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const { 
       jurisdiction, 
@@ -36,14 +27,10 @@ serve(async (req) => {
     }: LegalQueryRequest = await req.json();
 
     if (!jurisdiction || !topic) {
-      return new Response(
-        JSON.stringify({ error: 'jurisdiction and topic are required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('jurisdiction and topic are required', 400);
     }
 
     // First, check knowledge base for any stored legal documents
-    const searchTerms = [topic, ...keywords].join(' ');
     const { data: kbResults } = await supabase
       .from('archival_documents')
       .select('id, filename, summary, keywords, content_text, tags')
@@ -111,10 +98,7 @@ Format your response as structured JSON with the following schema:
 }`;
 
     if (!lovableApiKey) {
-      return new Response(
-        JSON.stringify({ error: 'LOVABLE_API_KEY not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('LOVABLE_API_KEY not configured', 500);
     }
 
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -137,10 +121,7 @@ Format your response as structured JSON with the following schema:
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
       console.error('AI API error:', errorText);
-      return new Response(
-        JSON.stringify({ error: 'Failed to query legal database', details: errorText }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse(`Failed to query legal database: ${errorText}`, 500);
     }
 
     const aiData = await aiResponse.json();
@@ -174,24 +155,17 @@ Format your response as structured JSON with the following schema:
       description: 'Legal database query audit log'
     });
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        query: { jurisdiction, topic, keywords },
-        results: legalResults,
-        knowledge_base_matches: kbResults || [],
-        queried_at: new Date().toISOString(),
-        disclaimer: 'This information is for reference purposes only and does not constitute legal advice. Always consult with a qualified legal professional for specific legal matters.'
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      query: { jurisdiction, topic, keywords },
+      results: legalResults,
+      knowledge_base_matches: kbResults || [],
+      queried_at: new Date().toISOString(),
+      disclaimer: 'This information is for reference purposes only and does not constitute legal advice. Always consult with a qualified legal professional for specific legal matters.'
+    });
 
-  } catch (error: unknown) {
+  } catch (error) {
     console.error('Error in query-legal-database:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(
-      JSON.stringify({ error: 'Internal server error', details: message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 interface QueryRequest {
   query_type: 'assets' | 'vulnerabilities' | 'business_criticality' | 'comprehensive';
@@ -55,15 +49,12 @@ interface QueryResponse {
   filters_applied: Record<string, unknown>;
 }
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = createServiceClient();
 
     const request: QueryRequest = await req.json();
     const {
@@ -170,15 +161,13 @@ serve(async (req) => {
         assetsQuery = assetsQuery.in('id', assetIds);
       } else {
         // No assets found with this vulnerability
-        return new Response(JSON.stringify({
+        return successResponse({
           query_type,
           results: [],
           summary: `No assets found with vulnerability ${vulnerability_id}`,
           total_count: 0,
           filters_applied: filtersApplied
-        }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
+        } as QueryResponse);
       }
     }
 
@@ -195,7 +184,7 @@ serve(async (req) => {
 
     // Transform results
     results = (assetsData || []).map(asset => {
-      const configDetails = asset.configuration_details || {};
+      const configDetails = (asset.configuration_details as Record<string, unknown>) || {};
       
       return {
         asset_id: asset.id,
@@ -206,20 +195,20 @@ serve(async (req) => {
         owner_team: asset.owner_team,
         business_criticality: asset.business_criticality,
         configuration_details: {
-          os: configDetails.os,
-          software_installed: configDetails.software_installed || [],
+          os: configDetails.os as string | undefined,
+          software_installed: (configDetails.software_installed as string[]) || [],
           network_segment: asset.network_segment,
           cloud_provider_service: asset.cloud_provider ? `${asset.cloud_provider}/${asset.cloud_service || ''}` : undefined,
           last_patched_date: asset.last_patched_date,
           ...configDetails
         },
-        known_vulnerabilities: (asset.asset_vulnerabilities || []).map((vuln: any) => ({
-          vulnerability_id: vuln.vulnerability_id,
-          severity: vuln.severity,
-          cvss_score: vuln.cvss_score,
-          description: vuln.description,
-          is_active_exploit_known: vuln.is_active_exploit_known,
-          remediation_status: vuln.remediation_status
+        known_vulnerabilities: ((asset.asset_vulnerabilities as Array<Record<string, unknown>>) || []).map((vuln) => ({
+          vulnerability_id: vuln.vulnerability_id as string,
+          severity: vuln.severity as string,
+          cvss_score: vuln.cvss_score as number | undefined,
+          description: vuln.description as string | undefined,
+          is_active_exploit_known: vuln.is_active_exploit_known as boolean,
+          remediation_status: vuln.remediation_status as string
         })),
         last_scanned: asset.last_scanned,
         tags: asset.tags || [],
@@ -284,23 +273,10 @@ serve(async (req) => {
 
     console.log('[query-internal-context] Returning', results.length, 'results');
 
-    return new Response(JSON.stringify(response), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    });
+    return successResponse(response);
 
   } catch (error) {
     console.error('[query-internal-context] Error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'An error occurred processing the query';
-    return new Response(JSON.stringify({
-      error: errorMessage,
-      query_type: 'error',
-      results: [],
-      summary: 'Query failed due to an error',
-      total_count: 0,
-      filters_applied: {}
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    });
+    return errorResponse(error instanceof Error ? error.message : 'An error occurred processing the query', 500);
   }
 });

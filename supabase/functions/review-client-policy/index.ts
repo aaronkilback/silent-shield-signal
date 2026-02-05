@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 interface ClientPolicyRequest {
   client_id?: string;
@@ -14,16 +8,13 @@ interface ClientPolicyRequest {
   analysis_type?: 'summary' | 'compliance_check' | 'gap_analysis' | 'full';
 }
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createServiceClient();
     const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const { 
       client_id,
@@ -34,10 +25,7 @@ serve(async (req) => {
     }: ClientPolicyRequest = await req.json();
 
     if (!client_id && !client_name) {
-      return new Response(
-        JSON.stringify({ error: 'Either client_id or client_name is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('Either client_id or client_name is required', 400);
     }
 
     // Fetch client information
@@ -51,10 +39,7 @@ serve(async (req) => {
     const { data: clients, error: clientError } = await clientQuery.limit(1);
     
     if (clientError || !clients || clients.length === 0) {
-      return new Response(
-        JSON.stringify({ error: 'Client not found', details: clientError?.message }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse(`Client not found: ${clientError?.message}`, 404);
     }
 
     const client = clients[0];
@@ -73,11 +58,11 @@ serve(async (req) => {
       docsQuery = docsQuery.or(`tags.cs.{${policy_type}},filename.ilike.%${policy_type}%`);
     }
 
-    const { data: documents, error: docsError } = await docsQuery.order('created_at', { ascending: false });
+    const { data: documents } = await docsQuery.order('created_at', { ascending: false });
 
     // Also check for any policies stored in onboarding_data or monitoring_config
     const clientPolicies = {
-      from_onboarding: client.onboarding_data?.policies || {},
+      from_onboarding: (client.onboarding_data as Record<string, unknown>)?.policies || {},
       monitoring_config: client.monitoring_config || {},
       high_value_assets: client.high_value_assets || [],
       threat_profile: client.threat_profile || {},
@@ -196,10 +181,7 @@ Format as structured JSON:
 }`;
 
     if (!lovableApiKey) {
-      return new Response(
-        JSON.stringify({ error: 'LOVABLE_API_KEY not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('LOVABLE_API_KEY not configured', 500);
     }
 
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -222,10 +204,7 @@ Format as structured JSON:
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
       console.error('AI API error:', errorText);
-      return new Response(
-        JSON.stringify({ error: 'Failed to analyze policies', details: errorText }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse(`Failed to analyze policies: ${errorText}`, 500);
     }
 
     const aiData = await aiResponse.json();
@@ -245,35 +224,28 @@ Format as structured JSON:
       analysisResults = { raw_response: responseContent };
     }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        client: {
-          id: client.id,
-          name: client.name,
-          industry: client.industry,
-        },
-        request: { policy_name, policy_type, analysis_type },
-        documents_found: documents?.length || 0,
-        document_list: documents?.map(d => ({ 
-          id: d.id, 
-          filename: d.filename, 
-          summary: d.summary,
-          tags: d.tags 
-        })) || [],
-        policy_analysis: analysisResults,
-        reviewed_at: new Date().toISOString(),
-        disclaimer: 'This analysis is based on available documentation and should be verified against current client policies. Recommendations should be validated with appropriate stakeholders.'
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      client: {
+        id: client.id,
+        name: client.name,
+        industry: client.industry,
+      },
+      request: { policy_name, policy_type, analysis_type },
+      documents_found: documents?.length || 0,
+      document_list: documents?.map(d => ({ 
+        id: d.id, 
+        filename: d.filename, 
+        summary: d.summary,
+        tags: d.tags 
+      })) || [],
+      policy_analysis: analysisResults,
+      reviewed_at: new Date().toISOString(),
+      disclaimer: 'This analysis is based on available documentation and should be verified against current client policies. Recommendations should be validated with appropriate stakeholders.'
+    });
 
-  } catch (error: unknown) {
+  } catch (error) {
     console.error('Error in review-client-policy:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return new Response(
-      JSON.stringify({ error: 'Internal server error', details: message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
