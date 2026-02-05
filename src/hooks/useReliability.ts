@@ -20,12 +20,17 @@ import {
   PerformanceReport,
 } from '@/lib/reliability/performanceMonitor';
 import { checkStateConsistency, SilentFailure } from '@/lib/reliability/silentFailureDetector';
+import {
+  checkCriticalFunctions,
+  CriticalCheckResult,
+} from '@/lib/reliability/criticalFunctionCheck';
 
 interface ReliabilityState {
   health: SystemHealthReport | null;
   integrity: IntegrityReport | null;
   performance: PerformanceReport | null;
   silentFailures: SilentFailure[];
+  criticalFunctions: CriticalCheckResult | null;
   isLoading: boolean;
   lastCheck: Date | null;
 }
@@ -48,6 +53,7 @@ export function useReliability(options: UseReliabilityOptions = {}) {
     integrity: null,
     performance: null,
     silentFailures: [],
+    criticalFunctions: null,
     isLoading: false,
     lastCheck: null,
   });
@@ -58,11 +64,12 @@ export function useReliability(options: UseReliabilityOptions = {}) {
     setState(prev => ({ ...prev, isLoading: true }));
 
     try {
-      const [health, integrity, performance, silentFailures] = await Promise.all([
+      const [health, integrity, performance, silentFailures, criticalFunctions] = await Promise.all([
         runHealthCheck(),
         runIntegrityCheck(),
         Promise.resolve(getPerformanceReport(60)),
         checkStateConsistency(),
+        checkCriticalFunctions(),
       ]);
 
       // Optionally store health results for trending
@@ -75,11 +82,12 @@ export function useReliability(options: UseReliabilityOptions = {}) {
         integrity,
         performance,
         silentFailures,
+        criticalFunctions,
         isLoading: false,
         lastCheck: new Date(),
       });
 
-      return { health, integrity, performance, silentFailures };
+      return { health, integrity, performance, silentFailures, criticalFunctions };
     } catch (error) {
       console.error('[useReliability] Check failed:', error);
       setState(prev => ({ ...prev, isLoading: false }));
@@ -131,6 +139,8 @@ export function useReliability(options: UseReliabilityOptions = {}) {
   const hasDegradedServices = (state.health?.degradedServices.length || 0) > 0;
   const integrityIssueCount = state.integrity?.issuesFound || 0;
   const slowOperations = state.performance ? getSlowOperations(60, 30) : [];
+  const undeployedFunctionCount = state.criticalFunctions?.failedCount || 0;
+  const hasUndeployedFunctions = undeployedFunctionCount > 0;
 
   return {
     // State
@@ -140,6 +150,8 @@ export function useReliability(options: UseReliabilityOptions = {}) {
     hasDegradedServices,
     integrityIssueCount,
     slowOperations,
+    undeployedFunctionCount,
+    hasUndeployedFunctions,
 
     // Actions
     runAllChecks,

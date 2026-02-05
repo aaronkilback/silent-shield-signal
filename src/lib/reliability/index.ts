@@ -75,3 +75,13 @@ export {
   retryAsync,
   CircuitBreaker,
 } from '../../hooks/useRetry';
+
+// Critical Function Checks
+export {
+  checkCriticalFunctions,
+  quickHealthCheck,
+  getCriticalFunctionList,
+  type CriticalFunction,
+  type FunctionStatus,
+  type CriticalCheckResult,
+} from './criticalFunctionCheck';
