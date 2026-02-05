@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 /**
  * Incident Ticket Management Tool for Fortress AI
@@ -68,7 +62,6 @@ function derivePriorityFromSeverity(severity: string): string {
 
 // Map string status to valid incident status enum
 function mapToIncidentStatus(status: string): string {
-  const validStatuses = ['open', 'investigating', 'contained', 'resolved', 'closed'];
   const statusMapping: Record<string, string> = {
     'new': 'open',
     'acknowledged': 'investigating',
@@ -80,15 +73,12 @@ function mapToIncidentStatus(status: string): string {
   return statusMapping[status] || 'open';
 }
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = createServiceClient();
 
     const requestBody: IncidentTicketRequest = await req.json();
     const {
@@ -114,24 +104,15 @@ serve(async (req) => {
 
     // Validate required fields
     if (!action) {
-      return new Response(
-        JSON.stringify({ status: 'failure', message: 'action is required (create or update)', ticket_id: '' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('action is required (create or update)', 400);
     }
 
     if (!description) {
-      return new Response(
-        JSON.stringify({ status: 'failure', message: 'description is required', ticket_id: '' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('description is required', 400);
     }
 
     if (!severity) {
-      return new Response(
-        JSON.stringify({ status: 'failure', message: 'severity is required', ticket_id: '' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse('severity is required', 400);
     }
 
     // Derive priority if not provided
@@ -160,10 +141,7 @@ serve(async (req) => {
     if (action === 'create') {
       // Validate title for create
       if (!title) {
-        return new Response(
-          JSON.stringify({ status: 'failure', message: 'title is required for create action', ticket_id: '' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('title is required for create action', 400);
       }
 
       // Create new incident
@@ -197,19 +175,11 @@ serve(async (req) => {
 
       if (createError) {
         console.error('[manage-incident-ticket] Create error:', createError);
-        return new Response(
-          JSON.stringify({ 
-            status: 'failure', 
-            message: `Failed to create incident: ${createError.message}`, 
-            ticket_id: '' 
-          }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse(`Failed to create incident: ${createError.message}`, 500);
       }
 
       // Link affected assets to incident if asset IDs provided
       if (affected_assets.length > 0) {
-        // Store asset references in incident metadata
         await supabase
           .from('incidents')
           .update({
@@ -271,29 +241,17 @@ serve(async (req) => {
       };
 
       console.log('[manage-incident-ticket] Created:', ticketId);
-
-      return new Response(
-        JSON.stringify(response),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return successResponse(response);
 
     } else if (action === 'update') {
       // Validate ticket_system_id for update
       if (!ticket_system_id) {
-        return new Response(
-          JSON.stringify({ 
-            status: 'failure', 
-            message: 'ticket_system_id is required for update action', 
-            ticket_id: '' 
-          }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse('ticket_system_id is required for update action', 400);
       }
 
       // Parse ticket ID - handle both INC-2024-XXXXXXXX format and raw UUID
       let incidentId = ticket_system_id;
       if (ticket_system_id.startsWith('INC-')) {
-        // Extract UUID portion from INC-2024-XXXXXXXX format
         const parts = ticket_system_id.split('-');
         if (parts.length >= 3) {
           incidentId = parts.slice(2).join('-').toLowerCase();
@@ -304,7 +262,6 @@ serve(async (req) => {
       let existingIncident;
       let fetchError;
 
-      // Try exact UUID match first
       const exactResult = await supabase
         .from('incidents')
         .select('id, title, priority, status, severity_level, timeline_json, sla_targets_json, acknowledged_at, summary')
@@ -314,7 +271,6 @@ serve(async (req) => {
       if (!exactResult.error && exactResult.data) {
         existingIncident = exactResult.data;
       } else {
-        // Try partial match on ID prefix
         const partialResult = await supabase
           .from('incidents')
           .select('id, title, priority, status, severity_level, timeline_json, sla_targets_json, acknowledged_at, summary')
@@ -346,14 +302,12 @@ serve(async (req) => {
         updated_at: new Date().toISOString(),
       };
 
-      // Update fields if provided
       if (title) updatePayload.title = title;
       if (severity) updatePayload.severity_level = severity;
       if (priority) updatePayload.priority = effectivePriority;
       if (status) updatePayload.status = effectiveStatus;
       if (incident_type) updatePayload.incident_type = incident_type;
 
-      // Update status timestamps
       if (effectiveStatus === 'investigating' && !existingIncident.acknowledged_at) {
         updatePayload.acknowledged_at = new Date().toISOString();
       }
@@ -364,7 +318,6 @@ serve(async (req) => {
         updatePayload.resolved_at = new Date().toISOString();
       }
 
-      // Merge timeline
       const existingTimeline = existingIncident.timeline_json || [];
       updatePayload.timeline_json = [
         ...existingTimeline,
@@ -377,7 +330,6 @@ serve(async (req) => {
         ...timeline_entries,
       ];
 
-      // Merge SLA targets with new data
       const existingSLA = existingIncident.sla_targets_json || {};
       const existingAssets = existingSLA.affected_asset_ids || [];
       const existingActions = existingSLA.recommended_actions || [];
@@ -391,7 +343,6 @@ serve(async (req) => {
         last_updated_at: new Date().toISOString(),
       };
 
-      // Update summary if description provided
       if (description) {
         const existingSummary = existingIncident.summary || '';
         updatePayload.summary = `${existingSummary}\n\n[${new Date().toISOString()}] ${description}`.trim();
@@ -404,17 +355,9 @@ serve(async (req) => {
 
       if (updateError) {
         console.error('[manage-incident-ticket] Update error:', updateError);
-        return new Response(
-          JSON.stringify({ 
-            status: 'failure', 
-            message: `Failed to update incident: ${updateError.message}`, 
-            ticket_id: ticket_system_id 
-          }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return errorResponse(`Failed to update incident: ${updateError.message}`, 500);
       }
 
-      // Link new entities if provided
       if (entity_ids.length > 0) {
         const entityLinks = entity_ids.map(entityId => ({
           incident_id: existingIncident.id,
@@ -449,32 +392,14 @@ serve(async (req) => {
       };
 
       console.log('[manage-incident-ticket] Updated:', ticketId);
-
-      return new Response(
-        JSON.stringify(response),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return successResponse(response);
 
     } else {
-      return new Response(
-        JSON.stringify({ 
-          status: 'failure', 
-          message: `Invalid action: ${action}. Use 'create' or 'update'.`, 
-          ticket_id: '' 
-        }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return errorResponse(`Invalid action: ${action}. Use 'create' or 'update'.`, 400);
     }
 
   } catch (error) {
     console.error('[manage-incident-ticket] Error:', error);
-    return new Response(
-      JSON.stringify({ 
-        status: 'failure', 
-        message: error instanceof Error ? error.message : 'Unknown error occurred', 
-        ticket_id: '' 
-      }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error occurred', 500);
   }
 });
