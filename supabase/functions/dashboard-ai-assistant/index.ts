@@ -15,7 +15,7 @@ const AI_TIMEOUT_MS = 45000;
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  
+
   try {
     const response = await fetch(url, {
       ...options,
@@ -25,11 +25,24 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
     return response;
   } catch (error) {
     clearTimeout(timeoutId);
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`AI request timed out after ${timeoutMs / 1000} seconds. Please try again with a simpler request.`);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(
+        `AI request timed out after ${timeoutMs / 1000} seconds. Please try again with a simpler request.`,
+      );
     }
     throw error;
   }
+}
+
+function base64FromBytes(bytes: Uint8Array): string {
+  // Avoid remote std imports to keep edge bundling stable.
+  // Convert bytes → binary string in chunks, then btoa().
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }
 
 // Dynamic system prompt that includes current date with timezone awareness
@@ -5537,8 +5550,7 @@ Be comprehensive - list all road names, milepost markers, facility names, pipeli
               };
             }
 
-            const { encode: base64Encode } = await import('https://deno.land/std@0.168.0/encoding/base64.ts');
-            const base64PDF = base64Encode(fileBytes);
+            const base64PDF = base64FromBytes(fileBytes);
 
             console.log(`Sending PDF as base64 for analysis (${(base64PDF.length / 1024 / 1024).toFixed(2)}MB)`);
 
@@ -5609,8 +5621,7 @@ Be comprehensive - list all road names, milepost markers, facility names, pipeli
             if (!fileBytes) {
               throw new Error('Failed to load image bytes for analysis');
             }
-            const { encode: base64Encode } = await import('https://deno.land/std@0.168.0/encoding/base64.ts');
-            const base64Image = base64Encode(fileBytes);
+            const base64Image = base64FromBytes(fileBytes);
             imageUrl = `data:${mimeType};base64,${base64Image}`;
           }
 
