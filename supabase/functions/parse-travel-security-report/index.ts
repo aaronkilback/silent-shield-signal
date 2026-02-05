@@ -25,15 +25,34 @@ serve(async (req) => {
   try {
     const { file_base64, file_name, file_type, provider, storage_path } = await req.json();
 
-    const supabaseClient = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_ANON_KEY") ?? "",
-      {
-        global: {
-          headers: { Authorization: req.headers.get("Authorization")! },
-        },
-      }
-    );
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+    if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceKey) {
+      throw new Error("Backend keys not configured");
+    }
+
+    // Auth client (respects user session)
+    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: { Authorization: req.headers.get("Authorization") ?? "" },
+      },
+    });
+
+    // Admin client (bypasses RLS); we still enforce auth via supabaseAuth above
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Require an authenticated user so the report can be persistently visible via RLS
+    const { data: userData, error: userError } = await supabaseAuth.auth.getUser();
+    if (userError) {
+      console.error("Failed to load user:", userError);
+      throw new Error("Unauthorized");
+    }
+    if (!userData?.user) {
+      throw new Error("Unauthorized");
+    }
+
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
@@ -42,7 +61,6 @@ serve(async (req) => {
 
     console.log(`Processing travel security report: ${file_name} from ${provider}`);
 
-    // Parse the security report using AI vision
     const prompt = `You are a security intelligence analyst. Parse this security briefing document and extract structured intelligence for travel risk assessment.
 
 The document is from: ${provider}
@@ -182,8 +200,8 @@ Parse the document content carefully and extract all relevant security intellige
     const parsedReport = JSON.parse(toolCall.function.arguments);
     console.log("Parsed report:", JSON.stringify(parsedReport, null, 2));
 
-    // Store the parsed report in the travel_security_reports table (or use archival_documents)
-    const { data: insertData, error: insertError } = await supabaseClient
+    // Store the parsed report in the archival_documents table
+    const { data: insertData, error: insertError } = await supabaseAdmin
       .from("archival_documents")
       .insert({
         filename: file_name,
@@ -192,15 +210,17 @@ Parse the document content carefully and extract all relevant security intellige
         storage_path: storage_path || `security-reports/${file_name}`,
         content_text: JSON.stringify(parsedReport),
         summary: `${parsedReport.source_provider} ${parsedReport.report_type} for ${parsedReport.location?.city}, ${parsedReport.location?.country}`,
-        tags: ["travel-security", provider, parsedReport.risk_rating?.toLowerCase()],
+        tags: ["travel-security", provider, parsedReport.risk_rating?.toLowerCase()].filter(Boolean),
+        uploaded_by: userData.user.id,
         metadata: {
           provider,
+          uploaded_by: userData.user.id,
           parsed_data: parsedReport,
           location_city: parsedReport.location?.city,
           location_country: parsedReport.location?.country,
           risk_rating: parsedReport.risk_rating,
-          valid_date: parsedReport.valid_date
-        }
+          valid_date: parsedReport.valid_date,
+        },
       })
       .select()
       .single();
@@ -212,7 +232,7 @@ Parse the document content carefully and extract all relevant security intellige
     // Create signals from incidents mentioned in the report
     if (parsedReport.incidents_mentioned && parsedReport.incidents_mentioned.length > 0) {
       for (const incident of parsedReport.incidents_mentioned) {
-        await supabaseClient.from("signals").insert({
+        await supabaseAdmin.from("signals").insert({
           title: `[${parsedReport.source_provider}] ${incident.type}: ${incident.location}`,
           content: incident.description,
           source_type: "third_party_report",
@@ -238,7 +258,7 @@ Parse the document content carefully and extract all relevant security intellige
                             development.toLowerCase().includes("disruption");
         
         if (isActionable) {
-          await supabaseClient.from("travel_alerts").insert({
+          await supabaseAdmin.from("travel_alerts").insert({
             alert_type: "security",
             severity: parsedReport.risk_rating?.toLowerCase() === "high" ? "high" : "medium",
             title: `${parsedReport.source_provider}: Security Update`,
