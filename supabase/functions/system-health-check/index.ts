@@ -1,10 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 interface HealthCheckResult {
   name: string;
@@ -21,7 +15,6 @@ interface SystemHealthResponse {
   version: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function checkDatabase(supabase: any): Promise<HealthCheckResult> {
   const start = Date.now();
   try {
@@ -56,7 +49,6 @@ async function checkDatabase(supabase: any): Promise<HealthCheckResult> {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function checkAuth(supabase: any): Promise<HealthCheckResult> {
   const start = Date.now();
   try {
@@ -90,7 +82,6 @@ async function checkAuth(supabase: any): Promise<HealthCheckResult> {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function checkStorage(supabase: any): Promise<HealthCheckResult> {
   const start = Date.now();
   try {
@@ -124,7 +115,6 @@ async function checkStorage(supabase: any): Promise<HealthCheckResult> {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function checkStorageBuckets(supabase: any): Promise<HealthCheckResult> {
   const start = Date.now();
   const requiredBuckets = ['archival-documents', 'entity-photos', 'ai-chat-attachments'];
@@ -143,7 +133,6 @@ async function checkStorageBuckets(supabase: any): Promise<HealthCheckResult> {
       };
     }
     
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const bucketIds = (buckets || []).map((b: any) => b.id);
     
     for (const required of requiredBuckets) {
@@ -181,11 +170,9 @@ async function checkStorageBuckets(supabase: any): Promise<HealthCheckResult> {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function checkDocumentProcessing(supabase: any): Promise<HealthCheckResult> {
   const start = Date.now();
   try {
-    // Check for documents stuck in processing (uploaded in last hour but no content_text)
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     
     const { data: stuckDocs, error: stuckError } = await supabase
@@ -208,7 +195,6 @@ async function checkDocumentProcessing(supabase: any): Promise<HealthCheckResult
     const stuckCount = stuckDocs?.length || 0;
     const latency = Date.now() - start;
     
-    // More than 10 unprocessed docs in the last hour indicates a problem
     if (stuckCount > 10) {
       return {
         name: 'document_processing',
@@ -348,7 +334,6 @@ async function checkAIGateway(): Promise<HealthCheckResult> {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function checkRecentErrors(supabase: any): Promise<HealthCheckResult> {
   const start = Date.now();
   try {
@@ -372,9 +357,7 @@ async function checkRecentErrors(supabase: any): Promise<HealthCheckResult> {
       };
     }
     
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const criticalCount = (recentErrors || []).filter((e: any) => e.severity === 'critical').length;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const highCount = (recentErrors || []).filter((e: any) => e.severity === 'high').length;
     
     if (criticalCount > 0) {
@@ -415,16 +398,12 @@ async function checkRecentErrors(supabase: any): Promise<HealthCheckResult> {
   }
 }
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabase = createServiceClient();
 
     const url = new URL(req.url);
     const includeExternal = url.searchParams.get('external') !== 'false';
@@ -493,24 +472,15 @@ serve(async (req) => {
       JSON.stringify(response),
       {
         status: overall_status === 'unhealthy' ? 503 : 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { 
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+          'Content-Type': 'application/json' 
+        },
       }
     );
   } catch (error) {
     console.error('[HealthCheck] Critical error:', error);
-    
-    return new Response(
-      JSON.stringify({
-        overall_status: 'unhealthy',
-        checks: [],
-        timestamp: new Date().toISOString(),
-        version: '1.1.0',
-        error: error instanceof Error ? error.message : 'Unknown error',
-      }),
-      {
-        status: 503,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Health check failed', 500);
   }
 });

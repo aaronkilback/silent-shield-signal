@@ -1,21 +1,12 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabase = createServiceClient();
 
     console.log('Starting wildfire monitoring scan...');
 
@@ -32,7 +23,6 @@ Deno.serve(async (req) => {
     let signalsCreated = 0;
 
     // NASA FIRMS - Active Fire Data (last 24 hours)
-    // Using VIIRS data for global coverage
     const firmsResponse = await fetch(
       'https://firms.modaps.eosdis.nasa.gov/api/area/csv/c6/VIIRS_SNPP_NRT/world/1',
       {
@@ -60,7 +50,7 @@ Deno.serve(async (req) => {
       // High confidence fires only
       if (parseInt(confidence) < 70) continue;
 
-      // Check proximity to clients (simplified - in production use proper geo calculation)
+      // Check proximity to clients
       for (const client of clients || []) {
         try {
           const signalText = `Active Wildfire Detected: High confidence (${confidence}%) fire detected on ${acq_date} at ${acq_time}. Brightness: ${brightness}K, Fire Radiative Power: ${frp} MW`;
@@ -114,20 +104,14 @@ Deno.serve(async (req) => {
 
     console.log(`Wildfire monitoring complete. Created ${signalsCreated} signals.`);
 
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        clients_scanned: clients?.length || 0,
-        signals_created: signalsCreated,
-        source: 'wildfire'
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({ 
+      success: true, 
+      clients_scanned: clients?.length || 0,
+      signals_created: signalsCreated,
+      source: 'wildfire'
+    });
   } catch (error) {
     console.error('Error in wildfire monitoring:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
