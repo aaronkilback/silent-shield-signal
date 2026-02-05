@@ -1,11 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
 
 // Regional APAC News Sources Configuration
 const APAC_SOURCES = [
@@ -299,15 +293,11 @@ function categorizeContent(content: string, sourceCategories: string[]): string 
   return 'regional_news';
 }
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
 
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-  );
+  const supabase = createServiceClient();
 
   // Create monitoring history entry
   const { data: historyEntry, error: historyError } = await supabase
@@ -561,17 +551,14 @@ serve(async (req) => {
     console.log(`   Signals created: ${signalsCreated}`);
     console.log(`   Documents ingested: ${documentsIngested}`);
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        sources_scanned: APAC_SOURCES.length,
-        items_scanned: itemsScanned,
-        signals_created: signalsCreated,
-        documents_ingested: documentsIngested,
-        source_results: sourceResults
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return successResponse({
+      success: true,
+      sources_scanned: APAC_SOURCES.length,
+      items_scanned: itemsScanned,
+      signals_created: signalsCreated,
+      documents_ingested: documentsIngested,
+      source_results: sourceResults
+    });
 
   } catch (error) {
     console.error('Regional APAC monitoring error:', error);
@@ -587,11 +574,6 @@ serve(async (req) => {
         .eq('id', historyEntry.id);
     }
 
-    return new Response(
-      JSON.stringify({ 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
