@@ -293,3 +293,33 @@ All 5 capabilities from Phase 6/7 have been implemented:
 5. **Cross-Cultural Awareness** - Enhanced system prompts for cultural intelligence in non-Western contexts
 
 All existing Phase 1-5 capabilities remain fully operational.
+
+---
+
+## Infrastructure Migration (2026-02-05)
+
+### Edge Function Standardization
+All ~140 edge functions have been migrated to the stable infrastructure:
+- **Pattern**: `Deno.serve()` + `npm:@supabase/supabase-js@2`
+- **Shared Client**: `_shared/supabase-client.ts` for consistent initialization
+- **CORS Handling**: Standardized via `handleCors()` helper
+
+### E2E Pipeline Verification
+| Pipeline | Status | Notes |
+|----------|--------|-------|
+| System Health Check | ✅ PASS | 9/9 checks healthy |
+| Signal Ingestion | ✅ PASS | Enqueuing functional |
+| AI Decision Engine | ✅ PASS | Rule-based + AI classification |
+| Alert Delivery | ✅ PASS | Multi-channel support |
+| VIP Deep Scan | ✅ PASS | Requires valid UUID client_id |
+
+### Security Audit
+| Finding | Severity | Resolution |
+|---------|----------|------------|
+| Extensions in Public | WARN | Acceptable (standard pattern) |
+| RLS SELECT true | WARN | Intentional for public-read tables |
+| Leaked Password Protection | WARN | Requires dashboard config |
+
+### Documentation
+- ✅ Created `OPERATIONS_RUNBOOK.md` - System operations guide
+- ✅ Updated `plan.md` - Infrastructure migration status
