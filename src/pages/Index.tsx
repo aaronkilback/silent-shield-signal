@@ -1,11 +1,9 @@
-import { PageLayout } from "@/components/PageLayout";
-import { DashboardClientSelector } from "@/components/ClientSelector";
-import { MonitoringHistory } from "@/components/MonitoringHistory";
 import { DashboardAIAssistant } from "@/components/DashboardAIAssistant";
-import { LiveEventFeed } from "@/components/LiveEventFeed";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
+import { MinimalHeader } from "@/components/MinimalHeader";
+import { Loader2 } from "lucide-react";
 
 const Index = () => {
   const { user, loading } = useAuth();
@@ -21,13 +19,21 @@ const Index = () => {
     return null;
   }
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   return (
-    <PageLayout loading={loading}>
-      <DashboardClientSelector />
-      <DashboardAIAssistant />
-      <LiveEventFeed />
-      <MonitoringHistory />
-    </PageLayout>
+    <div className="min-h-screen bg-background flex flex-col">
+      <MinimalHeader />
+      <main className="flex-1 flex flex-col overflow-hidden">
+        <DashboardAIAssistant fullScreen />
+      </main>
+    </div>
   );
 };
 

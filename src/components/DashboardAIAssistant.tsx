@@ -28,7 +28,7 @@ type Message = {
   conversation_id?: string;
 };
 
-export const DashboardAIAssistant = () => {
+export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: boolean }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, loading: authLoading } = useAuth();
@@ -1240,7 +1240,7 @@ How can I help you now?`,
   };
 
   return (
-    <Card className="w-full">
+    <Card className={cn("w-full", fullScreen && "flex-1 flex flex-col border-0 rounded-none shadow-none")}>
       <CardHeader className="pb-3">
         <div className="flex flex-col gap-3">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
@@ -1364,11 +1364,16 @@ How can I help you now?`,
           </div>
         </div>
       </CardHeader>
-      <CardContent className="flex flex-col">
-        <div className="flex flex-col gap-3">
+      <CardContent className={cn("flex flex-col", fullScreen && "flex-1 min-h-0")}>
+        <div className={cn("flex flex-col gap-3", fullScreen && "flex-1 min-h-0")}>
             {/* Fixed height container prevents layout shifts */}
             <div 
-              className="h-[400px] sm:h-[500px] lg:h-[600px] overflow-y-auto border rounded-md scroll-smooth" 
+              className={cn(
+                "overflow-y-auto border rounded-md scroll-smooth",
+                fullScreen 
+                  ? "flex-1 min-h-0" 
+                  : "h-[400px] sm:h-[500px] lg:h-[600px]"
+              )}
               ref={scrollRef}
             >
               <div className="p-4 space-y-4 min-h-full">
