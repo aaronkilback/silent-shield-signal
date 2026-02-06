@@ -724,6 +724,127 @@ INSTRUCTIONS:
           textContent = `[This PDF appears to be image-based/scanned and OCR analysis encountered an error. File: ${document.filename}. Size: ${fileSizeMB.toFixed(1)}MB. Error: ${visionError instanceof Error ? visionError.message : 'Unknown error'}]`;
         }
       }
+    } else if (document.file_type.startsWith('image/')) {
+      // Image files (JPEG, PNG, WebP, GIF, BMP, TIFF, etc.)
+      console.log(`Processing image file: ${document.filename} (${document.file_type})`);
+      
+      try {
+        const imageBytes = await fileData.arrayBuffer();
+        const imageUint8 = new Uint8Array(imageBytes);
+        const imageSizeMB = imageUint8.length / (1024 * 1024);
+        
+        // Gemini supports images up to ~20MB via base64
+        const MAX_IMAGE_MB = 10;
+        if (imageSizeMB > MAX_IMAGE_MB) {
+          console.log(`Image too large for vision analysis: ${imageSizeMB.toFixed(1)}MB`);
+          textContent = `[Image file: ${document.filename} (${imageSizeMB.toFixed(1)}MB). File exceeds the ${MAX_IMAGE_MB}MB limit for vision analysis. The file is stored and accessible.]`;
+        } else {
+          const imageBase64 = encodeBase64(imageUint8);
+          console.log(`Sending image for vision analysis: ${imageSizeMB.toFixed(2)}MB`);
+          
+          const visionResp = await fetchWithRetry(
+            'https://ai.gateway.lovable.dev/v1/chat/completions',
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'google/gemini-2.5-flash',
+                messages: [{
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'text',
+                      text: `Analyze this image "${document.filename}" thoroughly.
+
+INSTRUCTIONS:
+1. If the image contains text (documents, screenshots, signs, labels, handwriting), perform OCR and extract ALL readable text. Preserve structure, headings, paragraphs, tables (use | for columns), and bullet points.
+2. If the image is a photograph, diagram, chart, or visual content, provide a detailed description including: subjects, objects, locations, text visible, colors, layout, and any security-relevant details.
+3. If the image contains both text and visual elements, do BOTH: extract all text AND describe the visual content.
+4. Mark unclear or uncertain text with [?].
+5. Do NOT summarize - extract and describe everything visible.
+
+Return the full extracted text and/or description.`
+                    },
+                    {
+                      type: 'image_url',
+                      image_url: { url: `data:${document.file_type};base64,${imageBase64}` }
+                    }
+                  ]
+                }],
+                max_tokens: 8000
+              }),
+            },
+            3,
+            'Image Vision Analysis'
+          );
+          
+          if (visionResp.ok) {
+            const visionData = await visionResp.json();
+            const extracted = visionData.choices?.[0]?.message?.content?.trim();
+            if (extracted && extracted.length > 10) {
+              textContent = extracted.slice(0, 200000);
+              console.log(`Image analysis successful: ${textContent.length} characters extracted`);
+            } else {
+              console.warn('Image vision analysis returned minimal content');
+              textContent = `[Image file: ${document.filename}. Vision analysis returned no meaningful content. The image may be blank or contain only abstract graphics.]`;
+            }
+          } else {
+            const errText = await visionResp.text();
+            console.error(`Image vision analysis failed ${visionResp.status}: ${errText.substring(0, 300)}`);
+            
+            // Try Pro model as fallback
+            console.log('Trying Gemini Pro fallback for image analysis...');
+            const proResp = await fetchWithRetry(
+              'https://ai.gateway.lovable.dev/v1/chat/completions',
+              {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  model: 'google/gemini-2.5-pro',
+                  messages: [{
+                    role: 'user',
+                    content: [
+                      {
+                        type: 'text',
+                        text: `Extract all text and describe all visual content in this image "${document.filename}". Perform OCR if it contains text. Be thorough and detailed.`
+                      },
+                      {
+                        type: 'image_url',
+                        image_url: { url: `data:${document.file_type};base64,${imageBase64}` }
+                      }
+                    ]
+                  }],
+                  max_tokens: 8000
+                }),
+              },
+              2,
+              'Image Vision Pro Fallback'
+            );
+            
+            if (proResp.ok) {
+              const proData = await proResp.json();
+              const proContent = proData.choices?.[0]?.message?.content?.trim();
+              if (proContent && proContent.length > 10) {
+                textContent = proContent.slice(0, 200000);
+                console.log(`Pro fallback image analysis successful: ${textContent.length} chars`);
+              }
+            }
+            
+            if (!textContent || textContent.length < 50) {
+              textContent = `[Image analysis failed for: ${document.filename}. The image is stored and accessible but could not be analyzed.]`;
+            }
+          }
+        }
+      } catch (imageError) {
+        console.error('Image processing error:', imageError);
+        textContent = `[Image processing failed for: ${document.filename}. Error: ${imageError instanceof Error ? imageError.message : 'Unknown error'}. The file is stored and accessible.]`;
+      }
     }
 
     console.log(`Text content ready for AI analysis (${textContent.length} chars)`);
