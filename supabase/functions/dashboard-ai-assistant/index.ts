@@ -3207,14 +3207,17 @@ REPORT TYPES:
 - "executive": Executive Intelligence Report — comprehensive client-specific report with risk matrix, strategic deductions, source citations. Requires client_id or client_name.
 - "risk_snapshot": 72-Hour Risk Snapshot — cross-client overview of recent signals, incidents, and investigations over a configurable time window.
 - "security_briefing": Travel Security Briefing — location-specific security assessment for a city/country with threat analysis. Requires city and country.
+- "security_bulletin": Custom Security Bulletin — YOU compose the full bulletin content (title, sections, body text) from information the user provides (incidents, news articles, analysis). The tool renders it into a professional downloadable HTML document. Use this when the user gives you specific content to format into a bulletin/report. You MUST provide the full bulletin_html content yourself.
 
 USE WHEN:
 - User asks to "generate a report", "create a briefing", "make a document", "build an executive summary"
 - User wants a downloadable/printable intelligence product
 - User needs a security briefing for a travel destination
+- User provides specific incidents/articles and asks for a formatted security bulletin
 
 IMPORTANT:
 - For executive reports, resolve client_name to client_id first if only name is provided.
+- For security_bulletin: YOU write the bulletin content as HTML. Include sections, analysis, recommendations. The tool wraps it in professional styling and generates header images.
 - The tool returns HTML that can be downloaded. Tell the user you've generated the report and provide a download mechanism.
 - Reports take 15-30 seconds to generate — inform the user it's being generated.`,
       parameters: {
@@ -3222,7 +3225,7 @@ IMPORTANT:
         properties: {
           report_type: {
             type: "string",
-            enum: ["executive", "risk_snapshot", "security_briefing"],
+            enum: ["executive", "risk_snapshot", "security_briefing", "security_bulletin"],
             description: "Type of report to generate"
           },
           client_id: {
@@ -3248,6 +3251,27 @@ IMPORTANT:
           travel_dates: {
             type: "string",
             description: "Travel date range (optional for security_briefing)"
+          },
+          bulletin_title: {
+            type: "string",
+            description: "Title for the security bulletin (required for security_bulletin)"
+          },
+          bulletin_html: {
+            type: "string",
+            description: "The full bulletin body content as HTML that YOU compose. Include sections with h2/h3 headers, paragraphs, lists, tables as needed. The tool wraps this in professional styling."
+          },
+          bulletin_classification: {
+            type: "string",
+            enum: ["TLP:WHITE", "TLP:GREEN", "TLP:AMBER", "TLP:RED", "INTERNAL USE ONLY", "CONFIDENTIAL"],
+            description: "Classification marking for the bulletin header"
+          },
+          generate_header_image: {
+            type: "boolean",
+            description: "Whether to generate an AI header image for the bulletin (default true)"
+          },
+          image_prompt: {
+            type: "string",
+            description: "Custom prompt for the header image. If not provided, one is auto-generated from the title."
           }
         },
         required: ["report_type"]
@@ -10327,7 +10351,8 @@ The signal is now in the database with status 'triaged' and rules have been appl
     }
 
     case "generate_fortress_report": {
-      const { report_type, client_name, period_days, city, country, travel_dates } = args;
+      const { report_type, client_name, period_days, city, country, travel_dates,
+              bulletin_title, bulletin_html, bulletin_classification, generate_header_image, image_prompt } = args;
       let { client_id } = args;
 
       // Resolve client_name to client_id if needed
@@ -10347,6 +10372,192 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
       const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
       const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+      const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY") ?? "";
+
+      // ═══════════════════════════════════════════════════════════════
+      // SECURITY BULLETIN: Custom AI-composed bulletin with images
+      // ═══════════════════════════════════════════════════════════════
+      if (report_type === "security_bulletin") {
+        if (!bulletin_title || !bulletin_html) {
+          return { error: "bulletin_title and bulletin_html are required for security_bulletin reports. YOU must compose the bulletin content." };
+        }
+
+        try {
+          const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+          const reportId = crypto.randomUUID();
+          const reportDate = new Date().toISOString().split("T")[0];
+          const classification = bulletin_classification || "INTERNAL USE ONLY";
+          const now = new Date();
+
+          // Generate header image using DALL-E via images/generations endpoint
+          let headerImageDataUrl = "";
+          if (generate_header_image !== false && LOVABLE_API_KEY) {
+            try {
+              const imgPrompt = image_prompt || `Professional corporate security bulletin header image for: ${bulletin_title}. Dark theme, abstract geometric patterns suggesting surveillance, intelligence analysis, and corporate security. No text in image.`;
+              console.log("Generating bulletin header image via DALL-E...");
+              
+              const imgResponse = await fetch("https://ai.gateway.lovable.dev/v1/images/generations", {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  model: "dall-e-3",
+                  prompt: imgPrompt,
+                  n: 1,
+                  size: "1792x1024",
+                  quality: "hd",
+                }),
+              });
+
+              if (imgResponse.ok) {
+                const imgData = await imgResponse.json();
+                const imageUrl = imgData.data?.[0]?.url;
+                if (imageUrl) {
+                  // Download and convert to base64 for embedding in HTML
+                  try {
+                    const imgDownload = await fetch(imageUrl);
+                    if (imgDownload.ok) {
+                      const imgBytes = new Uint8Array(await imgDownload.arrayBuffer());
+                      const base64 = btoa(String.fromCharCode(...imgBytes));
+                      headerImageDataUrl = `data:image/png;base64,${base64}`;
+                      console.log("Header image generated and embedded successfully");
+                    }
+                  } catch (dlErr) {
+                    // Use direct URL as fallback
+                    headerImageDataUrl = imageUrl;
+                    console.log("Using direct image URL (base64 conversion failed)");
+                  }
+                }
+              } else {
+                console.error("Image generation failed:", await imgResponse.text());
+              }
+            } catch (imgErr) {
+              console.error("Non-fatal: Header image generation failed:", imgErr);
+            }
+          }
+
+          // Build the full bulletin HTML document
+          const headerImageHtml = headerImageDataUrl 
+            ? `<div style="width:100%;max-height:300px;overflow:hidden;border-radius:0 0 8px 8px;">
+                 <img src="${headerImageDataUrl}" alt="Security Bulletin Header" style="width:100%;height:auto;display:block;" />
+               </div>` 
+            : "";
+
+          const fullHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${bulletin_title}</title>
+  <style>
+    @page { size: A4; margin: 0; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #0a0a0a; color: #e5e7eb; line-height: 1.6; 
+    }
+    .page { max-width: 210mm; margin: 0 auto; background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%); }
+    .header {
+      background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+      border-bottom: 3px solid #00d9ff; padding: 32px 40px; position: relative;
+    }
+    .header::after {
+      content: ''; position: absolute; bottom: -3px; left: 0; right: 0; height: 1px;
+      background: linear-gradient(90deg, transparent, #00d9ff, transparent);
+    }
+    .classification-banner {
+      background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; border-radius: 4px;
+      padding: 6px 16px; display: inline-block; font-size: 0.75rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 1px; color: #fca5a5; margin-bottom: 16px;
+    }
+    .header-title { font-size: 1.75rem; font-weight: 800; color: #fff; margin-bottom: 8px; text-transform: uppercase; letter-spacing: -0.5px; }
+    .header-meta { font-size: 0.85rem; color: #9ca3af; margin-top: 12px; }
+    .header-meta span { margin-right: 24px; }
+    .header-meta strong { color: #e5e7eb; }
+    .content { padding: 32px 40px; }
+    .content h2 { color: #00d9ff; font-size: 1.2rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+      margin: 28px 0 12px; padding-bottom: 8px; border-bottom: 1px solid #2a2a2a;
+      display: flex; align-items: center; gap: 10px; }
+    .content h2::before { content: ''; width: 4px; height: 20px; background: linear-gradient(180deg, #00d9ff, #0ea5e9); border-radius: 2px; }
+    .content h3 { color: #a5b4fc; font-size: 1rem; font-weight: 600; margin: 20px 0 8px; }
+    .content p { color: #d1d5db; margin-bottom: 12px; font-size: 0.95rem; }
+    .content ul, .content ol { color: #d1d5db; margin: 8px 0 16px 24px; font-size: 0.95rem; }
+    .content li { margin-bottom: 6px; }
+    .content table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+    .content th { background: #1e293b; color: #00d9ff; padding: 10px 14px; text-align: left; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px; }
+    .content td { padding: 10px 14px; border-bottom: 1px solid #2a2a2a; color: #d1d5db; }
+    .content tr:hover td { background: rgba(0, 217, 255, 0.03); }
+    .content blockquote { border-left: 3px solid #00d9ff; padding: 12px 20px; margin: 16px 0; background: #0a0a0a; border-radius: 0 6px 6px 0; color: #d1d5db; font-style: italic; }
+    .severity-critical { color: #ef4444; font-weight: 700; }
+    .severity-high { color: #f97316; font-weight: 700; }
+    .severity-medium { color: #eab308; font-weight: 600; }
+    .severity-low { color: #22c55e; }
+    .footer { padding: 24px 40px; border-top: 1px solid #2a2a2a; font-size: 0.75rem; color: #6b7280; text-align: center; }
+    @media print { body { background: #fff; color: #111; } .page { background: #fff; } .content h2 { color: #1a365d; } .content p, .content li, .content td { color: #333; } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <div class="classification-banner">${classification}</div>
+      <h1 class="header-title">${bulletin_title}</h1>
+      <div class="header-meta">
+        <span><strong>Date:</strong> ${now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
+        <span><strong>Time:</strong> ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}</span>
+        <span><strong>Prepared by:</strong> FORTRESS Intelligence Platform</span>
+      </div>
+    </div>
+    ${headerImageHtml}
+    <div class="content">
+      ${bulletin_html}
+    </div>
+    <div class="footer">
+      <p>${classification} — This document is the property of the recipient organization. Unauthorized distribution is prohibited.</p>
+      <p>Generated by FORTRESS Intelligence Platform — ${now.toISOString()}</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+          // Upload to storage for download
+          const filename = `security-bulletin-${bulletin_title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 50)}-${reportDate}`;
+          const storagePath = `reports/${reportId}/${filename}.html`;
+          const htmlBytes = new TextEncoder().encode(fullHtml);
+
+          const { error: uploadError } = await serviceClient.storage
+            .from("tenant-files")
+            .upload(storagePath, htmlBytes, { contentType: "text/html", upsert: true });
+
+          let downloadUrl = "";
+          if (!uploadError) {
+            const { data: signedData } = await serviceClient.storage
+              .from("tenant-files")
+              .createSignedUrl(storagePath, 3600);
+            downloadUrl = signedData?.signedUrl || "";
+          } else {
+            console.error("Failed to upload bulletin to storage:", uploadError);
+          }
+
+          return {
+            success: true,
+            report_type: "security_bulletin",
+            report_id: reportId,
+            filename: `${filename}.html`,
+            html_length: fullHtml.length,
+            has_header_image: !!headerImageDataUrl,
+            download_url: downloadUrl,
+            message: `✅ **Security Bulletin** generated successfully (${Math.round(fullHtml.length / 1024)}KB)${headerImageDataUrl ? " with AI-generated header image" : ""}.`,
+            download_instructions: downloadUrl
+              ? `Security bulletin is ready for download. Provide the user this download link: ${downloadUrl}`
+              : "Bulletin was generated but storage upload failed."
+          };
+        } catch (bulletinError) {
+          console.error("Security bulletin generation error:", bulletinError);
+          return { error: `Failed to generate security bulletin: ${bulletinError instanceof Error ? bulletinError.message : "Unknown error"}` };
+        }
+      }
 
       try {
         let functionName: string;
