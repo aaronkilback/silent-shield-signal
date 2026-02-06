@@ -84,20 +84,29 @@ export async function generatePdfFromHtml(
   container.style.width = `${RENDER_WIDTH_PX}px`;
   container.style.background = bgColor;
   container.style.overflow = "visible";
+  container.style.height = "auto";
+  container.style.maxHeight = "none";
 
   // Extract body content if it's a full HTML document
   const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
   container.innerHTML = bodyMatch ? bodyMatch[1] : html;
 
-  // Extract and apply styles
+  // Extract and apply styles, then override any height/overflow constraints
   const styleMatches = html.match(/<style[^>]*>([\s\S]*?)<\/style>/gi);
-  if (styleMatches) {
-    const styleEl = document.createElement("style");
-    styleEl.textContent = styleMatches
-      .map((s) => s.replace(/<\/?style[^>]*>/gi, ""))
-      .join("\n");
-    container.prepend(styleEl);
-  }
+  const overrideCSS = `
+    html, body, .report-container, .bulletin-container, [class*="container"] {
+      height: auto !important;
+      max-height: none !important;
+      overflow: visible !important;
+      min-height: 0 !important;
+    }
+    @page { size: auto; margin: 0; }
+  `;
+  const styleEl = document.createElement("style");
+  styleEl.textContent = (styleMatches || [])
+    .map((s) => s.replace(/<\/?style[^>]*>/gi, ""))
+    .join("\n") + "\n" + overrideCSS;
+  container.prepend(styleEl);
 
   document.body.appendChild(container);
 
@@ -106,7 +115,17 @@ export async function generatePdfFromHtml(
     const images = Array.from(container.querySelectorAll("img"));
     await Promise.allSettled(images.map(safeLoadImage));
 
+    // Force all children to expand
+    container.querySelectorAll('*').forEach((el) => {
+      const s = (el as HTMLElement).style;
+      if (s) {
+        s.overflow = 'visible';
+        s.maxHeight = 'none';
+      }
+    });
+
     // Let styles settle
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 600)));
     await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 400)));
 
     const scale = 2;
