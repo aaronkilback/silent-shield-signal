@@ -10600,10 +10600,10 @@ The signal is now in the database with status 'triaged' and rules have been appl
             report_id: reportId,
             filename: `${filename}.html`,
             html_length: fullHtml.length,
-            has_header_image: !!headerImageDataUrl,
+            has_header_image: !!headerImageUrl,
             download_url: downloadUrl || dataUri,
             view_url: viewUrl || downloadUrl || dataUri,
-            message: `✅ **Security Bulletin Generated** — "${bulletin_title}" (${Math.round(fullHtml.length / 1024)}KB)${headerImageDataUrl ? " with AI-generated header image" : ""}`,
+            message: `✅ **Security Bulletin Generated** — "${bulletin_title}" (${Math.round(fullHtml.length / 1024)}KB)${headerImageUrl ? " with AI-generated header image" : ""}`,
             download_instructions: downloadUrl
               ? `Report is ready. Provide the user this link to view the formatted bulletin in their browser: ${viewUrl || downloadUrl}`
               : `Report generated. Provide this data link for download: ${dataUri.slice(0, 100)}...`
