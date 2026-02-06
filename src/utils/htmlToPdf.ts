@@ -75,92 +75,64 @@ export async function generatePdfFromHtml(
 ): Promise<jsPDF> {
   const bgColor = options?.backgroundColor ?? "#0a0a0a";
 
-  // Build a full override stylesheet that nukes ALL height/overflow constraints
-  const overrideCSS = `
-    *, *::before, *::after {
-      overflow: visible !important;
-      max-height: none !important;
-      height: auto !important;
-    }
-    html, body {
-      height: auto !important;
-      min-height: 0 !important;
-      overflow: visible !important;
-      max-height: none !important;
-    }
-    /* Preserve image dimensions */
-    img, svg, canvas, video {
-      height: auto !important;
-      max-width: 100% !important;
-      overflow: hidden !important;
-    }
-    /* Preserve table cell heights */
-    td, th {
-      height: auto !important;
-    }
-  `;
-
-  // Create container — NOT offscreen with left:-9999px which can cause
-  // rendering issues. Instead use fixed positioning behind everything.
+  // Create offscreen container
   const container = document.createElement("div");
-  container.style.cssText = `
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: ${RENDER_WIDTH_PX}px;
-    z-index: -9999;
-    opacity: 0;
-    pointer-events: none;
-    background: ${bgColor};
-    overflow: visible;
-    height: auto;
-    max-height: none;
-  `;
+  container.style.position = "absolute";
+  container.style.left = "-9999px";
+  container.style.top = "0";
+  container.style.width = `${RENDER_WIDTH_PX}px`;
+  container.style.background = bgColor;
+  container.style.overflow = "visible";
+  container.style.height = "auto";
+  container.style.maxHeight = "none";
 
   // Extract body content if it's a full HTML document
   const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  const bodyContent = bodyMatch ? bodyMatch[1] : html;
+  container.innerHTML = bodyMatch ? bodyMatch[1] : html;
 
-  // Extract styles from the HTML
+  // Extract and apply styles, then add targeted overflow overrides
+  // IMPORTANT: Only override overflow/max-height on container-like elements,
+  // NOT height on everything (which destroys layouts with dark backgrounds)
   const styleMatches = html.match(/<style[^>]*>([\s\S]*?)<\/style>/gi);
-  const extractedStyles = (styleMatches || [])
-    .map((s) => s.replace(/<\/?style[^>]*>/gi, ""))
-    .join("\n");
-
-  // Inject styles + override + content
-  container.innerHTML = `
-    <style>${extractedStyles}\n${overrideCSS}</style>
-    ${bodyContent}
+  const overrideCSS = `
+    .page, .report-container, .bulletin-container,
+    .content, body, html {
+      overflow: visible !important;
+      max-height: none !important;
+      min-height: 0 !important;
+    }
+    @page { size: auto; margin: 0; }
   `;
+  const styleEl = document.createElement("style");
+  styleEl.textContent = (styleMatches || [])
+    .map((s) => s.replace(/<\/?style[^>]*>/gi, ""))
+    .join("\n") + "\n" + overrideCSS;
+  container.prepend(styleEl);
 
   document.body.appendChild(container);
 
   try {
-    // Preload all images as base64 to avoid CORS/tainted canvas
+    // Preload all images as base64
     const images = Array.from(container.querySelectorAll("img"));
     await Promise.allSettled(images.map(safeLoadImage));
 
-    // Let layout settle after images load
-    await new Promise((r) => setTimeout(r, 500));
-    // Force a reflow
-    void container.scrollHeight;
+    // Only unlock overflow on divs that might clip content — leave everything else alone
+    container.querySelectorAll("div, section, article, main").forEach((el) => {
+      const htmlEl = el as HTMLElement;
+      const computed = window.getComputedStyle(htmlEl);
+      if (computed.overflow === "hidden" || computed.maxHeight !== "none") {
+        htmlEl.style.overflow = "visible";
+        htmlEl.style.maxHeight = "none";
+      }
+    });
+
+    // Let styles settle
     await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 500)));
-
-    // Measure the ACTUAL rendered height
-    const actualHeight = container.scrollHeight;
-    console.log(`[PDF] Container scrollHeight: ${actualHeight}px`);
-
-    if (actualHeight < 100) {
-      console.warn("[PDF] Container height suspiciously low, forcing min-height");
-    }
-
-    // Explicitly set the container height to match its scrollHeight
-    // so html2canvas knows the full extent
-    container.style.height = `${actualHeight}px`;
-    container.style.opacity = "0.001"; // near-invisible but still rendered
-
-    // Another settle after height fix
     await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 300)));
+
+    // Measure actual height
+    const actualHeight = container.scrollHeight;
+    console.log(`[PDF] Container scrollHeight: ${actualHeight}px, offsetHeight: ${container.offsetHeight}px`);
 
     const scale = 2;
 
@@ -171,15 +143,9 @@ export async function generatePdfFromHtml(
       allowTaint: false,
       logging: false,
       backgroundColor: bgColor,
-      width: RENDER_WIDTH_PX,
-      height: actualHeight,
       windowWidth: RENDER_WIDTH_PX,
-      windowHeight: actualHeight,
+      height: actualHeight,
       imageTimeout: 15000,
-      x: 0,
-      y: 0,
-      scrollX: 0,
-      scrollY: 0,
     });
 
     console.log(`[PDF] Canvas size: ${fullCanvas.width}x${fullCanvas.height}`);
