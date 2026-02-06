@@ -115,7 +115,7 @@ export const ExecutiveReportGenerator = () => {
     const container = document.createElement('div');
     container.style.position = 'absolute';
     container.style.left = '-9999px';
-    container.style.width = '210mm';
+    container.style.width = '794px';
     container.innerHTML = sanitizeHtml(reportHtml);
     document.body.appendChild(container);
 
@@ -125,30 +125,42 @@ export const ExecutiveReportGenerator = () => {
         description: "Please wait...",
       });
 
+      const scale = 2;
       const canvas = await html2canvas(container, {
-        scale: 2,
+        scale,
         useCORS: true,
         logging: false,
-        backgroundColor: '#ffffff',
+        backgroundColor: '#0a0a0a',
+        windowWidth: 794,
       });
 
-      const imgWidth = 210;
-      const pageHeight = 297;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
+      const MARGIN = 12;
+      const CONTENT_W = 210 - MARGIN * 2;
+      const CONTENT_H = 297 - MARGIN * 2;
+      const pxWidth = canvas.width / scale;
+      const scaleFactor = CONTENT_W / pxWidth;
+      const stripHeightPx = (CONTENT_H / scaleFactor) * scale;
 
       const pdf = new jsPDF('p', 'mm', 'a4');
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+      let offsetY = 0;
+      let pageIdx = 0;
 
-      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
+      while (offsetY < canvas.height) {
+        const thisH = Math.min(stripHeightPx, canvas.height - offsetY);
+        const slice = document.createElement('canvas');
+        slice.width = canvas.width;
+        slice.height = thisH;
+        const ctx = slice.getContext('2d');
+        if (!ctx) break;
+        ctx.drawImage(canvas, 0, offsetY, canvas.width, thisH, 0, 0, canvas.width, thisH);
 
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
+        const imgData = slice.toDataURL('image/jpeg', 0.92);
+        const sliceH = (thisH / scale) * scaleFactor;
+
+        if (pageIdx > 0) pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', MARGIN, MARGIN, CONTENT_W, sliceH);
+        offsetY += thisH;
+        pageIdx++;
       }
 
       pdf.save(`executive-report-${new Date().toISOString().split('T')[0]}.pdf`);
