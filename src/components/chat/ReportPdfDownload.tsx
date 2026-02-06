@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { FileDown, Loader2 } from "lucide-react";
+import { FileDown, Loader2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { generatePdfFromHtml } from "@/utils/htmlToPdf";
 
@@ -11,6 +11,26 @@ interface ReportPdfDownloadProps {
 
 export const ReportPdfDownload = ({ url, filename }: ReportPdfDownloadProps) => {
   const [isGenerating, setIsGenerating] = useState(false);
+  const [urlValid, setUrlValid] = useState<boolean | null>(null);
+
+  // Pre-validate the URL exists with a HEAD request
+  useEffect(() => {
+    if (!url || url.startsWith("data:")) {
+      setUrlValid(true); // data URIs are always valid
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(url, { method: "HEAD" });
+        if (!cancelled) setUrlValid(resp.ok);
+      } catch {
+        if (!cancelled) setUrlValid(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [url]);
 
   const downloadAsPdf = async () => {
     setIsGenerating(true);
@@ -50,6 +70,26 @@ export const ReportPdfDownload = ({ url, filename }: ReportPdfDownloadProps) => 
       setIsGenerating(false);
     }
   };
+
+  // Don't render button if URL is confirmed invalid
+  if (urlValid === false) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-destructive mt-1">
+        <AlertCircle className="w-3 h-3" />
+        Report file not found — ask Aegis to regenerate
+      </span>
+    );
+  }
+
+  // Still validating
+  if (urlValid === null) {
+    return (
+      <Button variant="outline" size="sm" disabled className="mt-1 gap-1.5">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        Checking…
+      </Button>
+    );
+  }
 
   return (
     <Button
