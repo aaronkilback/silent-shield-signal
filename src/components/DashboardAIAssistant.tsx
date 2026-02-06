@@ -1539,7 +1539,7 @@ How can I help you now?`,
                 onChange={handleFileSelect}
                 multiple
                 className="hidden"
-                accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+                accept=".jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,image/*"
               />
               <Button
                 type="button"
