@@ -5363,33 +5363,11 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
         }
       }
 
-      // For PDFs, prefer signed URLs to avoid memory pressure with large files
-      // Gemini API now supports signed URLs directly (up to 100MB)
-      let signedPdfUrl: string | null = null;
-      
-      if (inferredIsPdf) {
-        for (const bucket of candidateBuckets) {
-          const { data: signedData, error: signedError } = await supabaseClient.storage
-            .from(bucket)
-            .createSignedUrl(doc.storage_path, 60 * 10);
+      // PDFs MUST use base64 data URLs — signed URLs are NOT supported by the AI gateway for PDFs.
+      // Only image formats (PNG, JPEG, WebP, GIF) work with signed URLs.
 
-          if (!signedError && signedData?.signedUrl) {
-            signedPdfUrl = signedData.signedUrl;
-            resolvedBucket = bucket;
-            console.log(`Created signed URL for PDF from bucket: ${bucket}`);
-            break;
-          }
-
-          bucketErrors[bucket] = signedError?.message ?? 'Unknown error';
-        }
-      }
-
-      // Download the file from storage only when necessary:
-      // - PDFs when signed URL creation failed
-      // - Images when we couldn't create a signed URL
-      let fileBytes: ArrayBuffer | null = null;
-
-      if ((inferredIsPdf && !signedPdfUrl) || (!inferredIsPdf && !signedFileUrl)) {
+      // Download files: always for PDFs (base64 required), and for images when signed URL failed
+      if (inferredIsPdf || (!inferredIsImage) || (inferredIsImage && !signedFileUrl)) {
         let fileData: Blob | null = null;
 
         for (const bucket of candidateBuckets) {
@@ -5485,129 +5463,76 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
           /\.(jpg|jpeg|png|gif|webp|bmp|tiff?)$/i.test(doc.filename);
 
         if (isPDF) {
-          // Use signed URL for PDFs when available (supports up to 100MB)
-          // This avoids memory pressure from base64 encoding large files
-          if (signedPdfUrl) {
-            console.log(`Using signed URL for PDF analysis (${fileSizeMB.toFixed(1)}MB)`);
-            
-            const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                model: 'google/gemini-2.5-flash',
-                messages: [{
-                  role: 'user',
-                  content: [
-                    {
-                      type: 'text',
-                      text: `You are analyzing the document "${doc.filename}" which is a PDF file.
-
-${analysisPrompt}
-
-IMPORTANT: This document may contain maps, diagrams, tables, or image-based content. 
-Analyze ALL pages thoroughly and extract every piece of visible text, data, labels, legends, and geographic/infrastructure information.
-Be comprehensive - list all road names, milepost markers, facility names, pipeline routes, and any other relevant details.`
-                    },
-                    {
-                      type: 'image_url',
-                      image_url: { 
-                        url: signedPdfUrl 
-                      }
-                    }
-                  ]
-                }],
-                max_tokens: 16000
-              }),
-            });
-
-            if (visionResponse.ok) {
-              const visionData = await visionResponse.json();
-              const content = visionData.choices?.[0]?.message?.content;
-              if (content && content.length > 50) {
-                analysisResults.push(content);
-                console.log(`PDF analysis via signed URL: Extracted ${content.length} chars`);
-              } else {
-                console.warn('PDF analysis returned minimal content');
-              }
-            } else {
-              const errText = await visionResponse.text();
-              console.error(`Vision API error ${visionResponse.status}: ${errText}`);
-            }
-          } else if (fileBytes) {
-            // Fallback to base64 for smaller PDFs when signed URL not available
-            const maxSizeMB = 10;
-            if (fileSizeMB > maxSizeMB) {
-              return {
-                success: false,
-                error: `PDF file is too large for base64 analysis (${fileSizeMB.toFixed(1)}MB > ${maxSizeMB}MB limit) and signed URL creation failed.`,
-                document_id: docId,
-                filename: doc.filename,
-                bucket_errors: bucketErrors,
-                suggestion: "Ensure the file exists in storage and the bucket permissions allow signed URL creation.",
-              };
-            }
-
-            const base64PDF = base64FromBytes(fileBytes);
-
-            console.log(`Sending PDF as base64 for analysis (${(base64PDF.length / 1024 / 1024).toFixed(2)}MB)`);
-
-            const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                model: 'google/gemini-2.5-flash',
-                messages: [{
-                  role: 'user',
-                  content: [
-                    {
-                      type: 'text',
-                      text: `You are analyzing the document "${doc.filename}" which is a PDF file.
-
-${analysisPrompt}
-
-IMPORTANT: This document may contain maps, diagrams, tables, or image-based content. 
-Analyze ALL pages thoroughly and extract every piece of visible text, data, labels, legends, and geographic/infrastructure information.
-Be comprehensive - list all road names, milepost markers, facility names, pipeline routes, and any other relevant details.`
-                    },
-                    {
-                      type: 'image_url',
-                      image_url: { 
-                        url: `data:application/pdf;base64,${base64PDF}` 
-                      }
-                    }
-                  ]
-                }],
-                max_tokens: 16000
-              }),
-            });
-
-            if (visionResponse.ok) {
-              const visionData = await visionResponse.json();
-              const content = visionData.choices?.[0]?.message?.content;
-              if (content && content.length > 50) {
-                analysisResults.push(content);
-                console.log(`PDF analysis via base64: Extracted ${content.length} chars`);
-              } else {
-                console.warn('PDF analysis returned minimal content');
-              }
-            } else {
-              const errText = await visionResponse.text();
-              console.error(`Vision API error ${visionResponse.status}: ${errText}`);
-            }
-          } else {
+          // PDFs MUST use base64 data URLs — the AI gateway does NOT support signed URLs for PDFs
+          if (!fileBytes) {
             return {
               success: false,
-              error: 'Could not access PDF file - no signed URL or file bytes available',
+              error: 'Could not download PDF file for analysis',
               document_id: docId,
               filename: doc.filename,
               bucket_errors: bucketErrors,
             };
+          }
+
+          const maxSizeMB = 10;
+          if (fileSizeMB > maxSizeMB) {
+            return {
+              success: false,
+              error: `PDF file is too large for vision analysis (${fileSizeMB.toFixed(1)}MB > ${maxSizeMB}MB limit).`,
+              document_id: docId,
+              filename: doc.filename,
+              suggestion: "Consider splitting the PDF into smaller files or compressing it.",
+            };
+          }
+
+          const base64PDF = base64FromBytes(new Uint8Array(fileBytes));
+          console.log(`Sending PDF as base64 data URL for analysis (${fileSizeMB.toFixed(1)}MB)`);
+
+          const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'google/gemini-2.5-flash',
+              messages: [{
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: `You are analyzing the document "${doc.filename}" which is a PDF file.
+
+${analysisPrompt}
+
+IMPORTANT: This document may contain maps, diagrams, tables, or image-based content. 
+Analyze ALL pages thoroughly and extract every piece of visible text, data, labels, legends, and geographic/infrastructure information.
+Be comprehensive - list all road names, milepost markers, facility names, pipeline routes, and any other relevant details.`
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: { 
+                      url: `data:application/pdf;base64,${base64PDF}` 
+                    }
+                  }
+                ]
+              }],
+              max_tokens: 16000
+            }),
+          });
+
+          if (visionResponse.ok) {
+            const visionData = await visionResponse.json();
+            const content = visionData.choices?.[0]?.message?.content;
+            if (content && content.length > 50) {
+              analysisResults.push(content);
+              console.log(`PDF analysis via base64: Extracted ${content.length} chars`);
+            } else {
+              console.warn('PDF analysis returned minimal content');
+            }
+          } else {
+            const errText = await visionResponse.text();
+            console.error(`Vision API error ${visionResponse.status}: ${errText}`);
           }
         } else if (isImage) {
           // Direct image analysis
