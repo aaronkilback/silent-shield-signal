@@ -6,10 +6,9 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { FileText, Download, Loader2, Calendar, FileDown, Eye } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 import DOMPurify from 'dompurify';
 import { useActivityTracking } from "@/hooks/useActivityTracking";
+import { generatePdfFromHtml } from "@/utils/htmlToPdf";
 
 // Configure DOMPurify for safe HTML rendering in reports
 const sanitizeHtml = (html: string): string => {
@@ -112,103 +111,14 @@ export const ExecutiveReportGenerator = () => {
   const downloadReportPDF = async () => {
     if (!reportHtml) return;
 
-    const container = document.createElement('div');
-    container.style.position = 'absolute';
-    container.style.left = '-9999px';
-    container.style.width = '794px';
-    container.style.background = '#0a0a0a';
-
-    // Extract body and styles
-    const bodyMatch = reportHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-    container.innerHTML = sanitizeHtml(bodyMatch ? bodyMatch[1] : reportHtml);
-    
-    const styleMatch = reportHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/gi);
-    if (styleMatch) {
-      const styleEl = document.createElement("style");
-      styleEl.textContent = styleMatch.map((s) => s.replace(/<\/?style[^>]*>/gi, "")).join("\n");
-      container.prepend(styleEl);
-    }
-
-    document.body.appendChild(container);
-
     try {
       toast({ title: "Generating PDF", description: "Please wait..." });
-
-      // Pre-load images as base64 to bypass CORS
-      const images = Array.from(container.querySelectorAll("img"));
-      await Promise.allSettled(images.map(async (img) => {
-        const src = img.getAttribute("src") || "";
-        if (!src || src.startsWith("data:") || src.startsWith("blob:")) return;
-        try {
-          const resp = await fetch(src);
-          if (!resp.ok) throw new Error();
-          const blob = await resp.blob();
-          const reader = new FileReader();
-          const dataUrl = await new Promise<string>((res, rej) => {
-            reader.onloadend = () => res(reader.result as string);
-            reader.onerror = rej;
-            reader.readAsDataURL(blob);
-          });
-          img.src = dataUrl;
-          if (!img.complete) await new Promise<void>((r) => { img.onload = () => r(); img.onerror = () => r(); });
-        } catch { img.style.display = "none"; }
-      }));
-
-      await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 300)));
-
-      const scale = 2;
-      const MARGIN = 12;
-      const CONTENT_W = 210 - MARGIN * 2;
-      const CONTENT_H = 297 - MARGIN * 2;
-      const mmPerPx = CONTENT_W / 794;
-
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const sections = Array.from(container.querySelectorAll("[data-pdf-section]")) as HTMLElement[];
-
-      if (sections.length === 0) {
-        // Fallback: render as one canvas and slice
-        const canvas = await html2canvas(container, { scale, useCORS: true, allowTaint: true, logging: false, backgroundColor: null, windowWidth: 794 });
-        const stripHeightPx = (CONTENT_H / mmPerPx) * scale;
-        let offsetY = 0, pageIdx = 0;
-        while (offsetY < canvas.height) {
-          const thisH = Math.min(stripHeightPx, canvas.height - offsetY);
-          const slice = document.createElement('canvas');
-          slice.width = canvas.width; slice.height = thisH;
-          const ctx = slice.getContext('2d');
-          if (!ctx) break;
-          ctx.drawImage(canvas, 0, offsetY, canvas.width, thisH, 0, 0, canvas.width, thisH);
-          if (pageIdx > 0) pdf.addPage();
-          pdf.addImage(slice.toDataURL('image/jpeg', 0.92), 'JPEG', MARGIN, MARGIN, CONTENT_W, (thisH / scale) * mmPerPx);
-          offsetY += thisH; pageIdx++;
-        }
-      } else {
-        // Section-aware rendering
-        let currentY = 0;
-        for (const section of sections) {
-          let sectionCanvas: HTMLCanvasElement;
-          try {
-            sectionCanvas = await html2canvas(section, {
-              scale, useCORS: true, allowTaint: true, logging: false, backgroundColor: null, windowWidth: 794,
-            });
-          } catch { continue; }
-          if (sectionCanvas.height === 0) continue;
-          const sectionH = (sectionCanvas.height / scale) * mmPerPx;
-          if (currentY > 0 && currentY + sectionH > CONTENT_H) {
-            pdf.addPage();
-            currentY = 0;
-          }
-          pdf.addImage(sectionCanvas.toDataURL('image/jpeg', 0.92), 'JPEG', MARGIN, MARGIN + currentY, CONTENT_W, sectionH);
-          currentY += sectionH + 2;
-        }
-      }
-
+      const pdf = await generatePdfFromHtml(reportHtml);
       pdf.save(`executive-report-${new Date().toISOString().split('T')[0]}.pdf`);
       toast({ title: "PDF Downloaded", description: "The PDF report has been saved to your device." });
     } catch (error) {
       console.error('Error generating PDF:', error);
       toast({ title: "PDF Generation Failed", description: "Failed to generate PDF", variant: "destructive" });
-    } finally {
-      document.body.removeChild(container);
     }
   };
 

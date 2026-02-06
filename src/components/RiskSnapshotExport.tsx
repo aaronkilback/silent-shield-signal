@@ -4,9 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Download, FileDown } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 import DOMPurify from 'dompurify';
+import { generatePdfFromHtml } from "@/utils/htmlToPdf";
 
 // Configure DOMPurify for safe HTML rendering in reports
 const sanitizeHtml = (html: string): string => {
@@ -65,52 +64,17 @@ export const RiskSnapshotExport = () => {
   const downloadPDF = async () => {
     if (!reportHtml) return;
 
-    const container = document.createElement('div');
-    container.style.position = 'absolute';
-    container.style.left = '-9999px';
-    container.style.width = '210mm';
-    container.innerHTML = sanitizeHtml(reportHtml);
-    document.body.appendChild(container);
-
     try {
       toast.loading("Generating PDF...");
-
-      const canvas = await html2canvas(container, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-      });
-
-      const imgWidth = 210;
-      const pageHeight = 297;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-
-      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
-      }
-
+      const pdf = await generatePdfFromHtml(reportHtml, { backgroundColor: "#ffffff" });
       const periodEnd = new Date();
       pdf.save(`risk-snapshot-${periodEnd.toISOString().split("T")[0]}.pdf`);
-
       toast.dismiss();
       toast.success("PDF report downloaded");
     } catch (error) {
       console.error("Error generating PDF:", error);
+      toast.dismiss();
       toast.error("Failed to generate PDF");
-    } finally {
-      document.body.removeChild(container);
     }
   };
 
