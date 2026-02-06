@@ -12153,6 +12153,97 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
         });
       }
 
+      // ═══ FORCED REPORT GENERATION: User asked for report but AI didn't call tool ═══
+      // Detect when user explicitly requests a report/bulletin but AI responds with text/questions
+      {
+        const lastUserMsg = limitedMessages.filter((m: any) => m.role === "user").pop();
+        const lastUserText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
+        const userWantsReport = /\b(generate|create|make|build|produce|write|draft|compile|regenerate|try again|redo)\b.*\b(report|bulletin|briefing|document|summary|sitrep)\b/i.test(lastUserText) ||
+          /\b(report|bulletin|briefing|sitrep)\b.*\b(generate|create|make|build|produce|write|draft|compile|regenerate)\b/i.test(lastUserText) ||
+          /\b(try again|redo|regenerate)\b/i.test(lastUserText) && /\b(report|bulletin|briefing)\b/i.test(lastUserText);
+        
+        if (userWantsReport) {
+          console.log("FORCING generate_fortress_report (user explicitly requested report but AI responded with text instead of calling tool)");
+          
+          // Determine report type from user message
+          let reportType = "security_bulletin";
+          if (/\b(executive|client)\b/i.test(lastUserText)) reportType = "executive";
+          else if (/\b(risk|snapshot)\b/i.test(lastUserText)) reportType = "risk_snapshot";
+          else if (/\b(travel|security briefing|city|country)\b/i.test(lastUserText)) reportType = "security_briefing";
+          
+          // Extract title from user message or conversation
+          let bulletinTitle = "Security Bulletin";
+          const titleMatch = lastUserText.match(/[""]([^""]{5,100})[""]/) ||
+            lastUserText.match(/(?:titled?|called?|named?|about)\s+[""]?([^"".\n]{5,100})[""]?/i);
+          if (titleMatch) bulletinTitle = titleMatch[1].trim();
+          
+          // Gather content from recent conversation
+          const recentUserMsgs = limitedMessages
+            .filter((m: any) => m.role === "user")
+            .slice(-5)
+            .map((m: any) => typeof m.content === "string" ? m.content : "")
+            .filter((c: string) => c.length > 50 && !/try again|regenerate/i.test(c));
+          
+          const bulletinContent = recentUserMsgs.length > 0
+            ? `<h2>Intelligence Summary</h2><div>${recentUserMsgs.join('<br><br>').replace(/\n/g, '<br>')}</div>`
+            : `<h2>Security Bulletin</h2><p>Report generated from conversation context. Please provide specific intelligence content for a more detailed bulletin.</p>`;
+          
+          const forcedReportArgs: Record<string, any> = {
+            report_type: reportType,
+            bulletin_title: bulletinTitle,
+            bulletin_html: bulletinContent,
+            bulletin_classification: "INTERNAL USE ONLY",
+            generate_header_image: true,
+          };
+          
+          // For executive reports, try to resolve client
+          if (reportType === "executive") {
+            const clientMatch = lastUserText.match(/(?:for|about|on)\s+[""]?([A-Z][a-zA-Z\s]{2,30})[""]?/i);
+            if (clientMatch) forcedReportArgs.client_name = clientMatch[1].trim();
+          }
+          
+          const forcedResult = await executeTool("generate_fortress_report", forcedReportArgs, supabaseClient, authenticatedUserId);
+          const forcedToolResults = [
+            {
+              tool_call_id: "forced_generate_fortress_report_v2",
+              role: "tool",
+              name: "generate_fortress_report",
+              content: truncateToolResult(forcedResult, 25000),
+            },
+          ];
+
+          const finalResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${LOVABLE_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "google/gemini-2.5-flash",
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "You are the Fortress AI Assistant. A report was just generated using the generate_fortress_report tool. Present the ACTUAL download URL from the tool result to the user. NEVER modify or fabricate URLs. Use the exact view_url or download_url from the tool response. Keep your response concise — just confirm the report was generated and provide the link.",
+                },
+                ...processedMessages,
+                firstMessage,
+                ...forcedToolResults,
+              ],
+              stream: true,
+            }),
+          }, AI_TIMEOUT_MS);
+
+          if (!finalResponse.ok) {
+            throw new Error("Failed to get final response from AI after forced report generation");
+          }
+
+          return new Response(finalResponse.body, {
+            headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+          });
+        }
+      }
+
       // Check for forced agent creation
       const forcedAgent = extractPlannedAgentFromText(firstMessage.content);
       if (forcedAgent) {
