@@ -21,10 +21,17 @@ export const ReportPdfDownload = ({ url, filename }: ReportPdfDownloadProps) => 
       if (!response.ok) {
         const status = response.status;
         if (status === 404 || status === 400) {
-          toast.error("Report file not found — please ask Aegis to regenerate the report");
+          toast.error("Report not found — the file may have expired. Please ask Aegis to regenerate the report.");
+          setIsGenerating(false);
           return;
         }
         throw new Error(`Failed to fetch report (HTTP ${status})`);
+      }
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
+        toast.error("Invalid report format — please ask Aegis to regenerate the report.");
+        setIsGenerating(false);
+        return;
       }
       const html = await response.text();
 
