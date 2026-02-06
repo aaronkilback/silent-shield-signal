@@ -3228,6 +3228,7 @@ USE WHEN:
 IMPORTANT:
 - For executive reports, resolve client_name to client_id first if only name is provided.
 - For security_bulletin: organize and format the user's provided content as HTML. Include sections, headers, and structure. The tool wraps it in professional styling and generates header images.
+- CRITICAL FOR BULLETINS: If the user uploaded or shared ANY images (suspect vehicles, screenshots, photos, maps, etc.) during the conversation, you MUST pass them in the bulletin_images array. Extract ALL image URLs from the conversation (look for ai-chat-attachments URLs, osint-media URLs, or any image links the user shared). NEVER omit user-provided images.
 - The tool returns HTML that can be downloaded. Tell the user you've generated the report and provide a download mechanism.
 - Reports take 15-30 seconds to generate — inform the user it's being generated.`,
       parameters: {
@@ -3282,6 +3283,18 @@ IMPORTANT:
           image_prompt: {
             type: "string",
             description: "Custom prompt for the header image. If not provided, one is auto-generated from the title."
+          },
+          bulletin_images: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                url: { type: "string", description: "The image URL (from chat attachments, ai-chat-attachments bucket, or any URL shared in conversation)" },
+                caption: { type: "string", description: "Descriptive caption for the image" }
+              },
+              required: ["url"]
+            },
+            description: "Array of image objects to embed in the bulletin's Visual Intelligence Appendix. ALWAYS include ALL images the user shared or uploaded during the conversation. Each object has 'url' (the image URL) and optional 'caption'."
           }
         },
         required: ["report_type"]
@@ -10362,7 +10375,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
     case "generate_fortress_report": {
       const { report_type, client_name, period_days, city, country, travel_dates,
-              bulletin_title, bulletin_html, bulletin_classification, generate_header_image, image_prompt } = args;
+              bulletin_title, bulletin_html, bulletin_classification, generate_header_image, image_prompt, bulletin_images } = args;
       let { client_id } = args;
 
       // Resolve client_name to client_id if needed
@@ -10557,6 +10570,92 @@ The signal is now in the database with status 'triaged' and rules have been appl
   </div>
 </body>
 </html>`;
+
+          // ═══════════════════════════════════════════════════════════════
+          // EMBED VISUAL INTELLIGENCE APPENDIX for bulletins
+          // Includes user-provided images (bulletin_images) + OSINT media
+          // ═══════════════════════════════════════════════════════════════
+          let bulletinMediaItems: { url: string; caption: string; source: string }[] = [];
+
+          // 1. Add user-provided images from the conversation
+          if (bulletin_images && Array.isArray(bulletin_images) && bulletin_images.length > 0) {
+            for (const img of bulletin_images) {
+              if (img.url) {
+                bulletinMediaItems.push({
+                  url: img.url,
+                  caption: img.caption || "User-provided image",
+                  source: "Intelligence Submission"
+                });
+              }
+            }
+            console.log(`Including ${bulletinMediaItems.length} user-provided images in bulletin`);
+          }
+
+          // 2. Also fetch OSINT media if we have a client_id
+          if (client_id) {
+            try {
+              const mediaSince = new Date();
+              mediaSince.setDate(mediaSince.getDate() - (period_days || 7));
+
+              const { data: clientSignals } = await serviceClient
+                .from("signals")
+                .select("id")
+                .eq("client_id", client_id)
+                .gte("received_at", mediaSince.toISOString())
+                .limit(50);
+
+              const sigIds = (clientSignals || []).map((s: any) => s.id);
+              if (sigIds.length > 0) {
+                const { data: sigAttachments } = await serviceClient
+                  .from("attachments")
+                  .select("filename, storage_url, mime")
+                  .eq("parent_type", "signal")
+                  .in("parent_id", sigIds.slice(0, 30))
+                  .like("mime", "image/%")
+                  .limit(10);
+
+                if (sigAttachments?.length) {
+                  for (const att of sigAttachments) {
+                    bulletinMediaItems.push({
+                      url: att.storage_url,
+                      caption: att.filename || "OSINT capture",
+                      source: "OSINT Signal Media"
+                    });
+                  }
+                }
+              }
+            } catch (mediaErr) {
+              console.error("Non-fatal: OSINT media fetch for bulletin failed:", mediaErr);
+            }
+          }
+
+          // Inject appendix into HTML if we have images
+          if (bulletinMediaItems.length > 0) {
+            const appendixHtml = `
+<div data-pdf-section style="margin-top: 40px; padding: 20px; border-top: 2px solid rgba(0, 212, 255, 0.3);">
+  <h2 style="color: #00d4ff; font-size: 18px; margin-bottom: 16px; font-family: 'Georgia', serif; letter-spacing: 2px;">
+    📸 VISUAL INTELLIGENCE APPENDIX
+  </h2>
+  <p style="color: #a0a0a0; font-size: 12px; margin-bottom: 20px;">
+    ${bulletinMediaItems.length} visual asset(s) included in this bulletin.
+  </p>
+  ${bulletinMediaItems.map(item => `
+  <div data-pdf-section style="margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; overflow: hidden; background: rgba(255,255,255,0.03);">
+    <img src="${item.url}" alt="${item.caption}" style="width: 100%; max-height: 400px; object-fit: contain; display: block; background: #111;" crossorigin="anonymous" onerror="this.style.display='none'" />
+    <div style="padding: 10px 14px;">
+      <p style="font-size: 12px; color: #e0e0e0; margin: 0 0 4px 0; font-weight: 600;">${item.caption}</p>
+      <p style="font-size: 10px; color: #888; margin: 0;">Source: ${item.source}</p>
+    </div>
+  </div>`).join("")}
+</div>`;
+
+            // Insert before footer
+            fullHtml = fullHtml.replace(
+              '<div data-pdf-section class="footer">',
+              `${appendixHtml}\n    <div data-pdf-section class="footer">`
+            );
+            console.log(`Embedded ${bulletinMediaItems.length} images into bulletin Visual Intelligence Appendix`);
+          }
 
           // Upload to storage for download
           const filename = `security-bulletin-${bulletin_title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 50)}-${reportDate}`;
@@ -11629,6 +11728,7 @@ GENERATING NEW REPORTS & BULLETINS (CRITICAL - YOU MUST USE THIS):
 When users ask you to CREATE, GENERATE, BUILD, or PRODUCE a report, bulletin, briefing, or any downloadable document:
 → IMMEDIATELY call generate_fortress_report tool. NEVER say you cannot generate files.
 → For "security_bulletin": Format ONLY the content the user provided or that you retrieved from Fortress tools. Do NOT invent incidents, threat actors, TTPs, statistics, or details. If the user's input is thin, ask for more detail — do not pad with fabricated content. Pass the organized HTML to the tool.
+→ CRITICAL FOR BULLETINS — IMAGES: If the user uploaded or shared ANY images (suspect vehicles, screenshots, photos, etc.) in the conversation, you MUST extract all their URLs and pass them in the bulletin_images parameter. Look for URLs containing 'ai-chat-attachments', 'osint-media', or any image links. NEVER omit user-provided images from bulletins.
 → For "executive": Pass client_name or client_id. The tool auto-generates the full report from real data.
 → For "risk_snapshot": No required params. Auto-generates cross-client overview from real data.
 → For "security_briefing": Pass city and country for travel security assessment.
