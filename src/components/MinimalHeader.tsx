@@ -74,6 +74,14 @@ export const MinimalHeader = () => {
             <Activity className="w-3 h-3 text-status-active animate-pulse" />
             <span className="text-[11px] text-muted-foreground font-medium">Live</span>
           </div>
+          
+          {/* ⌘K shortcut hint */}
+          <button
+            onClick={() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
+            className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-md bg-secondary/30 text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          >
+            <span>⌘K</span>
+          </button>
 
           <EntityNotifications />
 

@@ -8,6 +8,7 @@ import SupportChatWidget from "@/components/SupportChatWidget";
 import { RealtimeNotifications } from "@/components/RealtimeNotifications";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ProactiveAgentMessages } from "@/components/agents/ProactiveAgentMessages";
+import { CommandPalette } from "@/components/CommandPalette";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import Clients from "./pages/Clients";
@@ -57,6 +58,7 @@ const App = () => (
               <RealtimeNotifications />
               <ProactiveAgentMessages />
               <EnsureDefaultRole />
+              <CommandPalette />
               <Routes>
                 <Route path="/" element={<Index />} />
                 <Route path="/auth" element={<Auth />} />

@@ -3,7 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Sparkles, Loader2, Paperclip, X, Mic, MicOff, MessageSquarePlus, Users, User, Share2 } from "lucide-react";
+import { Send, Sparkles, Loader2, Paperclip, X, Mic, MicOff, MessageSquarePlus, Users, User, Share2, Command } from "lucide-react";
+import { AegisCapabilityHints } from "@/components/AegisCapabilityHints";
+import { LoginBriefing } from "@/components/LoginBriefing";
 import { useOpenAIRealtime } from "./voice/useOpenAIRealtime";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -1383,6 +1385,15 @@ How can I help you now?`,
                   </div>
                 ) : (
                   <>
+                    {fullScreen && messages.length <= 1 && (
+                      <>
+                        <LoginBriefing onAskAegis={(q) => { setInput(q); }} />
+                        <AegisCapabilityHints
+                          onSelect={(hint) => { setInput(hint); }}
+                          visible={messages.length <= 1}
+                        />
+                      </>
+                    )}
                     {MessageList}
                     {streamingContent && (
                       <div className="flex justify-start animate-fade-in">
@@ -1544,7 +1555,7 @@ How can I help you now?`,
               <Input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask about threats, signals..."
+                placeholder={fullScreen ? "Ask AEGIS anything... (⌘K for quick nav)" : "Ask about threats, signals..."}
                 disabled={isLoading || isUploading}
                 className="flex-1 min-w-0"
               />
