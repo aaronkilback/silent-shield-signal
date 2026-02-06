@@ -12055,6 +12055,104 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
         });
       }
 
+      // ═══ FORCED REPORT GENERATION: Detect hallucinated storage URLs ═══
+      // If the AI output contains a supabase storage URL but didn't call generate_fortress_report,
+      // it hallucinated the URL. Force the actual tool call.
+      const hasHallucinatedUrl = /supabase\.co\/storage\/v1\/object\/(public|sign)\//.test(firstMessage.content);
+      const mentionsReportGeneration = /\b(generat|creat|compil|produc|regenerat|bulletin|report)\b/i.test(firstMessage.content);
+      
+      if (hasHallucinatedUrl && mentionsReportGeneration) {
+        console.log("FORCING generate_fortress_report (model hallucinated a storage URL instead of calling the tool)");
+        
+        // Extract bulletin info from the conversation context
+        // Find the most recent user messages that contain the original report request context
+        const userMessages = limitedMessages.filter((m: any) => m.role === "user");
+        const assistantMessages = limitedMessages.filter((m: any) => m.role === "assistant");
+        
+        // Try to extract bulletin title from the AI's response or conversation
+        let bulletinTitle = "Security Bulletin";
+        const titleMatch = firstMessage.content.match(/[""]([^""]{10,100})[""]/) || 
+                          firstMessage.content.match(/\*\*[""]?([^*""\n]{10,100})[""]?\*\*/);
+        if (titleMatch) bulletinTitle = titleMatch[1].replace(/^(View|Download|Regenerat\w+)\s+(the\s+)?(Latest|Newest|Most Recent|New|Updated)\s+/i, '');
+        
+        // Find bulletin HTML from earlier assistant messages that might have had the content
+        // Or compose a minimal bulletin from the AI's current response
+        let bulletinHtml = "";
+        
+        // Extract any substantive content from the AI's response (skip the hallucinated URL parts)
+        const contentWithoutUrls = firstMessage.content
+          .replace(/\[.*?\]\(https:\/\/.*?\)/g, '') // Remove markdown links
+          .replace(/https:\/\/\S+/g, '') // Remove bare URLs
+          .replace(/\*\*\[Generating Report\.\.\.\]\*\*/g, '')
+          .replace(/---/g, '')
+          .trim();
+        
+        // Look in conversation history for the original bulletin content request
+        let originalRequest = "";
+        for (let i = userMessages.length - 1; i >= 0; i--) {
+          const content = typeof userMessages[i].content === 'string' ? userMessages[i].content : '';
+          if (content.length > 100 && !/try again|improved|regenerate/i.test(content)) {
+            originalRequest = content;
+            break;
+          }
+        }
+        
+        // Build a minimal bulletin from available context
+        if (originalRequest) {
+          bulletinHtml = `<h2>Intelligence Summary</h2><div>${originalRequest.replace(/\n/g, '<br>')}</div>`;
+        } else {
+          bulletinHtml = `<h2>Security Bulletin</h2><p>Report regenerated at user request. Please provide specific intelligence content for a detailed bulletin.</p>`;
+        }
+        
+        const forcedReportArgs: Record<string, any> = {
+          report_type: "security_bulletin",
+          bulletin_title: bulletinTitle,
+          bulletin_html: bulletinHtml,
+          bulletin_classification: "INTERNAL USE ONLY",
+          generate_header_image: true,
+        };
+        
+        const forcedResult = await executeTool("generate_fortress_report", forcedReportArgs, supabaseClient, authenticatedUserId);
+        const forcedToolResults = [
+          {
+            tool_call_id: "forced_generate_fortress_report",
+            role: "tool",
+            name: "generate_fortress_report",
+            content: truncateToolResult(forcedResult, 25000),
+          },
+        ];
+
+        const finalResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You are the Fortress AI Assistant. A report was just generated using the generate_fortress_report tool. Present the ACTUAL download URL from the tool result to the user. NEVER modify or fabricate URLs. Use the exact view_url or download_url from the tool response. Keep your response concise — just confirm the report was generated and provide the link.",
+              },
+              ...processedMessages,
+              firstMessage,
+              ...forcedToolResults,
+            ],
+            stream: true,
+          }),
+        }, AI_TIMEOUT_MS);
+
+        if (!finalResponse.ok) {
+          throw new Error("Failed to get final response from AI after forced report generation");
+        }
+
+        return new Response(finalResponse.body, {
+          headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+        });
+      }
+
       // Check for forced agent creation
       const forcedAgent = extractPlannedAgentFromText(firstMessage.content);
       if (forcedAgent) {
