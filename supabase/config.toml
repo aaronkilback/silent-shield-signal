@@ -468,3 +468,6 @@ verify_jwt = true
 
 [functions.semantic-search]
 verify_jwt = true
+
+[functions.predictive-forecast]
+verify_jwt = false
