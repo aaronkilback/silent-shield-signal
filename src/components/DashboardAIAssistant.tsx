@@ -50,7 +50,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
   const [streamingContent, setStreamingContent] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
   const hasLoadedOnceRef = useRef(false);
   
   // Voice state
@@ -1061,7 +1061,7 @@ If not visible, try: **Ctrl+Shift+R** (hard refresh)`,
           )}>
             <ReactMarkdown
               components={{
-                a: ({ node, href, children, ...props }) => {
+                a: ({ href, children, ...props }) => {
                   const handleClick = (e: React.MouseEvent) => {
                     e.preventDefault();
                     if (href?.startsWith('/')) {
@@ -1082,7 +1082,7 @@ If not visible, try: **Ctrl+Shift+R** (hard refresh)`,
                     </a>
                   );
                 },
-                p: ({ node, children, ...props }) => (
+                p: ({ children, ...props }) => (
                   <p className="mb-2 last:mb-0" {...props}>{children}</p>
                 ),
               }}
@@ -1408,7 +1408,7 @@ How can I help you now?`,
                           )}>
                             <ReactMarkdown
                               components={{
-                                a: ({ node, href, children, ...props }) => {
+                                a: ({ href, children, ...props }) => {
                                   const handleClick = (e: React.MouseEvent) => {
                                     e.preventDefault();
                                     if (href?.startsWith('/')) {
@@ -1429,7 +1429,7 @@ How can I help you now?`,
                                     </a>
                                   );
                                 },
-                                p: ({ node, children, ...props }) => (
+                                p: ({ children, ...props }) => (
                                   <p className="mb-2 last:mb-0" {...props}>{children}</p>
                                 ),
                               }}
