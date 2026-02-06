@@ -78,6 +78,7 @@ TOOL QUICK REFERENCE:
 🎯 CREATE: create_entity, inject_test_signal (use client_name not ID), manage_incident_ticket
 🛡️ THREAT: analyze_threat_radar, check_dark_web_exposure, run_vip_deep_scan, get_threat_intel_feeds
 📄 DOCS: get_document_content, analyze_visual_document (for maps/diagrams/scanned PDFs)
+📊 REPORTS: generate_fortress_report — generates downloadable HTML reports (executive, risk_snapshot, security_briefing, security_bulletin). ALWAYS use this tool when user asks for any report, bulletin, briefing document, or formatted deliverable.
 ⚙️ SYSTEM: get_monitoring_status, diagnose_issues, autonomous_source_health_manager
 
 DECISION PATTERNS:
