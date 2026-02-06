@@ -41,7 +41,7 @@ export const LoginBriefing = ({ onAskAegis }: LoginBriefingProps) => {
           fetchBriefing(true);
           return;
         }
-      } catch { /* ignore parse errors */ }
+      } catch (_e) { /* ignore parse errors */ }
     }
 
     fetchBriefing(false);
