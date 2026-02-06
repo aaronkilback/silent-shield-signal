@@ -1060,56 +1060,58 @@ If not visible, try: **Ctrl+Shift+R** (hard refresh)`,
             // Paragraphs
             "[&_p]:my-1.5 [&_p]:leading-relaxed"
           )}>
-            <ReactMarkdown
-              components={{
-                a: ({ href, children, ...props }) => {
-                  const handleClick = (e: React.MouseEvent) => {
-                    e.preventDefault();
-                    if (href?.startsWith('/')) {
-                      navigate(href);
-                      toast.success("Navigating to " + href);
-                    } else if (href) {
-                      window.open(href, '_blank', 'noopener,noreferrer');
-                    }
-                  };
-                  // Check if this is a report/bulletin link
-                  const isReportLink = href && (
-                    href.includes('/reports/') && href.endsWith('.html') ||
-                    href.includes('security-bulletin') ||
-                    href.includes('executive-report') ||
-                    href.includes('risk-snapshot') ||
-                    href.includes('security-briefing')
-                  );
-                  // For report links, DON'T render a clickable <a> — only show the PDF download button
-                  if (isReportLink && href) {
-                    return (
-                      <span className="inline-flex flex-col gap-1">
-                        <span className="text-muted-foreground text-sm">📄 {children}</span>
-                        <ReportPdfDownload 
-                          url={href} 
-                          filename={href.split('/').pop() || undefined} 
-                        />
-                      </span>
-                    );
-                  }
-                  return (
-                    <a
-                      href={href}
-                      onClick={handleClick}
-                      className="text-primary hover:underline cursor-pointer font-medium"
-                      {...props}
+            {(() => {
+              const reportUrlRegex = /(https?:\/\/[^\s)]+supabase\.co\/storage\/v1\/object\/public\/osint-media\/reports\/[^\s)]+\.html)/g;
+              const reportUrls = [...new Set(message.content.match(reportUrlRegex) || [])];
+              const cleanedContent = reportUrls.reduce(
+                (content, url) => content.replace(new RegExp(url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), ''),
+                message.content
+              ).trim();
+              return (
+                <>
+                  {cleanedContent && (
+                    <ReactMarkdown
+                      components={{
+                        a: ({ href, children, ...props }) => {
+                          const handleClick = (e: React.MouseEvent) => {
+                            e.preventDefault();
+                            if (href?.startsWith('/')) {
+                              navigate(href);
+                              toast.success("Navigating to " + href);
+                            } else if (href) {
+                              window.open(href, '_blank', 'noopener,noreferrer');
+                            }
+                          };
+                          return (
+                            <a
+                              href={href}
+                              onClick={handleClick}
+                              className="text-primary hover:underline cursor-pointer font-medium"
+                              {...props}
+                            >
+                              {children}
+                            </a>
+                          );
+                        },
+                        p: ({ children, ...props }) => (
+                          <p className="mb-2 last:mb-0" {...props}>{children}</p>
+                        ),
+                      }}
                     >
-                      {children}
-                    </a>
-                  );
-                },
-                p: ({ children, ...props }) => (
-                  <p className="mb-2 last:mb-0" {...props}>{children}</p>
-                ),
-              }}
-            >
-              {message.content}
-            </ReactMarkdown>
+                      {cleanedContent}
+                    </ReactMarkdown>
+                  )}
+                  {reportUrls.map((url) => (
+                    <div key={url} className="mt-2">
+                      <ReportPdfDownload
+                        url={url}
+                        filename={url.split('/').pop() || undefined}
+                      />
+                    </div>
+                  ))}
+                </>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -1427,36 +1429,50 @@ How can I help you now?`,
                             "[&_strong]:font-semibold",
                             "[&_p]:my-1.5 [&_p]:leading-relaxed"
                           )}>
-                            <ReactMarkdown
-                              components={{
-                                a: ({ href, children, ...props }) => {
-                                  const handleClick = (e: React.MouseEvent) => {
-                                    e.preventDefault();
-                                    if (href?.startsWith('/')) {
-                                      navigate(href);
-                                      toast.success("Navigating to " + href);
-                                    } else if (href) {
-                                      window.open(href, '_blank', 'noopener,noreferrer');
-                                    }
-                                  };
-                                  return (
-                                    <a
-                                      href={href}
-                                      onClick={handleClick}
-                                      className="text-primary hover:underline cursor-pointer font-medium"
-                                      {...props}
+                            {(() => {
+                              const reportUrlRegex = /(https?:\/\/[^\s)]+supabase\.co\/storage\/v1\/object\/public\/osint-media\/reports\/[^\s)]+\.html)/g;
+                              const reportUrls = [...new Set(streamingContent.match(reportUrlRegex) || [])];
+                              const cleanedContent = reportUrls.reduce(
+                                (content, url) => content.replace(new RegExp(url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), ''),
+                                streamingContent
+                              ).trim();
+                              return (
+                                <>
+                                  {cleanedContent && (
+                                    <ReactMarkdown
+                                      components={{
+                                        a: ({ href, children, ...props }) => {
+                                          const handleClick = (e: React.MouseEvent) => {
+                                            e.preventDefault();
+                                            if (href?.startsWith('/')) {
+                                              navigate(href);
+                                              toast.success("Navigating to " + href);
+                                            } else if (href) {
+                                              window.open(href, '_blank', 'noopener,noreferrer');
+                                            }
+                                          };
+                                          return (
+                                            <a href={href} onClick={handleClick} className="text-primary hover:underline cursor-pointer font-medium" {...props}>
+                                              {children}
+                                            </a>
+                                          );
+                                        },
+                                        p: ({ children, ...props }) => (
+                                          <p className="mb-2 last:mb-0" {...props}>{children}</p>
+                                        ),
+                                      }}
                                     >
-                                      {children}
-                                    </a>
-                                  );
-                                },
-                                p: ({ children, ...props }) => (
-                                  <p className="mb-2 last:mb-0" {...props}>{children}</p>
-                                ),
-                              }}
-                            >
-                              {streamingContent}
-                            </ReactMarkdown>
+                                      {cleanedContent}
+                                    </ReactMarkdown>
+                                  )}
+                                  {reportUrls.map((url) => (
+                                    <div key={url} className="mt-2">
+                                      <ReportPdfDownload url={url} filename={url.split('/').pop() || undefined} />
+                                    </div>
+                                  ))}
+                                </>
+                              );
+                            })()}
                           </div>
                         </div>
                       </div>
