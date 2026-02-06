@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
     for (const source of rssSources) {
       try {
         // Access the config column (not config_json)
-        const feedUrl = source.config?.url || source.config?.feed_url;
+        const feedUrl = source.config?.feed_url || source.config?.url;
         
         if (!feedUrl) {
           // Skip sources without URLs - don't add to scanned list
