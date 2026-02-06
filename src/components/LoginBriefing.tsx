@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Shield, AlertTriangle, Radio, TrendingUp, X, ChevronRight } from "lucide-react";
+import { Shield, AlertTriangle, Radio, TrendingUp, X, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Loader2 } from "lucide-react";
 
 interface BriefingData {
   signalCount: number;

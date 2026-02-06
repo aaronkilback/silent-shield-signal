@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/command";
 import {
   Shield, AlertTriangle, Radio, Search, Users, FileText,
-  Map, Plane, Bug, Settings, Zap, Globe, UserCheck, Layers,
+  Plane, Bug, Settings, Zap, Globe, UserCheck, Layers,
   Activity, Target, Link, MessageSquare,
 } from "lucide-react";
 import { useUserRole } from "@/hooks/useUserRole";
