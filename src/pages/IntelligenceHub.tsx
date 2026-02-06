@@ -3,7 +3,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SemanticSearchPanel } from "@/components/intelligence/SemanticSearchPanel";
 import { EmbeddingManager } from "@/components/intelligence/EmbeddingManager";
 import { AudioBriefingPanel } from "@/components/intelligence/AudioBriefingPanel";
-import { Search, Database, Volume2 } from "lucide-react";
+import { ThreatForecastPanel } from "@/components/intelligence/ThreatForecastPanel";
+import { Search, Database, Volume2, TrendingUp } from "lucide-react";
 
 const IntelligenceHub = () => {
   return (
@@ -30,6 +31,10 @@ const IntelligenceHub = () => {
               <Volume2 className="h-3.5 w-3.5" />
               Audio Briefings
             </TabsTrigger>
+            <TabsTrigger value="forecast" className="gap-2">
+              <TrendingUp className="h-3.5 w-3.5" />
+              Threat Forecast
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="search">
@@ -42,6 +47,10 @@ const IntelligenceHub = () => {
 
           <TabsContent value="audio">
             <AudioBriefingPanel />
+          </TabsContent>
+
+          <TabsContent value="forecast">
+            <ThreatForecastPanel />
           </TabsContent>
         </Tabs>
       </div>
