@@ -10396,10 +10396,138 @@ The signal is now in the database with status 'triaged' and rules have been appl
           const clientLabel = reportData.metadata?.client || city || "platform";
           const filename = `${report_type}-report-${clientLabel.toLowerCase().replace(/\s+/g, "-")}-${reportDate}`;
 
-          // Store HTML in Supabase storage for download
+          // ═══════════════════════════════════════════════════════════════
+          // EMBED VISUAL INTELLIGENCE: OSINT media, maps, uploaded images
+          // ═══════════════════════════════════════════════════════════════
           const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+          let enrichedHtml = reportData.html;
+
+          try {
+            // Determine time window for media queries
+            const mediaPeriodDays = period_days || 7;
+            const mediaSince = new Date();
+            mediaSince.setDate(mediaSince.getDate() - mediaPeriodDays);
+
+            // 1. Fetch OSINT media attachments linked to signals for this client
+            let signalIds: string[] = [];
+            if (client_id) {
+              const { data: clientSignals } = await serviceClient
+                .from("signals")
+                .select("id")
+                .eq("client_id", client_id)
+                .gte("received_at", mediaSince.toISOString())
+                .limit(100);
+              signalIds = (clientSignals || []).map((s: any) => s.id);
+            }
+
+            let mediaItems: { url: string; caption: string; source: string }[] = [];
+
+            if (signalIds.length > 0) {
+              // Fetch attachments linked to these signals (images only)
+              const { data: signalAttachments } = await serviceClient
+                .from("attachments")
+                .select("filename, storage_url, mime, parent_id")
+                .eq("parent_type", "signal")
+                .in("parent_id", signalIds.slice(0, 50))
+                .like("mime", "image/%")
+                .limit(20);
+
+              if (signalAttachments?.length) {
+                for (const att of signalAttachments) {
+                  mediaItems.push({
+                    url: att.storage_url,
+                    caption: att.filename || "OSINT capture",
+                    source: "OSINT Signal Media"
+                  });
+                }
+              }
+            }
+
+            // 2. Fetch uploaded archival images for this client
+            if (client_id) {
+              const { data: archivalImages } = await serviceClient
+                .from("archival_documents")
+                .select("filename, storage_path, file_type, summary")
+                .eq("client_id", client_id)
+                .like("file_type", "image/%")
+                .gte("created_at", mediaSince.toISOString())
+                .limit(10);
+
+              if (archivalImages?.length) {
+                for (const doc of archivalImages) {
+                  const { data: signedUrl } = await serviceClient.storage
+                    .from("archival-documents")
+                    .createSignedUrl(doc.storage_path, 3600);
+                  if (signedUrl?.signedUrl) {
+                    mediaItems.push({
+                      url: signedUrl.signedUrl,
+                      caption: doc.summary || doc.filename,
+                      source: "Uploaded Document"
+                    });
+                  }
+                }
+              }
+            }
+
+            // 3. Fetch geospatial maps if available
+            const { data: mapObjects } = await serviceClient.storage
+              .from("geospatial-maps")
+              .list(client_id || "", { limit: 5, sortBy: { column: "created_at", order: "desc" } });
+
+            if (mapObjects?.length) {
+              for (const mapFile of mapObjects) {
+                const mapPath = client_id ? `${client_id}/${mapFile.name}` : mapFile.name;
+                const { data: mapUrl } = await serviceClient.storage
+                  .from("geospatial-maps")
+                  .createSignedUrl(mapPath, 3600);
+                if (mapUrl?.signedUrl) {
+                  mediaItems.push({
+                    url: mapUrl.signedUrl,
+                    caption: mapFile.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "),
+                    source: "Geospatial Intelligence"
+                  });
+                }
+              }
+            }
+
+            // Inject media gallery into HTML if we have images
+            if (mediaItems.length > 0) {
+              const galleryHtml = `
+<div style="page-break-before: always; margin-top: 40px; padding: 20px; border-top: 3px solid #1a365d;">
+  <h2 style="color: #1a365d; font-size: 18px; margin-bottom: 16px; font-family: 'Georgia', serif;">
+    📸 VISUAL INTELLIGENCE APPENDIX
+  </h2>
+  <p style="color: #555; font-size: 12px; margin-bottom: 20px;">
+    ${mediaItems.length} visual asset(s) collected during the reporting period.
+  </p>
+  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">
+    ${mediaItems.map(item => `
+    <div style="border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; background: #f8fafc;">
+      <img src="${item.url}" alt="${item.caption}" style="width: 100%; max-height: 250px; object-fit: cover;" onerror="this.style.display='none'" />
+      <div style="padding: 8px 12px;">
+        <p style="font-size: 11px; color: #333; margin: 0 0 4px 0; font-weight: 600;">${item.caption}</p>
+        <p style="font-size: 10px; color: #888; margin: 0;">Source: ${item.source}</p>
+      </div>
+    </div>`).join("")}
+  </div>
+</div>`;
+
+              // Insert before </body> or at end
+              if (enrichedHtml.includes("</body>")) {
+                enrichedHtml = enrichedHtml.replace("</body>", `${galleryHtml}</body>`);
+              } else {
+                enrichedHtml += galleryHtml;
+              }
+              console.log(`Embedded ${mediaItems.length} visual assets into report`);
+            }
+          } catch (mediaError) {
+            console.error("Non-fatal: Failed to embed media into report:", mediaError);
+            // Continue with original HTML — media enrichment is best-effort
+          }
+
+          // Store enriched HTML in Supabase storage for download
           const storagePath = `reports/${reportId}/${filename}.html`;
-          const htmlBytes = new TextEncoder().encode(reportData.html);
+          const htmlBytes = new TextEncoder().encode(enrichedHtml);
           
           const { error: uploadError } = await serviceClient.storage
             .from("tenant-files")
@@ -10412,7 +10540,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
           if (!uploadError) {
             const { data: signedData } = await serviceClient.storage
               .from("tenant-files")
-              .createSignedUrl(storagePath, 3600); // 1 hour expiry
+              .createSignedUrl(storagePath, 3600);
             downloadUrl = signedData?.signedUrl || "";
           } else {
             console.error("Failed to upload report to storage:", uploadError);
@@ -10427,10 +10555,11 @@ The signal is now in the database with status 'triaged' and rules have been appl
             report_type,
             report_id: reportId,
             filename: `${filename}.html`,
-            html_length: reportData.html.length,
+            html_length: enrichedHtml.length,
+            media_count: mediaItems?.length || 0,
             metadata: reportData.metadata || {},
             download_url: downloadUrl,
-            message: `✅ **${reportLabel}** generated successfully (${Math.round(reportData.html.length / 1024)}KB).`,
+            message: `✅ **${reportLabel}** generated successfully (${Math.round(enrichedHtml.length / 1024)}KB)${mediaItems?.length ? ` with ${mediaItems.length} embedded visual asset(s)` : ""}.`,
             download_instructions: downloadUrl 
               ? `Report is ready for download. Provide the user this download link: ${downloadUrl}` 
               : "Report was generated but storage upload failed. The report data is available in metadata."
