@@ -3208,7 +3208,16 @@ REPORT TYPES:
 - "executive": Executive Intelligence Report — comprehensive client-specific report with risk matrix, strategic deductions, source citations. Requires client_id or client_name.
 - "risk_snapshot": 72-Hour Risk Snapshot — cross-client overview of recent signals, incidents, and investigations over a configurable time window.
 - "security_briefing": Travel Security Briefing — location-specific security assessment for a city/country with threat analysis. Requires city and country.
-- "security_bulletin": Custom Security Bulletin — YOU compose the full bulletin content (title, sections, body text) from information the user provides (incidents, news articles, analysis). The tool renders it into a professional downloadable HTML document. Use this when the user gives you specific content to format into a bulletin/report. You MUST provide the full bulletin_html content yourself.
+- "security_bulletin": Custom Security Bulletin — format user-provided content into a professional downloadable HTML document. The tool renders it with branding and styling.
+
+CRITICAL ANTI-FABRICATION RULES FOR BULLETINS:
+⚠️ ONLY include facts, data, incidents, and details that the user explicitly provided in the conversation or that you retrieved from Fortress tools (query_fortress_data, get_recent_signals, perform_external_web_search, etc.)
+⚠️ NEVER invent incident details, dates, locations, threat actor names, TTPs, statistics, or recommendations that were not provided by the user or retrieved from tools
+⚠️ NEVER add placeholder sections like "[Insert Image Here]" or fabricated appendices
+⚠️ If the user provides partial information, format ONLY what they gave you — do NOT pad with invented details
+⚠️ If you need more information to complete a section, ASK the user — do not make it up
+⚠️ Clearly distinguish between user-provided facts and your analytical commentary
+⚠️ For recommendations: only suggest actions that logically follow from the provided facts — do not invent threat scenarios to justify recommendations
 
 USE WHEN:
 - User asks to "generate a report", "create a briefing", "make a document", "build an executive summary"
@@ -3218,7 +3227,7 @@ USE WHEN:
 
 IMPORTANT:
 - For executive reports, resolve client_name to client_id first if only name is provided.
-- For security_bulletin: YOU write the bulletin content as HTML. Include sections, analysis, recommendations. The tool wraps it in professional styling and generates header images.
+- For security_bulletin: organize and format the user's provided content as HTML. Include sections, headers, and structure. The tool wraps it in professional styling and generates header images.
 - The tool returns HTML that can be downloaded. Tell the user you've generated the report and provide a download mechanism.
 - Reports take 15-30 seconds to generate — inform the user it's being generated.`,
       parameters: {
@@ -11619,12 +11628,13 @@ Report types available: 'executive_intelligence', '72h-snapshot'
 GENERATING NEW REPORTS & BULLETINS (CRITICAL - YOU MUST USE THIS):
 When users ask you to CREATE, GENERATE, BUILD, or PRODUCE a report, bulletin, briefing, or any downloadable document:
 → IMMEDIATELY call generate_fortress_report tool. NEVER say you cannot generate files.
-→ For "security_bulletin": YOU compose the full bulletin_html content from the user's provided incidents/articles/analysis, then pass it to the tool. The tool wraps it in professional styling with header images and returns a download link.
-→ For "executive": Pass client_name or client_id. The tool auto-generates the full report.
-→ For "risk_snapshot": No required params. Auto-generates cross-client overview.
+→ For "security_bulletin": Format ONLY the content the user provided or that you retrieved from Fortress tools. Do NOT invent incidents, threat actors, TTPs, statistics, or details. If the user's input is thin, ask for more detail — do not pad with fabricated content. Pass the organized HTML to the tool.
+→ For "executive": Pass client_name or client_id. The tool auto-generates the full report from real data.
+→ For "risk_snapshot": No required params. Auto-generates cross-client overview from real data.
 → For "security_briefing": Pass city and country for travel security assessment.
 NEVER claim you are "a language model that cannot generate files" — you HAVE the generate_fortress_report tool and MUST use it.
 NEVER offer to "write text in chat instead" — ALWAYS use the tool to create a proper downloadable document.
+NEVER fabricate details to make a bulletin look more comprehensive — accuracy over completeness.
 
 
 ### When Documents are Uploaded via Chat
