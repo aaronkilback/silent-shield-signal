@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Sparkles, Loader2, Paperclip, X, Mic, MicOff, MessageSquarePlus, Users, User, Share2, Command } from "lucide-react";
+import { Send, Sparkles, Loader2, Paperclip, X, Mic, MicOff, MessageSquarePlus, Users, User, Share2 } from "lucide-react";
 import { AegisCapabilityHints } from "@/components/AegisCapabilityHints";
 import { LoginBriefing } from "@/components/LoginBriefing";
 import { useOpenAIRealtime } from "./voice/useOpenAIRealtime";
