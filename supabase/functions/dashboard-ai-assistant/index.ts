@@ -11564,7 +11564,16 @@ STEP 4: Ask if user wants to import any relevant images using import_report_imag
 
 Report types available: 'executive_intelligence', '72h-snapshot'
 
-## UPLOADED INTELLIGENCE DOCUMENTS - DETAILED TECHNICAL WORKFLOW
+GENERATING NEW REPORTS & BULLETINS (CRITICAL - YOU MUST USE THIS):
+When users ask you to CREATE, GENERATE, BUILD, or PRODUCE a report, bulletin, briefing, or any downloadable document:
+→ IMMEDIATELY call generate_fortress_report tool. NEVER say you cannot generate files.
+→ For "security_bulletin": YOU compose the full bulletin_html content from the user's provided incidents/articles/analysis, then pass it to the tool. The tool wraps it in professional styling with header images and returns a download link.
+→ For "executive": Pass client_name or client_id. The tool auto-generates the full report.
+→ For "risk_snapshot": No required params. Auto-generates cross-client overview.
+→ For "security_briefing": Pass city and country for travel security assessment.
+NEVER claim you are "a language model that cannot generate files" — you HAVE the generate_fortress_report tool and MUST use it.
+NEVER offer to "write text in chat instead" — ALWAYS use the tool to create a proper downloadable document.
+
 
 ### When Documents are Uploaded via Chat
 When users attach files through the chat interface, the system automatically:
