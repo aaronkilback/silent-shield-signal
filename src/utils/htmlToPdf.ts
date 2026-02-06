@@ -42,7 +42,6 @@ async function safeLoadImage(img: HTMLImageElement): Promise<void> {
       });
     }
   } catch {
-    // If CORS fails, try without mode
     try {
       const resp2 = await fetch(src);
       if (!resp2.ok) throw new Error();
@@ -76,57 +75,92 @@ export async function generatePdfFromHtml(
 ): Promise<jsPDF> {
   const bgColor = options?.backgroundColor ?? "#0a0a0a";
 
-  // Create offscreen container
+  // Build a full override stylesheet that nukes ALL height/overflow constraints
+  const overrideCSS = `
+    *, *::before, *::after {
+      overflow: visible !important;
+      max-height: none !important;
+      height: auto !important;
+    }
+    html, body {
+      height: auto !important;
+      min-height: 0 !important;
+      overflow: visible !important;
+      max-height: none !important;
+    }
+    /* Preserve image dimensions */
+    img, svg, canvas, video {
+      height: auto !important;
+      max-width: 100% !important;
+      overflow: hidden !important;
+    }
+    /* Preserve table cell heights */
+    td, th {
+      height: auto !important;
+    }
+  `;
+
+  // Create container — NOT offscreen with left:-9999px which can cause
+  // rendering issues. Instead use fixed positioning behind everything.
   const container = document.createElement("div");
-  container.style.position = "absolute";
-  container.style.left = "-9999px";
-  container.style.top = "0";
-  container.style.width = `${RENDER_WIDTH_PX}px`;
-  container.style.background = bgColor;
-  container.style.overflow = "visible";
-  container.style.height = "auto";
-  container.style.maxHeight = "none";
+  container.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: ${RENDER_WIDTH_PX}px;
+    z-index: -9999;
+    opacity: 0;
+    pointer-events: none;
+    background: ${bgColor};
+    overflow: visible;
+    height: auto;
+    max-height: none;
+  `;
 
   // Extract body content if it's a full HTML document
   const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  container.innerHTML = bodyMatch ? bodyMatch[1] : html;
+  const bodyContent = bodyMatch ? bodyMatch[1] : html;
 
-  // Extract and apply styles, then override any height/overflow constraints
+  // Extract styles from the HTML
   const styleMatches = html.match(/<style[^>]*>([\s\S]*?)<\/style>/gi);
-  const overrideCSS = `
-    html, body, .report-container, .bulletin-container, [class*="container"] {
-      height: auto !important;
-      max-height: none !important;
-      overflow: visible !important;
-      min-height: 0 !important;
-    }
-    @page { size: auto; margin: 0; }
-  `;
-  const styleEl = document.createElement("style");
-  styleEl.textContent = (styleMatches || [])
+  const extractedStyles = (styleMatches || [])
     .map((s) => s.replace(/<\/?style[^>]*>/gi, ""))
-    .join("\n") + "\n" + overrideCSS;
-  container.prepend(styleEl);
+    .join("\n");
+
+  // Inject styles + override + content
+  container.innerHTML = `
+    <style>${extractedStyles}\n${overrideCSS}</style>
+    ${bodyContent}
+  `;
 
   document.body.appendChild(container);
 
   try {
-    // Preload all images as base64
+    // Preload all images as base64 to avoid CORS/tainted canvas
     const images = Array.from(container.querySelectorAll("img"));
     await Promise.allSettled(images.map(safeLoadImage));
 
-    // Force all children to expand
-    container.querySelectorAll('*').forEach((el) => {
-      const s = (el as HTMLElement).style;
-      if (s) {
-        s.overflow = 'visible';
-        s.maxHeight = 'none';
-      }
-    });
+    // Let layout settle after images load
+    await new Promise((r) => setTimeout(r, 500));
+    // Force a reflow
+    void container.scrollHeight;
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 500)));
 
-    // Let styles settle
-    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 600)));
-    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 400)));
+    // Measure the ACTUAL rendered height
+    const actualHeight = container.scrollHeight;
+    console.log(`[PDF] Container scrollHeight: ${actualHeight}px`);
+
+    if (actualHeight < 100) {
+      console.warn("[PDF] Container height suspiciously low, forcing min-height");
+    }
+
+    // Explicitly set the container height to match its scrollHeight
+    // so html2canvas knows the full extent
+    container.style.height = `${actualHeight}px`;
+    container.style.opacity = "0.001"; // near-invisible but still rendered
+
+    // Another settle after height fix
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 300)));
 
     const scale = 2;
 
@@ -137,9 +171,18 @@ export async function generatePdfFromHtml(
       allowTaint: false,
       logging: false,
       backgroundColor: bgColor,
+      width: RENDER_WIDTH_PX,
+      height: actualHeight,
       windowWidth: RENDER_WIDTH_PX,
-      imageTimeout: 10000,
+      windowHeight: actualHeight,
+      imageTimeout: 15000,
+      x: 0,
+      y: 0,
+      scrollX: 0,
+      scrollY: 0,
     });
+
+    console.log(`[PDF] Canvas size: ${fullCanvas.width}x${fullCanvas.height}`);
 
     if (fullCanvas.width === 0 || fullCanvas.height === 0) {
       throw new Error("html2canvas produced an empty canvas");
@@ -147,8 +190,8 @@ export async function generatePdfFromHtml(
 
     // Slice the canvas into A4-sized strips
     const pdf = new jsPDF("p", "mm", "a4");
-    const mmPerPx = CONTENT_W_MM / (fullCanvas.width / scale);
-    const stripHeightPx = (CONTENT_H_MM / mmPerPx) * scale;
+    const pxPerMm = fullCanvas.width / CONTENT_W_MM;
+    const stripHeightPx = Math.floor(CONTENT_H_MM * pxPerMm);
 
     let offsetY = 0;
     let pageIdx = 0;
@@ -169,7 +212,7 @@ export async function generatePdfFromHtml(
       );
 
       const imgData = stripCanvas.toDataURL("image/jpeg", 0.92);
-      const stripHeightMM = (thisStripH / scale) * mmPerPx;
+      const stripHeightMM = thisStripH / pxPerMm;
 
       if (pageIdx > 0) {
         pdf.addPage();
@@ -188,6 +231,7 @@ export async function generatePdfFromHtml(
       pageIdx++;
     }
 
+    console.log(`[PDF] Generated ${pageIdx} pages`);
     return pdf;
   } finally {
     if (container.parentNode) {
