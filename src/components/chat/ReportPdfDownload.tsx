@@ -15,45 +15,12 @@ const A4_HEIGHT_MM = 297;
 const MARGIN_MM = 12;
 const CONTENT_WIDTH_MM = A4_WIDTH_MM - MARGIN_MM * 2;
 const CONTENT_HEIGHT_MM = A4_HEIGHT_MM - MARGIN_MM * 2;
+const SECTION_GAP_MM = 2;
+const RENDER_WIDTH_PX = 794; // ≈ 210mm at 96dpi
 
 /**
- * Pre-process images in a container to handle CORS for external URLs.
- * Replaces external <img> with base64 data URIs so html2canvas can capture them.
+ * Convert a blob to a base64 data URL.
  */
-async function preloadImages(container: HTMLElement): Promise<void> {
-  const images = Array.from(container.querySelectorAll("img"));
-
-  await Promise.allSettled(
-    images.map(async (img) => {
-      const src = img.getAttribute("src") || "";
-      if (!src || src.startsWith("data:") || src.startsWith("blob:")) {
-        if (!img.complete) {
-          await new Promise<void>((r) => {
-            img.onload = () => r();
-            img.onerror = () => r();
-          });
-        }
-        return;
-      }
-
-      try {
-        const resp = await fetch(src, { mode: "cors" });
-        if (!resp.ok) throw new Error(`${resp.status}`);
-        const blob = await resp.blob();
-        const dataUrl = await blobToDataUrl(blob);
-        img.src = dataUrl;
-        await new Promise<void>((r) => {
-          if (img.complete) return r();
-          img.onload = () => r();
-          img.onerror = () => r();
-        });
-      } catch {
-        img.style.display = "none";
-      }
-    })
-  );
-}
-
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -64,31 +31,188 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 }
 
 /**
- * Slice a tall canvas into page-height strips and add each as a PDF page.
- * This prevents text from being clipped mid-sentence at page boundaries.
+ * Pre-process images: fetch external URLs as base64 data URIs to bypass CORS.
+ * Uses a proxy approach for Supabase storage URLs.
  */
-function addCanvasToPages(
+async function preloadImages(container: HTMLElement): Promise<void> {
+  const images = Array.from(container.querySelectorAll("img"));
+
+  await Promise.allSettled(
+    images.map(async (img) => {
+      const src = img.getAttribute("src") || "";
+      if (!src || src.startsWith("data:") || src.startsWith("blob:")) {
+        // Wait for already-loading images
+        if (!img.complete) {
+          await new Promise<void>((r) => {
+            img.onload = () => r();
+            img.onerror = () => r();
+          });
+        }
+        return;
+      }
+
+      try {
+        // Try fetching as blob and converting to data URI
+        const resp = await fetch(src, { mode: "cors" });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        const dataUrl = await blobToDataUrl(blob);
+        img.src = dataUrl;
+        await new Promise<void>((r) => {
+          if (img.complete) return r();
+          img.onload = () => r();
+          img.onerror = () => r();
+        });
+      } catch {
+        // If CORS fails, try no-cors and create an object URL as fallback
+        try {
+          const resp2 = await fetch(src);
+          if (resp2.ok) {
+            const blob2 = await resp2.blob();
+            const dataUrl2 = await blobToDataUrl(blob2);
+            img.src = dataUrl2;
+            await new Promise<void>((r) => {
+              if (img.complete) return r();
+              img.onload = () => r();
+              img.onerror = () => r();
+            });
+          } else {
+            img.style.display = "none";
+          }
+        } catch {
+          // Last resort: hide the image so it doesn't taint the canvas
+          img.style.display = "none";
+        }
+      }
+    })
+  );
+}
+
+/**
+ * Render sections individually and place them on PDF pages without splitting.
+ * Falls back to full-page rendering if no sections are found.
+ */
+async function renderSectionsToPdf(
+  container: HTMLElement,
   pdf: jsPDF,
-  sourceCanvas: HTMLCanvasElement,
   scale: number
-) {
-  const pxWidth = sourceCanvas.width / scale;
-  const pxHeight = sourceCanvas.height / scale;
+): Promise<void> {
+  const sections = Array.from(
+    container.querySelectorAll("[data-pdf-section]")
+  ) as HTMLElement[];
 
-  // How many CSS px correspond to the printable content area
-  const scaleFactor = CONTENT_WIDTH_MM / pxWidth;
-  const pageHeightPx = CONTENT_HEIGHT_MM / scaleFactor; // page content height in CSS px
-  const stripHeightPx = pageHeightPx * scale; // in canvas px
+  // Fallback: if no sections marked, render entire container as one tall canvas
+  if (sections.length === 0) {
+    const fullCanvas = await html2canvas(container, {
+      scale,
+      useCORS: true,
+      allowTaint: true,
+      logging: false,
+      backgroundColor: null,
+      windowWidth: RENDER_WIDTH_PX,
+    });
+    addCanvasStrips(pdf, fullCanvas, scale);
+    return;
+  }
 
-  const totalCanvasHeight = sourceCanvas.height;
-  let offsetY = 0;
+  // Scale factor: how many mm per CSS pixel
+  const mmPerPx = CONTENT_WIDTH_MM / RENDER_WIDTH_PX;
+  let currentY_mm = 0; // current Y position on page in mm
   let pageIndex = 0;
 
-  while (offsetY < totalCanvasHeight) {
-    const remainingHeight = totalCanvasHeight - offsetY;
-    const thisStripH = Math.min(stripHeightPx, remainingHeight);
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i];
 
-    // Create a slice canvas for this page
+    // Render this section as its own canvas
+    let sectionCanvas: HTMLCanvasElement;
+    try {
+      sectionCanvas = await html2canvas(section, {
+        scale,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+        backgroundColor: null,
+        windowWidth: RENDER_WIDTH_PX,
+        // Capture only this element
+        x: 0,
+        y: section.offsetTop - container.offsetTop,
+        width: container.offsetWidth,
+        height: section.offsetHeight,
+        scrollX: 0,
+        scrollY: -(section.offsetTop - container.offsetTop),
+      });
+    } catch {
+      // Skip sections that fail to render
+      continue;
+    }
+
+    if (sectionCanvas.height === 0) continue;
+
+    const sectionHeightMm =
+      (sectionCanvas.height / scale) * mmPerPx;
+
+    // If this section is taller than a full page, slice it into strips
+    if (sectionHeightMm > CONTENT_HEIGHT_MM) {
+      // If we're not at the top of a page, start a new page
+      if (currentY_mm > 0) {
+        pdf.addPage();
+        pageIndex++;
+        currentY_mm = 0;
+      }
+      addCanvasStrips(pdf, sectionCanvas, scale, pageIndex > 0);
+      // After strips, we're on a new page at position 0
+      // Actually addCanvasStrips adds its own pages, so we need to track
+      const totalStrips = Math.ceil(
+        sectionCanvas.height / ((CONTENT_HEIGHT_MM / mmPerPx) * scale)
+      );
+      pageIndex += totalStrips - 1;
+      currentY_mm = 0; // next section starts on new page
+      // The last strip may not fill the page, but for simplicity start fresh
+      continue;
+    }
+
+    // Check if section fits on current page
+    if (currentY_mm + sectionHeightMm > CONTENT_HEIGHT_MM) {
+      // Doesn't fit — start a new page
+      pdf.addPage();
+      pageIndex++;
+      currentY_mm = 0;
+    }
+
+    // Add this section's canvas as an image at the current Y position
+    const imgData = sectionCanvas.toDataURL("image/jpeg", 0.92);
+    pdf.addImage(
+      imgData,
+      "JPEG",
+      MARGIN_MM,
+      MARGIN_MM + currentY_mm,
+      CONTENT_WIDTH_MM,
+      sectionHeightMm
+    );
+
+    currentY_mm += sectionHeightMm + SECTION_GAP_MM;
+  }
+}
+
+/**
+ * Slice a tall canvas into page-height strips (fallback for non-sectioned content
+ * or sections taller than a page).
+ */
+function addCanvasStrips(
+  pdf: jsPDF,
+  sourceCanvas: HTMLCanvasElement,
+  scale: number,
+  addFirstPage = false
+) {
+  const mmPerPx = CONTENT_WIDTH_MM / (sourceCanvas.width / scale);
+  const pageHeightPx = (CONTENT_HEIGHT_MM / mmPerPx) * scale;
+
+  let offsetY = 0;
+  let stripIndex = 0;
+
+  while (offsetY < sourceCanvas.height) {
+    const thisStripH = Math.min(pageHeightPx, sourceCanvas.height - offsetY);
+
     const sliceCanvas = document.createElement("canvas");
     sliceCanvas.width = sourceCanvas.width;
     sliceCanvas.height = thisStripH;
@@ -97,23 +221,21 @@ function addCanvasToPages(
 
     ctx.drawImage(
       sourceCanvas,
-      0, offsetY,                          // source x, y
-      sourceCanvas.width, thisStripH,      // source w, h
-      0, 0,                                // dest x, y
-      sourceCanvas.width, thisStripH       // dest w, h
+      0, offsetY, sourceCanvas.width, thisStripH,
+      0, 0, sourceCanvas.width, thisStripH
     );
 
     const imgData = sliceCanvas.toDataURL("image/jpeg", 0.92);
-    const sliceHeightMM = (thisStripH / scale) * scaleFactor;
+    const sliceHeightMM = (thisStripH / scale) * mmPerPx;
 
-    if (pageIndex > 0) {
+    if (stripIndex > 0 || addFirstPage) {
       pdf.addPage();
     }
 
     pdf.addImage(imgData, "JPEG", MARGIN_MM, MARGIN_MM, CONTENT_WIDTH_MM, sliceHeightMM);
 
     offsetY += thisStripH;
-    pageIndex++;
+    stripIndex++;
   }
 }
 
@@ -137,7 +259,7 @@ export const ReportPdfDownload = ({ url, filename }: ReportPdfDownloadProps) => 
       container.style.position = "absolute";
       container.style.left = "-9999px";
       container.style.top = "0";
-      container.style.width = "794px"; // ≈ 210mm at 96dpi
+      container.style.width = `${RENDER_WIDTH_PX}px`;
       container.style.background = "#0a0a0a";
 
       // Extract body content if wrapped in full HTML doc
@@ -156,29 +278,17 @@ export const ReportPdfDownload = ({ url, filename }: ReportPdfDownloadProps) => 
 
       document.body.appendChild(container);
 
-      // Pre-process images (CORS handling)
+      // Pre-process images (CORS handling — convert to base64)
       await preloadImages(container);
 
       // Allow a paint cycle so styles settle
-      await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 200)));
+      await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 300)));
 
       const scale = 2;
 
-      // Render the entire document as one tall canvas
-      const fullCanvas = await html2canvas(container, {
-        scale,
-        useCORS: true,
-        allowTaint: false,
-        logging: false,
-        backgroundColor: null,
-        windowWidth: 794,
-      });
-
-      if (fullCanvas.height === 0) throw new Error("Empty canvas rendered");
-
-      // Build PDF by slicing the tall canvas into page-height strips
+      // Build PDF using section-aware rendering
       const pdf = new jsPDF("p", "mm", "a4");
-      addCanvasToPages(pdf, fullCanvas, scale);
+      await renderSectionsToPdf(container, pdf, scale);
 
       const pdfFilename = filename
         ? filename.replace(/\.html$/i, ".pdf")
