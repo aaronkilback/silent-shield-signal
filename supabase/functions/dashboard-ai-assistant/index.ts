@@ -3196,6 +3196,63 @@ USE WHEN:
         required: ["entity_id"]
       }
     }
+  },
+  {
+    type: "function",
+    function: {
+      name: "generate_fortress_report",
+      description: `Generate a professional intelligence report or briefing document. This calls the platform's report generators and returns the full HTML report.
+
+REPORT TYPES:
+- "executive": Executive Intelligence Report — comprehensive client-specific report with risk matrix, strategic deductions, source citations. Requires client_id or client_name.
+- "risk_snapshot": 72-Hour Risk Snapshot — cross-client overview of recent signals, incidents, and investigations over a configurable time window.
+- "security_briefing": Travel Security Briefing — location-specific security assessment for a city/country with threat analysis. Requires city and country.
+
+USE WHEN:
+- User asks to "generate a report", "create a briefing", "make a document", "build an executive summary"
+- User wants a downloadable/printable intelligence product
+- User needs a security briefing for a travel destination
+
+IMPORTANT:
+- For executive reports, resolve client_name to client_id first if only name is provided.
+- The tool returns HTML that can be downloaded. Tell the user you've generated the report and provide a download mechanism.
+- Reports take 15-30 seconds to generate — inform the user it's being generated.`,
+      parameters: {
+        type: "object",
+        properties: {
+          report_type: {
+            type: "string",
+            enum: ["executive", "risk_snapshot", "security_briefing"],
+            description: "Type of report to generate"
+          },
+          client_id: {
+            type: "string",
+            description: "Client UUID (required for executive reports)"
+          },
+          client_name: {
+            type: "string",
+            description: "Client name — will be resolved to client_id if client_id not provided"
+          },
+          period_days: {
+            type: "number",
+            description: "Reporting period in days (default 7 for executive, 3 for risk_snapshot)"
+          },
+          city: {
+            type: "string",
+            description: "City name (required for security_briefing)"
+          },
+          country: {
+            type: "string",
+            description: "Country name (required for security_briefing)"
+          },
+          travel_dates: {
+            type: "string",
+            description: "Travel date range (optional for security_briefing)"
+          }
+        },
+        required: ["report_type"]
+      }
+    }
   }
 ];
 
@@ -10267,6 +10324,131 @@ The signal is now in the database with status 'triaged' and rules have been appl
       const { data, error } = await supabaseClient.from("principal_alert_preferences").upsert(updateData, { onConflict: "entity_id" }).select().single();
       if (error) return { error: error.message };
       return { success: true, message: "Alert preferences updated", preferences: data };
+    }
+
+    case "generate_fortress_report": {
+      const { report_type, client_name, period_days, city, country, travel_dates } = args;
+      let { client_id } = args;
+
+      // Resolve client_name to client_id if needed
+      if (!client_id && client_name) {
+        const { data: clientMatch } = await supabaseClient
+          .from("clients")
+          .select("id, name")
+          .ilike("name", `%${client_name}%`)
+          .limit(1)
+          .single();
+        if (clientMatch) {
+          client_id = clientMatch.id;
+        } else {
+          return { error: `No client found matching "${client_name}". Please check the name and try again.` };
+        }
+      }
+
+      const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+      const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+      try {
+        let functionName: string;
+        let requestBody: any;
+
+        switch (report_type) {
+          case "executive":
+            if (!client_id) return { error: "client_id or client_name is required for executive reports" };
+            functionName = "generate-executive-report";
+            requestBody = { client_id, period_days: period_days || 7 };
+            break;
+          case "risk_snapshot":
+            functionName = "generate-report";
+            requestBody = { report_type: "72h-snapshot", period_hours: (period_days || 3) * 24 };
+            break;
+          case "security_briefing":
+            if (!city || !country) return { error: "city and country are required for security briefings" };
+            functionName = "generate-security-briefing";
+            requestBody = { city, country, travel_dates };
+            break;
+          default:
+            return { error: `Unknown report type: ${report_type}` };
+        }
+
+        console.log(`Generating ${report_type} report via ${functionName}`, JSON.stringify(requestBody));
+
+        const reportResponse = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        if (!reportResponse.ok) {
+          const errorText = await reportResponse.text();
+          console.error(`Report generation failed: ${reportResponse.status}`, errorText);
+          return { error: `Report generation failed (${reportResponse.status}): ${errorText.substring(0, 200)}` };
+        }
+
+        const reportData = await reportResponse.json();
+        
+        if (reportData.html) {
+          const reportId = crypto.randomUUID();
+          const reportDate = new Date().toISOString().split("T")[0];
+          const clientLabel = reportData.metadata?.client || city || "platform";
+          const filename = `${report_type}-report-${clientLabel.toLowerCase().replace(/\s+/g, "-")}-${reportDate}`;
+
+          // Store HTML in Supabase storage for download
+          const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+          const storagePath = `reports/${reportId}/${filename}.html`;
+          const htmlBytes = new TextEncoder().encode(reportData.html);
+          
+          const { error: uploadError } = await serviceClient.storage
+            .from("tenant-files")
+            .upload(storagePath, htmlBytes, {
+              contentType: "text/html",
+              upsert: true,
+            });
+
+          let downloadUrl = "";
+          if (!uploadError) {
+            const { data: signedData } = await serviceClient.storage
+              .from("tenant-files")
+              .createSignedUrl(storagePath, 3600); // 1 hour expiry
+            downloadUrl = signedData?.signedUrl || "";
+          } else {
+            console.error("Failed to upload report to storage:", uploadError);
+          }
+
+          const reportLabel = report_type === "executive" ? "Executive Intelligence Report" 
+            : report_type === "risk_snapshot" ? "72-Hour Risk Snapshot" 
+            : "Travel Security Briefing";
+
+          return {
+            success: true,
+            report_type,
+            report_id: reportId,
+            filename: `${filename}.html`,
+            html_length: reportData.html.length,
+            metadata: reportData.metadata || {},
+            download_url: downloadUrl,
+            message: `✅ **${reportLabel}** generated successfully (${Math.round(reportData.html.length / 1024)}KB).`,
+            download_instructions: downloadUrl 
+              ? `Report is ready for download. Provide the user this download link: ${downloadUrl}` 
+              : "Report was generated but storage upload failed. The report data is available in metadata."
+          };
+        } else if (reportData.success === false) {
+          return { error: reportData.error || "Report generation returned no HTML" };
+        } else {
+          return { 
+            success: true, 
+            report_type, 
+            data: reportData,
+            message: "Report data generated but no HTML output was produced. The data is available for review."
+          };
+        }
+      } catch (fetchError) {
+        console.error("Report generation fetch error:", fetchError);
+        return { error: `Failed to generate report: ${fetchError instanceof Error ? fetchError.message : "Unknown error"}` };
+      }
     }
 
     default:
