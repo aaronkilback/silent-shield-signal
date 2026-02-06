@@ -10390,45 +10390,50 @@ The signal is now in the database with status 'triaged' and rules have been appl
           const classification = bulletin_classification || "INTERNAL USE ONLY";
           const now = new Date();
 
-          // Generate header image using DALL-E via images/generations endpoint
-          let headerImageDataUrl = "";
+          // Generate header image using Gemini Flash Image model
+          let headerImageUrl = "";
           if (generate_header_image !== false && LOVABLE_API_KEY) {
             try {
-              const imgPrompt = image_prompt || `Professional corporate security bulletin header image for: ${bulletin_title}. Dark theme, abstract geometric patterns suggesting surveillance, intelligence analysis, and corporate security. No text in image.`;
-              console.log("Generating bulletin header image via DALL-E...");
+              const imgPrompt = image_prompt || `A wide cinematic header image for a corporate security intelligence bulletin titled "${bulletin_title}". Dark moody atmosphere, deep navy and charcoal tones with subtle cyan accent lighting. Abstract geometric grid patterns suggesting digital surveillance networks and data analysis. No text, no words, no letters. Photorealistic, ultra high resolution, 16:9 aspect ratio.`;
+              console.log("Generating bulletin header image via Gemini Flash Image...");
               
-              const imgResponse = await fetch("https://ai.gateway.lovable.dev/v1/images/generations", {
+              const imgResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
                 method: "POST",
                 headers: {
                   "Authorization": `Bearer ${LOVABLE_API_KEY}`,
                   "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                  model: "dall-e-3",
-                  prompt: imgPrompt,
-                  n: 1,
-                  size: "1792x1024",
-                  quality: "hd",
+                  model: "google/gemini-2.5-flash-image",
+                  messages: [{ role: "user", content: imgPrompt }],
+                  modalities: ["image", "text"],
                 }),
               });
 
               if (imgResponse.ok) {
                 const imgData = await imgResponse.json();
-                const imageUrl = imgData.data?.[0]?.url;
-                if (imageUrl) {
-                  // Download and convert to base64 for embedding in HTML
+                const base64Url = imgData.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+                if (base64Url) {
+                  // Upload to storage instead of embedding massive base64
                   try {
-                    const imgDownload = await fetch(imageUrl);
-                    if (imgDownload.ok) {
-                      const imgBytes = new Uint8Array(await imgDownload.arrayBuffer());
-                      const base64 = btoa(String.fromCharCode(...imgBytes));
-                      headerImageDataUrl = `data:image/png;base64,${base64}`;
-                      console.log("Header image generated and embedded successfully");
+                    const base64Data = base64Url.replace(/^data:image\/\w+;base64,/, "");
+                    const imgBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+                    const imgPath = `reports/${reportId}/header.png`;
+                    
+                    const { error: imgUploadErr } = await serviceClient.storage
+                      .from("osint-media")
+                      .upload(imgPath, imgBytes, { contentType: "image/png", upsert: true });
+                    
+                    if (!imgUploadErr) {
+                      const { data: pubUrl } = serviceClient.storage.from("osint-media").getPublicUrl(imgPath);
+                      headerImageUrl = pubUrl?.publicUrl || base64Url;
+                    } else {
+                      headerImageUrl = base64Url; // fallback to inline base64
                     }
-                  } catch (dlErr) {
-                    // Use direct URL as fallback
-                    headerImageDataUrl = imageUrl;
-                    console.log("Using direct image URL (base64 conversion failed)");
+                    console.log("Header image generated and stored successfully");
+                  } catch (uploadErr) {
+                    headerImageUrl = base64Url; // fallback
+                    console.log("Using inline base64 image (storage upload failed)");
                   }
                 }
               } else {
@@ -10439,10 +10444,17 @@ The signal is now in the database with status 'triaged' and rules have been appl
             }
           }
 
-          // Build the full bulletin HTML document
-          const headerImageHtml = headerImageDataUrl 
-            ? `<div style="width:100%;max-height:300px;overflow:hidden;border-radius:0 0 8px 8px;">
-                 <img src="${headerImageDataUrl}" alt="Security Bulletin Header" style="width:100%;height:auto;display:block;" />
+          // Build the full bulletin HTML document with Fortress branding
+          const fortressLogo = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 40" width="180" height="30">
+  <defs><linearGradient id="fg" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#00d9ff"/><stop offset="100%" stop-color="#0ea5e9"/></linearGradient></defs>
+  <path d="M4 8h6v24H4zM12 8h14v5H17v4h8v5h-8v10h-5zM30 8h14v5h-4.5v19h-5V13H30z" fill="url(#fg)"/>
+  <text x="50" y="28" font-family="system-ui,-apple-system,sans-serif" font-size="20" font-weight="800" letter-spacing="3" fill="#ffffff">FORTRESS</text>
+  <text x="50" y="38" font-family="system-ui,-apple-system,sans-serif" font-size="7" font-weight="500" letter-spacing="4" fill="#6b7280">INTELLIGENCE PLATFORM</text>
+</svg>`;
+
+          const headerImageHtml = headerImageUrl 
+            ? `<div style="width:100%;max-height:280px;overflow:hidden;">
+                 <img src="${headerImageUrl}" alt="Security Bulletin Header" style="width:100%;height:auto;display:block;object-fit:cover;" />
                </div>` 
             : "";
 
@@ -10457,66 +10469,83 @@ The signal is now in the database with status 'triaged' and rules have been appl
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { 
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      background: #0a0a0a; color: #e5e7eb; line-height: 1.6; 
+      background: #080b12; color: #e5e7eb; line-height: 1.7;
     }
-    .page { max-width: 210mm; margin: 0 auto; background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%); }
-    .header {
-      background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
-      border-bottom: 3px solid #00d9ff; padding: 32px 40px; position: relative;
+    .page { max-width: 900px; margin: 0 auto; background: #0c1018; }
+    .top-bar { height: 4px; background: linear-gradient(90deg, #00d9ff 0%, #0ea5e9 50%, #6366f1 100%); }
+    .header { padding: 36px 48px 28px; position: relative; }
+    .logo-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+    .classification-badge {
+      background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 6px;
+      padding: 4px 14px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 1.5px; color: #fca5a5;
     }
-    .header::after {
-      content: ''; position: absolute; bottom: -3px; left: 0; right: 0; height: 1px;
-      background: linear-gradient(90deg, transparent, #00d9ff, transparent);
+    .header-title { font-size: 1.6rem; font-weight: 800; color: #fff; line-height: 1.3; margin-bottom: 16px; }
+    .meta-grid { display: flex; gap: 32px; flex-wrap: wrap; font-size: 0.82rem; color: #9ca3af; }
+    .meta-grid .meta-item { display: flex; flex-direction: column; gap: 2px; }
+    .meta-grid .meta-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 1px; color: #6b7280; font-weight: 600; }
+    .meta-grid .meta-value { color: #d1d5db; font-weight: 500; }
+    .divider { height: 1px; background: linear-gradient(90deg, transparent, #1e293b 20%, #1e293b 80%, transparent); margin: 0; }
+    .content { padding: 32px 48px 40px; }
+    .content h2 { 
+      color: #00d9ff; font-size: 1.05rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px;
+      margin: 32px 0 14px; padding: 10px 0 10px 16px; 
+      border-left: 3px solid #00d9ff; background: rgba(0,217,255,0.04);
     }
-    .classification-banner {
-      background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; border-radius: 4px;
-      padding: 6px 16px; display: inline-block; font-size: 0.75rem; font-weight: 700;
-      text-transform: uppercase; letter-spacing: 1px; color: #fca5a5; margin-bottom: 16px;
-    }
-    .header-title { font-size: 1.75rem; font-weight: 800; color: #fff; margin-bottom: 8px; text-transform: uppercase; letter-spacing: -0.5px; }
-    .header-meta { font-size: 0.85rem; color: #9ca3af; margin-top: 12px; }
-    .header-meta span { margin-right: 24px; }
-    .header-meta strong { color: #e5e7eb; }
-    .content { padding: 32px 40px; }
-    .content h2 { color: #00d9ff; font-size: 1.2rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
-      margin: 28px 0 12px; padding-bottom: 8px; border-bottom: 1px solid #2a2a2a;
-      display: flex; align-items: center; gap: 10px; }
-    .content h2::before { content: ''; width: 4px; height: 20px; background: linear-gradient(180deg, #00d9ff, #0ea5e9); border-radius: 2px; }
-    .content h3 { color: #a5b4fc; font-size: 1rem; font-weight: 600; margin: 20px 0 8px; }
-    .content p { color: #d1d5db; margin-bottom: 12px; font-size: 0.95rem; }
-    .content ul, .content ol { color: #d1d5db; margin: 8px 0 16px 24px; font-size: 0.95rem; }
-    .content li { margin-bottom: 6px; }
-    .content table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
-    .content th { background: #1e293b; color: #00d9ff; padding: 10px 14px; text-align: left; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px; }
-    .content td { padding: 10px 14px; border-bottom: 1px solid #2a2a2a; color: #d1d5db; }
-    .content tr:hover td { background: rgba(0, 217, 255, 0.03); }
-    .content blockquote { border-left: 3px solid #00d9ff; padding: 12px 20px; margin: 16px 0; background: #0a0a0a; border-radius: 0 6px 6px 0; color: #d1d5db; font-style: italic; }
+    .content h2:first-child { margin-top: 0; }
+    .content h3 { color: #a5b4fc; font-size: 0.95rem; font-weight: 600; margin: 22px 0 8px; }
+    .content p { color: #d1d5db; margin-bottom: 14px; font-size: 0.92rem; }
+    .content ul, .content ol { color: #d1d5db; margin: 8px 0 16px 20px; font-size: 0.92rem; }
+    .content li { margin-bottom: 8px; line-height: 1.6; }
+    .content li::marker { color: #00d9ff; }
+    .content table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.88rem; border-radius: 8px; overflow: hidden; }
+    .content th { background: #111827; color: #00d9ff; padding: 12px 16px; text-align: left; font-weight: 600; text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.8px; border-bottom: 2px solid #1e293b; }
+    .content td { padding: 11px 16px; border-bottom: 1px solid #1a1f2e; color: #d1d5db; }
+    .content tr:nth-child(even) td { background: rgba(17,24,39,0.4); }
+    .content tr:hover td { background: rgba(0, 217, 255, 0.04); }
+    .content blockquote { border-left: 3px solid #6366f1; padding: 14px 20px; margin: 16px 0; background: rgba(99,102,241,0.06); border-radius: 0 8px 8px 0; color: #c7d2fe; font-style: italic; }
+    .content strong { color: #f1f5f9; }
     .severity-critical { color: #ef4444; font-weight: 700; }
     .severity-high { color: #f97316; font-weight: 700; }
     .severity-medium { color: #eab308; font-weight: 600; }
     .severity-low { color: #22c55e; }
-    .footer { padding: 24px 40px; border-top: 1px solid #2a2a2a; font-size: 0.75rem; color: #6b7280; text-align: center; }
-    @media print { body { background: #fff; color: #111; } .page { background: #fff; } .content h2 { color: #1a365d; } .content p, .content li, .content td { color: #333; } }
+    .footer { padding: 28px 48px; border-top: 1px solid #1a1f2e; text-align: center; }
+    .footer-brand { font-size: 0.72rem; color: #4b5563; margin-top: 8px; letter-spacing: 0.5px; }
+    .footer-classification { font-size: 0.7rem; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+    @media print { 
+      body { background: #fff; color: #111; } 
+      .page { background: #fff; } 
+      .top-bar { background: #1a365d; }
+      .content h2 { color: #1a365d; border-left-color: #1a365d; background: #f0f4f8; }
+      .content p, .content li, .content td { color: #333; } 
+      .header-title { color: #111; }
+    }
   </style>
 </head>
 <body>
   <div class="page">
+    <div class="top-bar"></div>
     <div class="header">
-      <div class="classification-banner">${classification}</div>
+      <div class="logo-row">
+        ${fortressLogo}
+        <div class="classification-badge">${classification}</div>
+      </div>
       <h1 class="header-title">${bulletin_title}</h1>
-      <div class="header-meta">
-        <span><strong>Date:</strong> ${now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
-        <span><strong>Time:</strong> ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}</span>
-        <span><strong>Prepared by:</strong> FORTRESS Intelligence Platform</span>
+      <div class="meta-grid">
+        <div class="meta-item"><span class="meta-label">Date</span><span class="meta-value">${now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</span></div>
+        <div class="meta-item"><span class="meta-label">Time</span><span class="meta-value">${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}</span></div>
+        <div class="meta-item"><span class="meta-label">Prepared By</span><span class="meta-value">FORTRESS Intelligence Platform</span></div>
+        <div class="meta-item"><span class="meta-label">Report ID</span><span class="meta-value">${reportId.split("-")[0].toUpperCase()}</span></div>
       </div>
     </div>
     ${headerImageHtml}
+    <div class="divider"></div>
     <div class="content">
       ${bulletin_html}
     </div>
     <div class="footer">
-      <p>${classification} — This document is the property of the recipient organization. Unauthorized distribution is prohibited.</p>
-      <p>Generated by FORTRESS Intelligence Platform — ${now.toISOString()}</p>
+      <div class="footer-classification">${classification}</div>
+      <div class="footer-brand">Generated by FORTRESS Intelligence Platform · ${now.toISOString().split("T")[0]} · Unauthorized distribution is prohibited</div>
     </div>
   </div>
 </body>
