@@ -1080,23 +1080,27 @@ If not visible, try: **Ctrl+Shift+R** (hard refresh)`,
                     href.includes('risk-snapshot') ||
                     href.includes('security-briefing')
                   );
-                  return (
-                    <span>
-                      <a
-                        href={href}
-                        onClick={handleClick}
-                        className="text-primary hover:underline cursor-pointer font-medium"
-                        {...props}
-                      >
-                        {children}
-                      </a>
-                      {isReportLink && href && (
+                  // For report links, DON'T render a clickable <a> — only show the PDF download button
+                  if (isReportLink && href) {
+                    return (
+                      <span className="inline-flex flex-col gap-1">
+                        <span className="text-muted-foreground text-sm">📄 {children}</span>
                         <ReportPdfDownload 
                           url={href} 
                           filename={href.split('/').pop() || undefined} 
                         />
-                      )}
-                    </span>
+                      </span>
+                    );
+                  }
+                  return (
+                    <a
+                      href={href}
+                      onClick={handleClick}
+                      className="text-primary hover:underline cursor-pointer font-medium"
+                      {...props}
+                    >
+                      {children}
+                    </a>
                   );
                 },
                 p: ({ children, ...props }) => (
