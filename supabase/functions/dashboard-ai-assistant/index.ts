@@ -10527,19 +10527,43 @@ The signal is now in the database with status 'triaged' and rules have been appl
           const storagePath = `reports/${reportId}/${filename}.html`;
           const htmlBytes = new TextEncoder().encode(fullHtml);
 
+          // Upload to PUBLIC osint-media bucket so HTML renders correctly in browser
           const { error: uploadError } = await serviceClient.storage
-            .from("tenant-files")
-            .upload(storagePath, htmlBytes, { contentType: "text/html", upsert: true });
+            .from("osint-media")
+            .upload(storagePath, htmlBytes, { 
+              contentType: "text/html; charset=utf-8", 
+              upsert: true,
+            });
 
           let downloadUrl = "";
+          let viewUrl = "";
           if (!uploadError) {
-            const { data: signedData } = await serviceClient.storage
-              .from("tenant-files")
-              .createSignedUrl(storagePath, 3600);
-            downloadUrl = signedData?.signedUrl || "";
+            // Public bucket - get direct public URL for viewing
+            const { data: publicUrlData } = serviceClient.storage
+              .from("osint-media")
+              .getPublicUrl(storagePath);
+            viewUrl = publicUrlData?.publicUrl || "";
+            downloadUrl = viewUrl;
           } else {
             console.error("Failed to upload bulletin to storage:", uploadError);
+            // Fallback: try tenant-files bucket with signed URL
+            const { error: fallbackError } = await serviceClient.storage
+              .from("tenant-files")
+              .upload(storagePath, htmlBytes, { 
+                contentType: "text/html; charset=utf-8", 
+                upsert: true,
+              });
+            if (!fallbackError) {
+              const { data: signedData } = await serviceClient.storage
+                .from("tenant-files")
+                .createSignedUrl(storagePath, 3600);
+              downloadUrl = signedData?.signedUrl || "";
+            }
           }
+
+          // Also create a base64 data URI as guaranteed fallback
+          const htmlBase64 = base64FromBytes(htmlBytes);
+          const dataUri = `data:text/html;base64,${htmlBase64}`;
 
           return {
             success: true,
@@ -10548,11 +10572,12 @@ The signal is now in the database with status 'triaged' and rules have been appl
             filename: `${filename}.html`,
             html_length: fullHtml.length,
             has_header_image: !!headerImageDataUrl,
-            download_url: downloadUrl,
-            message: `✅ **Security Bulletin** generated successfully (${Math.round(fullHtml.length / 1024)}KB)${headerImageDataUrl ? " with AI-generated header image" : ""}.`,
+            download_url: downloadUrl || dataUri,
+            view_url: viewUrl || downloadUrl || dataUri,
+            message: `✅ **Security Bulletin Generated** — "${bulletin_title}" (${Math.round(fullHtml.length / 1024)}KB)${headerImageDataUrl ? " with AI-generated header image" : ""}`,
             download_instructions: downloadUrl
-              ? `Security bulletin is ready for download. Provide the user this download link: ${downloadUrl}`
-              : "Bulletin was generated but storage upload failed."
+              ? `Report is ready. Provide the user this link to view the formatted bulletin in their browser: ${viewUrl || downloadUrl}`
+              : `Report generated. Provide this data link for download: ${dataUri.slice(0, 100)}...`
           };
         } catch (bulletinError) {
           console.error("Security bulletin generation error:", bulletinError);
