@@ -10838,24 +10838,24 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         // Truncate excessively long messages
         const content = typeof msg.content === 'string' ? truncateContent(msg.content, 20000) : msg.content;
         
-        // Look for image URLs in markdown format
+        // Look for image/document URLs in markdown format
         const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)|<img[^>]+src="([^"]+)"/g;
         const markdownLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
         
-        const imageUrls: string[] = [];
+        const attachmentUrls: string[] = [];
         let match;
         const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
         
-        // Extract images from markdown/HTML
+        // Extract images/PDFs from markdown/HTML
         while ((match = imageRegex.exec(contentStr)) !== null) {
           const url = match[2] || match[3];
-          if (url && (url.includes('ai-chat-attachments') || url.match(/\.(jpg|jpeg|png|gif|webp)$/i))) {
-            imageUrls.push(url);
+          if (url && (url.includes('ai-chat-attachments') || url.match(/\.(jpg|jpeg|png|gif|webp|pdf)$/i))) {
+            attachmentUrls.push(url);
           }
         }
         
-        // If we have images, format as vision message
-        if (imageUrls.length > 0 && msg.role === 'user') {
+        // If we have attachments, format as vision message
+        if (attachmentUrls.length > 0 && msg.role === 'user') {
           const textContent = contentStr.replace(imageRegex, '').replace(markdownLinkRegex, '[$1]').trim();
           const contentParts: any[] = [];
           
@@ -10863,11 +10863,34 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             contentParts.push({ type: "text", text: textContent });
           }
           
-          for (const imageUrl of imageUrls.slice(0, 5)) { // Limit to 5 images
-            contentParts.push({
-              type: "image_url",
-              image_url: { url: imageUrl }
-            });
+          for (const attachUrl of attachmentUrls.slice(0, 5)) {
+            const isPdfUrl = attachUrl.toLowerCase().endsWith('.pdf') || attachUrl.includes('.pdf');
+            
+            if (isPdfUrl) {
+              // PDFs MUST use base64 data URLs — signed/public URLs are NOT supported by the AI gateway
+              try {
+                const pdfResp = await fetch(attachUrl);
+                if (pdfResp.ok) {
+                  const pdfBytes = new Uint8Array(await pdfResp.arrayBuffer());
+                  const base64 = base64FromBytes(pdfBytes);
+                  contentParts.push({
+                    type: "image_url",
+                    image_url: { url: `data:application/pdf;base64,${base64}` }
+                  });
+                  console.log(`Converted PDF attachment to base64 (${(pdfBytes.length / 1024 / 1024).toFixed(1)}MB)`);
+                } else {
+                  console.error(`Failed to download PDF attachment: ${pdfResp.status}`);
+                }
+              } catch (e) {
+                console.error(`Error downloading PDF attachment for base64:`, e);
+              }
+            } else {
+              // Images can use direct URLs
+              contentParts.push({
+                type: "image_url",
+                image_url: { url: attachUrl }
+              });
+            }
           }
           
           return {
