@@ -11,6 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
+import { ReportPdfDownload } from "@/components/chat/ReportPdfDownload";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
 import { useTenant } from "@/hooks/useTenant";
@@ -1071,15 +1072,31 @@ If not visible, try: **Ctrl+Shift+R** (hard refresh)`,
                       window.open(href, '_blank', 'noopener,noreferrer');
                     }
                   };
+                  // Check if this is a report/bulletin link
+                  const isReportLink = href && (
+                    href.includes('/reports/') && href.endsWith('.html') ||
+                    href.includes('security-bulletin') ||
+                    href.includes('executive-report') ||
+                    href.includes('risk-snapshot') ||
+                    href.includes('security-briefing')
+                  );
                   return (
-                    <a
-                      href={href}
-                      onClick={handleClick}
-                      className="text-primary hover:underline cursor-pointer font-medium"
-                      {...props}
-                    >
-                      {children}
-                    </a>
+                    <span>
+                      <a
+                        href={href}
+                        onClick={handleClick}
+                        className="text-primary hover:underline cursor-pointer font-medium"
+                        {...props}
+                      >
+                        {children}
+                      </a>
+                      {isReportLink && href && (
+                        <ReportPdfDownload 
+                          url={href} 
+                          filename={href.split('/').pop() || undefined} 
+                        />
+                      )}
+                    </span>
                   );
                 },
                 p: ({ children, ...props }) => (
