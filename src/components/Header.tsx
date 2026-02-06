@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Plane, Menu, Bot, ChevronDown, Settings, Database, Building2, Bug, CheckCircle, UserCog, Crosshair, Radar, Plug, BarChart3, FileSearch, Swords, ScanEye, Share2 } from "lucide-react";
+import { Shield, Activity, LogOut, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Plane, Menu, Bot, ChevronDown, Settings, Database, Building2, Bug, CheckCircle, UserCog, Crosshair, Radar, Plug, BarChart3, FileSearch, Swords, ScanEye, Share2, Brain } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -54,6 +54,7 @@ export const Header = () => {
 
   // Intelligence dropdown items
   const intelligenceItems = [
+    { path: "/intelligence-hub", icon: Brain, label: "Intel Hub" },
     { path: "/threat-radar", icon: Radar, label: "Threat Radar" },
     { path: "/investigations", icon: ClipboardList, label: "Investigations", matchPrefix: true },
     { path: "/entities", icon: Users, label: "Entities", badge: pendingSuggestions },

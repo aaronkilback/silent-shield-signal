@@ -765,6 +765,51 @@ export type Database = {
         }
         Relationships: []
       }
+      audio_briefings: {
+        Row: {
+          audio_url: string | null
+          chunks_processed: number | null
+          content_text: string | null
+          created_at: string
+          duration_seconds: number | null
+          id: string
+          source_id: string | null
+          source_type: string
+          status: string
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          audio_url?: string | null
+          chunks_processed?: number | null
+          content_text?: string | null
+          created_at?: string
+          duration_seconds?: number | null
+          id?: string
+          source_id?: string | null
+          source_type?: string
+          status?: string
+          title: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          audio_url?: string | null
+          chunks_processed?: number | null
+          content_text?: string | null
+          created_at?: string
+          duration_seconds?: number | null
+          id?: string
+          source_id?: string | null
+          source_type?: string
+          status?: string
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       audit_events: {
         Row: {
           action: string
@@ -3333,10 +3378,13 @@ export type Database = {
           content_hash: string | null
           created_at: string
           created_by: string | null
+          embedding_model: string | null
           file_path: string | null
           file_type: string | null
           id: string
           metadata: Json | null
+          source_id: string | null
+          source_type: string | null
           title: string
           updated_at: string
         }
@@ -3345,10 +3393,13 @@ export type Database = {
           content_hash?: string | null
           created_at?: string
           created_by?: string | null
+          embedding_model?: string | null
           file_path?: string | null
           file_type?: string | null
           id?: string
           metadata?: Json | null
+          source_id?: string | null
+          source_type?: string | null
           title: string
           updated_at?: string
         }
@@ -3357,10 +3408,13 @@ export type Database = {
           content_hash?: string | null
           created_at?: string
           created_by?: string | null
+          embedding_model?: string | null
           file_path?: string | null
           file_type?: string | null
           id?: string
           metadata?: Json | null
+          source_id?: string | null
+          source_type?: string | null
           title?: string
           updated_at?: string
         }
@@ -8428,6 +8482,21 @@ export type Database = {
       is_workspace_owner: {
         Args: { _user_id: string; _workspace_id: string }
         Returns: boolean
+      }
+      match_documents: {
+        Args: {
+          match_count?: number
+          match_threshold?: number
+          query_embedding: string
+        }
+        Returns: {
+          chunk_index: number
+          content: string
+          doc_id: string
+          id: string
+          metadata: Json
+          similarity: number
+        }[]
       }
       record_violation: {
         Args: {
