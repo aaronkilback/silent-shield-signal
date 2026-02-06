@@ -18,7 +18,14 @@ export const ReportPdfDownload = ({ url, filename }: ReportPdfDownloadProps) => 
 
     try {
       const response = await fetch(url);
-      if (!response.ok) throw new Error(`Failed to fetch report (${response.status})`);
+      if (!response.ok) {
+        const status = response.status;
+        if (status === 404 || status === 400) {
+          toast.error("Report file not found — please ask Aegis to regenerate the report");
+          return;
+        }
+        throw new Error(`Failed to fetch report (HTTP ${status})`);
+      }
       const html = await response.text();
 
       const pdf = await generatePdfFromHtml(html);

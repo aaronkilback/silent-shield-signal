@@ -10476,7 +10476,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
           // headerImageUrl is now inlined directly in the template with data-pdf-section
 
-          const fullHtml = `<!DOCTYPE html>
+          let fullHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
