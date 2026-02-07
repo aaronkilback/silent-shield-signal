@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "npm:zod@3.22.4";
 import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
+import { isTestContent, scoreSignalRelevance } from '../_shared/signal-relevance-scorer.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -149,6 +150,19 @@ Deno.serve(async (req) => {
           status: 'rejected',
           reason: 'false_positive_pattern',
           message: 'Content matches known false positive pattern'
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // EARLY REJECTION: Check for test/verification content
+    if (isTestContent(signalText)) {
+      console.log(`[Test Filter] Rejecting test content: ${signalText.substring(0, 100)}...`);
+      return new Response(
+        JSON.stringify({ 
+          status: 'rejected',
+          reason: 'test_content',
+          message: 'Test/verification content rejected from production pipeline'
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -659,6 +673,41 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
     
     const signalTitle = generateTitle(classification.normalized_text || signalText);
     
+    // ===== RELEVANCE SCORING: Use learned patterns to gate noise =====
+    const severityNum = classification.severity === 'critical' ? 100 :
+                        classification.severity === 'high' ? 75 :
+                        classification.severity === 'medium' ? 50 :
+                        classification.severity === 'low' ? 20 : 50;
+    
+    const relevanceResult = await scoreSignalRelevance(
+      supabase,
+      classification.normalized_text || signalText,
+      classification.category || null,
+      severityNum
+    );
+    
+    console.log(`[Relevance] Score: ${relevanceResult.score.toFixed(2)}, Recommendation: ${relevanceResult.recommendation}, Patterns: ${relevanceResult.matchedPatterns.join(', ')}`);
+    
+    // Suppress signals that are clearly noise
+    if (relevanceResult.recommendation === 'suppress') {
+      console.log(`[Relevance] SUPPRESSING signal: ${relevanceResult.reason}`);
+      return new Response(
+        JSON.stringify({ 
+          status: 'suppressed',
+          reason: relevanceResult.reason,
+          relevance_score: relevanceResult.score,
+          matched_patterns: relevanceResult.matchedPatterns,
+          message: 'Signal suppressed by relevance filter based on learned patterns'
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // Determine status based on relevance
+    const signalStatus = relevanceResult.recommendation === 'low_confidence' 
+      ? 'low_confidence' 
+      : 'new';
+    
     // Insert signal WITH content_hash and title from the start
     // Include match metadata for audit trail and potential re-assignment
     const { data: signal, error: insertError } = await supabase
@@ -666,12 +715,15 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
       .insert({
         source_id: sourceId,
         client_id: clientId,
-        title: signalTitle,  // ADDED: Generate title for all signals
+        title: signalTitle,
         raw_json: {
           ...signalRaw,
           matched_keywords: matchedKeywords.length > 0 ? matchedKeywords : undefined,
           match_confidence: matchConfidence,
-          match_timestamp: new Date().toISOString()
+          match_timestamp: new Date().toISOString(),
+          relevance_score: relevanceResult.score,
+          relevance_patterns: relevanceResult.matchedPatterns,
+          relevance_recommendation: relevanceResult.recommendation
         },
         normalized_text: classification.normalized_text,
         entity_tags: classification.entity_tags,
@@ -679,9 +731,10 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
         category: classification.category,
         severity: classification.severity,
         confidence: classification.confidence,
-        status: 'new',
+        relevance_score: relevanceResult.score,
+        status: signalStatus,
         is_test: is_test || false,
-        content_hash: contentHash  // CRITICAL: Include hash in initial insert
+        content_hash: contentHash
       })
       .select()
       .single();
