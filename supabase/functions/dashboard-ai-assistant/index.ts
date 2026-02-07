@@ -11516,10 +11516,20 @@ The user's message is just a conversational acknowledgment - respond in kind, do
     }
 
     // Process messages to extract file attachments and format for vision
+    // CRITICAL: Strip old report storage URLs from assistant messages to prevent
+    // the AI from copying them instead of calling generate_fortress_report fresh
     const processedMessages = await Promise.all(
       limitedMessages.map(async (msg: any) => {
         // Truncate excessively long messages
-        const content = typeof msg.content === 'string' ? truncateContent(msg.content, 20000) : msg.content;
+        let content = typeof msg.content === 'string' ? truncateContent(msg.content, 20000) : msg.content;
+        
+        // Strip old report/storage URLs from assistant messages to prevent hallucination
+        if (msg.role === 'assistant' && typeof content === 'string') {
+          content = content
+            .replace(/https?:\/\/[^\s)"\]]*supabase\.co\/storage\/v1\/object\/(public|sign)\/osint-media\/reports\/[^\s)"\]]*/g, '[REPORT_URL_REMOVED]')
+            .replace(/\[([^\]]*)\]\(\[REPORT_URL_REMOVED\]\)/g, '[$1](report-link-expired)')
+            .replace(/\[REPORT_URL_REMOVED\]/g, '(previous report link expired — must regenerate)');
+        }
         
         // Look for image/document URLs in markdown format
         const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)|<img[^>]+src="([^"]+)"/g;
@@ -12065,9 +12075,9 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
         console.log("FORCING generate_fortress_report (model hallucinated a storage URL instead of calling the tool)");
         
         // Extract bulletin info from the conversation context
-        // Find the most recent user messages that contain the original report request context
-        const userMessages = limitedMessages.filter((m: any) => m.role === "user");
-        const assistantMessages = limitedMessages.filter((m: any) => m.role === "assistant");
+        // Find the most recent user AND assistant messages for full context
+        const allUserMessages = limitedMessages.filter((m: any) => m.role === "user");
+        const allAssistantMessages = limitedMessages.filter((m: any) => m.role === "assistant");
         
         // Try to extract bulletin title from the AI's response or conversation
         let bulletinTitle = "Security Bulletin";
@@ -12075,33 +12085,86 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
                           firstMessage.content.match(/\*\*[""]?([^*""\n]{10,100})[""]?\*\*/);
         if (titleMatch) bulletinTitle = titleMatch[1].replace(/^(View|Download|Regenerat\w+)\s+(the\s+)?(Latest|Newest|Most Recent|New|Updated)\s+/i, '');
         
-        // Find bulletin HTML from earlier assistant messages that might have had the content
-        // Or compose a minimal bulletin from the AI's current response
-        let bulletinHtml = "";
+        // ═══ IMPROVED CONTENT EXTRACTION ═══
+        // Gather ALL substantive content from the conversation — user requests, 
+        // assistant analysis, tool results — to compose a proper bulletin.
+        // DO NOT skip "try again" messages — look PAST them for the original content.
         
-        // Extract any substantive content from the AI's response (skip the hallucinated URL parts)
-        const contentWithoutUrls = firstMessage.content
-          .replace(/\[.*?\]\(https:\/\/.*?\)/g, '') // Remove markdown links
-          .replace(/https:\/\/\S+/g, '') // Remove bare URLs
-          .replace(/\*\*\[Generating Report\.\.\.\]\*\*/g, '')
-          .replace(/---/g, '')
-          .trim();
+        const substantiveContent: string[] = [];
         
-        // Look in conversation history for the original bulletin content request
-        let originalRequest = "";
-        for (let i = userMessages.length - 1; i >= 0; i--) {
-          const content = typeof userMessages[i].content === 'string' ? userMessages[i].content : '';
-          if (content.length > 100 && !/try again|improved|regenerate/i.test(content)) {
-            originalRequest = content;
-            break;
+        // 1. Search ALL user messages for substantive content (longest first)
+        const sortedUserMsgs = allUserMessages
+          .map((m: any) => typeof m.content === 'string' ? m.content : '')
+          .filter((c: string) => c.length > 30)
+          .sort((a: string, b: string) => b.length - a.length);
+        
+        for (const content of sortedUserMsgs) {
+          // Skip pure "try again" messages but keep ones with actual content
+          const stripped = content.replace(/\b(try again|regenerate|redo|improved|please)\b/gi, '').trim();
+          if (stripped.length > 50) {
+            substantiveContent.push(content);
           }
         }
         
-        // Build a minimal bulletin from available context
-        if (originalRequest) {
-          bulletinHtml = `<h2>Intelligence Summary</h2><div>${originalRequest.replace(/\n/g, '<br>')}</div>`;
+        // 2. Search assistant messages for tool-result summaries (they contain analyzed data)
+        for (const msg of allAssistantMessages) {
+          const content = typeof msg.content === 'string' ? msg.content : '';
+          // Strip URLs and formatting, keep substance
+          const cleaned = content
+            .replace(/https?:\/\/\S+/g, '')
+            .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+            .replace(/\*\*/g, '')
+            .trim();
+          if (cleaned.length > 200) {
+            substantiveContent.push(cleaned.substring(0, 3000));
+          }
+        }
+        
+        // 3. Build bulletin HTML using AI composition for quality output
+        let bulletinHtml = "";
+        
+        if (substantiveContent.length > 0) {
+          // Use a fast AI call to compose proper bulletin HTML from context
+          try {
+            const compositionPrompt = `You are a security intelligence analyst. Compose a professional HTML security bulletin from this conversation context. Use proper HTML tags (h2, h3, p, ul, li, table, strong). Include ALL facts, entities, dates, and findings. Do NOT invent any details. Output ONLY the HTML body content (no <html>, <head>, <body> tags).
+
+CONVERSATION CONTEXT:
+${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
+
+            const composeResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                model: "google/gemini-2.5-flash",
+                messages: [{ role: "user", content: compositionPrompt }],
+                stream: false,
+              }),
+            }, 15000);
+
+            if (composeResponse.ok) {
+              const composeData = await composeResponse.json();
+              const composed = composeData.choices?.[0]?.message?.content || "";
+              if (composed.length > 100) {
+                bulletinHtml = composed
+                  .replace(/^```html?\s*/i, '')
+                  .replace(/```\s*$/i, '')
+                  .trim();
+                console.log(`Composed bulletin HTML via AI: ${bulletinHtml.length} chars`);
+              }
+            }
+          } catch (composeErr) {
+            console.error("AI composition failed, using raw content fallback:", composeErr);
+          }
+          
+          // Fallback: use raw content if AI composition failed
+          if (!bulletinHtml || bulletinHtml.length < 100) {
+            bulletinHtml = `<h2>Intelligence Summary</h2><div>${substantiveContent[0].replace(/\n/g, '<br>').substring(0, 5000)}</div>`;
+          }
         } else {
-          bulletinHtml = `<h2>Security Bulletin</h2><p>Report regenerated at user request. Please provide specific intelligence content for a detailed bulletin.</p>`;
+          bulletinHtml = `<h2>Security Bulletin</h2><p>No substantive content found in conversation history. Please provide specific intelligence content for a detailed bulletin.</p>`;
         }
         
         const forcedReportArgs: Record<string, any> = {
@@ -12177,16 +12240,68 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
             lastUserText.match(/(?:titled?|called?|named?|about)\s+[""]?([^"".\n]{5,100})[""]?/i);
           if (titleMatch) bulletinTitle = titleMatch[1].trim();
           
-          // Gather content from recent conversation
-          const recentUserMsgs = limitedMessages
-            .filter((m: any) => m.role === "user")
-            .slice(-5)
-            .map((m: any) => typeof m.content === "string" ? m.content : "")
-            .filter((c: string) => c.length > 50 && !/try again|regenerate/i.test(c));
+          // ═══ IMPROVED CONTENT EXTRACTION (same logic as hallucination safety net) ═══
+          const substantiveContent2: string[] = [];
           
-          const bulletinContent = recentUserMsgs.length > 0
-            ? `<h2>Intelligence Summary</h2><div>${recentUserMsgs.join('<br><br>').replace(/\n/g, '<br>')}</div>`
-            : `<h2>Security Bulletin</h2><p>Report generated from conversation context. Please provide specific intelligence content for a more detailed bulletin.</p>`;
+          // Search ALL user messages for substantive content
+          const allMsgs = limitedMessages
+            .map((m: any) => ({ role: m.role, text: typeof m.content === 'string' ? m.content : '' }))
+            .filter((m: any) => m.text.length > 30);
+          
+          for (const m of allMsgs) {
+            if (m.role === 'user') {
+              const stripped = m.text.replace(/\b(try again|regenerate|redo|improved|please)\b/gi, '').trim();
+              if (stripped.length > 50) substantiveContent2.push(m.text);
+            } else if (m.role === 'assistant') {
+              const cleaned = m.text
+                .replace(/https?:\/\/\S+/g, '')
+                .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+                .replace(/\*\*/g, '')
+                .trim();
+              if (cleaned.length > 200) substantiveContent2.push(cleaned.substring(0, 3000));
+            }
+          }
+          
+          // Use AI to compose proper bulletin HTML
+          let bulletinContent = "";
+          if (substantiveContent2.length > 0) {
+            try {
+              const compositionPrompt2 = `You are a security intelligence analyst. Compose a professional HTML security bulletin from this conversation context. Use proper HTML tags (h2, h3, p, ul, li, table, strong). Include ALL facts, entities, dates, and findings. Do NOT invent any details. Output ONLY the HTML body content (no <html>, <head>, <body> tags).
+
+CONVERSATION CONTEXT:
+${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
+
+              const composeResponse2 = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  model: "google/gemini-2.5-flash",
+                  messages: [{ role: "user", content: compositionPrompt2 }],
+                  stream: false,
+                }),
+              }, 15000);
+
+              if (composeResponse2.ok) {
+                const composeData2 = await composeResponse2.json();
+                const composed2 = composeData2.choices?.[0]?.message?.content || "";
+                if (composed2.length > 100) {
+                  bulletinContent = composed2.replace(/^```html?\s*/i, '').replace(/```\s*$/i, '').trim();
+                  console.log(`Composed bulletin HTML via AI (path 2): ${bulletinContent.length} chars`);
+                }
+              }
+            } catch (composeErr2) {
+              console.error("AI composition (path 2) failed:", composeErr2);
+            }
+            
+            if (!bulletinContent || bulletinContent.length < 100) {
+              bulletinContent = `<h2>Intelligence Summary</h2><div>${substantiveContent2[0].replace(/\n/g, '<br>').substring(0, 5000)}</div>`;
+            }
+          } else {
+            bulletinContent = `<h2>Security Bulletin</h2><p>No substantive content found in conversation history. Please provide specific intelligence for a detailed bulletin.</p>`;
+          }
           
           const forcedReportArgs: Record<string, any> = {
             report_type: reportType,
