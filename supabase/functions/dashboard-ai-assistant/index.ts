@@ -12065,6 +12065,32 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
         });
       }
 
+      // ═══ EXTRACT USER-UPLOADED IMAGE URLS FOR BULLETIN EMBEDDING ═══
+      // Scan all messages for image attachments to pass as bulletin_images
+      const extractBulletinImages = (msgs: any[]): string[] => {
+        const images: string[] = [];
+        for (const msg of msgs) {
+          const contentStr = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
+          // Match markdown images, HTML img tags, and raw image URLs
+          const imgPatterns = [
+            /!\[[^\]]*\]\(([^)]+\.(?:jpg|jpeg|png|gif|webp)[^)]*)\)/gi,
+            /<img[^>]+src="([^"]+)"/gi,
+            /(https?:\/\/[^\s)"]+(?:ai-chat-attachments|osint-media)[^\s)"]*\.(?:jpg|jpeg|png|gif|webp)[^\s)"]*)/gi,
+            /(https?:\/\/[^\s)"]+(?:ai-chat-attachments)[^\s)"]*)/gi,
+          ];
+          for (const pattern of imgPatterns) {
+            let m;
+            while ((m = pattern.exec(contentStr)) !== null) {
+              const url = m[1];
+              if (url && !url.includes('REPORT_URL_REMOVED') && !images.includes(url)) {
+                images.push(url);
+              }
+            }
+          }
+        }
+        return images;
+      };
+
       // ═══ FORCED REPORT GENERATION: Detect hallucinated storage URLs ═══
       // If the AI output contains a supabase storage URL but didn't call generate_fortress_report,
       // it hallucinated the URL. Force the actual tool call.
@@ -12081,15 +12107,11 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
         
         // Try to extract bulletin title from the AI's response or conversation
         let bulletinTitle = "Security Bulletin";
-        const titleMatch = firstMessage.content.match(/[""]([^""]{10,100})[""]/) || 
-                          firstMessage.content.match(/\*\*[""]?([^*""\n]{10,100})[""]?\*\*/);
+        const titleMatch = firstMessage.content.match(/[""\u201c\u201d]([^""\u201c\u201d]{10,100})[""\u201c\u201d]/) || 
+                          firstMessage.content.match(/\*\*[""\u201c\u201d]?([^*""\u201c\u201d\n]{10,100})[""\u201c\u201d]?\*\*/);
         if (titleMatch) bulletinTitle = titleMatch[1].replace(/^(View|Download|Regenerat\w+)\s+(the\s+)?(Latest|Newest|Most Recent|New|Updated)\s+/i, '');
         
         // ═══ IMPROVED CONTENT EXTRACTION ═══
-        // Gather ALL substantive content from the conversation — user requests, 
-        // assistant analysis, tool results — to compose a proper bulletin.
-        // DO NOT skip "try again" messages — look PAST them for the original content.
-        
         const substantiveContent: string[] = [];
         
         // 1. Search ALL user messages for substantive content (longest first)
@@ -12099,7 +12121,6 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
           .sort((a: string, b: string) => b.length - a.length);
         
         for (const content of sortedUserMsgs) {
-          // Skip pure "try again" messages but keep ones with actual content
           const stripped = content.replace(/\b(try again|regenerate|redo|improved|please)\b/gi, '').trim();
           if (stripped.length > 50) {
             substantiveContent.push(content);
@@ -12109,11 +12130,12 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
         // 2. Search assistant messages for tool-result summaries (they contain analyzed data)
         for (const msg of allAssistantMessages) {
           const content = typeof msg.content === 'string' ? msg.content : '';
-          // Strip URLs and formatting, keep substance
           const cleaned = content
             .replace(/https?:\/\/\S+/g, '')
             .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
             .replace(/\*\*/g, '')
+            .replace(/\(previous report link expired[^)]*\)/g, '')
+            .replace(/\[REPORT_URL_REMOVED\]/g, '')
             .trim();
           if (cleaned.length > 200) {
             substantiveContent.push(cleaned.substring(0, 3000));
@@ -12124,9 +12146,15 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
         let bulletinHtml = "";
         
         if (substantiveContent.length > 0) {
-          // Use a fast AI call to compose proper bulletin HTML from context
           try {
-            const compositionPrompt = `You are a security intelligence analyst. Compose a professional HTML security bulletin from this conversation context. Use proper HTML tags (h2, h3, p, ul, li, table, strong). Include ALL facts, entities, dates, and findings. Do NOT invent any details. Output ONLY the HTML body content (no <html>, <head>, <body> tags).
+            const compositionPrompt = `You are a security intelligence analyst. Compose a professional HTML security bulletin from this conversation context. Use proper HTML tags (h2, h3, p, ul, li, table, strong). Include ALL facts, entities, dates, and findings mentioned in the context.
+
+CRITICAL RULES:
+- NEVER use placeholder text like "[Insert Date]", "[Description of Image]", "[Insert details here]"
+- NEVER generate sections with bracketed placeholders
+- If specific details are missing, OMIT that section entirely — do NOT create placeholder sections
+- ONLY include facts and details explicitly present in the context below
+- Output ONLY the HTML body content (no <html>, <head>, <body> tags)
 
 CONVERSATION CONTEXT:
 ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
@@ -12151,6 +12179,8 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
                 bulletinHtml = composed
                   .replace(/^```html?\s*/i, '')
                   .replace(/```\s*$/i, '')
+                  // Strip any remaining placeholder patterns the AI might have generated
+                  .replace(/\[([^\]]*(?:insert|placeholder|description of|e\.g\.|based on)[^\]]*)\]/gi, '')
                   .trim();
                 console.log(`Composed bulletin HTML via AI: ${bulletinHtml.length} chars`);
               }
@@ -12159,12 +12189,17 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
             console.error("AI composition failed, using raw content fallback:", composeErr);
           }
           
-          // Fallback: use raw content if AI composition failed
           if (!bulletinHtml || bulletinHtml.length < 100) {
             bulletinHtml = `<h2>Intelligence Summary</h2><div>${substantiveContent[0].replace(/\n/g, '<br>').substring(0, 5000)}</div>`;
           }
         } else {
           bulletinHtml = `<h2>Security Bulletin</h2><p>No substantive content found in conversation history. Please provide specific intelligence content for a detailed bulletin.</p>`;
+        }
+        
+        // Extract user-uploaded images for embedding
+        const bulletinImages = extractBulletinImages(limitedMessages);
+        if (bulletinImages.length > 0) {
+          console.log(`Found ${bulletinImages.length} user-uploaded images for bulletin embedding`);
         }
         
         const forcedReportArgs: Record<string, any> = {
@@ -12173,6 +12208,7 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
           bulletin_html: bulletinHtml,
           bulletin_classification: "INTERNAL USE ONLY",
           generate_header_image: true,
+          ...(bulletinImages.length > 0 ? { bulletin_images: bulletinImages } : {}),
         };
         
         const forcedResult = await executeTool("generate_fortress_report", forcedReportArgs, supabaseClient, authenticatedUserId);
@@ -12257,6 +12293,8 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
                 .replace(/https?:\/\/\S+/g, '')
                 .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
                 .replace(/\*\*/g, '')
+                .replace(/\(previous report link expired[^)]*\)/g, '')
+                .replace(/\[REPORT_URL_REMOVED\]/g, '')
                 .trim();
               if (cleaned.length > 200) substantiveContent2.push(cleaned.substring(0, 3000));
             }
@@ -12266,7 +12304,14 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
           let bulletinContent = "";
           if (substantiveContent2.length > 0) {
             try {
-              const compositionPrompt2 = `You are a security intelligence analyst. Compose a professional HTML security bulletin from this conversation context. Use proper HTML tags (h2, h3, p, ul, li, table, strong). Include ALL facts, entities, dates, and findings. Do NOT invent any details. Output ONLY the HTML body content (no <html>, <head>, <body> tags).
+              const compositionPrompt2 = `You are a security intelligence analyst. Compose a professional HTML security bulletin from this conversation context. Use proper HTML tags (h2, h3, p, ul, li, table, strong). Include ALL facts, entities, dates, and findings.
+
+CRITICAL RULES:
+- NEVER use placeholder text like "[Insert Date]", "[Description of Image]", "[Insert details here]"
+- NEVER generate sections with bracketed placeholders
+- If specific details are missing, OMIT that section entirely — do NOT create placeholder sections
+- ONLY include facts and details explicitly present in the context below
+- Output ONLY the HTML body content (no <html>, <head>, <body> tags)
 
 CONVERSATION CONTEXT:
 ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
@@ -12288,7 +12333,11 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
                 const composeData2 = await composeResponse2.json();
                 const composed2 = composeData2.choices?.[0]?.message?.content || "";
                 if (composed2.length > 100) {
-                  bulletinContent = composed2.replace(/^```html?\s*/i, '').replace(/```\s*$/i, '').trim();
+                  bulletinContent = composed2
+                    .replace(/^```html?\s*/i, '')
+                    .replace(/```\s*$/i, '')
+                    .replace(/\[([^\]]*(?:insert|placeholder|description of|e\.g\.|based on)[^\]]*)\]/gi, '')
+                    .trim();
                   console.log(`Composed bulletin HTML via AI (path 2): ${bulletinContent.length} chars`);
                 }
               }
@@ -12303,12 +12352,19 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
             bulletinContent = `<h2>Security Bulletin</h2><p>No substantive content found in conversation history. Please provide specific intelligence for a detailed bulletin.</p>`;
           }
           
+          // Extract user-uploaded images for embedding
+          const bulletinImages2 = extractBulletinImages(limitedMessages);
+          if (bulletinImages2.length > 0) {
+            console.log(`Found ${bulletinImages2.length} user-uploaded images for bulletin embedding (path 2)`);
+          }
+          
           const forcedReportArgs: Record<string, any> = {
             report_type: reportType,
             bulletin_title: bulletinTitle,
             bulletin_html: bulletinContent,
             bulletin_classification: "INTERNAL USE ONLY",
             generate_header_image: true,
+            ...(bulletinImages2.length > 0 ? { bulletin_images: bulletinImages2 } : {}),
           };
           
           // For executive reports, try to resolve client
