@@ -12100,10 +12100,10 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
       if (hasHallucinatedUrl && mentionsReportGeneration) {
         console.log("FORCING generate_fortress_report (model hallucinated a storage URL instead of calling the tool)");
         
-        // Extract bulletin info from the conversation context
-        // Find the most recent user AND assistant messages for full context
-        const allUserMessages = limitedMessages.filter((m: any) => m.role === "user");
-        const allAssistantMessages = limitedMessages.filter((m: any) => m.role === "assistant");
+        // Extract bulletin info from the FULL conversation context (not truncated)
+        // Use original `messages` array to find substantive content that may have been truncated
+        const allUserMessages = messages.filter((m: any) => m.role === "user");
+        const allAssistantMessages = messages.filter((m: any) => m.role === "assistant");
         
         // Try to extract bulletin title from the AI's response or conversation
         let bulletinTitle = "Security Bulletin";
@@ -12197,7 +12197,7 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
         }
         
         // Extract user-uploaded images for embedding
-        const bulletinImages = extractBulletinImages(limitedMessages);
+        const bulletinImages = extractBulletinImages(messages);
         if (bulletinImages.length > 0) {
           console.log(`Found ${bulletinImages.length} user-uploaded images for bulletin embedding`);
         }
@@ -12279,8 +12279,8 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
           // ═══ IMPROVED CONTENT EXTRACTION (same logic as hallucination safety net) ═══
           const substantiveContent2: string[] = [];
           
-          // Search ALL user messages for substantive content
-          const allMsgs = limitedMessages
+          // Search ALL messages from FULL history (not truncated) for substantive content
+          const allMsgs = messages
             .map((m: any) => ({ role: m.role, text: typeof m.content === 'string' ? m.content : '' }))
             .filter((m: any) => m.text.length > 30);
           
@@ -12353,7 +12353,7 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
           }
           
           // Extract user-uploaded images for embedding
-          const bulletinImages2 = extractBulletinImages(limitedMessages);
+          const bulletinImages2 = extractBulletinImages(messages);
           if (bulletinImages2.length > 0) {
             console.log(`Found ${bulletinImages2.length} user-uploaded images for bulletin embedding (path 2)`);
           }
