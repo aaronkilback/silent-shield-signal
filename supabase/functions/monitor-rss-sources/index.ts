@@ -170,6 +170,7 @@ Deno.serve(async (req) => {
                 title: item.title,
                 raw_text: content,
                 source_id: source.id,
+                source_url: item.link || null,
                 metadata: {
                   url: item.link,
                   source_type: 'rss',

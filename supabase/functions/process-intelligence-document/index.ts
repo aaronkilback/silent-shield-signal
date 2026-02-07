@@ -670,7 +670,10 @@ Extract all entities, signals, and their relationships.`
               author_handle: document.author_handle,
               author_name: document.author_name,
               is_high_priority: document.metadata?.is_high_priority,
-              event_details: document.metadata?.event_details
+              event_details: document.metadata?.event_details,
+              // Propagate source URL so UI can render links
+              url: sourceUrl || null,
+              source_url: sourceUrl || null,
             }
           })
           .select('id')

@@ -120,21 +120,30 @@ export async function createSignal(
   supabase: SupabaseClient,
   signalData: SignalData
 ): Promise<string | null> {
+  // Build raw_json with source URL so the UI can find it
+  const rawJson: Record<string, any> = {
+    ...(signalData.metadata || {}),
+    source: signalData.source,
+    url: signalData.source_url || null,
+    source_url: signalData.source_url || null,
+  };
+
+  const contentHash = await computeContentHash(signalData.content);
+
   const { data, error } = await supabase
     .from('signals')
     .insert({
-      source: signalData.source,
+      normalized_text: signalData.content,
       category: signalData.category,
       severity: signalData.severity,
-      content: signalData.content,
-      raw_content: signalData.raw_content || signalData.content,
-      source_url: signalData.source_url,
-      location: signalData.location,
-      client_id: signalData.client_id,
-      tenant_id: signalData.tenant_id,
-      confidence_score: signalData.confidence_score || 0.5,
-      metadata: signalData.metadata || {},
-      ingested_at: new Date().toISOString()
+      location: signalData.location || null,
+      client_id: signalData.client_id || null,
+      tenant_id: signalData.tenant_id || null,
+      confidence: signalData.confidence_score || 0.5,
+      status: 'new',
+      is_test: false,
+      content_hash: contentHash,
+      raw_json: rawJson,
     })
     .select('id')
     .single();
@@ -145,6 +154,15 @@ export async function createSignal(
   }
 
   return data?.id;
+}
+
+// Simple content hash for deduplication
+async function computeContentHash(text: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text.trim().toLowerCase());
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 // ============= CLIENT MATCHING =============
