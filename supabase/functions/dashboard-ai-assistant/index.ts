@@ -45,6 +45,16 @@ function base64FromBytes(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+// Escape HTML special characters for safe template insertion
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Dynamic system prompt that includes current date with timezone awareness
 function getEnhancedSystemPrompt(): string {
   const timeContext = getTimeContext();
@@ -12142,21 +12152,23 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
           }
         }
         
-        // 3. Build bulletin HTML using AI composition for quality output
+        // 3. Build bulletin HTML using AI to extract structured data, then apply deterministic template
         let bulletinHtml = "";
         
         if (substantiveContent.length > 0) {
           try {
-            const compositionPrompt = `You are a security intelligence analyst. Compose a professional HTML security bulletin from this conversation context. Use proper HTML tags (h2, h3, p, ul, li, table, strong). Include ALL facts, entities, dates, and findings mentioned in the context.
+            const extractionPrompt = `Extract structured intelligence from this conversation context. Return ONLY valid JSON (no markdown, no code fences).
 
-CRITICAL RULES:
-- NEVER use placeholder text like "[Insert Date]", "[Description of Image]", "[Insert details here]"
-- NEVER generate sections with bracketed placeholders
-- If specific details are missing, OMIT that section entirely — do NOT create placeholder sections
-- ONLY include facts and details explicitly present in the context below
-- Output ONLY the HTML body content (no <html>, <head>, <body> tags)
+Format:
+{"executive_summary":"1-2 sentence overview","sections":[{"title":"Section Title","content":"paragraph text","bullets":["point 1","point 2"]}],"key_entities":["entity names mentioned"],"dates_mentioned":["any dates"],"locations":["any locations"]}
 
-CONVERSATION CONTEXT:
+RULES:
+- ONLY extract facts explicitly present in the context
+- NEVER invent details, dates, locations, or threat actors
+- If a field has no data, use empty string or empty array
+- Keep content factual and concise
+
+CONTEXT:
 ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
 
             const composeResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -12167,30 +12179,59 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
               },
               body: JSON.stringify({
                 model: "google/gemini-2.5-flash",
-                messages: [{ role: "user", content: compositionPrompt }],
+                messages: [{ role: "user", content: extractionPrompt }],
                 stream: false,
               }),
             }, 15000);
 
             if (composeResponse.ok) {
               const composeData = await composeResponse.json();
-              const composed = composeData.choices?.[0]?.message?.content || "";
-              if (composed.length > 100) {
-                bulletinHtml = composed
-                  .replace(/^```html?\s*/i, '')
-                  .replace(/```\s*$/i, '')
-                  // Strip any remaining placeholder patterns the AI might have generated
-                  .replace(/\[([^\]]*(?:insert|placeholder|description of|e\.g\.|based on)[^\]]*)\]/gi, '')
-                  .trim();
-                console.log(`Composed bulletin HTML via AI: ${bulletinHtml.length} chars`);
+              const rawJson = (composeData.choices?.[0]?.message?.content || "")
+                .replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
+              
+              try {
+                const extracted = JSON.parse(rawJson);
+                // Build deterministic HTML from structured data
+                const parts: string[] = [];
+                
+                if (extracted.executive_summary) {
+                  parts.push(`<h2>Executive Summary</h2><p>${escapeHtml(extracted.executive_summary)}</p>`);
+                }
+                
+                if (extracted.sections && Array.isArray(extracted.sections)) {
+                  for (const section of extracted.sections) {
+                    if (!section.title || (!section.content && (!section.bullets || section.bullets.length === 0))) continue;
+                    parts.push(`<h2>${escapeHtml(section.title)}</h2>`);
+                    if (section.content) parts.push(`<p>${escapeHtml(section.content)}</p>`);
+                    if (section.bullets && section.bullets.length > 0) {
+                      parts.push(`<ul>${section.bullets.map((b: string) => `<li>${escapeHtml(b)}</li>`).join('')}</ul>`);
+                    }
+                  }
+                }
+                
+                if (extracted.key_entities?.length > 0) {
+                  parts.push(`<h2>Key Entities</h2><ul>${extracted.key_entities.map((e: string) => `<li>${escapeHtml(e)}</li>`).join('')}</ul>`);
+                }
+                
+                if (extracted.locations?.length > 0 || extracted.dates_mentioned?.length > 0) {
+                  parts.push(`<h2>Reference Data</h2>`);
+                  if (extracted.locations?.length > 0) parts.push(`<p><strong>Locations:</strong> ${extracted.locations.map(escapeHtml).join(', ')}</p>`);
+                  if (extracted.dates_mentioned?.length > 0) parts.push(`<p><strong>Dates:</strong> ${extracted.dates_mentioned.map(escapeHtml).join(', ')}</p>`);
+                }
+                
+                bulletinHtml = parts.join('\n');
+                console.log(`Built bulletin HTML from structured extraction: ${bulletinHtml.length} chars, ${parts.length} sections`);
+              } catch (jsonErr) {
+                console.error("JSON parse failed, falling back to raw content:", jsonErr);
               }
             }
           } catch (composeErr) {
-            console.error("AI composition failed, using raw content fallback:", composeErr);
+            console.error("AI extraction failed, using raw content fallback:", composeErr);
           }
           
           if (!bulletinHtml || bulletinHtml.length < 100) {
-            bulletinHtml = `<h2>Intelligence Summary</h2><div>${substantiveContent[0].replace(/\n/g, '<br>').substring(0, 5000)}</div>`;
+            // Deterministic fallback: format raw content as clean HTML
+            bulletinHtml = `<h2>Intelligence Summary</h2><p>${escapeHtml(substantiveContent[0]).replace(/\n/g, '</p><p>').substring(0, 5000)}</p>`;
           }
         } else {
           bulletinHtml = `<h2>Security Bulletin</h2><p>No substantive content found in conversation history. Please provide specific intelligence content for a detailed bulletin.</p>`;
@@ -12300,20 +12341,21 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
             }
           }
           
-          // Use AI to compose proper bulletin HTML
+          // Use AI to extract structured data, then build deterministic HTML
           let bulletinContent = "";
           if (substantiveContent2.length > 0) {
             try {
-              const compositionPrompt2 = `You are a security intelligence analyst. Compose a professional HTML security bulletin from this conversation context. Use proper HTML tags (h2, h3, p, ul, li, table, strong). Include ALL facts, entities, dates, and findings.
+              const extractionPrompt2 = `Extract structured intelligence from this conversation context. Return ONLY valid JSON (no markdown, no code fences).
 
-CRITICAL RULES:
-- NEVER use placeholder text like "[Insert Date]", "[Description of Image]", "[Insert details here]"
-- NEVER generate sections with bracketed placeholders
-- If specific details are missing, OMIT that section entirely — do NOT create placeholder sections
-- ONLY include facts and details explicitly present in the context below
-- Output ONLY the HTML body content (no <html>, <head>, <body> tags)
+Format:
+{"executive_summary":"1-2 sentence overview","sections":[{"title":"Section Title","content":"paragraph text","bullets":["point 1","point 2"]}],"key_entities":["entity names mentioned"],"dates_mentioned":["any dates"],"locations":["any locations"]}
 
-CONVERSATION CONTEXT:
+RULES:
+- ONLY extract facts explicitly present in the context
+- NEVER invent details, dates, locations, or threat actors
+- If a field has no data, use empty string or empty array
+
+CONTEXT:
 ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
 
               const composeResponse2 = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -12324,29 +12366,49 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
                 },
                 body: JSON.stringify({
                   model: "google/gemini-2.5-flash",
-                  messages: [{ role: "user", content: compositionPrompt2 }],
+                  messages: [{ role: "user", content: extractionPrompt2 }],
                   stream: false,
                 }),
               }, 15000);
 
               if (composeResponse2.ok) {
                 const composeData2 = await composeResponse2.json();
-                const composed2 = composeData2.choices?.[0]?.message?.content || "";
-                if (composed2.length > 100) {
-                  bulletinContent = composed2
-                    .replace(/^```html?\s*/i, '')
-                    .replace(/```\s*$/i, '')
-                    .replace(/\[([^\]]*(?:insert|placeholder|description of|e\.g\.|based on)[^\]]*)\]/gi, '')
-                    .trim();
-                  console.log(`Composed bulletin HTML via AI (path 2): ${bulletinContent.length} chars`);
+                const rawJson2 = (composeData2.choices?.[0]?.message?.content || "")
+                  .replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
+                
+                try {
+                  const extracted = JSON.parse(rawJson2);
+                  const parts: string[] = [];
+                  
+                  if (extracted.executive_summary) {
+                    parts.push(`<h2>Executive Summary</h2><p>${escapeHtml(extracted.executive_summary)}</p>`);
+                  }
+                  if (extracted.sections && Array.isArray(extracted.sections)) {
+                    for (const section of extracted.sections) {
+                      if (!section.title || (!section.content && (!section.bullets || section.bullets.length === 0))) continue;
+                      parts.push(`<h2>${escapeHtml(section.title)}</h2>`);
+                      if (section.content) parts.push(`<p>${escapeHtml(section.content)}</p>`);
+                      if (section.bullets?.length > 0) {
+                        parts.push(`<ul>${section.bullets.map((b: string) => `<li>${escapeHtml(b)}</li>`).join('')}</ul>`);
+                      }
+                    }
+                  }
+                  if (extracted.key_entities?.length > 0) {
+                    parts.push(`<h2>Key Entities</h2><ul>${extracted.key_entities.map((e: string) => `<li>${escapeHtml(e)}</li>`).join('')}</ul>`);
+                  }
+                  
+                  bulletinContent = parts.join('\n');
+                  console.log(`Built bulletin HTML from structured extraction (path 2): ${bulletinContent.length} chars`);
+                } catch (jsonErr) {
+                  console.error("JSON parse failed (path 2):", jsonErr);
                 }
               }
             } catch (composeErr2) {
-              console.error("AI composition (path 2) failed:", composeErr2);
+              console.error("AI extraction (path 2) failed:", composeErr2);
             }
             
             if (!bulletinContent || bulletinContent.length < 100) {
-              bulletinContent = `<h2>Intelligence Summary</h2><div>${substantiveContent2[0].replace(/\n/g, '<br>').substring(0, 5000)}</div>`;
+              bulletinContent = `<h2>Intelligence Summary</h2><p>${escapeHtml(substantiveContent2[0]).replace(/\n/g, '</p><p>').substring(0, 5000)}</p>`;
             }
           } else {
             bulletinContent = `<h2>Security Bulletin</h2><p>No substantive content found in conversation history. Please provide specific intelligence for a detailed bulletin.</p>`;
