@@ -1,4 +1,5 @@
 import { useState } from "react";
+import DOMPurify from "dompurify";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -286,7 +287,11 @@ export const IntelBriefingGenerator = () => {
                     <CardContent className="p-4">
                       <div 
                         className="prose prose-sm dark:prose-invert max-w-none"
-                        dangerouslySetInnerHTML={{ __html: generatedHtml || generatedContent }}
+                        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(generatedHtml || generatedContent || "", {
+                          ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'p', 'br', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'table', 'tr', 'td', 'th', 'div', 'span'],
+                          ALLOWED_ATTR: ['class', 'style'],
+                          ALLOW_DATA_ATTR: false,
+                        }) }}
                       />
                     </CardContent>
                   </Card>
