@@ -55,6 +55,36 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
+// Filter out meta-conversation (about report generation, tool errors, platform issues)
+// so that only actual intelligence content is extracted for reports
+const META_CONVERSATION_PATTERNS = [
+  /\b(generate|create|make|build|produce|regenerate|redo|try again)\b.*\b(report|bulletin|briefing|document)\b/i,
+  /\b(report|bulletin|briefing)\b.*\b(generate|create|make|regenerate|redo)\b/i,
+  /\bvision analysis could not extract\b/i,
+  /\bdocument may be corrupted\b/i,
+  /\bunsupported format\b/i,
+  /\btry uploading images directly\b/i,
+  /\bdownload\s+(the\s+)?pdf\b/i,
+  /\breport (link|url)\s+(expired|removed)\b/i,
+  /\bplease ask aegis to regenerate\b/i,
+  /\bpdf (generation|download)\s+(failed|error|issue)\b/i,
+  /\bhere('s| is) (your|the) (latest|new|updated|fresh)\s+(report|bulletin|briefing)\b/i,
+  /\bI('ve| have) generated\b.*\b(report|bulletin|briefing)\b/i,
+  /\byou can (view|download|access)\s+(the|your)\s+(report|bulletin)\b/i,
+];
+
+function isMetaConversation(text: string): boolean {
+  // Short command-like messages are meta
+  const stripped = text.replace(/\b(try again|regenerate|redo|improved|please|yes|no|ok|thanks)\b/gi, '').trim();
+  if (stripped.length < 40) return true;
+  
+  // Check against meta patterns
+  for (const pattern of META_CONVERSATION_PATTERNS) {
+    if (pattern.test(text)) return true;
+  }
+  return false;
+}
+
 // Dynamic system prompt that includes current date with timezone awareness
 function getEnhancedSystemPrompt(): string {
   const timeContext = getTimeContext();
@@ -12122,24 +12152,23 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
         if (titleMatch) bulletinTitle = titleMatch[1].replace(/^(View|Download|Regenerat\w+)\s+(the\s+)?(Latest|Newest|Most Recent|New|Updated)\s+/i, '');
         
         // ═══ IMPROVED CONTENT EXTRACTION ═══
+        // Filter out meta-conversation (about report generation, tool errors, etc.)
         const substantiveContent: string[] = [];
         
         // 1. Search ALL user messages for substantive content (longest first)
         const sortedUserMsgs = allUserMessages
           .map((m: any) => typeof m.content === 'string' ? m.content : '')
-          .filter((c: string) => c.length > 30)
+          .filter((c: string) => c.length > 30 && !isMetaConversation(c))
           .sort((a: string, b: string) => b.length - a.length);
         
         for (const content of sortedUserMsgs) {
-          const stripped = content.replace(/\b(try again|regenerate|redo|improved|please)\b/gi, '').trim();
-          if (stripped.length > 50) {
-            substantiveContent.push(content);
-          }
+          substantiveContent.push(content);
         }
         
         // 2. Search assistant messages for tool-result summaries (they contain analyzed data)
         for (const msg of allAssistantMessages) {
           const content = typeof msg.content === 'string' ? msg.content : '';
+          if (isMetaConversation(content)) continue;
           const cleaned = content
             .replace(/https?:\/\/\S+/g, '')
             .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
@@ -12317,18 +12346,17 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
             lastUserText.match(/(?:titled?|called?|named?|about)\s+[""]?([^"".\n]{5,100})[""]?/i);
           if (titleMatch) bulletinTitle = titleMatch[1].trim();
           
-          // ═══ IMPROVED CONTENT EXTRACTION (same logic as hallucination safety net) ═══
+           // ═══ IMPROVED CONTENT EXTRACTION (same logic as hallucination safety net) ═══
           const substantiveContent2: string[] = [];
           
-          // Search ALL messages from FULL history (not truncated) for substantive content
+          // Search ALL messages from FULL history (not truncated), filtering meta-conversation
           const allMsgs = messages
             .map((m: any) => ({ role: m.role, text: typeof m.content === 'string' ? m.content : '' }))
-            .filter((m: any) => m.text.length > 30);
+            .filter((m: any) => m.text.length > 30 && !isMetaConversation(m.text));
           
           for (const m of allMsgs) {
             if (m.role === 'user') {
-              const stripped = m.text.replace(/\b(try again|regenerate|redo|improved|please)\b/gi, '').trim();
-              if (stripped.length > 50) substantiveContent2.push(m.text);
+              substantiveContent2.push(m.text);
             } else if (m.role === 'assistant') {
               const cleaned = m.text
                 .replace(/https?:\/\/\S+/g, '')

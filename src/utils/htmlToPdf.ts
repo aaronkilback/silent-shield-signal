@@ -75,24 +75,31 @@ export async function generatePdfFromHtml(
 ): Promise<jsPDF> {
   const bgColor = options?.backgroundColor ?? "#0a0a0a";
 
-  // Create offscreen container
+  // Create offscreen container — use fixed positioning with opacity:0 to keep
+  // it in the rendering flow (avoiding off-screen rendering bugs in some browsers
+  // that can cause flipped/blank canvases).
   const container = document.createElement("div");
-  container.style.position = "absolute";
-  container.style.left = "-9999px";
+  container.style.position = "fixed";
+  container.style.left = "0";
   container.style.top = "0";
   container.style.width = `${RENDER_WIDTH_PX}px`;
   container.style.background = bgColor;
   container.style.overflow = "visible";
   container.style.height = "auto";
   container.style.maxHeight = "none";
+  container.style.opacity = "0";
+  container.style.pointerEvents = "none";
+  container.style.zIndex = "-9999";
+  // Prevent any inherited transforms from flipping the content
+  container.style.transform = "none";
+  container.style.direction = "ltr";
+  container.style.writingMode = "horizontal-tb";
 
   // Extract body content if it's a full HTML document
   const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
   container.innerHTML = bodyMatch ? bodyMatch[1] : html;
 
   // Extract and apply styles, then add targeted overflow overrides
-  // IMPORTANT: Only override overflow/max-height on container-like elements,
-  // NOT height on everything (which destroys layouts with dark backgrounds)
   const styleMatches = html.match(/<style[^>]*>([\s\S]*?)<\/style>/gi);
   const overrideCSS = `
     .page, .report-container, .bulletin-container,
@@ -100,6 +107,9 @@ export async function generatePdfFromHtml(
       overflow: visible !important;
       max-height: none !important;
       min-height: 0 !important;
+    }
+    * {
+      transform: none !important;
     }
     @page { size: auto; margin: 0; }
   `;
@@ -129,6 +139,10 @@ export async function generatePdfFromHtml(
     // Let styles settle
     await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 500)));
     await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 300)));
+
+    // Temporarily make visible for html2canvas (some engines skip opacity:0 elements)
+    container.style.opacity = "1";
+    container.style.visibility = "visible";
 
     // Measure actual height
     const actualHeight = container.scrollHeight;
@@ -177,7 +191,8 @@ export async function generatePdfFromHtml(
         0, 0, fullCanvas.width, thisStripH
       );
 
-      const imgData = stripCanvas.toDataURL("image/jpeg", 0.92);
+      // Use PNG format to avoid any JPEG orientation/encoding edge cases
+      const imgData = stripCanvas.toDataURL("image/png");
       const stripHeightMM = thisStripH / pxPerMm;
 
       if (pageIdx > 0) {
@@ -186,7 +201,7 @@ export async function generatePdfFromHtml(
 
       pdf.addImage(
         imgData,
-        "JPEG",
+        "PNG",
         MARGIN_MM,
         MARGIN_MM,
         CONTENT_W_MM,
