@@ -10,8 +10,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { FileText, Download, Eye, Loader2, FileDown, Upload, Image as ImageIcon, X } from "lucide-react";
 import { format } from "date-fns";
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import { generatePdfFromHtml } from "@/utils/htmlToPdf";
 import { Checkbox } from "@/components/ui/checkbox";
 import DOMPurify from 'dompurify';
 import { ImageLightbox, ImageLightboxTrigger } from "@/components/ui/image-lightbox";
@@ -315,50 +314,16 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
   const downloadBulletinPDF = async () => {
     if (!generatedBulletin) return;
 
-    const container = document.createElement('div');
-    container.style.position = 'absolute';
-    container.style.left = '-9999px';
-    container.style.width = '210mm';
-    container.innerHTML = sanitizeHtml(generatedBulletin);
-    document.body.appendChild(container);
-
     try {
       toast.loading("Generating PDF...");
-
-      const canvas = await html2canvas(container, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-      });
-
-      const imgWidth = 210;
-      const pageHeight = 297;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-
-      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
-      }
-
+      const pdf = await generatePdfFromHtml(generatedBulletin, { backgroundColor: "#ffffff" });
       pdf.save(`security_bulletin_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
       toast.dismiss();
       toast.success("PDF bulletin downloaded");
     } catch (error) {
       console.error("Error generating PDF:", error);
+      toast.dismiss();
       toast.error("Failed to generate PDF");
-    } finally {
-      document.body.removeChild(container);
     }
   };
 
