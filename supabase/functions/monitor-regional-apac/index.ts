@@ -489,6 +489,7 @@ Deno.serve(async (req) => {
                 .insert({
                   title: item.title,
                   raw_text: `${item.title}\n\n${item.description}`,
+                  source_url: item.link || null,
                   metadata: {
                     url: item.link,
                     source_type: 'regional_apac',

@@ -116,8 +116,9 @@ Deno.serve(async (req) => {
       .insert({
         source_id: sourceId,
         title,
-        raw_text: chunks[0], // Store first chunk in parent
+        raw_text: chunks[0],
         content_hash: contentHash,
+        source_url: metadata?.url || metadata?.source_url || null,
         metadata,
         chunk_index: 0,
         total_chunks: chunks.length,
