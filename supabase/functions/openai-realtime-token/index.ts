@@ -305,6 +305,33 @@ WHEN TO USE:
           },
           required: ['action']
         }
+      },
+      {
+        type: 'function',
+        name: 'query_expert_knowledge',
+        description: 'Query the World Knowledge Engine for authoritative security expertise (MITRE ATT&CK, NIST, ISO, ASIS, CISA). Use when asked about best practices, frameworks, standards, methodology, or "how should we..."',
+        parameters: {
+          type: 'object',
+          properties: {
+            question: { type: 'string', description: 'The expertise question' },
+            domain: { type: 'string', enum: ['cyber_security', 'physical_security', 'executive_protection', 'crisis_management', 'threat_intelligence', 'travel_security', 'compliance_governance', 'geopolitical_analysis'] },
+            include_live_search: { type: 'boolean', description: 'Include live web research (default: true)' }
+          },
+          required: ['question']
+        }
+      },
+      {
+        type: 'function',
+        name: 'get_tech_radar',
+        description: 'Get Technology Radar recommendations — emerging security technologies with relevance scores and adoption playbooks. Use when asked about new tech, modernization, or what to adopt.',
+        parameters: {
+          type: 'object',
+          properties: {
+            category: { type: 'string', description: 'Technology category filter' },
+            min_relevance: { type: 'number', description: 'Minimum relevance score 0-1 (default: 0.5)' }
+          },
+          required: []
+        }
       }
     ];
 
