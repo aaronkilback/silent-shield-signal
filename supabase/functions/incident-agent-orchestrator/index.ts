@@ -184,12 +184,13 @@ serve(async (req) => {
     // Fetch incident with related data
     const { data: incident, error: incidentError } = await supabase
       .from('incidents')
-      .select('*, signals(*), clients(*)')
+      .select('*, signals!incidents_signal_id_fkey(*), clients(*)')
       .eq('id', incident_id)
       .single();
 
     if (incidentError || !incident) {
-      throw new Error('Incident not found');
+      console.error('[Orchestrator] Incident query error:', JSON.stringify(incidentError), 'incident_id:', incident_id);
+      throw new Error(`Incident not found: ${incidentError?.message || 'no data returned'}`);
     }
 
     // Determine which agent to use
@@ -349,7 +350,7 @@ Provide your specialized analysis following the output format specified.`;
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        max_tokens: 4000,
+        ...(agentModel.startsWith('openai/') ? { max_completion_tokens: 4000 } : { max_tokens: 4000 }),
         temperature: 0.7
       })
     });
