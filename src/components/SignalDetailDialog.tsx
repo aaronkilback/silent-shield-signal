@@ -8,6 +8,8 @@ import { formatDistanceToNow } from "date-fns";
 import { useState, useEffect } from "react";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
 import { SignalFeedback } from "@/components/SignalFeedback";
+import { SignalScoreExplainer } from "@/components/SignalScoreExplainer";
+import { useImplicitFeedback } from "@/hooks/useImplicitFeedback";
 import { CreateIncidentFromSignalDialog } from "@/components/signals/CreateIncidentFromSignalDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -38,11 +40,16 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
   const [correlatedSignals, setCorrelatedSignals] = useState<any[]>([]);
   const [copied, setCopied] = useState(false);
   const [linkedIncident, setLinkedIncident] = useState<any>(null);
+  const { startViewing, stopViewing, trackEvent } = useImplicitFeedback();
+
+  // Track implicit view duration
+  useEffect(() => {
+    if (open && signal?.id) {
+      startViewing(signal.id);
+      return () => stopViewing(signal.id);
+    }
+  }, [open, signal?.id, startViewing, stopViewing]);
   
-  if (!signal) return null;
-
-  const decodedText = signal.normalized_text ? decodeHtmlEntities(signal.normalized_text) : signal.normalized_text;
-
   // Fetch correlation data and linked incident when dialog opens
   useEffect(() => {
     const fetchData = async () => {
@@ -108,6 +115,10 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
 
     fetchData();
   }, [signal?.id, signal?.correlation_group_id, open]);
+
+  if (!signal) return null;
+
+  const decodedText = signal.normalized_text ? decodeHtmlEntities(signal.normalized_text) : signal.normalized_text;
 
   const handleRunAIAnalysis = async () => {
     setIsAnalyzing(true);
@@ -400,6 +411,9 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                     <Badge variant="outline">
                       {Math.round(signal.confidence)}% confidence
                     </Badge>
+                  )}
+                  {signal.relevance_score != null && (
+                    <SignalScoreExplainer signalId={signal.id} score={signal.relevance_score} />
                   )}
                   <SignalFeedback 
                     signalId={signal.id}

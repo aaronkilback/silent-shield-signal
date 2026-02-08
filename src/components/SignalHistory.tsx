@@ -13,6 +13,7 @@ import { ImageLightbox } from "@/components/ui/image-lightbox";
 import { SignalAgeIndicator } from "@/components/signals/SignalAgeBadge";
 import { SignalDetailDialog } from "./SignalDetailDialog";
 import { SignalFeedback } from "./SignalFeedback";
+import { SignalScoreExplainer } from "./SignalScoreExplainer";
 import { toast } from "sonner";
 
 // Helper to decode HTML entities and clean text
@@ -72,6 +73,7 @@ interface Signal {
     shares?: number;
     views?: number;
   };
+  relevance_score?: number | null;
   media_urls?: string[];
   thumbnail_url?: string;
   sources?: {
@@ -594,6 +596,7 @@ export const SignalHistory = () => {
                 )}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
+                <SignalScoreExplainer signalId={signal.id} score={signal.relevance_score} />
                 <span className="text-xs text-muted-foreground font-medium">
                   {((signal.confidence || 0) * 100).toFixed(0)}%
                 </span>
