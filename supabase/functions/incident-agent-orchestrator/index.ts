@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
 import { getAntiHallucinationPrompt, getCriticalDateContext, calculateIncidentAge } from "../_shared/anti-hallucination.ts";
+import { buildMemoryContext, storeAgentMemory } from "../_shared/agent-memory.ts";
+import { buildGraphContext, discoverIncidentConnections } from "../_shared/knowledge-graph.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -240,6 +242,17 @@ serve(async (req) => {
     const dateContext = getCriticalDateContext();
     const incidentAge = calculateIncidentAge({ id: incident.id, opened_at: incident.opened_at });
     const antiHallucinationBlock = getAntiHallucinationPrompt();
+
+    // Tier 2: Retrieve agent memory and knowledge graph context in parallel
+    const [memoryContext, graphContext, graphEdges] = await Promise.all([
+      buildMemoryContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || ''),
+      buildGraphContext(supabase, incident_id),
+      discoverIncidentConnections(supabase, incident_id, selectedAgent),
+    ]);
+    
+    if (graphEdges.length > 0) {
+      console.log(`[Orchestrator] ${selectedAgent} found ${graphEdges.length} knowledge graph connections for incident ${incident_id}`);
+    }
     
     const investigationContext = `
 === VERIFIED INCIDENT DETAILS (as of ${dateContext.currentDateTimeISO}) ===
@@ -270,7 +283,22 @@ ${incident.signals?.raw_json?.ai_decision ? JSON.stringify(incident.signals.raw_
 
 === TIMELINE ===
 ${incident.timeline_json?.map((t: any) => `[${t.timestamp}] ${t.event}: ${t.details}`).join('\n') || 'No timeline entries'}
+
+${memoryContext}
+${graphContext}
 `;
+
+    // Tier 1: Use upgraded models based on agent specialization
+    const AGENT_MODELS: Record<string, string> = {
+      'GLOBE-SAGE': 'google/gemini-3-pro-preview',
+      'AEGIS-CMD': 'openai/gpt-5.2',
+      'LEX-MAGNA': 'openai/gpt-5.2',
+      'BIRD-DOG': 'google/gemini-3-pro-preview',
+      'LOCUS-INTEL': 'google/gemini-3-flash-preview',
+      'TIME-WARP': 'google/gemini-3-flash-preview',
+      'PATTERN-SEEKER': 'openai/gpt-5.2',
+    };
+    const agentModel = AGENT_MODELS[selectedAgent] || 'google/gemini-3-flash-preview';
 
     const systemPrompt = `You are ${selectedAgent}, a specialized AI security analyst within the Fortress AI Task Force.
 Your specialty: ${agentConfig.specialty}
@@ -316,7 +344,7 @@ Provide your specialized analysis following the output format specified.`;
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: agentModel,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
@@ -356,6 +384,16 @@ Provide your specialized analysis following the output format specified.`;
       investigation_focus: agentConfig.investigationFocus,
       prompt_used: userPrompt.substring(0, 500) + '...'
     };
+
+    // Tier 2: Store agent memory from this investigation
+    await storeAgentMemory(supabase, selectedAgent, analysisContent.substring(0, 1500), {
+      incidentId: incident_id,
+      clientId: incident.client_id,
+      memoryType: 'investigation',
+      entities: incident.signals?.entity_tags || [],
+      tags: [incident.priority, incident.signals?.category].filter(Boolean),
+      confidence: 0.7,
+    });
 
     // Update incident with analysis
     const currentLog = incident.ai_analysis_log || [];

@@ -471,3 +471,15 @@ verify_jwt = true
 
 [functions.predictive-forecast]
 verify_jwt = false
+
+[functions.multi-agent-debate]
+verify_jwt = false
+
+[functions.autonomous-threat-scan]
+verify_jwt = false
+
+[functions.predictive-incident-scorer]
+verify_jwt = false
+
+[functions.vision-analysis]
+verify_jwt = false
