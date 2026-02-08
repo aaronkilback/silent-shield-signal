@@ -470,6 +470,50 @@ export type Database = {
           },
         ]
       }
+      analyst_accuracy_metrics: {
+        Row: {
+          accuracy_score: number
+          accurate_feedback: number
+          created_at: string
+          id: string
+          last_calibrated: string
+          total_feedback: number
+          updated_at: string
+          user_id: string
+          weight_multiplier: number
+        }
+        Insert: {
+          accuracy_score?: number
+          accurate_feedback?: number
+          created_at?: string
+          id?: string
+          last_calibrated?: string
+          total_feedback?: number
+          updated_at?: string
+          user_id: string
+          weight_multiplier?: number
+        }
+        Update: {
+          accuracy_score?: number
+          accurate_feedback?: number
+          created_at?: string
+          id?: string
+          last_calibrated?: string
+          total_feedback?: number
+          updated_at?: string
+          user_id?: string
+          weight_multiplier?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "analyst_accuracy_metrics_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       api_keys: {
         Row: {
           client_id: string | null
@@ -3465,6 +3509,36 @@ export type Database = {
         }
         Relationships: []
       }
+      implicit_feedback_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          event_value: number | null
+          id: string
+          metadata: Json | null
+          signal_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          event_value?: number | null
+          id?: string
+          metadata?: Json | null
+          signal_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          event_value?: number | null
+          id?: string
+          metadata?: Json | null
+          signal_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       improvements: {
         Row: {
           created_at: string
@@ -6208,6 +6282,42 @@ export type Database = {
           },
         ]
       }
+      signal_clusters: {
+        Row: {
+          cluster_label: string
+          cluster_score: number | null
+          created_at: string
+          entity_overlap: string[] | null
+          id: string
+          metadata: Json | null
+          signal_ids: string[]
+          temporal_window_hours: number | null
+          updated_at: string
+        }
+        Insert: {
+          cluster_label: string
+          cluster_score?: number | null
+          created_at?: string
+          entity_overlap?: string[] | null
+          id?: string
+          metadata?: Json | null
+          signal_ids?: string[]
+          temporal_window_hours?: number | null
+          updated_at?: string
+        }
+        Update: {
+          cluster_label?: string
+          cluster_score?: number | null
+          created_at?: string
+          entity_overlap?: string[] | null
+          id?: string
+          metadata?: Json | null
+          signal_ids?: string[]
+          temporal_window_hours?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       signal_correlation_groups: {
         Row: {
           avg_confidence: number | null
@@ -6344,6 +6454,54 @@ export type Database = {
           },
         ]
       }
+      signal_score_explanations: {
+        Row: {
+          confidence: number
+          created_at: string
+          embedding_similarity: number | null
+          factors: Json
+          id: string
+          recommendation: string
+          seasonal_detail: string | null
+          seasonal_pattern_match: boolean | null
+          signal_id: string
+          source_diversity_boost: number | null
+          source_diversity_count: number | null
+          total_score: number
+          updated_at: string
+        }
+        Insert: {
+          confidence?: number
+          created_at?: string
+          embedding_similarity?: number | null
+          factors?: Json
+          id?: string
+          recommendation?: string
+          seasonal_detail?: string | null
+          seasonal_pattern_match?: boolean | null
+          signal_id: string
+          source_diversity_boost?: number | null
+          source_diversity_count?: number | null
+          total_score: number
+          updated_at?: string
+        }
+        Update: {
+          confidence?: number
+          created_at?: string
+          embedding_similarity?: number | null
+          factors?: Json
+          id?: string
+          recommendation?: string
+          seasonal_detail?: string | null
+          seasonal_pattern_match?: boolean | null
+          signal_id?: string
+          source_diversity_boost?: number | null
+          source_diversity_count?: number | null
+          total_score?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       signals: {
         Row: {
           applied_rules: Json | null
@@ -6352,6 +6510,7 @@ export type Database = {
           client_id: string | null
           comments: Json | null
           confidence: number | null
+          content_embedding: string | null
           content_hash: string | null
           correlated_count: number | null
           correlation_confidence: number | null
@@ -6399,6 +6558,7 @@ export type Database = {
           client_id?: string | null
           comments?: Json | null
           confidence?: number | null
+          content_embedding?: string | null
           content_hash?: string | null
           correlated_count?: number | null
           correlation_confidence?: number | null
@@ -6446,6 +6606,7 @@ export type Database = {
           client_id?: string | null
           comments?: Json | null
           confidence?: number | null
+          content_embedding?: string | null
           content_hash?: string | null
           correlated_count?: number | null
           correlation_confidence?: number | null
