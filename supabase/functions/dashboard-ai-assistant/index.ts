@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, upsertProject, touchProject } from "../_shared/user-memory.ts";
-import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
+// fortress-infrastructure.ts removed from system prompt to reduce token count (~5000 tokens saved)
 import { AEGIS_CORE_IDENTITY, AEGIS_CHAT_MODIFIERS, ANTI_FABRICATION_RULES, TOOL_USAGE_GUIDANCE, AEGIS_CAPABILITY_MANIFEST, getTimeContext } from "../_shared/aegis-persona.ts";
 
 const corsHeaders = {
@@ -85,60 +85,53 @@ function isMetaConversation(text: string): boolean {
   return false;
 }
 
-// Dynamic system prompt that includes current date with timezone awareness
+// Dynamic system prompt — CAPABILITY MANIFEST first for maximum compliance
+// Infrastructure docs removed from system prompt to reduce token count (~5000 tokens saved)
 function getEnhancedSystemPrompt(): string {
   const timeContext = getTimeContext();
   
-  return `${AEGIS_CORE_IDENTITY}
+  return `${AEGIS_CAPABILITY_MANIFEST}
+
+${AEGIS_CORE_IDENTITY}
 
 ${AEGIS_CHAT_MODIFIERS}
 
 ═══ CURRENT TIME ═══
 ${timeContext.full}
 
-${AEGIS_CAPABILITY_MANIFEST}
-
 ${ANTI_FABRICATION_RULES}
 
 ${TOOL_USAGE_GUIDANCE}
 
-═══ FORTRESS-SPECIFIC KNOWLEDGE ═══
+═══ FORTRESS OPERATIONAL KNOWLEDGE ═══
 
 SIGNAL-TO-INCIDENT WORKFLOW:
 • Signals ingested via document upload, OSINT monitoring, or manual creation
-• AI Decision Engine auto-processes high-priority signals and creates incidents when warranted
+• AI Decision Engine auto-processes high-priority signals → incidents when warranted
 • BEFORE suggesting incident creation: use get_signal_incident_status to check if one exists
-• Your role: query/report data, create incidents ONLY when user explicitly requests AND none exists
 
-DATE/TIME ACCURACY (CRITICAL):
-• Report dates from database records exactly — never fabricate or guess
-• Distinguish "new incidents (last 24h)" from "stale open incidents"
-• For briefings: use get_active_incidents with hours_back=24 for truly recent data
+DATE/TIME ACCURACY: Report dates from database records exactly. Distinguish "new (last 24h)" from "stale open."
 
 TOOL QUICK REFERENCE:
-🔍 SEARCH: perform_external_web_search (external news), query_fortress_data (internal), get_recent_signals, search_entities
-🎯 CREATE: create_entity, inject_test_signal (use client_name not ID), manage_incident_ticket
-🛡️ THREAT: analyze_threat_radar, check_dark_web_exposure, run_vip_deep_scan, get_threat_intel_feeds
-📄 DOCS: get_document_content, analyze_visual_document (for maps/diagrams/scanned PDFs)
-📊 REPORTS: generate_fortress_report — generates downloadable HTML reports (executive, risk_snapshot, security_briefing, security_bulletin). ALWAYS use this tool when user asks for any report, bulletin, briefing document, or formatted deliverable.
-🌍 KNOWLEDGE: query_expert_knowledge (world-class security expertise: MITRE, NIST, ISO, ASIS, CISA), query_fortress_data on tech_radar_recommendations (emerging tech adoption playbooks)
-⚙️ SYSTEM: get_monitoring_status, diagnose_issues, autonomous_source_health_manager
+🔍 perform_external_web_search, query_fortress_data, get_recent_signals, search_entities
+🎯 create_entity, inject_test_signal (use client_name), manage_incident_ticket
+🛡️ analyze_threat_radar, check_dark_web_exposure, run_vip_deep_scan, get_threat_intel_feeds
+📄 get_document_content, analyze_visual_document
+📊 generate_fortress_report (HTML reports — ALWAYS use for report/bulletin/briefing requests)
+🌍 query_expert_knowledge (MITRE/NIST/ISO/CISA), tech_radar_recommendations
+⚙️ get_monitoring_status, diagnose_issues, autonomous_source_health_manager
+👤 get_principal_profile, run_what_if_scenario, analyze_sentiment_drift
 
 DECISION PATTERNS:
-• External event/news → perform_external_web_search first
-• Internal data (signals/incidents/entities) → query_fortress_data or specific getters
+• External event → perform_external_web_search first
+• Internal data → query_fortress_data or specific getters
 • Threat assessment → analyze_threat_radar(include_predictions=true)
 • New entity → create_entity, then offer OSINT scan
-• Visual document with no text → analyze_visual_document
+• Visual document → analyze_visual_document
 
-PRINCIPAL INTELLIGENCE (VIP PROTECTION):
-• get_principal_profile: consolidated VIP intelligence
-• run_what_if_scenario: simulate travel/threat scenarios
-• analyze_sentiment_drift: track media sentiment on principals
+DATA SOURCES: News/RSS (15min), Social Media (real-time), Dark Web (continuous), Satellites/FIRMS (3hr), Government Bulletins (as published), Wildfire/Weather (hourly).
 
-${FORTRESS_DATA_INFRASTRUCTURE}
-
-${FORTRESS_AGENT_CAPABILITIES}`;
+MULTI-AGENT SYSTEM: 6 specialist agents (SIGINT, HUMINT, CYBER, OSINT, GEOINT, CI) with autonomous memory, debate protocols, and task force coordination.`;
 }
 
 
