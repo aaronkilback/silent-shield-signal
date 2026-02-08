@@ -102,7 +102,17 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Generate title from document text (first sentence or first 100 chars)
+    const docTitle = (() => {
+      if (!text || text.length === 0) return `Document Upload: ${filename}`;
+      const dotPos = text.indexOf('.');
+      if (dotPos > 0 && dotPos <= 100) return text.substring(0, dotPos + 1);
+      if (text.length > 100) return text.substring(0, 97) + '...';
+      return text;
+    })();
+
     const { data: signal, error: signalError } = await supabase.from('signals').insert({
+      title: docTitle,
       normalized_text: text, location: location || null, category: 'document_upload',
       severity: rulesResult.severity || 'low', confidence: 0.7, client_id: matchedClientId,
       raw_json: { source: 'document_upload', filename, mimeType, rulesMatched: rulesResult.matchedRule, matchedKeyword: rulesResult.matchedKeyword },

@@ -364,6 +364,7 @@ export const DuplicateDetectionPanel = () => {
 
       if (action === 'merge') {
         if (detection.detection_type === 'signal') {
+          // Feedback cleanup now handled by DB trigger (cleanup_signal_feedback)
           await supabase.from('signals').delete().eq('id', detection.source_id);
         } else if (detection.detection_type === 'document') {
           await supabase.from('archival_documents').delete().eq('id', detection.source_id);

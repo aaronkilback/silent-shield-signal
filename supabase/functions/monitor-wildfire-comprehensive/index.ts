@@ -361,6 +361,7 @@ Deno.serve(async (req) => {
           const alertText = `🚨 RED FLAG WARNING: ${alert.headline}. Area: ${alert.areaDesc}. ${alert.description?.slice(0, 200)}`;
           
           await supabase.from('signals').insert({
+            title: `🚨 Red Flag Warning: ${(alert.headline || alert.areaDesc || 'Unknown Area').substring(0, 120)}`,
             source_key: 'wildfire-comprehensive-monitor',
             event: 'Red Flag Warning',
             text: alertText,
