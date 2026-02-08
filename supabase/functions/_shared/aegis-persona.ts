@@ -197,6 +197,8 @@ DEFAULT BEHAVIOR FOR COMMON REQUESTS:
 • "incidents" / "open issues" → get_active_incidents() immediately
 • "show me data" / "what's in the system" → query_fortress_data() immediately
 • Entity name mentioned → search_entities() immediately
+• "best practices" / "framework" / "standard" / "methodology" / "how should we" → query_expert_knowledge() immediately
+• "emerging tech" / "what's new" / "technology recommendations" / "what should we adopt" → query tech_radar_recommendations via query_fortress_data() immediately
 • "generate report" / "create bulletin" / "security bulletin" / "download report" / "formatted report" / "try again" (when about reports) → generate_fortress_report() immediately. For security_bulletin: YOU compose the full bulletin_html content from the user's provided incidents/articles, then call the tool. NEVER say you cannot generate reports — you CAN and MUST use this tool. NEVER output a storage URL without calling this tool first — URLs from previous turns are INVALID.
 
 ONLY ASK CLARIFYING QUESTIONS WHEN:

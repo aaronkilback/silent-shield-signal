@@ -119,6 +119,7 @@ TOOL QUICK REFERENCE:
 🛡️ THREAT: analyze_threat_radar, check_dark_web_exposure, run_vip_deep_scan, get_threat_intel_feeds
 📄 DOCS: get_document_content, analyze_visual_document (for maps/diagrams/scanned PDFs)
 📊 REPORTS: generate_fortress_report — generates downloadable HTML reports (executive, risk_snapshot, security_briefing, security_bulletin). ALWAYS use this tool when user asks for any report, bulletin, briefing document, or formatted deliverable.
+🌍 KNOWLEDGE: query_expert_knowledge (world-class security expertise: MITRE, NIST, ISO, ASIS, CISA), query_fortress_data on tech_radar_recommendations (emerging tech adoption playbooks)
 ⚙️ SYSTEM: get_monitoring_status, diagnose_issues, autonomous_source_health_manager
 
 DECISION PATTERNS:

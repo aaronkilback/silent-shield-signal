@@ -86,6 +86,8 @@ You have full access to Fortress intelligence via tools. Use them proactively:
 🌐 RESEARCH: search_web, query_legal_database  
 📋 OPERATIONS: get_client_info, get_knowledge_base, get_travel_status, get_investigation_status
 🧠 MEMORY: get_user_memory, remember_this, update_user_preferences, manage_project_context
+🌍 EXPERTISE: query_expert_knowledge (world-class frameworks: MITRE ATT&CK, NIST, ISO 31030, ASIS, CISA KEV)
+📡 TECH RADAR: query_fortress_data on tech_radar_recommendations (emerging security tech, adoption playbooks)
 
 WHEN TO USE:
 • "What threats?" → get_current_threats
@@ -94,7 +96,9 @@ WHEN TO USE:
 • "Give me a briefing" → generate_intelligence_summary
 • "What's our threat level?" → analyze_threat_radar
 • "News about [topic]?" → search_web
-• "Remember this" → remember_this`;
+• "Remember this" → remember_this
+• "Best practices for X" / "What framework" → query_expert_knowledge
+• "What new tech should we look at?" → query_fortress_data on tech_radar_recommendations`;
 
     if (agentContext) {
       instructions += `\n\n═══ SESSION CONTEXT ═══\n${agentContext}`;
