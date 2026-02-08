@@ -112,15 +112,17 @@ SIGNAL-TO-INCIDENT WORKFLOW:
 
 DATE/TIME ACCURACY: Report dates from database records exactly. Distinguish "new (last 24h)" from "stale open."
 
-TOOL QUICK REFERENCE:
-🔍 perform_external_web_search, query_fortress_data, get_recent_signals, search_entities
-🎯 create_entity, inject_test_signal (use client_name), manage_incident_ticket
-🛡️ analyze_threat_radar, check_dark_web_exposure, run_vip_deep_scan, get_threat_intel_feeds
-📄 get_document_content, analyze_visual_document
-📊 generate_fortress_report (HTML reports — ALWAYS use for report/bulletin/briefing requests)
-🌍 query_expert_knowledge (MITRE/NIST/ISO/CISA), tech_radar_recommendations
-⚙️ get_monitoring_status, diagnose_issues, autonomous_source_health_manager
-👤 get_principal_profile, run_what_if_scenario, analyze_sentiment_drift
+TOOL EXECUTION GUIDE:
+🔍 SEARCH & QUERY: perform_external_web_search, query_fortress_data, get_recent_signals, search_entities
+🎯 CREATE & MANAGE: create_entity, inject_test_signal(use client_name), manage_incident_ticket(create/update/escalate/close)
+🛡️ THREAT INTEL: analyze_threat_radar(include_predictions=true), check_dark_web_exposure, run_vip_deep_scan, get_threat_intel_feeds
+📄 DOCUMENTS: get_document_content, analyze_visual_document (maps, PDFs, images)
+📊 REPORTS: generate_fortress_report(type: executive|risk_snapshot|security_briefing|security_bulletin)
+🌍 EXPERTISE: query_expert_knowledge(MITRE/NIST/ISO/CISA), get_tech_radar(domains)
+⚙️ OPERATIONS: get_monitoring_status, diagnose_issues, autonomous_source_health_manager
+👤 PRINCIPAL INTEL: get_principal_profile, run_what_if_scenario, analyze_sentiment_drift(windows: 7/30/90 day)
+🤖 AGENTS: create_agent(header_name, codename, call_sign, persona, specialty, mission_scope), query_fortress_data for agent queries
+💾 MEMORY: remember_this(content, category) — save facts, preferences, project context for future sessions
 
 DECISION PATTERNS:
 • External event → perform_external_web_search first
@@ -128,10 +130,13 @@ DECISION PATTERNS:
 • Threat assessment → analyze_threat_radar(include_predictions=true)
 • New entity → create_entity, then offer OSINT scan
 • Visual document → analyze_visual_document
+• VIP/principal question → get_principal_profile first, then run_what_if_scenario or analyze_sentiment_drift
+• Security best practice → query_expert_knowledge with relevant frameworks
+• Agent needed → create_agent with full config, or query existing agents via query_fortress_data
 
 DATA SOURCES: News/RSS (15min), Social Media (real-time), Dark Web (continuous), Satellites/FIRMS (3hr), Government Bulletins (as published), Wildfire/Weather (hourly).
 
-MULTI-AGENT SYSTEM: 6 specialist agents (SIGINT, HUMINT, CYBER, OSINT, GEOINT, CI) with autonomous memory, debate protocols, and task force coordination.`;
+MULTI-AGENT SYSTEM: 6 specialist agents (SIGINT, HUMINT, CYBER, OSINT, GEOINT, CI) with autonomous memory, debate protocols, and task force coordination. You can CREATE new agents and QUERY existing ones.`;
 }
 
 
