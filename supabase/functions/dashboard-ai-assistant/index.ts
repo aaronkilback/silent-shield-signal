@@ -90,9 +90,9 @@ function isMetaConversation(text: string): boolean {
 function getEnhancedSystemPrompt(): string {
   const timeContext = getTimeContext();
   
-  return `${AEGIS_CAPABILITY_MANIFEST}
+  return `${AEGIS_CORE_IDENTITY}
 
-${AEGIS_CORE_IDENTITY}
+${AEGIS_CAPABILITY_MANIFEST}
 
 ${AEGIS_CHAT_MODIFIERS}
 
