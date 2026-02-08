@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Shield, AlertTriangle, Radio, TrendingUp, X, ChevronRight, Loader2 } from "lucide-react";
+import { Shield, AlertTriangle, Radio, TrendingUp, X, ChevronRight, Loader2, Cpu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +12,16 @@ interface BriefingData {
   criticalIncidents: number;
   recentEntities: number;
   lastLogin: string | null;
+  techRadar: TechRecommendation[];
+}
+
+interface TechRecommendation {
+  id: string;
+  technology_name: string;
+  category: string;
+  urgency: string;
+  summary: string;
+  maturity_level: string;
 }
 
 interface LoginBriefingProps {
@@ -54,7 +64,7 @@ export const LoginBriefing = ({ onAskAegis }: LoginBriefingProps) => {
       since.setHours(since.getHours() - 24);
       const sinceISO = since.toISOString();
 
-      const [signalsRes, incidentsRes, entitiesRes] = await Promise.all([
+      const [signalsRes, incidentsRes, entitiesRes, techRadarRes] = await Promise.all([
         supabase
           .from("signals")
           .select("id, priority", { count: "exact", head: false })
@@ -69,6 +79,13 @@ export const LoginBriefing = ({ onAskAegis }: LoginBriefingProps) => {
           .from("entities")
           .select("id", { count: "exact", head: true })
           .gte("created_at", sinceISO),
+        supabase
+          .from("tech_radar_recommendations" as any)
+          .select("id, technology_name, category, urgency, summary, maturity_level")
+          .in("urgency", ["adopt_now", "evaluate"])
+          .eq("status", "new")
+          .order("relevance_score" as any, { ascending: false })
+          .limit(3),
       ]);
 
       const signalCount = signalsRes.count || 0;
@@ -92,6 +109,14 @@ export const LoginBriefing = ({ onAskAegis }: LoginBriefingProps) => {
         criticalIncidents,
         recentEntities: entitiesRes.count || 0,
         lastLogin: null,
+        techRadar: (techRadarRes.data as any[] || []).map((r: any) => ({
+          id: r.id,
+          technology_name: r.technology_name,
+          category: r.category,
+          urgency: r.urgency,
+          summary: r.summary,
+          maturity_level: r.maturity_level,
+        })),
       };
 
       setData(briefing);
@@ -178,6 +203,44 @@ export const LoginBriefing = ({ onAskAegis }: LoginBriefingProps) => {
                 </span>
                 <ChevronRight className="w-3 h-3" />
               </button>
+            )}
+
+            {/* Tech Radar Recommendations */}
+            {data.techRadar.length > 0 && (
+              <div className="mt-2 space-y-1.5">
+                <div className="flex items-center gap-1.5 px-1">
+                  <Cpu className="w-3 h-3 text-primary" />
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Tech Radar</span>
+                </div>
+                {data.techRadar.map((rec) => (
+                  <button
+                    key={rec.id}
+                    onClick={() => onAskAegis(
+                      `Tell me about ${rec.technology_name} and whether we should adopt it. Include implementation details and risks.`
+                    )}
+                    className={cn(
+                      "w-full flex items-center justify-between px-3 py-2 rounded-md text-left",
+                      rec.urgency === 'adopt_now'
+                        ? "bg-primary/10 border border-primary/20 hover:bg-primary/15"
+                        : "bg-muted/40 border border-border/30 hover:bg-muted/60",
+                      "text-xs transition-colors cursor-pointer"
+                    )}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn(
+                          "text-[9px] font-bold uppercase px-1.5 py-0.5 rounded",
+                          rec.urgency === 'adopt_now' ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
+                        )}>
+                          {rec.urgency === 'adopt_now' ? '⚡ ADOPT' : '🔍 EVALUATE'}
+                        </span>
+                        <span className="font-medium text-foreground truncate">{rec.technology_name}</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0 ml-2" />
+                  </button>
+                ))}
+              </div>
             )}
           </div>
         ) : null}
