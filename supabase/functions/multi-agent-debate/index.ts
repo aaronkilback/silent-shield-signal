@@ -77,11 +77,14 @@ Deno.serve(async (req) => {
     // Fetch incident with related data
     const { data: incident, error: incErr } = await supabase
       .from('incidents')
-      .select('*, signals(*), clients(*)')
+      .select('*, signals!incidents_signal_id_fkey(*), clients(*)')
       .eq('id', incident_id)
       .single();
 
-    if (incErr || !incident) throw new Error('Incident not found');
+    if (incErr || !incident) {
+      console.error('[Debate] Incident query error:', JSON.stringify(incErr), 'incident_id:', incident_id);
+      throw new Error(`Incident not found: ${incErr?.message || 'no data returned'}`);
+    }
 
     const selectedAgents = agents || ['THREAT-ANALYST', 'PATTERN-ANALYST', 'STRATEGIC-ANALYST'];
     const dateContext = getCriticalDateContext();
@@ -139,7 +142,7 @@ Current date: ${dateContext.currentDateISO}`;
               { role: 'system', content: systemPrompt },
               { role: 'user', content: `Analyze this incident independently:\n${incidentContext}` },
             ],
-            max_tokens: 3000,
+            ...(agent.model.startsWith('openai/') ? { max_completion_tokens: 3000 } : { max_tokens: 3000 }),
             temperature: 0.5,
           }),
         });
@@ -195,7 +198,7 @@ Current date: ${dateContext.currentDateISO}`;
           { role: 'system', content: `${JUDGE_PROMPT}\n\n${antiHallucination}\nCurrent date: ${dateContext.currentDateISO}` },
           { role: 'user', content: `Incident Context:\n${incidentContext}\n\n--- INDEPENDENT ANALYSES ---\n${debateInput}` },
         ],
-        max_tokens: 4000,
+        max_completion_tokens: 4000,
         temperature: 0.3,
       }),
     });
