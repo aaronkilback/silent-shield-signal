@@ -82,6 +82,113 @@ export type Database = {
           },
         ]
       }
+      agent_debate_records: {
+        Row: {
+          consensus_score: number | null
+          created_at: string
+          debate_type: string
+          final_assessment: string | null
+          id: string
+          incident_id: string | null
+          individual_analyses: Json
+          judge_agent: string | null
+          participating_agents: string[]
+          synthesis: Json | null
+        }
+        Insert: {
+          consensus_score?: number | null
+          created_at?: string
+          debate_type?: string
+          final_assessment?: string | null
+          id?: string
+          incident_id?: string | null
+          individual_analyses?: Json
+          judge_agent?: string | null
+          participating_agents?: string[]
+          synthesis?: Json | null
+        }
+        Update: {
+          consensus_score?: number | null
+          created_at?: string
+          debate_type?: string
+          final_assessment?: string | null
+          id?: string
+          incident_id?: string | null
+          individual_analyses?: Json
+          judge_agent?: string | null
+          participating_agents?: string[]
+          synthesis?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_debate_records_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_investigation_memory: {
+        Row: {
+          agent_call_sign: string
+          client_id: string | null
+          confidence: number | null
+          content: string
+          created_at: string
+          embedding: string | null
+          entities: string[] | null
+          expires_at: string | null
+          id: string
+          incident_id: string | null
+          memory_type: string
+          tags: string[] | null
+        }
+        Insert: {
+          agent_call_sign: string
+          client_id?: string | null
+          confidence?: number | null
+          content: string
+          created_at?: string
+          embedding?: string | null
+          entities?: string[] | null
+          expires_at?: string | null
+          id?: string
+          incident_id?: string | null
+          memory_type?: string
+          tags?: string[] | null
+        }
+        Update: {
+          agent_call_sign?: string
+          client_id?: string | null
+          confidence?: number | null
+          content?: string
+          created_at?: string
+          embedding?: string | null
+          entities?: string[] | null
+          expires_at?: string | null
+          id?: string
+          incident_id?: string | null
+          memory_type?: string
+          tags?: string[] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_investigation_memory_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_investigation_memory_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_learning_sessions: {
         Row: {
           agent_id: string | null
@@ -937,6 +1044,42 @@ export type Database = {
           metric_date?: string
           osint_scans_completed?: number | null
           signals_processed?: number | null
+        }
+        Relationships: []
+      }
+      autonomous_scan_results: {
+        Row: {
+          agent_call_sign: string
+          alerts_generated: number | null
+          created_at: string
+          findings: Json
+          id: string
+          risk_score: number | null
+          scan_type: string
+          signals_analyzed: number | null
+          status: string
+        }
+        Insert: {
+          agent_call_sign: string
+          alerts_generated?: number | null
+          created_at?: string
+          findings?: Json
+          id?: string
+          risk_score?: number | null
+          scan_type: string
+          signals_analyzed?: number | null
+          status?: string
+        }
+        Update: {
+          agent_call_sign?: string
+          alerts_generated?: number | null
+          created_at?: string
+          findings?: Json
+          id?: string
+          risk_score?: number | null
+          scan_type?: string
+          signals_analyzed?: number | null
+          status?: string
         }
         Relationships: []
       }
@@ -3694,6 +3837,54 @@ export type Database = {
           },
         ]
       }
+      incident_knowledge_graph: {
+        Row: {
+          created_at: string
+          discovered_by: string | null
+          evidence: Json | null
+          id: string
+          relationship_type: string
+          source_incident_id: string
+          strength: number
+          target_incident_id: string
+        }
+        Insert: {
+          created_at?: string
+          discovered_by?: string | null
+          evidence?: Json | null
+          id?: string
+          relationship_type: string
+          source_incident_id: string
+          strength?: number
+          target_incident_id: string
+        }
+        Update: {
+          created_at?: string
+          discovered_by?: string | null
+          evidence?: Json | null
+          id?: string
+          relationship_type?: string
+          source_incident_id?: string
+          strength?: number
+          target_incident_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "incident_knowledge_graph_source_incident_id_fkey"
+            columns: ["source_incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "incident_knowledge_graph_target_incident_id_fkey"
+            columns: ["target_incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       incident_outcomes: {
         Row: {
           created_at: string
@@ -5193,6 +5384,53 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      predictive_incident_scores: {
+        Row: {
+          actual_escalated: boolean | null
+          contributing_factors: Json | null
+          escalation_probability: number
+          id: string
+          model_version: string | null
+          outcome_verified: boolean | null
+          predicted_priority: string | null
+          predicted_severity: string | null
+          scored_at: string
+          signal_id: string | null
+        }
+        Insert: {
+          actual_escalated?: boolean | null
+          contributing_factors?: Json | null
+          escalation_probability?: number
+          id?: string
+          model_version?: string | null
+          outcome_verified?: boolean | null
+          predicted_priority?: string | null
+          predicted_severity?: string | null
+          scored_at?: string
+          signal_id?: string | null
+        }
+        Update: {
+          actual_escalated?: boolean | null
+          contributing_factors?: Json | null
+          escalation_probability?: number
+          id?: string
+          model_version?: string | null
+          outcome_verified?: boolean | null
+          predicted_priority?: string | null
+          predicted_severity?: string | null
+          scored_at?: string
+          signal_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "predictive_incident_scores_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       predictive_threat_models: {
         Row: {
@@ -8138,6 +8376,48 @@ export type Database = {
           },
         ]
       }
+      vision_analysis_results: {
+        Row: {
+          analysis: Json
+          analyzed_at: string
+          confidence: number | null
+          detected_objects: string[] | null
+          extracted_text: string | null
+          id: string
+          image_url: string
+          model_used: string | null
+          source_id: string | null
+          source_type: string
+          threat_indicators: string[] | null
+        }
+        Insert: {
+          analysis?: Json
+          analyzed_at?: string
+          confidence?: number | null
+          detected_objects?: string[] | null
+          extracted_text?: string | null
+          id?: string
+          image_url: string
+          model_used?: string | null
+          source_id?: string | null
+          source_type: string
+          threat_indicators?: string[] | null
+        }
+        Update: {
+          analysis?: Json
+          analyzed_at?: string
+          confidence?: number | null
+          detected_objects?: string[] | null
+          extracted_text?: string | null
+          id?: string
+          image_url?: string
+          model_used?: string | null
+          source_id?: string | null
+          source_type?: string
+          threat_indicators?: string[] | null
+        }
+        Relationships: []
+      }
       webhook_deliveries: {
         Row: {
           attempt_count: number
@@ -8643,6 +8923,23 @@ export type Database = {
       is_workspace_owner: {
         Args: { _user_id: string; _workspace_id: string }
         Returns: boolean
+      }
+      match_agent_memories: {
+        Args: {
+          p_agent: string
+          p_match_count?: number
+          p_match_threshold?: number
+          p_query_embedding: string
+        }
+        Returns: {
+          confidence: number
+          content: string
+          entities: string[]
+          id: string
+          incident_id: string
+          memory_type: string
+          similarity: number
+        }[]
       }
       match_documents: {
         Args: {
