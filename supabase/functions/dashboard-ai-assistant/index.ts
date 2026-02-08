@@ -11790,7 +11790,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         messages: [
           {
             role: "system",
-            content: `You are the Fortress AI Assistant - an intelligent security operations assistant with comprehensive knowledge of the platform, its codebase, architecture, and all features.
+            content: `You are AEGIS (Active Enterprise Guardian & Intelligence System), the AI command intelligence assistant for FORTRESS. You have comprehensive knowledge of the platform, its codebase, architecture, and all features.
 ${tenantKnowledgeContext}
 PLATFORM OVERVIEW:
 Fortress is a security intelligence and threat monitoring platform built on React/TypeScript frontend with Supabase (PostgreSQL + Edge Functions) backend. The platform automates OSINT collection, threat detection, incident management, entity tracking, travel security, and investigation management through 50+ edge functions and AI-powered automation.
@@ -12228,7 +12228,7 @@ Be conversational and helpful. Format data clearly with bullet points. Provide n
               {
                 role: "system",
                 content:
-                  "You are the Fortress AI Assistant. Summarize tool results in a clear, conversational way. Use markdown links: [Link Text](/path). Be concise and helpful.",
+                  "You are AEGIS, the AI intelligence assistant for FORTRESS. Summarize tool results in a clear, conversational way. Use markdown links: [Link Text](/path). Be concise and helpful.",
               },
               ...processedMessages,
               firstMessage,
@@ -12445,7 +12445,7 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
               {
                 role: "system",
                 content:
-                  "You are the Fortress AI Assistant. A report was just generated using the generate_fortress_report tool. Present the ACTUAL download URL from the tool result to the user. NEVER modify or fabricate URLs. Use the exact view_url or download_url from the tool response. Keep your response concise — just confirm the report was generated and provide the link.",
+                  "You are AEGIS, the AI intelligence assistant for FORTRESS. A report was just generated using the generate_fortress_report tool. Present the ACTUAL download URL from the tool result to the user. NEVER modify or fabricate URLs. Use the exact view_url or download_url from the tool response. Keep your response concise — just confirm the report was generated and provide the link.",
               },
               ...processedMessages,
               firstMessage,
@@ -12627,7 +12627,7 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
                 {
                   role: "system",
                   content:
-                    "You are the Fortress AI Assistant. A report was just generated using the generate_fortress_report tool. Present the ACTUAL download URL from the tool result to the user. NEVER modify or fabricate URLs. Use the exact view_url or download_url from the tool response. Keep your response concise — just confirm the report was generated and provide the link.",
+                    "You are AEGIS, the AI intelligence assistant for FORTRESS. A report was just generated using the generate_fortress_report tool. Present the ACTUAL download URL from the tool result to the user. NEVER modify or fabricate URLs. Use the exact view_url or download_url from the tool response. Keep your response concise — just confirm the report was generated and provide the link.",
                 },
                 ...processedMessages,
                 firstMessage,
@@ -12673,7 +12673,7 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
               {
                 role: "system",
                 content:
-                  "You are the Fortress AI Assistant. Summarize tool results in a clear, conversational way. Report the actual agent creation result - if success, confirm with agent details; if error, explain the issue. Use markdown links: [Link Text](/path). Be concise and helpful.",
+                  "You are AEGIS, the AI intelligence assistant for FORTRESS. Summarize tool results in a clear, conversational way. Report the actual agent creation result - if success, confirm with agent details; if error, explain the issue. Use markdown links: [Link Text](/path). Be concise and helpful.",
               },
               ...processedMessages,
               firstMessage,
@@ -12738,7 +12738,7 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
               {
                 role: "system",
                 content:
-                  "You are the Fortress AI Assistant. Present the query_fortress_data results clearly and comprehensively. Format the data in a structured, readable way using markdown tables, bullet points, and headers. Highlight key findings, provide summaries, and offer follow-up analysis suggestions. Use markdown links: [Link Text](/path). Be thorough and actionable.",
+                  "You are AEGIS, the AI intelligence assistant for FORTRESS. Present the query_fortress_data results clearly and comprehensively. Format the data in a structured, readable way using markdown tables, bullet points, and headers. Highlight key findings, provide summaries, and offer follow-up analysis suggestions. Use markdown links: [Link Text](/path). Be thorough and actionable.",
               },
               ...processedMessages,
               firstMessage,
@@ -12819,7 +12819,7 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
           messages: [
             {
               role: "system",
-              content: `You are the Fortress AI Assistant. Summarize tool results in a clear, conversational way. Use markdown links: [Link Text](/path). Be concise and helpful. When file attachments are present, incorporate insights. When explaining architecture or implementation, be detailed and technical.`,
+              content: `You are AEGIS, the AI intelligence assistant for FORTRESS. Summarize tool results in a clear, conversational way. Use markdown links: [Link Text](/path). Be concise and helpful. When file attachments are present, incorporate insights. When explaining architecture or implementation, be detailed and technical.`,
             },
             ...processedMessages,
             firstMessage,
@@ -12850,7 +12850,7 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
         messages: [
           {
             role: "system",
-            content: `You are the Fortress AI Assistant with comprehensive platform knowledge. Use plain, conversational language. Provide navigation links: [Link Text](/path). When diagnosing issues, be specific and actionable. When file attachments are present, analyze them for security insights. When explaining architecture, be detailed and technical.`,
+            content: `You are AEGIS, the AI intelligence assistant for FORTRESS with comprehensive platform knowledge. Use plain, conversational language. Provide navigation links: [Link Text](/path). When diagnosing issues, be specific and actionable. When file attachments are present, analyze them for security insights. When explaining architecture, be detailed and technical.`,
           },
           ...processedMessages,
         ],
