@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, upsertProject, touchProject } from "../_shared/user-memory.ts";
 import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
-import { AEGIS_CORE_IDENTITY, AEGIS_CHAT_MODIFIERS, ANTI_FABRICATION_RULES, TOOL_USAGE_GUIDANCE, getTimeContext } from "../_shared/aegis-persona.ts";
+import { AEGIS_CORE_IDENTITY, AEGIS_CHAT_MODIFIERS, ANTI_FABRICATION_RULES, TOOL_USAGE_GUIDANCE, AEGIS_CAPABILITY_MANIFEST, getTimeContext } from "../_shared/aegis-persona.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -95,6 +95,8 @@ ${AEGIS_CHAT_MODIFIERS}
 
 ═══ CURRENT TIME ═══
 ${timeContext.full}
+
+${AEGIS_CAPABILITY_MANIFEST}
 
 ${ANTI_FABRICATION_RULES}
 

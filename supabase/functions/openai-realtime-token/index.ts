@@ -1,4 +1,4 @@
-import { AEGIS_CORE_IDENTITY, AEGIS_VOICE_MODIFIERS, ANTI_FABRICATION_RULES, TOOL_USAGE_GUIDANCE, getTimeContext } from "../_shared/aegis-persona.ts";
+import { AEGIS_CORE_IDENTITY, AEGIS_VOICE_MODIFIERS, ANTI_FABRICATION_RULES, TOOL_USAGE_GUIDANCE, AEGIS_CAPABILITY_MANIFEST, getTimeContext } from "../_shared/aegis-persona.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -74,6 +74,8 @@ ${AEGIS_VOICE_MODIFIERS}
 
 ═══ CURRENT TIME ═══
 ${timeContext.full}
+
+${AEGIS_CAPABILITY_MANIFEST}
 
 ${ANTI_FABRICATION_RULES}
 
