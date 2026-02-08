@@ -3421,6 +3421,146 @@ CATEGORIES: ai_ml_security, endpoint_security, cloud_security, physical_security
         }
       }
     }
+  },
+  // ═══ MULTI-AGENT ORCHESTRATION TOOLS ═══
+  {
+    type: "function",
+    function: {
+      name: "dispatch_agent_investigation",
+      description: `Dispatch a specialist AI agent to investigate an incident. This triggers the multi-agent orchestrator to assign agents like BIRD-DOG (pattern analysis), GLOBE-SAGE (geopolitical), LEX-MAGNA (legal), LOCUS-INTEL (geographic), TIME-WARP (temporal), PATTERN-SEEKER (correlation), or AEGIS-CMD (tactical response).
+
+Use when:
+- User asks to "send an agent" or "investigate this incident"
+- An incident needs specialized analysis beyond your own
+- Multiple perspectives are needed on a complex incident
+
+The orchestrator auto-selects the best agent if you don't specify one. A Task Force name is generated when 2+ agents are assigned.`,
+      parameters: {
+        type: "object",
+        properties: {
+          incident_id: {
+            type: "string",
+            description: "UUID of the incident to investigate"
+          },
+          agent_call_sign: {
+            type: "string",
+            description: "Optional: specific agent call sign (BIRD-DOG, GLOBE-SAGE, LEX-MAGNA, LOCUS-INTEL, TIME-WARP, PATTERN-SEEKER, AEGIS-CMD). If omitted, auto-selects best agent.",
+            enum: ["BIRD-DOG", "GLOBE-SAGE", "LEX-MAGNA", "LOCUS-INTEL", "TIME-WARP", "PATTERN-SEEKER", "AEGIS-CMD"]
+          },
+          prompt: {
+            type: "string",
+            description: "Optional: custom investigation prompt to guide the agent's analysis"
+          }
+        },
+        required: ["incident_id"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "trigger_multi_agent_debate",
+      description: `Trigger a Multi-Agent Debate on an incident. 2-3 specialist agents independently analyze the same incident, then a judge agent synthesizes conflicting assessments into a higher-confidence conclusion.
+
+Use when:
+- User wants a "second opinion" or "debate" on an incident
+- A high-severity incident needs ensemble reasoning
+- Conflicting assessments need resolution
+- Maximum analytical rigor is required
+
+Returns: individual agent analyses, consensus score, synthesis, and final assessment.`,
+      parameters: {
+        type: "object",
+        properties: {
+          incident_id: {
+            type: "string",
+            description: "UUID of the incident to debate"
+          },
+          debate_type: {
+            type: "string",
+            description: "Type of debate protocol",
+            enum: ["adversarial", "collaborative", "structured"],
+          },
+          custom_prompt: {
+            type: "string",
+            description: "Optional: custom focus for the debate"
+          }
+        },
+        required: ["incident_id"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "generate_audio_briefing",
+      description: `Generate an audio briefing from text content using OpenAI TTS-1-HD with the "onyx" voice (deep, authoritative male voice). Creates a downloadable MP3 file.
+
+Use when:
+- User asks for an "audio briefing" or "listen to this"
+- User wants a briefing they can play back
+- Converting a written report/analysis to audio format
+
+The content is cleaned for TTS (markdown removed), chunked for reliability, and uploaded to storage.`,
+      parameters: {
+        type: "object",
+        properties: {
+          content: {
+            type: "string",
+            description: "The text content to convert to audio. Should be TTS-ready prose without markdown."
+          },
+          title: {
+            type: "string",
+            description: "Title for the audio briefing (used in filename)"
+          }
+        },
+        required: ["content", "title"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_briefing_session",
+      description: `Create a new briefing session (briefing room) for collaborative intelligence review. Supports adding participants (agents and humans), agenda items, and linking to incidents or investigations.
+
+Use when:
+- User wants to "start a briefing" or "create a briefing room"
+- A team needs to review an incident or investigation together
+- Agents need a structured environment for collaborative analysis`,
+      parameters: {
+        type: "object",
+        properties: {
+          title: {
+            type: "string",
+            description: "Briefing session title"
+          },
+          description: {
+            type: "string",
+            description: "Optional description of the briefing purpose"
+          },
+          incident_id: {
+            type: "string",
+            description: "Optional: link to an incident"
+          },
+          investigation_id: {
+            type: "string",
+            description: "Optional: link to an investigation"
+          },
+          agent_ids: {
+            type: "array",
+            items: { type: "string" },
+            description: "Optional: array of agent UUIDs to add as participants"
+          },
+          meeting_mode: {
+            type: "string",
+            description: "Meeting mode",
+            enum: ["standard", "crisis", "review"],
+          }
+        },
+        required: ["title"]
+      }
+    }
   }
 ];
 
@@ -11136,6 +11276,241 @@ The signal is now in the database with status 'triaged' and rules have been appl
         count: data?.length || 0,
         filters_applied: { category, min_relevance: effectiveMinRelevance },
         note: "Technology Radar scans run weekly. Ask me to explain any recommendation or generate an adoption playbook."
+      };
+    }
+
+    case "dispatch_agent_investigation": {
+      const { incident_id, agent_call_sign, prompt } = args;
+      
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+      
+      const orchestratorResponse = await fetch(
+        `${supabaseUrl}/functions/v1/incident-agent-orchestrator`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${serviceKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ incident_id, agent_call_sign, prompt }),
+        }
+      );
+      
+      if (!orchestratorResponse.ok) {
+        const errText = await orchestratorResponse.text();
+        return { error: `Agent dispatch failed: ${errText}` };
+      }
+      
+      const result = await orchestratorResponse.json();
+      return {
+        success: true,
+        agent_dispatched: result.agent,
+        analysis: result.analysis,
+        investigation_focus: result.investigation_focus,
+        log_entries: result.log_entry_count,
+        incident_id: result.incident_id,
+        note: `Agent ${result.agent} has completed their investigation. Their analysis has been logged to the incident timeline.`
+      };
+    }
+
+    case "trigger_multi_agent_debate": {
+      const { incident_id, debate_type, custom_prompt } = args;
+      
+      const supabaseUrl2 = Deno.env.get("SUPABASE_URL") ?? "";
+      const serviceKey2 = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+      
+      const debateResponse = await fetch(
+        `${supabaseUrl2}/functions/v1/multi-agent-debate`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${serviceKey2}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ 
+            incident_id, 
+            debate_type: debate_type || "adversarial",
+            custom_prompt 
+          }),
+        }
+      );
+      
+      if (!debateResponse.ok) {
+        const errText = await debateResponse.text();
+        return { error: `Multi-agent debate failed: ${errText}` };
+      }
+      
+      const debateResult = await debateResponse.json();
+      return {
+        success: true,
+        debate_id: debateResult.debate_id,
+        participating_agents: debateResult.participating_agents,
+        consensus_score: debateResult.consensus_score,
+        synthesis: debateResult.synthesis,
+        final_assessment: debateResult.final_assessment,
+        individual_analyses_count: debateResult.individual_analyses?.length || 0,
+        note: "Multi-agent debate complete. The synthesis represents the combined assessment from all participating agents."
+      };
+    }
+
+    case "generate_audio_briefing": {
+      const { content, title } = args;
+      const briefingUserId = userId || args._user_id;
+      
+      if (!briefingUserId) {
+        return { error: "User authentication required for audio generation" };
+      }
+      
+      const supabaseUrl3 = Deno.env.get("SUPABASE_URL") ?? "";
+      const serviceKey3 = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+      
+      // Create audio_briefings record first
+      const { data: briefingRecord, error: insertErr } = await supabaseClient
+        .from("audio_briefings")
+        .insert({
+          title,
+          content_text: content.substring(0, 5000),
+          source_type: "aegis_chat",
+          status: "processing",
+          user_id: briefingUserId,
+        })
+        .select("id")
+        .single();
+      
+      if (insertErr) {
+        return { error: `Failed to create briefing record: ${insertErr.message}` };
+      }
+      
+      // Call the audio generation edge function  
+      const audioResponse = await fetch(
+        `${supabaseUrl3}/functions/v1/generate-briefing-audio`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${serviceKey3}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ content, title }),
+        }
+      );
+      
+      if (!audioResponse.ok) {
+        const errText = await audioResponse.text();
+        // Update record to failed
+        await supabaseClient
+          .from("audio_briefings")
+          .update({ status: "failed" })
+          .eq("id", briefingRecord.id);
+        return { error: `Audio generation failed: ${errText}` };
+      }
+      
+      const audioResult = await audioResponse.json();
+      
+      // Update the briefing record with results
+      await supabaseClient
+        .from("audio_briefings")
+        .update({
+          audio_url: audioResult.audio_url,
+          duration_seconds: audioResult.duration_estimate,
+          chunks_processed: audioResult.chunks_processed,
+          status: "completed",
+        })
+        .eq("id", briefingRecord.id);
+      
+      return {
+        success: true,
+        briefing_id: briefingRecord.id,
+        audio_url: audioResult.audio_url,
+        duration_estimate_seconds: audioResult.duration_estimate,
+        chunks_processed: audioResult.chunks_processed,
+        note: "Audio briefing generated with the Onyx voice (deep, authoritative). The briefing is available for playback."
+      };
+    }
+
+    case "create_briefing_session": {
+      const { title, description, incident_id, investigation_id, agent_ids, meeting_mode } = args;
+      const sessionUserId = userId || args._user_id;
+      
+      if (!sessionUserId) {
+        return { error: "User authentication required to create briefing sessions" };
+      }
+      
+      // First, find or create a default workspace for the user
+      const { data: workspaces } = await supabaseClient
+        .from("investigation_workspaces")
+        .select("id")
+        .limit(1);
+      
+      let workspaceId = workspaces?.[0]?.id;
+      
+      if (!workspaceId) {
+        const { data: newWs, error: wsErr } = await supabaseClient
+          .from("investigation_workspaces")
+          .insert({
+            name: "Default Workspace",
+            created_by_user_id: sessionUserId,
+          })
+          .select("id")
+          .single();
+        
+        if (wsErr) {
+          return { error: `Failed to create workspace: ${wsErr.message}` };
+        }
+        workspaceId = newWs.id;
+      }
+      
+      // Create the briefing session
+      const { data: session, error: sessionErr } = await supabaseClient
+        .from("briefing_sessions")
+        .insert({
+          title,
+          description: description || null,
+          incident_id: incident_id || null,
+          investigation_id: investigation_id || null,
+          meeting_mode: meeting_mode || "standard",
+          status: "scheduled",
+          created_by: sessionUserId,
+          workspace_id: workspaceId,
+        })
+        .select("*")
+        .single();
+      
+      if (sessionErr) {
+        return { error: `Failed to create briefing session: ${sessionErr.message}` };
+      }
+      
+      // Add the creator as a participant
+      await supabaseClient
+        .from("briefing_participants")
+        .insert({
+          briefing_id: session.id,
+          user_id: sessionUserId,
+          role: "facilitator",
+        });
+      
+      // Add agent participants if specified
+      if (agent_ids && agent_ids.length > 0) {
+        const agentParticipants = agent_ids.map((agentId: string) => ({
+          briefing_id: session.id,
+          agent_id: agentId,
+          role: "analyst",
+        }));
+        
+        await supabaseClient
+          .from("briefing_participants")
+          .insert(agentParticipants);
+      }
+      
+      return {
+        success: true,
+        session_id: session.id,
+        title: session.title,
+        status: session.status,
+        meeting_mode: session.meeting_mode,
+        workspace_id: workspaceId,
+        participants_added: 1 + (agent_ids?.length || 0),
+        note: `Briefing session "${title}" created. You can add agenda items, invite more participants, and start the session when ready.`
       };
     }
 
