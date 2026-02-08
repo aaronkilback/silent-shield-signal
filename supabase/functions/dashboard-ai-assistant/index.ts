@@ -3341,6 +3341,86 @@ IMPORTANT:
         required: ["report_type"]
       }
     }
+  },
+  {
+    type: "function",
+    function: {
+      name: "query_expert_knowledge",
+      description: `Query the World Knowledge Engine — a curated database of world-class security expertise from authoritative global sources including MITRE ATT&CK, CISA KEV, NIST frameworks, ISO 31030, ASIS International, and more.
+
+USE THIS WHEN:
+- User asks about best practices, frameworks, standards, or methodology
+- User needs guidance on executive protection, travel security, crisis management
+- User asks "how should we..." or "what's the standard for..."
+- You need to reference authoritative security doctrine during analysis
+- User asks what the platform knows, what expertise is available, or about capabilities
+
+This tool fuses LOCAL expert knowledge (49+ entries across 8 domains), GLOBAL cross-tenant insights, and optionally LIVE web research via Perplexity to produce authoritative, actionable briefings.
+
+DOMAINS: cyber_security, physical_security, executive_protection, crisis_management, threat_intelligence, travel_security, compliance_governance, geopolitical_analysis`,
+      parameters: {
+        type: "object",
+        properties: {
+          question: {
+            type: "string",
+            description: "The expertise question (e.g., 'Executive protection advance work best practices')"
+          },
+          domain: {
+            type: "string",
+            description: "Optional domain filter to narrow results",
+            enum: ["cyber_security", "physical_security", "executive_protection", "crisis_management", "threat_intelligence", "travel_security", "compliance_governance", "geopolitical_analysis"]
+          },
+          include_live_search: {
+            type: "boolean",
+            description: "Include live web research via Perplexity for the most current information (default: true)"
+          },
+          context: {
+            type: "string",
+            description: "Additional context to focus the query (e.g., client industry, region)"
+          },
+          max_results: {
+            type: "number",
+            description: "Maximum local knowledge entries to return (default: 10)"
+          }
+        },
+        required: ["question"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_tech_radar",
+      description: `Get Technology Radar recommendations — proactively curated emerging security technologies with relevance scores and adoption playbooks.
+
+USE THIS WHEN:
+- User asks "what new tech should we adopt?" or "what's emerging?"
+- User asks about modernization, innovation, or technology strategy
+- User wants to know about specific tech domains (AI/ML, endpoint, cloud, etc.)
+- User asks what the platform monitors or recommends
+
+Returns recommendations with: technology name, description, maturity level, relevance score (0-1), vendor landscape, business case, and adoption playbook.
+
+CATEGORIES: ai_ml_security, endpoint_security, cloud_security, physical_security, network_security, identity_access, data_security, application_security, ot_ics_security`,
+      parameters: {
+        type: "object",
+        properties: {
+          category: {
+            type: "string",
+            description: "Filter by technology category",
+            enum: ["ai_ml_security", "endpoint_security", "cloud_security", "physical_security", "network_security", "identity_access", "data_security", "application_security", "ot_ics_security"]
+          },
+          min_relevance: {
+            type: "number",
+            description: "Minimum relevance score 0-1 (default: 0.5)"
+          },
+          limit: {
+            type: "number",
+            description: "Number of recommendations to return (default: 10)"
+          }
+        }
+      }
+    }
   }
 ];
 
@@ -10991,6 +11071,72 @@ The signal is now in the database with status 'triaged' and rules have been appl
         console.error("Report generation fetch error:", fetchError);
         return { error: `Failed to generate report: ${fetchError instanceof Error ? fetchError.message : "Unknown error"}` };
       }
+    }
+
+    case "query_expert_knowledge": {
+      const { question, domain, include_live_search, context, max_results } = args;
+      
+      try {
+        const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+        const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+        
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/query-expert-knowledge`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+          body: JSON.stringify({
+            question,
+            domain,
+            include_live_search: include_live_search !== false,
+            context,
+            max_results: max_results || 10,
+          }),
+        });
+        
+        if (!response.ok) {
+          const errText = await response.text();
+          return { error: `Expert knowledge query failed: ${errText}` };
+        }
+        
+        const result = await response.json();
+        return result;
+      } catch (err) {
+        console.error("query_expert_knowledge error:", err);
+        return { error: `Expert knowledge query failed: ${err instanceof Error ? err.message : "Unknown error"}` };
+      }
+    }
+
+    case "get_tech_radar": {
+      const { category, min_relevance, limit: techLimit } = args;
+      const effectiveLimit = techLimit || 10;
+      const effectiveMinRelevance = min_relevance || 0.5;
+      
+      let query = supabaseClient
+        .from("tech_radar_recommendations")
+        .select("*")
+        .gte("relevance_score", effectiveMinRelevance)
+        .eq("is_dismissed", false)
+        .order("relevance_score", { ascending: false })
+        .limit(effectiveLimit);
+      
+      if (category) {
+        query = query.eq("category", category);
+      }
+      
+      const { data, error } = await query;
+      
+      if (error) {
+        return { error: `Tech radar query failed: ${error.message}` };
+      }
+      
+      return {
+        recommendations: data || [],
+        count: data?.length || 0,
+        filters_applied: { category, min_relevance: effectiveMinRelevance },
+        note: "Technology Radar scans run weekly. Ask me to explain any recommendation or generate an adoption playbook."
+      };
     }
 
     default:
