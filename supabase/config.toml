@@ -498,3 +498,6 @@ verify_jwt = false
 
 [functions.query-expert-knowledge]
 verify_jwt = false
+
+[functions.tech-radar-scanner]
+verify_jwt = false

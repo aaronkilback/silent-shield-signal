@@ -7693,6 +7693,93 @@ export type Database = {
           },
         ]
       }
+      tech_radar_recommendations: {
+        Row: {
+          business_case: string | null
+          category: string
+          competing_with: string[] | null
+          created_at: string
+          dependencies: string[] | null
+          estimated_timeline: string | null
+          id: string
+          implementation_effort: string | null
+          maturity_level: string
+          relevance_score: number | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          risks: string[] | null
+          source_citations: string[] | null
+          status: string
+          summary: string
+          technology_name: string
+          tenant_id: string | null
+          updated_at: string
+          urgency: string
+          vendor_landscape: string | null
+        }
+        Insert: {
+          business_case?: string | null
+          category: string
+          competing_with?: string[] | null
+          created_at?: string
+          dependencies?: string[] | null
+          estimated_timeline?: string | null
+          id?: string
+          implementation_effort?: string | null
+          maturity_level?: string
+          relevance_score?: number | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          risks?: string[] | null
+          source_citations?: string[] | null
+          status?: string
+          summary: string
+          technology_name: string
+          tenant_id?: string | null
+          updated_at?: string
+          urgency?: string
+          vendor_landscape?: string | null
+        }
+        Update: {
+          business_case?: string | null
+          category?: string
+          competing_with?: string[] | null
+          created_at?: string
+          dependencies?: string[] | null
+          estimated_timeline?: string | null
+          id?: string
+          implementation_effort?: string | null
+          maturity_level?: string
+          relevance_score?: number | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          risks?: string[] | null
+          source_citations?: string[] | null
+          status?: string
+          summary?: string
+          technology_name?: string
+          tenant_id?: string | null
+          updated_at?: string
+          urgency?: string
+          vendor_landscape?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tech_radar_recommendations_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tech_radar_recommendations_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tenant_activity: {
         Row: {
           activity_type: string
