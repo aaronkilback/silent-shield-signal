@@ -20,17 +20,35 @@ Deno.serve(async (req) => {
       return errorResponse("Unauthorized", 401);
     }
 
-    const userClient = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const { data: { user }, error: authError } = await userClient.auth.getUser();
-    if (authError || !user) {
-      return errorResponse("Unauthorized", 401);
+    const token = authHeader.replace("Bearer ", "");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    
+    let userId: string;
+    
+    // Allow service-role calls (server-to-server from dashboard-ai-assistant)
+    if (token === serviceRoleKey) {
+      // Parse user_id from request body instead
+      const bodyText = await req.text();
+      const body: GenerateAudioRequest & { user_id?: string } = JSON.parse(bodyText);
+      userId = body.user_id || "system";
+      // Re-assign body vars since we consumed the stream
+      var content = body.content;
+      var title = body.title;
+    } else {
+      const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const { data: { user }, error: authError } = await userClient.auth.getUser();
+      if (authError || !user) {
+        return errorResponse("Unauthorized", 401);
+      }
+      userId = user.id;
+      const body: GenerateAudioRequest = await req.json();
+      content = body.content;
+      title = body.title;
     }
 
-    const body: GenerateAudioRequest = await req.json();
-    const { content, title } = body;
+    // content and title already extracted above
 
     if (!content) {
       return errorResponse("Content is required", 400);
@@ -107,7 +125,7 @@ Deno.serve(async (req) => {
     // Upload to storage
     const serviceClient = createServiceClient();
     
-    const fileName = `briefings/${user.id}/${Date.now()}-${title.replace(/[^a-zA-Z0-9]/g, "_").substring(0, 50)}.mp3`;
+    const fileName = `briefings/${userId}/${Date.now()}-${title.replace(/[^a-zA-Z0-9]/g, "_").substring(0, 50)}.mp3`;
     
     const { data: uploadData, error: uploadError } = await serviceClient.storage
       .from("tenant-files")
