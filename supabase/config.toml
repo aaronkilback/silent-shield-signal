@@ -483,3 +483,12 @@ verify_jwt = false
 
 [functions.vision-analysis]
 verify_jwt = false
+
+[functions.autonomous-operations-loop]
+verify_jwt = false
+
+[functions.generate-playbook]
+verify_jwt = false
+
+[functions.digital-twin-simulator]
+verify_jwt = false

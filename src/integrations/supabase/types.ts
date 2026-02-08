@@ -1005,6 +1005,72 @@ export type Database = {
           },
         ]
       }
+      auto_escalation_rules: {
+        Row: {
+          actions: Json
+          conditions: Json
+          cooldown_minutes: number
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          is_active: boolean
+          last_triggered_at: string | null
+          name: string
+          tenant_id: string | null
+          trigger_count: number
+          trigger_type: string
+          updated_at: string
+        }
+        Insert: {
+          actions?: Json
+          conditions?: Json
+          cooldown_minutes?: number
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          last_triggered_at?: string | null
+          name: string
+          tenant_id?: string | null
+          trigger_count?: number
+          trigger_type?: string
+          updated_at?: string
+        }
+        Update: {
+          actions?: Json
+          conditions?: Json
+          cooldown_minutes?: number
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          last_triggered_at?: string | null
+          name?: string
+          tenant_id?: string | null
+          trigger_count?: number
+          trigger_type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "auto_escalation_rules_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "auto_escalation_rules_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       automation_metrics: {
         Row: {
           accuracy_rate: number | null
@@ -1044,6 +1110,42 @@ export type Database = {
           metric_date?: string
           osint_scans_completed?: number | null
           signals_processed?: number | null
+        }
+        Relationships: []
+      }
+      autonomous_actions_log: {
+        Row: {
+          action_details: Json
+          action_type: string
+          created_at: string
+          error_message: string | null
+          id: string
+          result: Json | null
+          status: string
+          trigger_id: string | null
+          trigger_source: string
+        }
+        Insert: {
+          action_details?: Json
+          action_type: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          result?: Json | null
+          status?: string
+          trigger_id?: string | null
+          trigger_source: string
+        }
+        Update: {
+          action_details?: Json
+          action_type?: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          result?: Json | null
+          status?: string
+          trigger_id?: string | null
+          trigger_source?: string
         }
         Relationships: []
       }
@@ -4521,6 +4623,74 @@ export type Database = {
           },
         ]
       }
+      investigation_playbooks: {
+        Row: {
+          countermeasures: Json | null
+          created_at: string
+          description: string | null
+          effectiveness_score: number | null
+          id: string
+          is_active: boolean
+          model_version: string | null
+          name: string
+          severity_level: string
+          source_investigation_ids: string[] | null
+          source_type: string
+          steps: Json
+          success_metrics: Json | null
+          tenant_id: string | null
+          threat_category: string
+          times_used: number
+          updated_at: string
+        }
+        Insert: {
+          countermeasures?: Json | null
+          created_at?: string
+          description?: string | null
+          effectiveness_score?: number | null
+          id?: string
+          is_active?: boolean
+          model_version?: string | null
+          name: string
+          severity_level?: string
+          source_investigation_ids?: string[] | null
+          source_type?: string
+          steps?: Json
+          success_metrics?: Json | null
+          tenant_id?: string | null
+          threat_category: string
+          times_used?: number
+          updated_at?: string
+        }
+        Update: {
+          countermeasures?: Json | null
+          created_at?: string
+          description?: string | null
+          effectiveness_score?: number | null
+          id?: string
+          is_active?: boolean
+          model_version?: string | null
+          name?: string
+          severity_level?: string
+          source_investigation_ids?: string[] | null
+          source_type?: string
+          steps?: Json
+          success_metrics?: Json | null
+          tenant_id?: string | null
+          threat_category?: string
+          times_used?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investigation_playbooks_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       investigation_workspaces: {
         Row: {
           created_at: string
@@ -6098,6 +6268,82 @@ export type Database = {
           },
         ]
       }
+      scheduled_briefings: {
+        Row: {
+          briefing_type: string
+          client_id: string | null
+          config: Json | null
+          created_at: string
+          created_by: string | null
+          id: string
+          is_active: boolean
+          last_run_at: string | null
+          next_run_at: string | null
+          recipient_emails: string[] | null
+          recipient_user_ids: string[]
+          schedule_cron: string
+          tenant_id: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          briefing_type?: string
+          client_id?: string | null
+          config?: Json | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          last_run_at?: string | null
+          next_run_at?: string | null
+          recipient_emails?: string[] | null
+          recipient_user_ids?: string[]
+          schedule_cron?: string
+          tenant_id?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          briefing_type?: string
+          client_id?: string | null
+          config?: Json | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          last_run_at?: string | null
+          next_run_at?: string | null
+          recipient_emails?: string[] | null
+          recipient_user_ids?: string[]
+          schedule_cron?: string
+          tenant_id?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scheduled_briefings_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scheduled_briefings_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scheduled_briefings_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sentiment_tracking: {
         Row: {
           alert_reason: string | null
@@ -6905,6 +7151,85 @@ export type Database = {
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      simulation_scenarios: {
+        Row: {
+          attack_chains: Json | null
+          completed_at: string | null
+          confidence_score: number | null
+          created_at: string
+          id: string
+          model_used: string | null
+          name: string
+          parameters: Json
+          recommendations: Json | null
+          results: Json | null
+          risk_score: number | null
+          run_by: string | null
+          scenario_type: string
+          status: string
+          target_client_id: string | null
+          target_entity_id: string | null
+        }
+        Insert: {
+          attack_chains?: Json | null
+          completed_at?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          id?: string
+          model_used?: string | null
+          name: string
+          parameters?: Json
+          recommendations?: Json | null
+          results?: Json | null
+          risk_score?: number | null
+          run_by?: string | null
+          scenario_type?: string
+          status?: string
+          target_client_id?: string | null
+          target_entity_id?: string | null
+        }
+        Update: {
+          attack_chains?: Json | null
+          completed_at?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          id?: string
+          model_used?: string | null
+          name?: string
+          parameters?: Json
+          recommendations?: Json | null
+          results?: Json | null
+          risk_score?: number | null
+          run_by?: string | null
+          scenario_type?: string
+          status?: string
+          target_client_id?: string | null
+          target_entity_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "simulation_scenarios_run_by_fkey"
+            columns: ["run_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "simulation_scenarios_target_client_id_fkey"
+            columns: ["target_client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "simulation_scenarios_target_entity_id_fkey"
+            columns: ["target_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
             referencedColumns: ["id"]
           },
         ]
