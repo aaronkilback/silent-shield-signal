@@ -3543,6 +3543,65 @@ export type Database = {
           },
         ]
       }
+      expert_knowledge: {
+        Row: {
+          applicability_tags: string[] | null
+          citation: string | null
+          confidence_score: number | null
+          content: string
+          created_at: string
+          domain: string
+          id: string
+          is_active: boolean | null
+          knowledge_type: string
+          last_validated_at: string | null
+          source_id: string | null
+          subdomain: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          applicability_tags?: string[] | null
+          citation?: string | null
+          confidence_score?: number | null
+          content: string
+          created_at?: string
+          domain: string
+          id?: string
+          is_active?: boolean | null
+          knowledge_type?: string
+          last_validated_at?: string | null
+          source_id?: string | null
+          subdomain?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          applicability_tags?: string[] | null
+          citation?: string | null
+          confidence_score?: number | null
+          content?: string
+          created_at?: string
+          domain?: string
+          id?: string
+          is_active?: boolean | null
+          knowledge_type?: string
+          last_validated_at?: string | null
+          source_id?: string | null
+          subdomain?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "expert_knowledge_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "world_knowledge_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       feedback_events: {
         Row: {
           created_at: string | null
@@ -9137,6 +9196,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      world_knowledge_sources: {
+        Row: {
+          created_at: string
+          domain: string
+          id: string
+          ingestion_count: number | null
+          is_active: boolean | null
+          last_ingested_at: string | null
+          metadata: Json | null
+          refresh_interval_hours: number | null
+          source_name: string
+          source_type: string
+          source_url: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          domain: string
+          id?: string
+          ingestion_count?: number | null
+          is_active?: boolean | null
+          last_ingested_at?: string | null
+          metadata?: Json | null
+          refresh_interval_hours?: number | null
+          source_name: string
+          source_type?: string
+          source_url?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          domain?: string
+          id?: string
+          ingestion_count?: number | null
+          is_active?: boolean | null
+          last_ingested_at?: string | null
+          metadata?: Json | null
+          refresh_interval_hours?: number | null
+          source_name?: string
+          source_type?: string
+          source_url?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
     }
     Views: {

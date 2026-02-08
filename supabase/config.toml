@@ -492,3 +492,9 @@ verify_jwt = false
 
 [functions.digital-twin-simulator]
 verify_jwt = false
+
+[functions.ingest-world-knowledge]
+verify_jwt = false
+
+[functions.query-expert-knowledge]
+verify_jwt = false
