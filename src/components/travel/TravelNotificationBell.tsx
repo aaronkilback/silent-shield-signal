@@ -1,19 +1,22 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Plane, AlertTriangle, MapPin } from "lucide-react";
+import { Plane, AlertTriangle, MapPin, CheckCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatDistanceToNow } from "date-fns";
 import { useNavigate } from "react-router-dom";
+import { useCallback } from "react";
 
 /**
  * Compact travel alert bell for the global header.
  * Shows unacknowledged travel alerts + recent risk level changes.
+ * Clicking an alert acknowledges it and removes it from the badge count.
  */
 export function TravelNotificationBell() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const { data: alerts = [] } = useQuery({
     queryKey: ["travel-alerts-global"],
@@ -52,6 +55,29 @@ export function TravelNotificationBell() {
     refetchInterval: 60000,
   });
 
+  const acknowledgeAlert = useCallback(async (alertId: string) => {
+    await supabase
+      .from("travel_alerts")
+      .update({ acknowledged: true })
+      .eq("id", alertId);
+    queryClient.invalidateQueries({ queryKey: ["travel-alerts-global"] });
+  }, [queryClient]);
+
+  const acknowledgeAllAlerts = useCallback(async () => {
+    if (alerts.length === 0) return;
+    const ids = alerts.map((a: any) => a.id);
+    await supabase
+      .from("travel_alerts")
+      .update({ acknowledged: true })
+      .in("id", ids);
+    queryClient.invalidateQueries({ queryKey: ["travel-alerts-global"] });
+  }, [alerts, queryClient]);
+
+  const handleAlertClick = useCallback(async (alertId: string) => {
+    await acknowledgeAlert(alertId);
+    navigate("/travel");
+  }, [acknowledgeAlert, navigate]);
+
   const totalCount = alerts.length + riskChanges.length;
 
   if (totalCount === 0) return null;
@@ -78,13 +104,26 @@ export function TravelNotificationBell() {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold">Travel Alerts</h3>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => navigate("/travel")}
-            >
-              View All
-            </Button>
+            <div className="flex items-center gap-1">
+              {alerts.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={acknowledgeAllAlerts}
+                  className="text-xs gap-1"
+                >
+                  <CheckCheck className="h-3.5 w-3.5" />
+                  Dismiss All
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate("/travel")}
+              >
+                View All
+              </Button>
+            </div>
           </div>
 
           <ScrollArea className="h-[350px]">
@@ -118,7 +157,7 @@ export function TravelNotificationBell() {
                       ? "border-destructive/30 bg-destructive/5"
                       : "border-border"
                   }`}
-                  onClick={() => navigate("/travel")}
+                  onClick={() => handleAlertClick(alert.id)}
                 >
                   <div className="flex items-start gap-2">
                     {getSeverityIcon(alert.alert_type)}
