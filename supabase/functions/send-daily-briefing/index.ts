@@ -1,0 +1,245 @@
+/**
+ * Send Daily Briefing Email
+ * 
+ * Generates an AI-powered daily threat summary and emails it via Resend.
+ * Designed to be triggered by pg_cron daily.
+ * 
+ * Recipients are configured in the `scheduled_briefings` table
+ * with briefing_type = 'daily_email'.
+ */
+
+import { Resend } from "npm:resend@2.0.0";
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { getCriticalDateContext } from "../_shared/anti-hallucination.ts";
+
+Deno.serve(async (req) => {
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
+
+  try {
+    const supabase = createServiceClient();
+    const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
+    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Fortress AI <notifications@updates.lovableproject.com>';
+
+    if (!RESEND_API_KEY) throw new Error('RESEND_API_KEY not configured');
+    if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY not configured');
+
+    const resend = new Resend(RESEND_API_KEY);
+    const dateContext = getCriticalDateContext();
+
+    console.log(`[DailyBriefing] Generating for ${dateContext.currentDateISO}`);
+
+    // Get recipients from scheduled_briefings where briefing_type is daily_email
+    const { data: briefingConfigs } = await supabase
+      .from('scheduled_briefings')
+      .select('*')
+      .eq('is_active', true)
+      .eq('briefing_type', 'daily_email');
+
+    if (!briefingConfigs || briefingConfigs.length === 0) {
+      console.log('[DailyBriefing] No active daily_email briefings configured');
+      return successResponse({ success: true, message: 'No active daily email briefings configured', sent: 0 });
+    }
+
+    // Gather 24-hour intelligence snapshot
+    const cutoff24h = new Date(Date.now() - 24 * 3600000).toISOString();
+
+    const [
+      { data: recentSignals },
+      { data: openIncidents },
+      { data: recentScans },
+      { data: recentActions },
+    ] = await Promise.all([
+      supabase.from('signals').select('id, category, severity, title, normalized_text, created_at')
+        .gte('created_at', cutoff24h).order('created_at', { ascending: false }).limit(50),
+      supabase.from('incidents').select('id, priority, status, opened_at')
+        .eq('status', 'open').limit(50),
+      supabase.from('autonomous_scan_results').select('risk_score, findings, created_at')
+        .order('created_at', { ascending: false }).limit(1),
+      supabase.from('autonomous_actions_log').select('action_type, action_details, created_at')
+        .gte('created_at', cutoff24h).limit(20),
+    ]);
+
+    const metrics = {
+      signals_24h: (recentSignals || []).length,
+      critical_signals: (recentSignals || []).filter(s => s.severity === 'critical').length,
+      high_signals: (recentSignals || []).filter(s => s.severity === 'high').length,
+      open_incidents: (openIncidents || []).length,
+      risk_score: recentScans?.[0]?.risk_score || 0,
+      autonomous_actions: (recentActions || []).length,
+    };
+
+    // Generate briefing content via AI
+    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash',
+        messages: [
+          {
+            role: 'system',
+            content: `You are Fortress AI, generating a concise daily security briefing email. Write in measured, professional prose suitable for a non-technical executive. No markdown formatting — use plain text with clear section headers. Keep it under 250 words. Current date: ${dateContext.currentDateFormatted}, ${dateContext.currentTime24h} ${dateContext.currentTimezone}.
+
+Structure:
+1. SITUATION OVERVIEW (2-3 sentences)
+2. KEY METRICS (bullet-style numbers)
+3. NOTABLE SIGNALS (top 3 if any, one line each)
+4. RECOMMENDED POSTURE (1-2 sentences)
+
+Tone: Calm, authoritative, zero jargon. If metrics are all low/zero, state "No elevated activity detected" confidently.`,
+          },
+          {
+            role: 'user',
+            content: `Generate today's daily briefing.\n\nMETRICS:\n${JSON.stringify(metrics, null, 2)}\n\nTOP SIGNALS (last 24h):\n${JSON.stringify((recentSignals || []).slice(0, 5).map(s => ({ severity: s.severity, category: s.category, title: s.title })), null, 2)}\n\nAUTONOMOUS ACTIONS:\n${JSON.stringify((recentActions || []).map(a => a.action_type), null, 2)}`,
+          },
+        ],
+        max_tokens: 800,
+        temperature: 0.2,
+      }),
+    });
+
+    if (!aiResponse.ok) {
+      throw new Error(`AI generation failed: ${aiResponse.status}`);
+    }
+
+    const aiData = await aiResponse.json();
+    const briefingText = aiData.choices?.[0]?.message?.content || 'Unable to generate briefing content.';
+
+    // Build HTML email
+    const emailHtml = buildBriefingEmail(briefingText, metrics, dateContext);
+
+    // Send to all configured recipients
+    let sentCount = 0;
+    const errors: string[] = [];
+
+    for (const config of briefingConfigs) {
+      const recipients = config.recipient_emails || [];
+      
+      for (const email of recipients) {
+        try {
+          await resend.emails.send({
+            from: fromEmail,
+            to: [email],
+            subject: `🛡️ Fortress Daily Briefing — ${dateContext.currentDateFormatted}`,
+            html: emailHtml,
+          });
+          sentCount++;
+          console.log(`[DailyBriefing] Sent to ${email}`);
+        } catch (err) {
+          console.error(`[DailyBriefing] Failed to send to ${email}:`, err);
+          errors.push(`${email}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        }
+      }
+
+      // Update last_run_at
+      await supabase.from('scheduled_briefings').update({
+        last_run_at: new Date().toISOString(),
+      }).eq('id', config.id);
+    }
+
+    // Log the action
+    await supabase.from('autonomous_actions_log').insert({
+      action_type: 'daily_email_briefing',
+      trigger_source: 'cron',
+      action_details: { sent_count: sentCount, errors, date: dateContext.currentDateISO },
+      status: errors.length === 0 ? 'completed' : 'partial',
+    });
+
+    console.log(`[DailyBriefing] Complete. Sent: ${sentCount}, Errors: ${errors.length}`);
+
+    return successResponse({
+      success: true,
+      sent: sentCount,
+      errors: errors.length > 0 ? errors : undefined,
+      date: dateContext.currentDateISO,
+    });
+  } catch (error) {
+    console.error('[DailyBriefing] Error:', error);
+    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
+  }
+});
+
+function buildBriefingEmail(
+  briefingText: string,
+  metrics: Record<string, number>,
+  dateContext: { currentDateFormatted: string; currentTime24h: string; currentTimezone: string }
+): string {
+  const riskColor = metrics.risk_score >= 70 ? '#dc2626' : metrics.risk_score >= 40 ? '#f59e0b' : '#059669';
+  const riskLabel = metrics.risk_score >= 70 ? 'ELEVATED' : metrics.risk_score >= 40 ? 'MODERATE' : 'NORMAL';
+
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0; padding:0; background:#0f172a; font-family: 'Segoe UI', Arial, sans-serif;">
+  <div style="max-width:600px; margin:0 auto; background:#1e293b; border-radius:12px; overflow:hidden; margin-top:20px; margin-bottom:20px;">
+    
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding:30px 30px 20px; border-bottom:1px solid #334155;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div style="width:40px; height:40px; background:linear-gradient(135deg, #3b82f6, #06b6d4); border-radius:8px; display:flex; align-items:center; justify-content:center;">
+          <span style="font-size:20px;">🛡️</span>
+        </div>
+        <div>
+          <h1 style="color:#f1f5f9; margin:0; font-size:20px; font-weight:600;">Fortress Daily Briefing</h1>
+          <p style="color:#94a3b8; margin:4px 0 0; font-size:13px;">${dateContext.currentDateFormatted} · ${dateContext.currentTime24h} ${dateContext.currentTimezone}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Risk Score Banner -->
+    <div style="padding:16px 30px; background:${riskColor}15; border-bottom:1px solid #334155;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div style="width:10px; height:10px; background:${riskColor}; border-radius:50%;"></div>
+        <span style="color:${riskColor}; font-weight:600; font-size:14px;">THREAT POSTURE: ${riskLabel}</span>
+        <span style="color:#64748b; font-size:13px; margin-left:auto;">Score: ${metrics.risk_score}/100</span>
+      </div>
+    </div>
+
+    <!-- Metrics Row -->
+    <div style="padding:20px 30px; display:flex; gap:12px; border-bottom:1px solid #334155;">
+      <div style="flex:1; background:#0f172a; border-radius:8px; padding:12px; text-align:center;">
+        <div style="color:#94a3b8; font-size:11px; text-transform:uppercase; letter-spacing:0.5px;">Signals</div>
+        <div style="color:#f1f5f9; font-size:24px; font-weight:700; margin-top:4px;">${metrics.signals_24h}</div>
+      </div>
+      <div style="flex:1; background:#0f172a; border-radius:8px; padding:12px; text-align:center;">
+        <div style="color:#94a3b8; font-size:11px; text-transform:uppercase; letter-spacing:0.5px;">Incidents</div>
+        <div style="color:#f1f5f9; font-size:24px; font-weight:700; margin-top:4px;">${metrics.open_incidents}</div>
+      </div>
+      <div style="flex:1; background:#0f172a; border-radius:8px; padding:12px; text-align:center;">
+        <div style="color:#dc2626; font-size:11px; text-transform:uppercase; letter-spacing:0.5px;">Critical</div>
+        <div style="color:#dc2626; font-size:24px; font-weight:700; margin-top:4px;">${metrics.critical_signals}</div>
+      </div>
+    </div>
+
+    <!-- Briefing Content -->
+    <div style="padding:24px 30px; color:#cbd5e1; font-size:14px; line-height:1.7;">
+      ${briefingText.split('\n').map(line => {
+        if (!line.trim()) return '<br>';
+        if (line.trim().match(/^[A-Z\s]{4,}:?$/)) {
+          return `<h3 style="color:#f1f5f9; font-size:13px; text-transform:uppercase; letter-spacing:1px; margin:20px 0 8px; border-bottom:1px solid #334155; padding-bottom:6px;">${line.trim()}</h3>`;
+        }
+        if (line.trim().startsWith('- ') || line.trim().startsWith('• ')) {
+          return `<p style="margin:4px 0; padding-left:16px; color:#94a3b8;">› ${line.trim().slice(2)}</p>`;
+        }
+        return `<p style="margin:6px 0;">${line}</p>`;
+      }).join('\n')}
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:20px 30px; background:#0f172a; border-top:1px solid #334155; text-align:center;">
+      <p style="color:#475569; font-size:11px; margin:0;">
+        Automated intelligence briefing from Fortress AI · Delivered ${dateContext.currentDateFormatted}
+      </p>
+      <p style="color:#334155; font-size:10px; margin:8px 0 0;">
+        To adjust delivery preferences, update your scheduled briefings in Fortress.
+      </p>
+    </div>
+  </div>
+</body>
+</html>`;
+}
