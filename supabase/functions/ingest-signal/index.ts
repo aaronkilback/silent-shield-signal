@@ -606,6 +606,26 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
     
     console.log(`Calculated content hash: ${contentHash.substring(0, 16)}...`);
     
+    // Check if this content was previously rejected/deleted by user
+    const { data: rejectedHash } = await supabase
+      .from('rejected_content_hashes')
+      .select('id')
+      .eq('content_hash', contentHash)
+      .limit(1)
+      .maybeSingle();
+
+    if (rejectedHash) {
+      console.log(`[Rejected] Signal blocked - content was previously rejected/deleted`);
+      return new Response(
+        JSON.stringify({
+          status: 'rejected',
+          reason: 'previously_rejected',
+          message: 'This content was previously deleted or marked irrelevant by an analyst'
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
     // Check for duplicates BEFORE insertion
     // - Use normalized_text for near-duplicate detection (more stable than raw text)
     // - Scope to the matched client

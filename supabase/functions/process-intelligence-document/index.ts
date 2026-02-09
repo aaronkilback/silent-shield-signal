@@ -597,7 +597,20 @@ Extract all entities, signals, and their relationships.`
 
         if (existingSignal) {
           console.log(`Skipping duplicate signal for client ${clientMatch.clientName}: ${signal.title}`);
-          continue; // Skip this duplicate
+          continue;
+        }
+
+        // Check if this content was previously rejected/deleted
+        const { data: rejectedHash } = await supabase
+          .from('rejected_content_hashes')
+          .select('id')
+          .eq('content_hash', contentHash)
+          .limit(1)
+          .maybeSingle();
+
+        if (rejectedHash) {
+          console.log(`Skipping previously rejected signal for client ${clientMatch.clientName}: ${signal.title}`);
+          continue;
         }
         
         // Additional near-duplicate check: look for similar normalized_text in recent signals

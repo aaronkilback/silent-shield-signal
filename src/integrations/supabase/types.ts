@@ -6003,6 +6003,41 @@ export type Database = {
         }
         Relationships: []
       }
+      rejected_content_hashes: {
+        Row: {
+          client_id: string | null
+          content_hash: string
+          created_at: string
+          id: string
+          original_signal_title: string | null
+          reason: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          content_hash: string
+          created_at?: string
+          id?: string
+          original_signal_title?: string | null
+          reason?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          content_hash?: string
+          created_at?: string
+          id?: string
+          original_signal_title?: string | null
+          reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rejected_content_hashes_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       reliability_settings: {
         Row: {
           auto_create_verification_tasks: boolean | null

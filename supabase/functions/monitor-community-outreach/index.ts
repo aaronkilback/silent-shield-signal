@@ -513,6 +513,19 @@ async function createOutreachSignal(supabase: any, data: {
       return false;
     }
 
+    // Check if this content was previously rejected/deleted
+    const { data: rejectedHash } = await supabase
+      .from('rejected_content_hashes')
+      .select('id')
+      .eq('content_hash', contentHash)
+      .limit(1)
+      .maybeSingle();
+
+    if (rejectedHash) {
+      console.log(`Skipping previously rejected signal: ${data.title.substring(0, 50)}`);
+      return false;
+    }
+
     const normalizedText = `[Community Outreach] ${data.title}\n\n${data.description}`;
 
     const { error } = await supabase

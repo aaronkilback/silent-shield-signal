@@ -171,6 +171,19 @@ Deno.serve(async (req) => {
                 continue;
               }
 
+              // Check if this content was previously rejected/deleted
+              const { data: rejectedHash } = await supabase
+                .from('rejected_content_hashes')
+                .select('id')
+                .eq('content_hash', contentHash)
+                .limit(1)
+                .maybeSingle();
+
+              if (rejectedHash) {
+                console.log(`Skipping previously rejected news signal: ${title.substring(0, 50)}...`);
+                continue;
+              }
+
               let category = 'news';
               let severity = 'low';
 
