@@ -598,7 +598,7 @@ export const SignalHistory = () => {
               <div className="flex items-center gap-2 flex-shrink-0">
                 <SignalScoreExplainer signalId={signal.id} score={signal.relevance_score} />
                 <span className="text-xs text-muted-foreground font-medium">
-                  {((signal.confidence || 0) * 100).toFixed(0)}%
+                  {Math.round(signal.confidence || 0)}%
                 </span>
                 <SignalFeedback
                   signalId={signal.id}
