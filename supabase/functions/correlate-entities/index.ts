@@ -19,6 +19,58 @@ interface EntityMatch {
   matchedOn: string[];
 }
 
+// Disambiguation: context-sensitive false-positive filters per entity type
+// Maps entity type → sets of nearby words that indicate a FALSE match
+const DISAMBIGUATION_NEGATIVES: Record<string, string[]> = {
+  organization: [
+    // "Shell" the company vs "shell casing", "shell out", "bombshell", "nutshell"
+    'casing', 'casings', 'cartridge', 'ammunition', 'caliber', 'firearm', 'handgun',
+    'shotgun', 'bullet', 'projectile', 'bombshell', 'nutshell', 'eggshell', 'seashell',
+    'shell out', 'shell shock', 'tortoise shell',
+  ],
+  person: [
+    // Common homonym traps for person names
+    'password', 'username', 'login', 'variable', 'function', 'class',
+  ],
+};
+
+/**
+ * Checks whether a text mention of an entity name is contextually valid.
+ * Returns false if nearby words indicate a different meaning (e.g., "shell casing").
+ */
+function isContextualMatch(fullText: string, entityName: string, entityType: string): boolean {
+  const nameLower = entityName.toLowerCase();
+  const textLower = fullText.toLowerCase();
+  
+  // Find the position of the entity name in text
+  const idx = textLower.indexOf(nameLower);
+  if (idx === -1) return false;
+  
+  // Extract a ±120-char window around the match for context analysis
+  const windowStart = Math.max(0, idx - 120);
+  const windowEnd = Math.min(textLower.length, idx + nameLower.length + 120);
+  const window = textLower.substring(windowStart, windowEnd);
+  
+  // Check type-specific negatives
+  const negatives = DISAMBIGUATION_NEGATIVES[entityType] || [];
+  for (const neg of negatives) {
+    if (window.includes(neg.toLowerCase())) {
+      return false;
+    }
+  }
+  
+  // For short entity names (≤6 chars), require stronger context:
+  // the name must appear as a standalone word (not part of compound like "eggshell")
+  if (nameLower.length <= 6) {
+    const wordBoundary = new RegExp(`(?:^|[\\s,."'(])${nameLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:[\\s,."')]|$)`, 'i');
+    if (!wordBoundary.test(window)) {
+      return false;
+    }
+  }
+  
+  return true;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -119,7 +171,7 @@ serve(async (req) => {
 
     console.log(`Extracted ${extractedNames.size} potential entity names after filtering`);
 
-    // Match against existing entities
+    // Match against existing entities with disambiguation
     if (entities && entities.length > 0) {
       for (const entity of entities) {
         const names = [entity.name, ...(entity.aliases || [])];
@@ -128,16 +180,27 @@ serve(async (req) => {
         for (const name of names) {
           const nameLower = name.toLowerCase();
           
-          // Exact match in text
-          if (textLower.includes(nameLower)) {
-            matchedTerms.push(name);
+          // Skip very short entity names (3 chars or less) - too ambiguous
+          if (nameLower.length <= 3) continue;
+          
+          // Check for word-boundary match (not substring of larger word)
+          const wordBoundaryRegex = new RegExp(`\\b${nameLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+          if (wordBoundaryRegex.test(text)) {
+            // Disambiguation: check if the match is contextually relevant
+            if (isContextualMatch(text, name, entity.type)) {
+              matchedTerms.push(name);
+            } else {
+              console.log(`Disambiguation rejected: "${name}" in context (entity type: ${entity.type})`);
+            }
           }
 
           // Check if any extracted name matches
           for (const extracted of extractedNames) {
             if (extracted.toLowerCase().includes(nameLower) || nameLower.includes(extracted.toLowerCase())) {
-              matchedTerms.push(extracted);
-              extractedNames.delete(extracted);
+              if (isContextualMatch(text, extracted, entity.type)) {
+                matchedTerms.push(extracted);
+                extractedNames.delete(extracted);
+              }
             }
           }
         }
