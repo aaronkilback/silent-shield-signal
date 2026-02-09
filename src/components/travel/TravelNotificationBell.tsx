@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatDistanceToNow } from "date-fns";
 import { useNavigate } from "react-router-dom";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 
 /**
  * Compact travel alert bell for the global header.
@@ -17,6 +17,7 @@ import { useCallback } from "react";
 export function TravelNotificationBell() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [dismissedRiskChangeIds, setDismissedRiskChangeIds] = useState<Set<string>>(new Set());
 
   const { data: alerts = [] } = useQuery({
     queryKey: ["travel-alerts-global"],
@@ -64,21 +65,35 @@ export function TravelNotificationBell() {
   }, [queryClient]);
 
   const acknowledgeAllAlerts = useCallback(async () => {
-    if (alerts.length === 0) return;
-    const ids = alerts.map((a: any) => a.id);
-    await supabase
-      .from("travel_alerts")
-      .update({ acknowledged: true })
-      .in("id", ids);
-    queryClient.invalidateQueries({ queryKey: ["travel-alerts-global"] });
-  }, [alerts, queryClient]);
+    if (alerts.length === 0 && visibleRiskChanges.length === 0) return;
+    // Acknowledge actual alerts
+    if (alerts.length > 0) {
+      const ids = alerts.map((a: any) => a.id);
+      await supabase
+        .from("travel_alerts")
+        .update({ acknowledged: true })
+        .in("id", ids);
+      queryClient.invalidateQueries({ queryKey: ["travel-alerts-global"] });
+    }
+    // Dismiss risk changes locally
+    setDismissedRiskChangeIds(prev => {
+      const next = new Set(prev);
+      riskChanges.forEach((c: any) => next.add(c.id));
+      return next;
+    });
+  }, [alerts, riskChanges, queryClient]);
+
+  const dismissRiskChange = useCallback((changeId: string) => {
+    setDismissedRiskChangeIds(prev => new Set(prev).add(changeId));
+  }, []);
 
   const handleAlertClick = useCallback(async (alertId: string) => {
     await acknowledgeAlert(alertId);
     navigate("/travel");
   }, [acknowledgeAlert, navigate]);
 
-  const totalCount = alerts.length + riskChanges.length;
+  const visibleRiskChanges = riskChanges.filter((c: any) => !dismissedRiskChangeIds.has(c.id));
+  const totalCount = alerts.length + visibleRiskChanges.length;
 
   if (totalCount === 0) return null;
 
@@ -129,11 +144,14 @@ export function TravelNotificationBell() {
           <ScrollArea className="h-[350px]">
             <div className="space-y-2">
               {/* Risk level changes */}
-              {riskChanges.map((change: any) => (
+              {visibleRiskChanges.map((change: any) => (
                 <div
                   key={`change-${change.id}`}
                   className="p-3 rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50/50 dark:bg-amber-950/20 cursor-pointer"
-                  onClick={() => navigate("/travel")}
+                  onClick={() => {
+                    dismissRiskChange(change.id);
+                    navigate("/travel");
+                  }}
                 >
                   <div className="flex items-center gap-2 text-sm">
                     <AlertTriangle className="h-4 w-4 text-amber-500" />
