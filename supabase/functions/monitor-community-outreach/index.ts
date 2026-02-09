@@ -68,6 +68,13 @@ const EXCLUDE_PATTERNS = [
   /\b(arrest|murder|assault|robbery|theft|arson)\b/i,
   /\b(accident|collision|crash|fatality)\b/i,
   /\b(wildfire|evacuation order)\b/i,
+  // Obituaries & funeral notices
+  /\b(obituar|funeral|memorial service|passed away|in loving memory|condolences|rest in peace)\b/i,
+  // Job postings & recruitment
+  /\b(salary|hourly wage|apply now|job posting|resume|cover letter|hiring|job openings?|career opportunities?)\b/i,
+  /\$\d+\s*[-–]\s*\$\d+/i, // Salary ranges like $21 - $22
+  // Generic institutional pages (not events)
+  /\b(staff resources|work tools|content editor|pay stubs?|employee portal)\b/i,
 ];
 
 // Domains that produce noise / irrelevant results
@@ -76,6 +83,14 @@ const EXCLUDED_DOMAINS = [
   'linkedin.com/jobs', 'tumblr.com', 'volcanodiscovery.com',
   'facebook.com/groups', 'pinterest.com', 'tiktok.com',
   'amazon.com', 'ebay.com', 'reddit.com',
+  // Job boards & recruitment sites
+  'experiencehub.ca', 'jobs.ca', 'workbc.ca', 'jobbank.gc.ca',
+  'glassdoor.com', 'ziprecruiter.com', 'careerbuilder.com',
+  // Obituary sites
+  'shortenandryan.com', 'legacy.com', 'arbormemorial.ca',
+  'dignitymemorial.com', 'remembering.ca',
+  // Generic health/institutional portals
+  'phsa.ca', 'interiorhealth.ca',
 ];
 
 Deno.serve(async (req) => {
@@ -204,8 +219,8 @@ Deno.serve(async (req) => {
             const content = `${item.title} ${item.snippet}`.toLowerCase();
             const relevance = scoreOutreachRelevance(content);
 
-            // Google results already match queries, so lower threshold
-            if (relevance.score >= 20) {
+            // Google results already match queries, but raise threshold to reduce noise
+            if (relevance.score >= 35) {
               const created = await createOutreachSignal(supabase, {
                 clientId,
                 source: `Google News: ${query.substring(0, 40)}`,
@@ -261,19 +276,30 @@ Deno.serve(async (req) => {
         const textContent = extractTextFromHTML(html);
         itemsScanned++;
 
-        // Look for event/announcement patterns
+        // Only extract genuine event/announcement content — skip nav menus & page headings
+        // Require a date or time indicator near the match to confirm it's a real announcement
         const eventPatterns = [
-          /(?:upcoming|event|announcement|meeting|gathering|ceremony|workshop|conference|open house)[:\s]+([^.!?\n]{20,200})/gi,
-          /(?:community|public|engagement|consultation)[:\s]+([^.!?\n]{20,200})/gi,
+          /(?:(?:january|february|march|april|may|june|july|august|september|october|november|december|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+[\s\S]{0,100}?(?:event|meeting|gathering|ceremony|workshop|open house|consultation|announcement)[\s:]+([^.!?\n]{30,300}))/gi,
+          /(?:(?:event|meeting|gathering|ceremony|workshop|open house|consultation|announcement)[\s:]+[\s\S]{0,50}?(?:january|february|march|april|may|june|july|august|september|october|november|december|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})[\s\S]{0,200})/gi,
+          /(?:news|press release|update|bulletin)[\s:]+([^.!?\n]{30,300})/gi,
         ];
 
+        let bandSignalsCreated = 0;
+        const MAX_BAND_SIGNALS = 3; // Cap per band to prevent scraping floods
+
         for (const pattern of eventPatterns) {
+          if (bandSignalsCreated >= MAX_BAND_SIGNALS) break;
           let match;
-          while ((match = pattern.exec(textContent)) !== null) {
+          while ((match = pattern.exec(textContent)) !== null && bandSignalsCreated < MAX_BAND_SIGNALS) {
             const snippet = match[0].trim();
+            
+            // Skip very short or navigation-like text
+            if (snippet.length < 40) continue;
+            if (/^(public works|community development|band economic|agricultural planning|cultural tourism|urban)/i.test(snippet)) continue;
+            
             const relevance = scoreOutreachRelevance(snippet.toLowerCase());
 
-            if (relevance.score >= 25) {
+            if (relevance.score >= 35) {
               const created = await createOutreachSignal(supabase, {
                 clientId,
                 source: band.name,
@@ -285,7 +311,10 @@ Deno.serve(async (req) => {
                 relevanceReasons: [...relevance.reasons, `Source: ${band.name}`],
                 outreachType: relevance.outreachType || 'first_nations',
               });
-              if (created) signalsCreated++;
+              if (created) {
+                signalsCreated++;
+                bandSignalsCreated++;
+              }
             }
           }
         }
