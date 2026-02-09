@@ -121,15 +121,29 @@ Deno.serve(async (req) => {
 
     if (signalError) throw signalError;
 
-    const { data: entities } = await supabase.from('entities').select('id, name, aliases').eq('is_active', true);
+    const { data: entities } = await supabase.from('entities').select('id, name, aliases, type').eq('is_active', true);
     if (entities) {
       const textLower = text.toLowerCase();
       const mentions = [];
       for (const entity of entities) {
         for (const name of [entity.name, ...(entity.aliases || [])]) {
-          if (textLower.includes(name.toLowerCase())) {
-            mentions.push({ entity_id: entity.id, signal_id: signal.id, confidence: 0.8, context: text.substring(0, 500) });
-            break;
+          const nameLower = name.toLowerCase();
+          if (nameLower.length <= 3) continue; // skip very short names
+          
+          // Word-boundary match
+          const wbRegex = new RegExp(`\\b${nameLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+          if (wbRegex.test(text)) {
+            // Disambiguation context check
+            const idx = textLower.indexOf(nameLower);
+            if (idx !== -1) {
+              const win = textLower.substring(Math.max(0, idx - 120), Math.min(textLower.length, idx + nameLower.length + 120));
+              const orgNegatives = ['casing', 'casings', 'cartridge', 'ammunition', 'caliber', 'firearm', 'handgun', 'shotgun', 'bullet', 'projectile', 'bombshell', 'nutshell', 'eggshell', 'seashell'];
+              const isOrgFalsePositive = entity.type === 'organization' && orgNegatives.some(neg => win.includes(neg));
+              if (!isOrgFalsePositive) {
+                mentions.push({ entity_id: entity.id, signal_id: signal.id, confidence: 0.8, context: text.substring(0, 500) });
+                break;
+              }
+            }
           }
         }
       }
