@@ -576,6 +576,10 @@ Respond with a JSON object:
         }))
       });
 
+      // Capture previous risk level for change detection
+      const previousRiskLevel = itinerary.risk_level || "low";
+      const riskChanged = previousRiskLevel !== assessment.risk_level;
+
       // Update itinerary with AI risk assessment
       await supabaseClient
         .from("itineraries")
@@ -584,6 +588,19 @@ Respond with a JSON object:
           ai_risk_assessment: assessment,
         })
         .eq("id", itinerary.id);
+
+      // Log scan to history for timeline rendering
+      await supabaseClient.from("itinerary_scan_history").insert({
+        itinerary_id: itinerary.id,
+        risk_level: assessment.risk_level,
+        alert_count: assessment.alerts?.length || 0,
+        alerts: assessment.alerts || [],
+        flight_status: flightStatus || null,
+        destination_intel_summary: assessment.assessment || null,
+        previous_risk_level: previousRiskLevel,
+        risk_changed: riskChanged,
+        scan_source: "automated",
+      });
 
       // Create alerts for significant risks
       if (assessment.alerts && assessment.alerts.length > 0) {
@@ -606,7 +623,7 @@ Respond with a JSON object:
         }
       }
 
-      console.log(`Updated risk assessment for itinerary ${itinerary.id}: ${assessment.risk_level}`);
+      console.log(`Updated risk assessment for itinerary ${itinerary.id}: ${assessment.risk_level}${riskChanged ? ` (changed from ${previousRiskLevel})` : ""}`);
     }
 
     return successResponse({

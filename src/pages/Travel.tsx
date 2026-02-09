@@ -6,7 +6,8 @@ import { TravelAlertsPanel } from "@/components/travel/TravelAlertsPanel";
 import { TravelersMap } from "@/components/travel/TravelersMap";
 import { SecurityReportUpload } from "@/components/travel/SecurityReportUpload";
 import { GenerateSecurityBriefing } from "@/components/travel/GenerateSecurityBriefing";
-import { Plane, Users, AlertTriangle, MapPin, Loader2, FileText } from "lucide-react";
+import { TripTimeline } from "@/components/travel/TripTimeline";
+import { Plane, Users, AlertTriangle, MapPin, Loader2, FileText, Activity } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Header } from "@/components/Header";
 import { useAuth } from "@/hooks/useAuth";
@@ -60,7 +61,7 @@ export default function Travel() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="travelers" className="gap-2">
             <Users className="h-4 w-4" />
             Travelers
@@ -68,6 +69,10 @@ export default function Travel() {
           <TabsTrigger value="itineraries" className="gap-2">
             <Plane className="h-4 w-4" />
             Itineraries
+          </TabsTrigger>
+          <TabsTrigger value="timeline" className="gap-2">
+            <Activity className="h-4 w-4" />
+            Timeline
           </TabsTrigger>
           <TabsTrigger value="alerts" className="gap-2">
             <AlertTriangle className="h-4 w-4" />
@@ -89,6 +94,10 @@ export default function Travel() {
 
         <TabsContent value="itineraries" className="space-y-4">
           <ItinerariesList />
+        </TabsContent>
+
+        <TabsContent value="timeline" className="space-y-4">
+          <TripTimeline />
         </TabsContent>
 
         <TabsContent value="alerts" className="space-y-4">

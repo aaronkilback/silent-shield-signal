@@ -4982,6 +4982,56 @@ export type Database = {
           },
         ]
       }
+      itinerary_scan_history: {
+        Row: {
+          alert_count: number
+          alerts: Json
+          destination_intel_summary: string | null
+          flight_status: Json | null
+          id: string
+          itinerary_id: string
+          previous_risk_level: string | null
+          risk_changed: boolean
+          risk_level: string
+          scan_source: string
+          scanned_at: string
+        }
+        Insert: {
+          alert_count?: number
+          alerts?: Json
+          destination_intel_summary?: string | null
+          flight_status?: Json | null
+          id?: string
+          itinerary_id: string
+          previous_risk_level?: string | null
+          risk_changed?: boolean
+          risk_level?: string
+          scan_source?: string
+          scanned_at?: string
+        }
+        Update: {
+          alert_count?: number
+          alerts?: Json
+          destination_intel_summary?: string | null
+          flight_status?: Json | null
+          id?: string
+          itinerary_id?: string
+          previous_risk_level?: string | null
+          risk_changed?: boolean
+          risk_level?: string
+          scan_source?: string
+          scanned_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "itinerary_scan_history_itinerary_id_fkey"
+            columns: ["itinerary_id"]
+            isOneToOne: false
+            referencedRelation: "itineraries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       knowledge_base_articles: {
         Row: {
           category_id: string | null
