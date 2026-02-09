@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate, useLocation } from "react-router-dom";
 import { EntityNotifications } from "@/components/EntityNotifications";
+import { TravelNotificationBell } from "@/components/travel/TravelNotificationBell";
 import { SettingsSheet } from "@/components/SettingsSheet";
 import { EnvironmentBadge } from "@/components/EnvironmentBadge";
 import { useQuery } from "@tanstack/react-query";
@@ -209,6 +210,7 @@ export const Header = () => {
 
               <div className="flex items-center gap-1 lg:gap-2 ml-1 lg:ml-2 pl-1 lg:pl-2 border-l border-border">
                 <EntityNotifications />
+                <TravelNotificationBell />
                 <div className="hidden 2xl:flex items-center gap-2 px-2 py-1.5 rounded-lg bg-secondary/50">
                   <Activity className="w-3.5 h-3.5 text-status-active animate-pulse" />
                   <span className="text-xs text-foreground font-medium">Online</span>
@@ -230,6 +232,7 @@ export const Header = () => {
           {isMobile && (
             <div className="flex items-center gap-2">
               <EntityNotifications />
+              <TravelNotificationBell />
               <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
                 <SheetTrigger asChild>
                   <Button variant="ghost" size="sm">

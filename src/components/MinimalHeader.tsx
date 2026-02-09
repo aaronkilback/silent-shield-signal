@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { EntityNotifications } from "@/components/EntityNotifications";
+import { TravelNotificationBell } from "@/components/travel/TravelNotificationBell";
 import { SettingsSheet } from "@/components/SettingsSheet";
 import { EnvironmentBadge } from "@/components/EnvironmentBadge";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -84,6 +85,7 @@ export const MinimalHeader = () => {
           </button>
 
           <EntityNotifications />
+          <TravelNotificationBell />
 
           {/* Quick nav dropdown */}
           {!isMobile ? (
