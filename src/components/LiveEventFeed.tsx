@@ -4,11 +4,13 @@ import { AlertTriangle, Shield, Activity, Zap, Link as LinkIcon } from "lucide-r
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { SignalAgeIndicator } from "@/components/signals/SignalAgeBadge";
 
 
 interface Signal {
   id: string;
   received_at: string;
+  event_date: string | null;
   source_id: string | null;
   category: string | null;
   severity: string | null;
@@ -23,11 +25,10 @@ interface Signal {
   correlated_count: number | null;
   correlation_confidence: number | null;
   is_primary_signal: boolean | null;
-  // Rule-applied fields (take precedence over AI classification)
   rule_category: string | null;
   rule_priority: string | null;
   rule_tags: string[] | null;
-  applied_rules: any; // JSONB
+  applied_rules: any;
 }
 
 // Helper to get effective severity/priority (rule > AI)
@@ -235,8 +236,8 @@ export const LiveEventFeed = () => {
                         ✓ Rule Applied
                       </Badge>
                     )}
-                    <span className="text-xs text-muted-foreground font-mono ml-auto">
-                      {new Date(signal.received_at).toLocaleTimeString()}
+                    <span className="ml-auto">
+                      <SignalAgeIndicator eventDate={signal.event_date} ingestedAt={signal.received_at} />
                     </span>
                   </div>
                   
