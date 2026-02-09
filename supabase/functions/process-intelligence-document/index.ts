@@ -7,10 +7,12 @@ const corsHeaders = {
 };
 
 // Extract publication date from social media content and text
+// IMPORTANT: Returns the date closest to ingestion time (most likely the publication date),
+// NOT the first date found in content (which may be an event date or historical reference).
 function extractPublicationDate(text: string, _url: string = ''): Date | null {
   const now = new Date();
   
-  // Pattern 1: Relative time in text (e.g., "2 hours ago", "3 days ago", "1 year ago")
+  // Pattern 1: Relative time — strongest publication signal, return immediately
   const relativeTimePatterns = [
     { pattern: /(\d+)\s*(?:second|sec)s?\s*ago/i, unit: 'seconds' },
     { pattern: /(\d+)\s*(?:minute|min)s?\s*ago/i, unit: 'minutes' },
@@ -18,7 +20,6 @@ function extractPublicationDate(text: string, _url: string = ''): Date | null {
     { pattern: /(\d+)\s*days?\s*ago/i, unit: 'days' },
     { pattern: /(\d+)\s*weeks?\s*ago/i, unit: 'weeks' },
     { pattern: /(\d+)\s*months?\s*ago/i, unit: 'months' },
-    { pattern: /(\d+)\s*years?\s*ago/i, unit: 'years' },
   ];
   
   for (const { pattern, unit } of relativeTimePatterns) {
@@ -33,27 +34,27 @@ function extractPublicationDate(text: string, _url: string = ''): Date | null {
         case 'days': date.setDate(date.getDate() - value); break;
         case 'weeks': date.setDate(date.getDate() - (value * 7)); break;
         case 'months': date.setMonth(date.getMonth() - value); break;
-        case 'years': date.setFullYear(date.getFullYear() - value); break;
       }
       return date;
     }
   }
   
-  // Pattern 2: Absolute dates (e.g., "January 15, 2023", "2023-01-15")
+  // Pattern 2: Collect ALL absolute date candidates, then pick closest to now
+  const candidates: Date[] = [];
+  
   const absoluteDatePatterns = [
-    /(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/,
-    /(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})/i,
-    /(\d{1,2})(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?),?\s+(\d{4})/i,
+    /(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/g,
+    /(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})/gi,
+    /(\d{1,2})(?:st|nd|rd|th)?\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?),?\s+(\d{4})/gi,
   ];
   
   for (const pattern of absoluteDatePatterns) {
-    const match = text.match(pattern);
-    if (match) {
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
       try {
-        const dateStr = match[0];
-        const parsed = new Date(dateStr);
+        const parsed = new Date(match[0]);
         if (!isNaN(parsed.getTime()) && parsed <= now) {
-          return parsed;
+          candidates.push(parsed);
         }
       } catch {
         continue;
@@ -61,22 +62,24 @@ function extractPublicationDate(text: string, _url: string = ''): Date | null {
     }
   }
   
-  // Pattern 3: Facebook-specific date formats (e.g., "March 15 at 3:30 PM")
-  const fbDatePattern = /(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:\s+at\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?/i;
-  const fbMatch = text.match(fbDatePattern);
-  if (fbMatch) {
+  // Pattern 3: Facebook-specific (e.g., "March 15 at 3:30 PM")
+  const fbDatePattern = /(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:\s+at\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?/gi;
+  let fbMatch;
+  while ((fbMatch = fbDatePattern.exec(text)) !== null) {
     try {
       const dateStr = `${fbMatch[0]} ${now.getFullYear()}`;
       const parsed = new Date(dateStr);
-      if (parsed > now) {
-        parsed.setFullYear(parsed.getFullYear() - 1);
-      }
-      if (!isNaN(parsed.getTime())) {
-        return parsed;
-      }
-    } catch {
-      // Ignore parsing errors
-    }
+      if (parsed > now) parsed.setFullYear(parsed.getFullYear() - 1);
+      if (!isNaN(parsed.getTime())) candidates.push(parsed);
+    } catch { /* ignore */ }
+  }
+  
+  // Pick the candidate closest to ingestion time (most likely the publication date)
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => 
+      Math.abs(now.getTime() - a.getTime()) - Math.abs(now.getTime() - b.getTime())
+    );
+    return candidates[0];
   }
   
   return null;
