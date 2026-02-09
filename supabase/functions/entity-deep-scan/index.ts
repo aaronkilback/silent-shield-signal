@@ -420,6 +420,140 @@ Deno.serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // PHASE 5B: TECHNICAL OSINT (Shodan/Censys-style via Perplexity)
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    if (PERPLEXITY_API_KEY && (entity.type === 'organization' || entity.type === 'infrastructure' || entity.type === 'domain')) {
+      try {
+        console.log(`[DEEP-SCAN] Running technical OSINT enrichment for ${entity.name}`);
+        const techPrompt = `Perform a technical OSINT assessment for "${entity.name}". Research and report on:
+1. Known domains, subdomains, and DNS records (MX, SPF, DMARC, TXT)
+2. SSL/TLS certificate details and any certificate transparency findings
+3. Known open ports or exposed services (IoT devices, admin panels, APIs)
+4. Email infrastructure (mail servers, security configurations)
+5. Known IP ranges and hosting providers
+6. Any exposed cloud resources (S3 buckets, Azure blobs, GCS)
+7. WHOIS and domain registration history
+
+Return as JSON array with objects: { finding_type, title, description, risk_level (critical/high/medium/low/info), source, confidence (0-100) }`;
+
+        const techResponse = await fetchWithRetry('https://api.perplexity.ai/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'sonar',
+            messages: [
+              { role: 'system', content: 'You are a technical OSINT analyst specializing in network infrastructure and digital attack surface analysis. Return only valid JSON.' },
+              { role: 'user', content: techPrompt }
+            ]
+          })
+        });
+
+        if (techResponse.ok) {
+          const techData = await techResponse.json();
+          const techContent = techData.choices?.[0]?.message?.content || '';
+          const techJsonMatch = techContent.match(/\[[\s\S]*\]/);
+          if (techJsonMatch) {
+            try {
+              const techFindings = JSON.parse(techJsonMatch[0]);
+              for (const finding of techFindings.slice(0, 10)) {
+                results.push({
+                  category: 'technical_osint',
+                  type: finding.finding_type || 'infrastructure',
+                  label: `🔧 ${finding.title?.slice(0, 60) || 'Technical Finding'}`,
+                  value: finding.description || 'Technical infrastructure finding',
+                  source: finding.source || 'Technical OSINT Analysis',
+                  confidence: Math.min(finding.confidence || 65, 80), // Cap single-source at 80
+                  riskLevel: finding.risk_level || 'medium',
+                  commentary: `Technical OSINT finding. Single-source confidence capped at 80%.`
+                });
+              }
+            } catch (parseErr) {
+              console.error('[DEEP-SCAN] Failed to parse technical OSINT:', parseErr);
+            }
+          }
+        }
+        await delay(1500);
+      } catch (e) {
+        console.error('[DEEP-SCAN] Technical OSINT error:', e);
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PHASE 5C: SANCTIONS & REGISTRY SCREENING
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    if (PERPLEXITY_API_KEY || LOVABLE_API_KEY) {
+      try {
+        console.log(`[DEEP-SCAN] Running sanctions/registry screening for ${entity.name}`);
+        const sanctionsPrompt = `Check "${entity.name}" (${entity.type}) against:
+1. OFAC SDN (Specially Designated Nationals) sanctions list
+2. EU consolidated sanctions list
+3. UN Security Council sanctions
+4. OpenCorporates corporate registry entries (formation, directors, filings)
+5. SEC EDGAR filings (if applicable — 10-K, proxy statements, insider trading)
+6. PEP (Politically Exposed Persons) databases
+7. Interpol and law enforcement notices
+
+Return as JSON array with objects: { check_type, entity_matched, list_name, match_confidence (0-100), description, risk_level (critical/high/medium/low/info), is_exact_match (boolean) }
+If no matches found for a category, include an entry with risk_level "info" confirming clean status.`;
+
+        const apiUrl = PERPLEXITY_API_KEY ? 'https://api.perplexity.ai/chat/completions' : 'https://ai.gateway.lovable.dev/v1/chat/completions';
+        const apiKey = PERPLEXITY_API_KEY || LOVABLE_API_KEY;
+        const model = PERPLEXITY_API_KEY ? 'sonar' : 'google/gemini-2.5-flash';
+
+        const sanctionsResponse = await fetchWithRetry(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: 'You are a compliance and sanctions screening analyst. Return only valid JSON.' },
+              { role: 'user', content: sanctionsPrompt }
+            ]
+          })
+        });
+
+        if (sanctionsResponse.ok) {
+          const sanctionsData = await sanctionsResponse.json();
+          const sanctionsContent = sanctionsData.choices?.[0]?.message?.content || '';
+          const sanctionsJsonMatch = sanctionsContent.match(/\[[\s\S]*\]/);
+          if (sanctionsJsonMatch) {
+            try {
+              const sanctionsFindings = JSON.parse(sanctionsJsonMatch[0]);
+              for (const finding of sanctionsFindings) {
+                const isMatch = finding.risk_level !== 'info' && finding.is_exact_match !== false;
+                results.push({
+                  category: 'sanctions_screening',
+                  type: finding.check_type || 'sanctions_check',
+                  label: `${isMatch ? '🚨' : '✅'} ${finding.list_name || finding.check_type}: ${isMatch ? 'MATCH' : 'Clear'}`,
+                  value: finding.description || `${finding.list_name} screening result`,
+                  source: finding.list_name || 'Sanctions Screening',
+                  confidence: Math.min(finding.match_confidence || 70, 80),
+                  riskLevel: isMatch ? (finding.risk_level || 'critical') : 'info',
+                  commentary: isMatch 
+                    ? `⚠️ Potential sanctions match on ${finding.list_name}. Manual verification required.`
+                    : `No match found on ${finding.list_name}.`
+                });
+              }
+            } catch (parseErr) {
+              console.error('[DEEP-SCAN] Failed to parse sanctions results:', parseErr);
+            }
+          }
+        }
+        await delay(1500);
+      } catch (e) {
+        console.error('[DEEP-SCAN] Sanctions screening error:', e);
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // PHASE 6: THREAT INTELLIGENCE FEEDS
     // ═══════════════════════════════════════════════════════════════════════════
     

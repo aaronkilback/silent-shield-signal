@@ -340,7 +340,108 @@ Deno.serve(async (req) => {
           } catch (e) {
             console.error(`[DEEP-SCAN] HIBP check error:`, e);
           }
-          send({ type: "source_complete", data: { source: "Have I Been Pwned" } });
+        // ── TECHNICAL OSINT ENRICHMENT (Perplexity) ──
+        const PERPLEXITY_API_KEY = Deno.env.get("PERPLEXITY_API_KEY");
+        if (PERPLEXITY_API_KEY && params.email) {
+          send({ type: "domain", data: { domain: "technical_osint", label: "Technical OSINT & Infrastructure" } });
+          send({ type: "source_started", data: { source: "Technical OSINT", category: "digital" } });
+          try {
+            const techPrompt = `For the individual "${fullName}" (email: ${params.email}), perform technical OSINT:
+1. Domain ownership via WHOIS for their email domain
+2. DNS security (SPF, DMARC, DKIM) for their email domain
+3. Any publicly exposed infrastructure linked to them
+4. Known digital assets (domains, apps, repos)
+Return as JSON array: [{ title, description, risk_level, source }]`;
+            
+            const techResp = await fetchWithRetry("https://api.perplexity.ai/chat/completions", {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${PERPLEXITY_API_KEY}`, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: "sonar",
+                messages: [
+                  { role: "system", content: "Technical OSINT analyst. Return only valid JSON." },
+                  { role: "user", content: techPrompt }
+                ]
+              })
+            }, 2, 2000);
+            
+            if (techResp.ok) {
+              const techData = await techResp.json();
+              const techContent = techData.choices?.[0]?.message?.content || "";
+              const techMatch = techContent.match(/\[[\s\S]*\]/);
+              if (techMatch) {
+                try {
+                  const techFindings = JSON.parse(techMatch[0]);
+                  for (const f of techFindings.slice(0, 5)) {
+                    const d: Discovery = {
+                      type: "other",
+                      label: `🔧 ${f.title || "Technical Finding"}`,
+                      value: f.description || "",
+                      source: f.source || "Technical OSINT",
+                      confidence: 75, // Single source — capped
+                      category: "digital",
+                      riskLevel: f.risk_level || "medium",
+                      commentary: "Technical OSINT finding (single-source, confidence capped at 80%)."
+                    };
+                    discoveries.push(d);
+                    send({ type: "discovery", data: d });
+                  }
+                } catch { /* parse error */ }
+              }
+            }
+          } catch (e) { console.error("[DEEP-SCAN] Tech OSINT error:", e); }
+          send({ type: "source_complete", data: { source: "Technical OSINT" } });
+          await delay(1500);
+        }
+
+        // ── SANCTIONS & REGISTRY SCREENING ──
+        if (PERPLEXITY_API_KEY) {
+          send({ type: "domain", data: { domain: "sanctions", label: "Sanctions & Registry Screening" } });
+          send({ type: "source_started", data: { source: "Sanctions Screening", category: "operational" } });
+          try {
+            const sanctionsPrompt = `Screen "${fullName}" against OFAC SDN, EU sanctions, UN sanctions, PEP databases, and OpenCorporates. Return JSON array: [{ list_name, status ("clear"|"match"|"possible_match"), description, risk_level }]`;
+            const sanctResp = await fetchWithRetry("https://api.perplexity.ai/chat/completions", {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${PERPLEXITY_API_KEY}`, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: "sonar",
+                messages: [
+                  { role: "system", content: "Compliance screening analyst. Return only valid JSON." },
+                  { role: "user", content: sanctionsPrompt }
+                ]
+              })
+            }, 2, 2000);
+            
+            if (sanctResp.ok) {
+              const sanctData = await sanctResp.json();
+              const sanctContent = sanctData.choices?.[0]?.message?.content || "";
+              const sanctMatch = sanctContent.match(/\[[\s\S]*\]/);
+              if (sanctMatch) {
+                try {
+                  const findings = JSON.parse(sanctMatch[0]);
+                  for (const f of findings) {
+                    const isMatch = f.status === "match" || f.status === "possible_match";
+                    const d: Discovery = {
+                      type: "corporate",
+                      label: `${isMatch ? "🚨" : "✅"} ${f.list_name}: ${isMatch ? "MATCH" : "Clear"}`,
+                      value: f.description || `${f.list_name} screening`,
+                      source: f.list_name || "Sanctions Screening",
+                      confidence: isMatch ? 70 : 85,
+                      category: "operational",
+                      riskLevel: isMatch ? (f.risk_level || "critical") : "low",
+                      commentary: isMatch ? `Potential sanctions match. Manual verification required.` : `No match on ${f.list_name}.`
+                    };
+                    discoveries.push(d);
+                    send({ type: "discovery", data: d });
+                  }
+                } catch { /* parse error */ }
+              }
+            }
+          } catch (e) { console.error("[DEEP-SCAN] Sanctions error:", e); }
+          send({ type: "source_complete", data: { source: "Sanctions Screening" } });
+          await delay(1500);
+        }
+
         }
 
         // AI Analysis Phase
