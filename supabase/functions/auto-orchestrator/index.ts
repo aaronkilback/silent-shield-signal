@@ -308,7 +308,8 @@ async function runOSINTMonitorsInBackground(supabase: any) {
       'monitor-darkweb',
       'monitor-domains',
       'monitor-facebook',
-      'monitor-instagram'
+      'monitor-instagram',
+      'monitor-community-outreach'
     ];
 
     let monitorsRun = 0;
