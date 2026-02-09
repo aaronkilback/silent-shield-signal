@@ -4597,6 +4597,51 @@ export type Database = {
           },
         ]
       }
+      investigation_compliance: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          checklist: Json
+          created_at: string
+          id: string
+          jurisdiction: string | null
+          legal_basis: string | null
+          scan_type: string
+          target_id: string | null
+          target_name: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          checklist?: Json
+          created_at?: string
+          id?: string
+          jurisdiction?: string | null
+          legal_basis?: string | null
+          scan_type?: string
+          target_id?: string | null
+          target_name: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          checklist?: Json
+          created_at?: string
+          id?: string
+          jurisdiction?: string | null
+          legal_basis?: string | null
+          scan_type?: string
+          target_id?: string | null
+          target_name?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       investigation_entries: {
         Row: {
           created_at: string | null

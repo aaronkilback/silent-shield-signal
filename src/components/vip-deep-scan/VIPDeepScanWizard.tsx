@@ -22,6 +22,7 @@ import { VoiceDictationInput } from "./VoiceDictationInput";
 import { OSINTDiscoveryPanel } from "./OSINTDiscoveryPanel";
 import { useOSINTDiscovery, type DiscoveryItem } from "@/hooks/useOSINTDiscovery";
 import { resolveVIPFieldMapping } from "./discoveryFieldMapping";
+import { ComplianceGate } from "./ComplianceGate";
 
 interface FamilyMember {
   name: string;
@@ -547,11 +548,28 @@ export function VIPDeepScanWizard() {
     }));
   };
 
+  const [complianceApproved, setComplianceApproved] = useState(false);
+  const [complianceId, setComplianceId] = useState<string | null>(null);
+
+  const handleComplianceApproved = (id: string) => {
+    setComplianceId(id);
+    setComplianceApproved(true);
+  };
+
   const handleSubmit = async () => {
     if (!formData.consentDataCollection || !formData.consentDarkWebScan || !formData.consentSocialMediaAnalysis) {
       toast({
         title: "Consent Required",
         description: "All consent checkboxes must be checked to proceed with the deep scan.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!complianceApproved) {
+      toast({
+        title: "Compliance Review Required",
+        description: "Complete the pre-investigation compliance review before submitting.",
         variant: "destructive",
       });
       return;
@@ -591,7 +609,7 @@ export function VIPDeepScanWizard() {
       case 1: return formData.clientId && formData.priorityLevel;
       case 2: return formData.fullLegalName && formData.primaryEmail;
       case 3: return formData.properties.some(p => p.address);
-      case 9: return formData.consentDataCollection && formData.consentDarkWebScan && formData.consentSocialMediaAnalysis;
+      case 9: return formData.consentDataCollection && formData.consentDarkWebScan && formData.consentSocialMediaAnalysis && complianceApproved;
       default: return true;
     }
   };
@@ -1575,24 +1593,34 @@ export function VIPDeepScanWizard() {
               </CardContent>
             </Card>
 
-            <Card className="bg-primary/5 border-primary/20">
-              <CardContent className="pt-6">
-                <div className="flex items-center gap-3">
-                  <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                    <Shield className="h-6 w-6 text-primary" />
+            {/* Pre-Investigation Compliance Gate */}
+            <ComplianceGate
+              scanType="vip_deep_scan"
+              targetName={formData.fullLegalName || "Unknown"}
+              targetId={formData.clientId}
+              onApproved={handleComplianceApproved}
+            />
+
+            {complianceApproved && (
+              <Card className="bg-primary/5 border-primary/20">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-3">
+                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                      <Shield className="h-6 w-6 text-primary" />
+                    </div>
+                    <div>
+                      <h4 className="font-semibold">Ready to Initiate Deep Scan</h4>
+                      <p className="text-sm text-muted-foreground">
+                        {formData.priorityLevel === "priority" 
+                          ? "Results will be delivered within 72 hours via secure portal."
+                          : "Results will be delivered within 14 days via secure portal."
+                        }
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="font-semibold">Ready to Initiate Deep Scan</h4>
-                    <p className="text-sm text-muted-foreground">
-                      {formData.priorityLevel === "priority" 
-                        ? "Results will be delivered within 72 hours via secure portal."
-                        : "Results will be delivered within 14 days via secure portal."
-                      }
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            )}
           </div>
         );
 
