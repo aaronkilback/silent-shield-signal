@@ -70,6 +70,30 @@ Deno.serve(async (req) => {
       autonomous_actions: (recentActions || []).length,
     };
 
+    // Skip briefing if there's nothing new to report
+    const hasNewActivity = metrics.signals_24h > 0 || metrics.open_incidents > 0 || metrics.autonomous_actions > 0;
+    
+    if (!hasNewActivity) {
+      console.log('[DailyBriefing] No new activity in last 24h — skipping send to avoid noise');
+      
+      // Log the skip
+      await supabase.from('autonomous_actions_log').insert({
+        action_type: 'daily_email_briefing',
+        trigger_source: 'cron',
+        action_details: { skipped: true, reason: 'no_new_activity', date: dateContext.currentDateISO },
+        status: 'skipped',
+      });
+
+      // Still update last_run_at so we know the cron fired
+      for (const config of briefingConfigs) {
+        await supabase.from('scheduled_briefings').update({
+          last_run_at: new Date().toISOString(),
+        }).eq('id', config.id);
+      }
+
+      return successResponse({ success: true, message: 'No new activity — briefing skipped to reduce noise', sent: 0, skipped: true });
+    }
+
     // Generate briefing content via AI
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
