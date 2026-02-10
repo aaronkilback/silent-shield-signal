@@ -62,7 +62,20 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - Primary user interface — agent-mediated UI philosophy
 - Powered by GPT/Gemini with 21 operational tools
 - EXPECTED: Responds coherently. Empty/generic = degraded
-- REMEDIATION: Cannot auto-fix — flag for human review
+- REMEDIATION: Cannot auto-fix AI model — flag for human review
+
+### AEGIS Behavioral Compliance (HIGH — NEW)
+- AEGIS and all agents must follow "Action-First / Zero-Preamble" execution rules
+- Anti-patterns to detect in recent assistant responses:
+  1. CAPABILITY LISTING: Responses containing numbered lists of what AEGIS "can do" before executing (e.g., "I can help with: 1) Vulnerability scanning 2)...")
+  2. PREAMBLE BLOAT: Multi-paragraph intros before tool execution (e.g., "I will now initiate a comprehensive scan focusing on...")
+  3. VERBOSITY: Simple action requests getting 200+ word responses when 2-3 sentences suffice
+  4. TOOL AVOIDANCE: Describing capabilities instead of calling mapped tools (e.g., saying "I could search for..." instead of actually searching)
+  5. IDENTITY DRIFT: Using "As an AI" or "I don't have the capability" when tools exist
+- TELEMETRY: Sample last 20 assistant messages, score each for anti-pattern violations
+- SCORING: Each message gets a compliance score 0.0-1.0. Average < 0.7 = warning, < 0.5 = critical
+- REMEDIATION (fix_aegis_drift): Insert a corrective "system" memory note into agent_memory with reinforcement instructions. This note is loaded into future AEGIS sessions, correcting drift without code changes.
+- LEARNING: Track which anti-patterns are most common to identify systemic prompt weaknesses
 
 ### Daily Briefing System (HIGH)
 - Sends AI-generated threat summary at 06:00 Calgary (13:00 UTC)
@@ -110,13 +123,13 @@ Respond with ONLY valid JSON (no markdown):
   "severity": "healthy" | "monitoring" | "degraded" | "critical",
   "findings": [
     {
-      "category": "Signal Pipeline" | "AEGIS AI" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops",
+      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops",
       "severity": "critical" | "warning" | "info",
       "title": "Short title",
       "analysis": "What you observed and WHY it matters (2-3 sentences). Reference learnings if relevant.",
       "recommendation": "What action to take. If past remediations failed, suggest alternatives.",
       "canAutoRemediate": true/false,
-      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "none",
+      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "none",
       "isRecurring": true/false,
       "learningNote": "What you learned about this issue from history (or 'First occurrence')",
       "thresholdAdjustment": null | { "metric": "string", "currentValue": number, "suggestedValue": number, "reason": "string" }
@@ -199,6 +212,16 @@ interface TelemetryData {
   database: { connected: boolean; responseTimeMs: number };
   autonomousOps: { recentActions: number; lastActionAge: string };
   aiHealth: { systemHealthCheckStatus: number | null };
+  aegisBehavior: {
+    sampleSize: number;
+    avgResponseLength: number;
+    capabilityListingCount: number;
+    preambleBloatCount: number;
+    toolAvoidanceCount: number;
+    identityDriftCount: number;
+    complianceScore: number;
+    worstExamples: string[];
+  };
   historicalBaseline: { avgDailySignals: number; avgWeeklyBugs: number };
   adaptiveThresholds: AdaptiveThresholds;
 }
@@ -531,6 +554,10 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     dbLatencyWarningMs: 2000,
   };
 
+  // ═══ AEGIS BEHAVIORAL COMPLIANCE TELEMETRY ═══
+  // Sample recent assistant messages and score for anti-pattern violations
+  const aegisBehavior = await collectAegisBehaviorTelemetry(supabase);
+
   return {
     timestamp: now.toISOString(),
     edgeFunctions,
@@ -545,8 +572,99 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     database: { connected: dbConnected, responseTimeMs: Date.now() - dbStart },
     autonomousOps: { recentActions: autonomousActionsResult.count || 0, lastActionAge },
     aiHealth: { systemHealthCheckStatus: aiHealthStatus },
+    aegisBehavior,
     historicalBaseline: { avgDailySignals, avgWeeklyBugs },
     adaptiveThresholds,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+//              AEGIS BEHAVIORAL COMPLIANCE MONITOR
+// ═══════════════════════════════════════════════════════════════
+
+const AEGIS_ANTI_PATTERNS = [
+  { name: 'capability_listing', regex: /(?:I can help with|I have the ability to|my capabilities include|here(?:'s| is) what I can do)[\s\S]{0,50}(?:\d\)|•|-)[\s\S]{0,200}(?:\d\)|•|-)/i, weight: 1.0 },
+  { name: 'preamble_bloat', regex: /(?:I will now|I'm going to|Let me|I'll proceed to|I will initiate|I am about to)[\s\S]{50,}/i, weight: 0.8 },
+  { name: 'tool_avoidance', regex: /(?:I could|I would be able to|I have access to tools that|I can leverage)[\s\S]{0,100}(?:search|scan|analyze|monitor|generate)/i, weight: 0.9 },
+  { name: 'identity_drift', regex: /(?:as an AI|I(?:'m| am) (?:just )?a (?:language model|chatbot|AI assistant)|I don't have (?:the )?capabilit|I cannot generate|I(?:'m| am) not able to)/i, weight: 1.0 },
+  { name: 'verbosity', regex: null, weight: 0.6 }, // Checked via word count
+];
+
+async function collectAegisBehaviorTelemetry(supabase: any): Promise<TelemetryData['aegisBehavior']> {
+  const sixHoursAgo = new Date(Date.now() - 6 * 3600000).toISOString();
+  
+  // Sample recent assistant responses (role = 'assistant')
+  const { data: recentMessages } = await supabase
+    .from('ai_assistant_messages')
+    .select('content, created_at')
+    .eq('role', 'assistant')
+    .gte('created_at', sixHoursAgo)
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  const messages = recentMessages || [];
+  if (messages.length === 0) {
+    return {
+      sampleSize: 0, avgResponseLength: 0, capabilityListingCount: 0,
+      preambleBloatCount: 0, toolAvoidanceCount: 0, identityDriftCount: 0,
+      complianceScore: 1.0, worstExamples: [],
+    };
+  }
+
+  let capabilityListingCount = 0;
+  let preambleBloatCount = 0;
+  let toolAvoidanceCount = 0;
+  let identityDriftCount = 0;
+  let totalWords = 0;
+  let verbosityViolations = 0;
+  const worstExamples: string[] = [];
+
+  for (const msg of messages) {
+    const content = msg.content || '';
+    const wordCount = content.split(/\s+/).length;
+    totalWords += wordCount;
+
+    // Check each anti-pattern
+    for (const pattern of AEGIS_ANTI_PATTERNS) {
+      if (pattern.name === 'verbosity') {
+        // Flag responses over 250 words (AEGIS should be concise)
+        if (wordCount > 250) {
+          verbosityViolations++;
+          if (worstExamples.length < 3) {
+            worstExamples.push(`[VERBOSE ${wordCount}w] ${content.substring(0, 120)}...`);
+          }
+        }
+        continue;
+      }
+
+      if (pattern.regex && pattern.regex.test(content)) {
+        switch (pattern.name) {
+          case 'capability_listing': capabilityListingCount++; break;
+          case 'preamble_bloat': preambleBloatCount++; break;
+          case 'tool_avoidance': toolAvoidanceCount++; break;
+          case 'identity_drift': identityDriftCount++; break;
+        }
+        if (worstExamples.length < 3) {
+          const match = content.match(pattern.regex!);
+          worstExamples.push(`[${pattern.name.toUpperCase()}] ${(match?.[0] || content).substring(0, 120)}...`);
+        }
+      }
+    }
+  }
+
+  const totalViolations = capabilityListingCount + preambleBloatCount + toolAvoidanceCount + identityDriftCount + verbosityViolations;
+  // Compliance score: 1.0 = perfect, 0.0 = every message violates
+  const complianceScore = Math.max(0, 1.0 - (totalViolations / messages.length));
+
+  return {
+    sampleSize: messages.length,
+    avgResponseLength: Math.round(totalWords / messages.length),
+    capabilityListingCount,
+    preambleBloatCount,
+    toolAvoidanceCount,
+    identityDriftCount,
+    complianceScore: Math.round(complianceScore * 100) / 100,
+    worstExamples,
   };
 }
 
@@ -719,6 +837,36 @@ async function executeRemediation(
         return { 
           action, finding, success: !error, 
           details: error ? `Failed to store adjustment: ${error.message}` : `Threshold ${adjustment.metric} adjusted: ${adjustment.currentValue} → ${adjustment.suggestedValue} (${adjustment.reason})` 
+        };
+      }
+
+      case 'fix_aegis_drift': {
+        // Insert a corrective memory note that AEGIS loads on next session
+        // This acts as a behavioral reinforcement without code changes
+        const correctionNote = `BEHAVIORAL CORRECTION (auto-generated by Watchdog at ${new Date().toISOString()}):
+Recent analysis detected persona drift violations. REINFORCE THESE RULES:
+1. ACTION-FIRST: Your FIRST response token must trigger a tool call when a mapped action exists.
+2. ZERO-PREAMBLE: NEVER write introductory paragraphs before tool calls.
+3. NO CAPABILITY LISTING: NEVER enumerate what you can do — JUST DO IT.
+4. CONCISE: 2-5 sentences max for action results. Elaborate only when asked.
+5. NO IDENTITY DISCLAIMERS: Never say "As an AI" or "I don't have the capability" — you have 21 tools.
+This correction was triggered because compliance score dropped below threshold. Execute tools immediately.`;
+
+        const { error } = await supabase.from('agent_memory').insert({
+          agent_id: null, // Global — applies to all AEGIS instances
+          content: correctionNote,
+          memory_type: 'behavioral_correction',
+          scope: 'global',
+          importance_score: 10, // Maximum importance
+          context_tags: ['behavioral_correction', 'action_first', 'zero_preamble', 'watchdog_generated'],
+          expires_at: new Date(Date.now() + 7 * 86400000).toISOString(), // 7-day TTL, refreshed if drift continues
+        });
+
+        return {
+          action, finding, success: !error,
+          details: error
+            ? `Failed to insert behavioral correction: ${error.message}`
+            : 'Inserted global behavioral correction memory. AEGIS will load this reinforcement on next session.',
         };
       }
 

@@ -12025,7 +12025,26 @@ ${tenantKnowledge.map(k => `[${k.knowledge_type?.toUpperCase() || 'CONTEXT'}]${k
       }
     }
 
-    // Helper to truncate content to avoid token limits
+    // Load active behavioral corrections from watchdog (global agent_memory)
+    let behavioralCorrectionContext = "";
+    try {
+      const { data: corrections } = await supabaseClient
+        .from("agent_memory")
+        .select("content")
+        .eq("memory_type", "behavioral_correction")
+        .eq("scope", "global")
+        .gt("expires_at", new Date().toISOString())
+        .order("importance_score", { ascending: false })
+        .limit(3);
+      
+      if (corrections && corrections.length > 0) {
+        behavioralCorrectionContext = `\n\n⚠️ ACTIVE BEHAVIORAL CORRECTIONS (from System Watchdog — HIGHEST PRIORITY):\n${corrections.map(c => c.content).join('\n---\n')}\n`;
+        console.log(`[AEGIS] Loaded ${corrections.length} active behavioral correction(s) from watchdog`);
+      }
+    } catch (e) {
+      console.warn("[AEGIS] Failed to load behavioral corrections (non-fatal):", e);
+    }
+
     const truncateContent = (content: string, maxChars: number = 50000): string => {
       if (content.length <= maxChars) return content;
       return content.substring(0, maxChars) + "\n\n... [Content truncated due to size limits. Query with more specific filters for complete results.]";
@@ -12271,7 +12290,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
           {
             role: "system",
             content: `You are AEGIS (Active Enterprise Guardian & Intelligence System), the AI command intelligence assistant for FORTRESS. You have comprehensive knowledge of the platform, its codebase, architecture, and all features.
-${tenantKnowledgeContext}
+${tenantKnowledgeContext}${behavioralCorrectionContext}
 PLATFORM OVERVIEW:
 Fortress is a security intelligence and threat monitoring platform built on React/TypeScript frontend with Supabase (PostgreSQL + Edge Functions) backend. The platform automates OSINT collection, threat detection, incident management, entity tracking, travel security, and investigation management through 50+ edge functions and AI-powered automation.
 

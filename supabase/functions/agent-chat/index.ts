@@ -563,8 +563,27 @@ Respond naturally and briefly.`
 
     // Build system prompt with agent persona
     const antiHallucinationBlock = getAntiHallucinationPrompt();
+
+    // Load active behavioral corrections from watchdog
+    let behavioralCorrectionBlock = "";
+    try {
+      const { data: corrections } = await supabase
+        .from("agent_memory")
+        .select("content")
+        .eq("memory_type", "behavioral_correction")
+        .eq("scope", "global")
+        .gt("expires_at", new Date().toISOString())
+        .order("importance_score", { ascending: false })
+        .limit(3);
+      
+      if (corrections && corrections.length > 0) {
+        behavioralCorrectionBlock = `\n\n⚠️ ACTIVE BEHAVIORAL CORRECTIONS (from System Watchdog — HIGHEST PRIORITY):\n${corrections.map(c => c.content).join('\n---\n')}\n`;
+      }
+    } catch (e) {
+      // Non-fatal — proceed without corrections
+    }
     
-    const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}
+    const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}${behavioralCorrectionBlock}
 
 Your Mission: ${agent.mission_scope}
 Your Call Sign: ${agent.call_sign}
