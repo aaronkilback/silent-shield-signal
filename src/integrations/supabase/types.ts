@@ -2784,6 +2784,53 @@ export type Database = {
         }
         Relationships: []
       }
+      doctrine_library: {
+        Row: {
+          content_text: string | null
+          content_type: string
+          created_at: string
+          created_by: string | null
+          id: string
+          is_active: boolean
+          storage_path: string | null
+          tags: string[] | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          content_text?: string | null
+          content_type?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          storage_path?: string | null
+          tags?: string[] | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          content_text?: string | null
+          content_type?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          storage_path?: string | null
+          tags?: string[] | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "doctrine_library_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       document_entity_mentions: {
         Row: {
           confidence: number | null
