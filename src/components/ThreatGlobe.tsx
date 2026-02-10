@@ -235,6 +235,16 @@ export const ThreatGlobe = () => {
   };
 
   const parseLocationCoords = (location: string): { lat: number; lng: number } | null => {
+    // First try to parse raw coordinate pairs like "56.776096, -122.147010"
+    const coordMatch = location.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+    if (coordMatch) {
+      const lat = parseFloat(coordMatch[1]);
+      const lng = parseFloat(coordMatch[2]);
+      if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+        return { lat, lng };
+      }
+    }
+
     // Comprehensive geocoding map for common locations
     const geoMap: Record<string, { lat: number; lng: number }> = {
       // North America
@@ -269,6 +279,16 @@ export const ThreatGlobe = () => {
       "usa": { lat: 37.0902, lng: -95.7129 },
       "british columbia": { lat: 53.7267, lng: -127.6476 },
       "bc": { lat: 53.7267, lng: -127.6476 },
+      "grande prairie": { lat: 55.1707, lng: -118.7887 },
+      "dawson creek": { lat: 55.7596, lng: -120.2353 },
+      "taylor": { lat: 56.1563, lng: -120.6856 },
+      "chetwynd": { lat: 55.6987, lng: -121.6317 },
+      "tumbler ridge": { lat: 55.1264, lng: -121.0000 },
+      "hudson's hope": { lat: 56.0311, lng: -121.9072 },
+      "prince george": { lat: 53.9171, lng: -122.7497 },
+      "smithers": { lat: 54.7804, lng: -127.1743 },
+      "kitimat": { lat: 54.0523, lng: -128.7137 },
+      "terrace": { lat: 54.5164, lng: -128.5997 },
       
       // Asia Pacific
       "kuala lumpur": { lat: 3.1390, lng: 101.6869 },
