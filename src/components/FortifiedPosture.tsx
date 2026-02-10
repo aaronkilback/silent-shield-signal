@@ -217,84 +217,10 @@ export const FortifiedPosture = ({
         : "text-muted-foreground";
 
   return (
-    <div className="mt-2">
-      <Collapsible>
-        <CollapsibleTrigger className="group w-full flex items-center gap-2 px-3 py-2 rounded-md bg-muted/20 border border-border/30 hover:bg-muted/40 transition-colors cursor-pointer text-left">
-          <ChevronRight className="w-3 h-3 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
-          <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
-            Fortified Operating Posture
-          </span>
-        </CollapsibleTrigger>
-
-        <CollapsibleContent>
-          <div className="mt-1.5 space-y-2.5 px-1">
-            {/* Commander's Intent */}
-            <PostureSection label="Commander's Intent">
-              <p className="text-xs text-foreground leading-relaxed">
-                {commandersIntent}
-              </p>
-            </PostureSection>
-
-            {/* Loop Speed Snapshot */}
-            <PostureSection label="Loop Speed">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-3">
-                  <MetricPill label="MTTD" value={loopSpeed?.mttd || "—"} />
-                  <MetricPill label="MTTR" value={loopSpeed?.mttr || "—"} />
-                </div>
-                <span
-                  className={cn(
-                    "text-[10px] font-semibold ml-auto",
-                    trendColor
-                  )}
-                >
-                  {trendIcon} {loopSpeed?.trend || "No data"}
-                </span>
-              </div>
-            </PostureSection>
-
-            {/* Doctrine Anchor */}
-            <PostureSection label="Doctrine Anchor">
-              <p className="text-xs text-muted-foreground leading-relaxed italic">
-                {doctrine}
-              </p>
-            </PostureSection>
-
-            {/* Shot. Brick. */}
-            <PostureSection label="Shot. Brick.">
-              {shotBrick ? (
-                <div className="space-y-1">
-                  <div className="flex gap-2 text-xs">
-                    <span className="text-destructive font-semibold shrink-0">
-                      Shot:
-                    </span>
-                    <span className="text-foreground">{shotBrick.shot}</span>
-                  </div>
-                  <div className="flex gap-2 text-xs">
-                    <span className="text-primary font-semibold shrink-0">
-                      Brick:
-                    </span>
-                    <span className="text-muted-foreground">
-                      {shotBrick.brick}
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  No shots yesterday. Maintain posture.
-                </p>
-              )}
-            </PostureSection>
-
-            {/* Exposure Question */}
-            <PostureSection label="Exposure Question">
-              <p className="text-xs text-foreground font-medium leading-relaxed">
-                {question}
-              </p>
-            </PostureSection>
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
+    <div className="mt-2 px-3 py-2">
+      <p className="text-xs text-muted-foreground leading-relaxed italic">
+        "{doctrine}"
+      </p>
     </div>
   );
 };
