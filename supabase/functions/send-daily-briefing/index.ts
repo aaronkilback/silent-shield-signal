@@ -73,6 +73,22 @@ Deno.serve(async (req) => {
       autonomous_actions: (recentActions || []).length,
     };
 
+    // DEDUP GUARD: Check if we already sent a briefing today (prevents duplicate sends from watchdog/manual triggers)
+    const todayStart = dateContext.currentDateISO + 'T00:00:00Z';
+    const { data: alreadySent } = await supabase
+      .from('autonomous_actions_log')
+      .select('id')
+      .eq('action_type', 'daily_email_briefing')
+      .eq('status', 'completed')
+      .gte('created_at', todayStart)
+      .not('action_details->skipped', 'eq', 'true')
+      .limit(1);
+
+    if (alreadySent && alreadySent.length > 0) {
+      console.log('[DailyBriefing] Already sent today — dedup guard blocking duplicate');
+      return successResponse({ success: true, message: 'Briefing already sent today', sent: 0, deduplicated: true });
+    }
+
     // Skip briefing if there's nothing new to report
     const hasNewActivity = metrics.signals_24h > 0 || metrics.open_incidents > 0 || metrics.autonomous_actions > 0;
     
