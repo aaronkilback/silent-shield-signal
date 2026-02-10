@@ -15,7 +15,9 @@ const ACTIVISM_KEYWORDS = [
   'protest', 'pipeline', 'activist', 'demonstration', 'blockade',
   'environmental', 'climate', 'indigenous rights', 'first nation',
   'stop', 'oppose', 'rally', 'march', 'occupation', 'resistance',
-  'campaign', 'PRGT', 'LNG', 'Coastal GasLink', 'CGL'
+  'campaign', 'PRGT', 'LNG', 'Coastal GasLink', 'CGL',
+  'facebook live', 'going live', 'live now', 'live video', 'streaming live',
+  'watch live', 'live broadcast', 'live stream'
 ];
 
 Deno.serve(async (req) => {
@@ -66,6 +68,9 @@ Deno.serve(async (req) => {
         
         // Client name + activism/protest terms
         searchQueries.push(`site:facebook.com "${client.name}" (protest OR pipeline OR activist OR blockade OR demonstration)`);
+        
+        // Client name + Facebook Live streams
+        searchQueries.push(`site:facebook.com "${client.name}" ("facebook live" OR "going live" OR "live video" OR "streaming live")`);
         
         // Client name + security threats
         searchQueries.push(`site:facebook.com "${client.name}" (breach OR hack OR security OR scam OR threat)`);
@@ -122,6 +127,9 @@ Deno.serve(async (req) => {
         
         // Entity name + pipeline/energy project terms for more targeted results
         searchQueries.push(`site:facebook.com "${entity.name}" (pipeline OR LNG OR "Coastal GasLink" OR PRGT OR protest OR indigenous)`);
+        
+        // Entity name + Facebook Live streams
+        searchQueries.push(`site:facebook.com "${entity.name}" ("facebook live" OR "going live" OR "live video" OR "streaming")`);
         
         // Include aliases in search
         if (entity.aliases && entity.aliases.length > 0) {
@@ -248,7 +256,9 @@ async function processSearch(
 
         // Determine category
         let category = 'social_media';
-        if (lowerText.includes('protest') || lowerText.includes('blockade') || lowerText.includes('demonstration')) {
+        if (lowerText.includes('facebook live') || lowerText.includes('going live') || lowerText.includes('live video') || lowerText.includes('streaming live')) {
+          category = 'live_stream';
+        } else if (lowerText.includes('protest') || lowerText.includes('blockade') || lowerText.includes('demonstration')) {
           category = 'protest_activity';
         } else if (ACTIVISM_KEYWORDS.some(k => lowerText.includes(k.toLowerCase()))) {
           category = 'activism';
