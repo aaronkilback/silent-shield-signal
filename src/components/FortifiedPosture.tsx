@@ -8,8 +8,8 @@ import {
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// Silent Shield Doctrine Anchors — tactical application only
-const DOCTRINE_ANCHORS = [
+// Static fallbacks — used only when AI generation fails
+const FALLBACK_ANCHORS = [
   "Map the terrain before engaging. Verify your source coverage matches your threat surface today.",
   "Separate noise from intelligence. If a signal won't change your next decision, it doesn't deserve your attention.",
   "Model the consequence chain. Every threat has a second-order effect you haven't considered yet.",
@@ -19,8 +19,7 @@ const DOCTRINE_ANCHORS = [
   "Assume the adversary adapted overnight. Validate yesterday's assumptions before acting on them.",
 ];
 
-// Exposure Questions — consequence-focused, thought-provoking
-const EXPOSURE_QUESTIONS = [
+const FALLBACK_QUESTIONS = [
   "If a monitored source went silent right now, which exposure would go undetected?",
   "What's the one entity in your portfolio that hasn't been reassessed in over 30 days?",
   "If today's first alert is misdirection, where is the actual exposure?",
@@ -64,9 +63,12 @@ export const FortifiedPosture = ({
 }: FortifiedPostureProps) => {
   const [loopSpeed, setLoopSpeed] = useState<LoopSpeed | null>(null);
   const [shotBrick, setShotBrick] = useState<ShotBrick | null>(null);
+  const [doctrine, setDoctrine] = useState(FALLBACK_ANCHORS[getDailyIndex(FALLBACK_ANCHORS.length)]);
+  const [question, setQuestion] = useState(FALLBACK_QUESTIONS[getDailyIndex(FALLBACK_QUESTIONS.length)]);
 
   useEffect(() => {
     fetchPostureData();
+    fetchAIContent();
   }, []);
 
   const fetchPostureData = async () => {
@@ -153,6 +155,43 @@ export const FortifiedPosture = ({
     }
   };
 
+  const fetchAIContent = async () => {
+    const CACHE_KEY = "fortress-posture-ai";
+    const today = new Date().toISOString().split("T")[0];
+
+    // Check sessionStorage cache for today
+    try {
+      const cached = sessionStorage.getItem(CACHE_KEY);
+      if (cached) {
+        const { date, data } = JSON.parse(cached);
+        if (date === today && data.doctrine_anchor && data.exposure_question) {
+          setDoctrine(data.doctrine_anchor);
+          setQuestion(data.exposure_question);
+          return;
+        }
+      }
+    } catch (_) { /* ignore */ }
+
+    try {
+      const { data, error } = await supabase.functions.invoke("generate-posture-content", {
+        body: {
+          highPrioritySignals,
+          criticalIncidents,
+          openIncidents,
+          recentShot: shotBrick?.shot || null,
+        },
+      });
+
+      if (!error && data?.doctrine_anchor && data?.exposure_question) {
+        setDoctrine(data.doctrine_anchor);
+        setQuestion(data.exposure_question);
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify({ date: today, data }));
+      }
+    } catch (err) {
+      console.error("[FortifiedPosture] AI content fetch failed, using fallback:", err);
+    }
+  };
+
   // Commander's Intent — derived from current situation
   const commandersIntent = (() => {
     if (criticalIncidents > 0)
@@ -163,9 +202,6 @@ export const FortifiedPosture = ({
       return "Advance open incident resolution. Clear one case to completion before adding new intake.";
     return "Sustain detection coverage. Use the calm to stress-test one assumption in your current posture.";
   })();
-
-  const doctrine = DOCTRINE_ANCHORS[getDailyIndex(DOCTRINE_ANCHORS.length)];
-  const question = EXPOSURE_QUESTIONS[getDailyIndex(EXPOSURE_QUESTIONS.length)];
 
   const trendIcon =
     loopSpeed?.trend === "Improving"
