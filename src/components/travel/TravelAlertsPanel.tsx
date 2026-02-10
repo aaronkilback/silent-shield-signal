@@ -50,6 +50,7 @@ export function TravelAlertsPanel() {
         .from("travel_alerts")
         .update({
           acknowledged: true,
+          is_active: false,
           acknowledged_at: new Date().toISOString(),
           acknowledged_by: user?.id,
         })

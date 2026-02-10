@@ -59,7 +59,7 @@ export function TravelNotificationBell() {
   const acknowledgeAlert = useCallback(async (alertId: string) => {
     await supabase
       .from("travel_alerts")
-      .update({ acknowledged: true })
+      .update({ acknowledged: true, is_active: false })
       .eq("id", alertId);
     queryClient.invalidateQueries({ queryKey: ["travel-alerts-global"] });
   }, [queryClient]);
@@ -71,7 +71,7 @@ export function TravelNotificationBell() {
       const ids = alerts.map((a: any) => a.id);
       await supabase
         .from("travel_alerts")
-        .update({ acknowledged: true })
+        .update({ acknowledged: true, is_active: false })
         .in("id", ids);
       queryClient.invalidateQueries({ queryKey: ["travel-alerts-global"] });
     }
