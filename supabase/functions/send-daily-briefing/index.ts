@@ -50,6 +50,7 @@ Deno.serve(async (req) => {
       { data: openIncidents },
       { data: recentScans },
       { data: recentActions },
+      { data: doctrineEntries },
     ] = await Promise.all([
       supabase.from('signals').select('id, category, severity, title, normalized_text, created_at')
         .gte('created_at', cutoff24h).order('created_at', { ascending: false }).limit(50),
@@ -59,6 +60,8 @@ Deno.serve(async (req) => {
         .order('created_at', { ascending: false }).limit(1),
       supabase.from('autonomous_actions_log').select('action_type, action_details, created_at')
         .gte('created_at', cutoff24h).limit(20),
+      supabase.from('doctrine_library').select('title, content_text, content_type, tags')
+        .eq('is_active', true).order('created_at', { ascending: false }).limit(30),
     ]);
 
     const metrics = {
@@ -93,6 +96,63 @@ Deno.serve(async (req) => {
 
       return successResponse({ success: true, message: 'No new activity — briefing skipped to reduce noise', sent: 0, skipped: true });
     }
+
+    // Generate Fortified Operating Posture content via AI
+    let postureContent = { doctrine_anchor: '', exposure_question: '' };
+    try {
+      const doctrineContext = (doctrineEntries || [])
+        .filter((d: any) => d.content_text)
+        .map((d: any) => `- [${d.content_type}] ${d.title}: ${d.content_text}`)
+        .join('\n');
+
+      const postureResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.5-flash',
+          messages: [
+            {
+              role: 'system',
+              content: `You are the Silent Shield doctrine advisor. Generate one doctrine anchor and one exposure question for today's posture.
+
+SOURCING: Draw from the Silent Shield Doctrine Library first. Fallback to open-source frameworks (ASIS, NIST, MITRE) if library is empty.
+
+DOCTRINE LIBRARY:
+${doctrineContext || 'No entries available.'}
+
+OUTPUT: JSON with "doctrine_anchor" (max 25 words, tactical behavioral instruction) and "exposure_question" (max 30 words, consequence-focused).
+
+Current posture: ${metrics.critical_signals} critical signals, ${metrics.open_incidents} open incidents, ${metrics.signals_24h} signals in 24h.
+
+Respond ONLY with valid JSON.`,
+            },
+            { role: 'user', content: 'Generate today\'s doctrine anchor and exposure question.' },
+          ],
+          temperature: 0.4,
+        }),
+      });
+
+      if (postureResponse.ok) {
+        const postureData = await postureResponse.json();
+        let content = (postureData.choices?.[0]?.message?.content || '').trim();
+        if (content.startsWith('```')) content = content.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+        const parsed = JSON.parse(content);
+        postureContent = parsed;
+      }
+    } catch (err) {
+      console.error('[DailyBriefing] Posture content generation failed:', err);
+    }
+
+    // Compute Commander's Intent
+    const criticalIncidents = (openIncidents || []).filter((i: any) => i.priority === 'p1' || i.priority === 'p2').length;
+    const highPrioritySignals = metrics.critical_signals + metrics.high_signals;
+    let commandersIntent = 'Sustain detection coverage. Use the calm to stress-test one assumption in your current posture.';
+    if (criticalIncidents > 0) commandersIntent = 'Contain active critical incidents and restore operational baseline before end of day.';
+    else if (highPrioritySignals > 0) commandersIntent = 'Triage elevated signal volume to baseline. Prioritize disposition over investigation depth.';
+    else if (metrics.open_incidents > 0) commandersIntent = 'Advance open incident resolution. Clear one case to completion before adding new intake.';
 
     // Generate briefing content via AI
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -134,7 +194,11 @@ Tone: Calm, authoritative, zero jargon. If metrics are all low/zero, state "No e
     const briefingText = aiData.choices?.[0]?.message?.content || 'Unable to generate briefing content.';
 
     // Build HTML email
-    const emailHtml = buildBriefingEmail(briefingText, metrics, dateContext);
+    const emailHtml = buildBriefingEmail(briefingText, metrics, dateContext, {
+      commandersIntent,
+      doctrineAnchor: postureContent.doctrine_anchor,
+      exposureQuestion: postureContent.exposure_question,
+    });
 
     // Send to all configured recipients
     let sentCount = 0;
@@ -190,10 +254,36 @@ Tone: Calm, authoritative, zero jargon. If metrics are all low/zero, state "No e
 function buildBriefingEmail(
   briefingText: string,
   metrics: Record<string, number>,
-  dateContext: { currentDateFormatted: string; currentTime24h: string; currentTimezone: string }
+  dateContext: { currentDateFormatted: string; currentTime24h: string; currentTimezone: string },
+  posture: { commandersIntent: string; doctrineAnchor: string; exposureQuestion: string }
 ): string {
   const riskColor = metrics.risk_score >= 70 ? '#dc2626' : metrics.risk_score >= 40 ? '#f59e0b' : '#059669';
   const riskLabel = metrics.risk_score >= 70 ? 'ELEVATED' : metrics.risk_score >= 40 ? 'MODERATE' : 'NORMAL';
+
+  const postureSection = `
+    <!-- Fortified Operating Posture -->
+    <div style="padding:20px 30px; border-top:1px solid #334155;">
+      <h3 style="color:#3b82f6; font-size:11px; text-transform:uppercase; letter-spacing:1.5px; margin:0 0 16px; font-weight:700;">⬡ Fortified Operating Posture</h3>
+      
+      <div style="margin-bottom:14px;">
+        <div style="color:#64748b; font-size:10px; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; font-weight:600;">Commander's Intent</div>
+        <p style="color:#f1f5f9; font-size:13px; margin:0; line-height:1.5;">${posture.commandersIntent}</p>
+      </div>
+
+      ${posture.doctrineAnchor ? `
+      <div style="margin-bottom:14px;">
+        <div style="color:#64748b; font-size:10px; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; font-weight:600;">Doctrine Anchor</div>
+        <p style="color:#94a3b8; font-size:13px; margin:0; line-height:1.5; font-style:italic;">${posture.doctrineAnchor}</p>
+      </div>
+      ` : ''}
+
+      ${posture.exposureQuestion ? `
+      <div style="margin-bottom:0;">
+        <div style="color:#64748b; font-size:10px; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; font-weight:600;">Exposure Question</div>
+        <p style="color:#f1f5f9; font-size:13px; margin:0; line-height:1.5; font-weight:500;">${posture.exposureQuestion}</p>
+      </div>
+      ` : ''}
+    </div>`;
 
   return `
 <!DOCTYPE html>
@@ -253,6 +343,8 @@ function buildBriefingEmail(
         return `<p style="margin:6px 0;">${line}</p>`;
       }).join('\n')}
     </div>
+
+    ${postureSection}
 
     <!-- Footer -->
     <div style="padding:20px 30px; background:#0f172a; border-top:1px solid #334155; text-align:center;">
