@@ -602,11 +602,26 @@ Respond with a JSON object:
         scan_source: "automated",
       });
 
-      // Create alerts for significant risks
+      // Create alerts for significant risks (skip if similar alert already exists and is acknowledged)
       if (assessment.alerts && assessment.alerts.length > 0) {
         for (const alert of assessment.alerts) {
           // Only create alerts for medium severity and above
           if (["medium", "high", "critical"].includes(alert.severity)) {
+            // Check for existing active or acknowledged alert of the same type for this itinerary
+            const { data: existingAlert } = await supabaseClient
+              .from("travel_alerts")
+              .select("id, acknowledged")
+              .eq("itinerary_id", itinerary.id)
+              .eq("alert_type", alert.type)
+              .eq("is_active", true)
+              .maybeSingle();
+
+            // Skip if an alert of this type already exists (acknowledged or not)
+            if (existingAlert) {
+              console.log(`Skipping duplicate ${alert.type} alert for itinerary ${itinerary.id} (existing: ${existingAlert.id}, acknowledged: ${existingAlert.acknowledged})`);
+              continue;
+            }
+
             await supabaseClient.from("travel_alerts").insert({
               itinerary_id: itinerary.id,
               traveler_id: itinerary.traveler_id,
