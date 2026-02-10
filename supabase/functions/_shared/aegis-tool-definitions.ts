@@ -1195,6 +1195,39 @@ Supports files up to 20MB and processes up to 10 pages for PDFs.`,
   {
     type: "function",
     function: {
+      name: "search_social_media",
+      description: `SOCIAL MEDIA SEARCH: Search across X/Twitter, Facebook, Instagram, and Reddit for posts about a specific incident, event, person, or topic. Uses Perplexity AI to find real social media posts and discussions.
+
+USE THIS WHEN:
+- User asks to check social media for mentions of an incident
+- User wants to know if people are posting about an event
+- User needs social media intelligence on a developing situation
+- User asks "is anyone talking about X on social media?"
+
+RETURNS: Social media posts found across platforms with URLs, content snippets, platform, and sentiment.`,
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "What to search for (incident name, event, person, topic)" },
+          platforms: { 
+            type: "array", 
+            items: { type: "string", enum: ["twitter", "facebook", "instagram", "reddit", "all"] },
+            description: "Platforms to search (default: all)" 
+          },
+          time_filter: { 
+            type: "string", 
+            enum: ["hour", "day", "week", "month"], 
+            description: "How recent (default: day)" 
+          },
+          location: { type: "string", description: "Geographic focus (e.g., 'British Columbia', 'Tumbler Ridge')" },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "run_data_quality_check",
       description: "Run data quality monitoring to identify issues like incidents missing titles/summaries.",
       parameters: {

@@ -5993,6 +5993,111 @@ The signal is now in the database with status 'triaged' and rules have been appl
       };
     }
 
+    case "search_social_media": {
+      const { query, platforms, time_filter, location } = args;
+      
+      if (!query) {
+        return { error: "Query is required for social media search" };
+      }
+
+      console.log(`[search_social_media] Searching social media for: "${query}"`);
+      
+      const PERPLEXITY_API_KEY = Deno.env.get("PERPLEXITY_API_KEY");
+      if (!PERPLEXITY_API_KEY) {
+        return { error: "Perplexity API key not configured — social media search unavailable" };
+      }
+
+      // Build platform-specific search queries
+      const targetPlatforms = platforms?.includes("all") || !platforms ? ["twitter", "facebook", "instagram", "reddit"] : platforms;
+      const platformSites = {
+        twitter: "site:x.com OR site:twitter.com",
+        facebook: "site:facebook.com",
+        instagram: "site:instagram.com",
+        reddit: "site:reddit.com",
+      };
+      
+      const siteFilter = targetPlatforms
+        .map((p: string) => platformSites[p as keyof typeof platformSites])
+        .filter(Boolean)
+        .join(" OR ");
+
+      const locationContext = location ? ` near ${location}` : "";
+      const searchQuery = `${query}${locationContext} (${siteFilter})`;
+      
+      // Map time_filter to Perplexity recency
+      const recencyMap: Record<string, string> = { hour: "day", day: "day", week: "week", month: "month" };
+      const recency = recencyMap[time_filter || "day"] || "day";
+
+      try {
+        const perplexityResponse = await fetch("https://api.perplexity.ai/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "sonar",
+            messages: [
+              {
+                role: "system",
+                content: `You are a social media intelligence analyst. Search for social media posts about the given topic. For each post found, extract: platform (X/Twitter, Facebook, Instagram, Reddit), author/handle, post content/summary, URL if available, approximate date, and sentiment (positive/negative/neutral/alarming). Focus on posts from real users discussing the topic. If you find no relevant posts, say so clearly.`
+              },
+              {
+                role: "user",
+                content: `Find social media posts about: ${query}${location ? ` Location focus: ${location}` : ""}. Search across: ${targetPlatforms.join(", ")}. Time range: last ${time_filter || "day"}.`
+              }
+            ],
+            search_recency_filter: recency,
+          }),
+        });
+
+        if (!perplexityResponse.ok) {
+          const errText = await perplexityResponse.text();
+          console.error("[search_social_media] Perplexity error:", errText);
+          return { error: `Social media search failed: ${perplexityResponse.status}` };
+        }
+
+        const perplexityResult = await perplexityResponse.json();
+        const content = perplexityResult.choices?.[0]?.message?.content || "No results found";
+        const citations = perplexityResult.citations || [];
+
+        // Store as a signal for reference
+        const signalText = `Social Media Search: ${query}\n\n${content}`;
+        await supabaseClient
+          .from("signals")
+          .insert({
+            title: `Social Media Search: ${query.substring(0, 80)}`,
+            normalized_text: signalText.substring(0, 5000),
+            source: "social_media_search",
+            severity: "info",
+            status: "triaged",
+            metadata: {
+              search_query: query,
+              platforms: targetPlatforms,
+              time_filter: time_filter || "day",
+              location: location || null,
+              citations: citations,
+              search_type: "on_demand_social_search"
+            }
+          });
+
+        return {
+          success: true,
+          message: `Social media search completed for: "${query}"`,
+          platforms_searched: targetPlatforms,
+          time_range: time_filter || "last 24 hours",
+          location_focus: location || "Global",
+          results: content,
+          source_urls: citations,
+          note: "Results stored as an intelligence signal for reference. Scheduled monitors will continue to pick up new content in future scan cycles."
+        };
+
+      } catch (searchErr) {
+        console.error("[search_social_media] Error:", searchErr);
+        return { error: `Social media search failed: ${searchErr instanceof Error ? searchErr.message : "Unknown error"}` };
+      }
+    }
+
     case "run_data_quality_check": {
       const { data, error } = await supabaseClient.functions.invoke('data-quality-monitor', {
         body: { auto_fix: args.auto_fix || false, categories: args.categories || ['incident', 'entity', 'signal'] }
