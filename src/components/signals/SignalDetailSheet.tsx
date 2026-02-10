@@ -6,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, History, Clock, Heart, MessageCircle, Eye, Hash, AtSign, Instagram, Twitter, Facebook } from "lucide-react";
 import { format, differenceInDays } from "date-fns";
 import { SignalAgeBadge } from "./SignalAgeBadge";
+import { FacebookVideoEmbed, isFacebookVideoUrl } from "./FacebookVideoEmbed";
 
 interface SignalDetailSheetProps {
   open: boolean;
@@ -314,6 +315,13 @@ export function SignalDetailSheet({
                 )}
 
                 <Separator />
+              </div>
+            )}
+
+            {/* Facebook Video Embed */}
+            {socialPlatform?.toLowerCase() === 'facebook' && isFacebookVideoUrl(sourceUrl) && (
+              <div>
+                <FacebookVideoEmbed url={sourceUrl} />
               </div>
             )}
 
