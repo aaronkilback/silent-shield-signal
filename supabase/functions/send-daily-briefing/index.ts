@@ -100,9 +100,12 @@ Deno.serve(async (req) => {
     // Generate single doctrine line via AI
     let doctrineLine = '';
     try {
-      const doctrineContext = (doctrineEntries || [])
-        .filter((d: any) => d.content_text)
-        .map((d: any) => `- [${d.content_type}] ${d.title}: ${d.content_text}`)
+      // Prioritize core Silent Shield book principles
+      const coreEntries = (doctrineEntries || []).filter((d: any) => d.tags?.includes('core-10') && d.content_text);
+      const otherEntries = (doctrineEntries || []).filter((d: any) => !d.tags?.includes('core-10') && d.content_text);
+      const prioritized = coreEntries.length > 0 ? coreEntries : otherEntries;
+      const doctrineContext = prioritized
+        .map((d: any) => `- ${d.title}: ${d.content_text}`)
         .join('\n');
 
       const postureResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
