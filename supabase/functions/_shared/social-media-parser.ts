@@ -354,6 +354,17 @@ export function isHighPriorityContent(text: string): boolean {
 export function extractPublicationDate(text: string, url: string = ''): Date | null {
   const now = new Date();
   
+  // Pattern 0: Instagram shortcode timestamp extraction
+  // Instagram shortcodes encode the post ID in base64. The post ID contains the creation timestamp.
+  const igShortcodeMatch = url.match(/instagram\.com\/(?:p|reel|tv)\/([a-zA-Z0-9_-]+)/);
+  if (igShortcodeMatch) {
+    const shortcode = igShortcodeMatch[1];
+    const igDate = decodeInstagramShortcodeDate(shortcode);
+    if (igDate && igDate <= now && igDate.getFullYear() >= 2010) {
+      return igDate;
+    }
+  }
+  
   // Pattern 1: Relative time in text (e.g., "2 hours ago", "3 days ago", "1 year ago")
   const relativeTimePatterns = [
     { pattern: /(\d+)\s*(?:second|sec)s?\s*ago/i, unit: 'seconds' },
@@ -464,4 +475,38 @@ export function getContentAgeDescription(eventDate: Date | null): string {
   
   const years = Math.floor(diffDays / 365);
   return years === 1 ? '1 year ago' : `${years} years ago`;
+}
+
+/**
+ * Decode an Instagram shortcode to extract the approximate post timestamp.
+ * Instagram media IDs are derived from shortcodes using base64 encoding.
+ * The top bits of the media ID contain a Unix timestamp (milliseconds).
+ * This works reliably for posts created before ~2020. Newer posts may use
+ * different ID schemes, so we validate the result.
+ */
+export function decodeInstagramShortcodeDate(shortcode: string): Date | null {
+  try {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    let mediaId = BigInt(0);
+    
+    for (const char of shortcode) {
+      const index = alphabet.indexOf(char);
+      if (index === -1) return null; // Invalid character
+      mediaId = mediaId * BigInt(64) + BigInt(index);
+    }
+    
+    // The timestamp is in the upper bits: shift right by 23
+    const timestampMs = Number(mediaId >> BigInt(23));
+    
+    // Validate: should be between 2010 and now
+    const date = new Date(timestampMs);
+    const now = new Date();
+    if (date.getFullYear() >= 2010 && date <= now) {
+      return date;
+    }
+    
+    return null;
+  } catch {
+    return null;
+  }
 }
