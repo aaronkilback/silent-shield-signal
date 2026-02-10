@@ -468,6 +468,8 @@ Extract all entities, signals, and their relationships.`
                         },
                         severity_score: { type: "integer", minimum: 0, maximum: 100 },
                         relevance_score: { type: "number", minimum: 0, maximum: 1 },
+                        estimated_event_date: { type: "string", description: "ISO 8601 date (YYYY-MM-DD) of when the described event ACTUALLY OCCURRED. Extract from article dates, bylines, or temporal references. Null if clearly current/today." },
+                        is_historical_content: { type: "boolean", description: "True if the event described occurred more than 90 days ago" },
                         related_entity_names: { type: "array", items: { type: "string" } },
                         location: { type: "string" }
                       },
@@ -644,12 +646,23 @@ Extract all entities, signals, and their relationships.`
           continue; // Skip to next clientMatch
         }
 
-        // Extract event date from document content
+        // Extract event date from document content, with AI-extracted date as fallback
         const sourceUrl = document.source_url || document.metadata?.url || '';
         const contentText = `${document.raw_text || ''} ${document.post_caption || ''}`;
-        const eventDate = document.post_date 
+        let eventDate = document.post_date 
           ? new Date(document.post_date)
           : extractPublicationDate(contentText, sourceUrl);
+        
+        // If no date extracted from text, use AI-estimated event date
+        if (!eventDate && signal.estimated_event_date) {
+          try {
+            const aiDate = new Date(signal.estimated_event_date);
+            if (!isNaN(aiDate.getTime())) {
+              eventDate = aiDate;
+              console.log(`[DateExtract] Using AI-estimated event date: ${eventDate.toISOString()} (historical: ${signal.is_historical_content})`);
+            }
+          } catch { /* ignore invalid dates */ }
+        }
         
         const { data: newSignal, error: signalError } = await supabase
           .from('signals')

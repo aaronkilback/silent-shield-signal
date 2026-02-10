@@ -324,6 +324,8 @@ Respond with structured JSON containing:
   "alert_recipients": ["email1@example.com"],
   "estimated_impact": string,
   "reasoning": string,
+  "estimated_event_date": "ISO 8601 date string (YYYY-MM-DD) of when the described event ACTUALLY OCCURRED based on clues in the text. If the signal describes a past event (e.g., references a specific year, season, or past campaign), extract that date. If the event appears current/recent, use null.",
+  "is_historical_content": boolean — true if the described event occurred more than 90 days ago,
   "strategic_context": "Broader threat landscape — only cite verified patterns",
   "threat_correlation": "ONLY list signals with direct evidence-based connections. State 'No direct correlations found' if none exist.",
   "campaign_assessment": "ONLY if direct evidence exists of coordination. Otherwise state 'No evidence of coordinated campaign'.",
@@ -387,12 +389,14 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
                 alert_recipients: { type: 'array', items: { type: 'string' } },
                 estimated_impact: { type: 'string' },
                 reasoning: { type: 'string' },
+                estimated_event_date: { type: 'string', description: 'ISO 8601 date (YYYY-MM-DD) of when the event actually occurred. Null if current/recent.' },
+                is_historical_content: { type: 'boolean', description: 'True if the described event occurred more than 90 days ago' },
                 strategic_context: { type: 'string' },
                 threat_correlation: { type: 'string' },
                 campaign_assessment: { type: 'string' },
                 sector_implications: { type: 'string' }
               },
-              required: ['threat_level', 'confidence', 'should_create_incident', 'reasoning']
+              required: ['threat_level', 'confidence', 'should_create_incident', 'reasoning', 'is_historical_content']
             }
           }
         }],
@@ -644,22 +648,36 @@ Generated: ${new Date().toISOString()}
     }
 
     // Update signal status with enhanced decision data
+    // Also set event_date if AI identified this as historical content
+    const signalUpdate: Record<string, any> = { 
+      status: 'triaged',
+      raw_json: {
+        ...signal.raw_json,
+        ai_decision: decision,
+        processing_method: 'ai',
+        pattern_analysis: {
+          recent_signals_analyzed: recentSignals?.length || 0,
+          strategic_context: decision.strategic_context,
+          threat_correlation: decision.threat_correlation,
+          campaign_assessment: decision.campaign_assessment
+        }
+      }
+    };
+
+    // If AI extracted an event date and signal doesn't already have one, set it
+    if (decision.estimated_event_date && !signal.event_date) {
+      try {
+        const parsed = new Date(decision.estimated_event_date);
+        if (!isNaN(parsed.getTime())) {
+          signalUpdate.event_date = parsed.toISOString();
+          console.log(`[AI-Decision] Set event_date to ${signalUpdate.event_date} (historical: ${decision.is_historical_content})`);
+        }
+      } catch { /* ignore invalid dates */ }
+    }
+
     const { error: updateError } = await supabase
       .from('signals')
-      .update({ 
-        status: 'triaged',
-        raw_json: {
-          ...signal.raw_json,
-          ai_decision: decision,
-          processing_method: 'ai',
-          pattern_analysis: {
-            recent_signals_analyzed: recentSignals?.length || 0,
-            strategic_context: decision.strategic_context,
-            threat_correlation: decision.threat_correlation,
-            campaign_assessment: decision.campaign_assessment
-          }
-        }
-      })
+      .update(signalUpdate)
       .eq('id', signal.id);
     
     if (updateError) {
