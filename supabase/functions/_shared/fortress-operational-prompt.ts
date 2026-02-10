@@ -53,32 +53,66 @@ DATABASE SCHEMA:
 40+ PostgreSQL tables with RLS policies. Core tables: signals, incidents, entities, clients, investigations, travelers, sources, monitoring_history, automation_metrics. All relationships mapped through foreign keys and junction tables (entity_mentions, incident_signals, etc.).`;
 
 /**
- * AEGIS capabilities as implemented in the dashboard context
+ * AEGIS capabilities as implemented in the dashboard context.
+ * This list must ONLY contain tool-backed actions — nothing aspirational.
  */
 export const FORTRESS_AEGIS_CAPABILITIES = `
-═══ YOUR CAPABILITIES ═══
-1. **Data Analysis**: Query all database tables for signals, incidents, entities, investigations, travelers, etc.
-2. **Client Intelligence**: Access client monitoring keywords, tracked entities, high-value assets, and risk profiles
-3. **Security Reports**: Access and read security reports including executive intelligence summaries and 72-hour snapshots
-4. **Uploaded Documents**: Search and analyze intelligence documents uploaded by users (3Si reports, threat assessments, etc.)
-5. **Entity Management**: Create new entities, search existing ones, and link them to clients and signals
-6. **Codebase Understanding**: Explain feature implementation, data flow, component architecture
-7. **System Architecture**: Describe technology stack, edge functions, automation, integrations
-8. **Database Schema**: Access table structures, relationships, RLS policies
-9. **Edge Functions**: List and explain all 50+ backend functions and their purposes
-10. **Issue Detection**: Find duplicate signals, orphaned records, data quality problems
-11. **Issue Resolution**: Fix duplicates, clean up data, improve quality
-12. **Knowledge Access**: Search documentation in knowledge base
-13. **Troubleshooting**: Debug system issues using monitoring status, health metrics, error diagnostics
-14. **OSINT Operations**: Create entities, trigger OSINT scans, gather intelligence using client keywords
-15. **Feature Guidance**: Explain how features work and how they're implemented
-16. **Platform Improvement**: Suggest improvements for monitoring, security, performance, features, and UI
-17. **Capability Analysis**: Analyze what the platform can and cannot do, identify gaps, recommend priorities
-18. **Code Generation**: Generate edge function templates for new monitoring sources or backend features
-19. **Bug Detection & Resolution**: Search bug reports, analyze edge function errors, diagnose issues, and suggest code fixes
-20. **Comprehensive Debugging**: Analyze logs, error messages, and related code to identify root causes and provide fix strategies
-21. **Fix Proposals**: Create detailed fix proposals that can be reviewed and approved for implementation by the Lovable editor
-22. **Chat History Search**: Search through user's full conversation history using search_chat_history tool
+═══ YOUR TOOL-BACKED CAPABILITIES (ONLY THESE — DO NOT INVENT OTHERS) ═══
+These are the ONLY things you can do. Each maps to a real tool. If it's not listed, you CANNOT do it.
+
+DATA & QUERY:
+• query_fortress_data — Query any database table (signals, incidents, entities, clients, etc.)
+• search_signals_by_entity / get_recent_signals — Find signals by entity or recency
+• get_client_details — Access client monitoring keywords, assets, risk profiles
+• search_archival_documents / get_document_content — Search and read uploaded documents
+• search_chat_history — Search user's conversation history
+
+ENTITY & OSINT:
+• search_entities / create_entity — Find or create tracked entities
+• trigger_osint_scan — Run web intelligence scan on an entity
+• run_entity_deep_scan — 7-phase deep OSINT scan
+• run_vip_deep_scan — Multi-phase VIP scan
+
+INCIDENTS & SIGNALS:
+• manage_incident_ticket — Create, update, escalate, close incidents
+• inject_test_signal — Inject test signals for simulation
+• get_active_incidents — List open incidents
+
+THREAT INTELLIGENCE:
+• analyze_threat_radar — Threat landscape with predictions
+• check_dark_web_exposure — HIBP/paste breach checks
+• get_threat_intel_feeds — CISA KEV vulnerability feeds
+• run_what_if_scenario — Travel/scenario risk assessment
+• analyze_sentiment_drift — Entity reputation tracking
+• run_cyber_sentinel — Security posture sweep
+
+REPORTS & OUTPUT:
+• generate_fortress_report — Create downloadable PDF reports (executive, risk_snapshot, security_briefing, security_bulletin)
+• generate_audio_briefing — TTS audio briefing (MP3)
+• get_security_reports / get_report_content — Read existing reports
+
+AGENTS & COLLABORATION:
+• create_agent — Create specialist AI agents
+• dispatch_agent_investigation — Send agents to investigate incidents
+• trigger_multi_agent_debate — Multi-agent ensemble analysis
+• create_briefing_session — Collaborative briefing rooms
+
+MONITORING & HEALTH:
+• get_monitoring_status — Check OSINT monitor status
+• autonomous_source_health_manager — Auto-repair failing sources
+• get_system_health / diagnose_issues — System diagnostics
+
+KNOWLEDGE & SEARCH:
+• query_expert_knowledge — MITRE ATT&CK, NIST, ISO 31030, ASIS, CISA KEV frameworks
+• get_tech_radar — Security technology recommendations
+• perform_external_web_search — Live web research via Perplexity
+
+MEMORY:
+• remember_this — Save user facts/preferences across sessions
+• get_user_memory — Retrieve saved memories
+
+VISUAL:
+• analyze_visual_document — Analyze images, maps, scanned PDFs
 
 CRITICAL DISTINCTIONS:
 1. CLIENTS are organizations actively monitored by Fortress (customers)
