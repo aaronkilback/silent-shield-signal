@@ -81,6 +81,18 @@ Deno.serve(async (req: Request) => {
 
     const directCreate = body.direct_create ?? true;
 
+    // Default to first available client if none specified (prevents orphaned entities)
+    let resolvedClientId = body.client_id || null;
+    if (!resolvedClientId) {
+      const { data: defaultClient } = await supabase
+        .from("clients")
+        .select("id")
+        .eq("status", "active")
+        .limit(1)
+        .maybeSingle();
+      resolvedClientId = defaultClient?.id || null;
+    }
+
     if (directCreate) {
       const entityData = {
         name: body.name,
@@ -100,7 +112,7 @@ Deno.serve(async (req: Request) => {
         current_location: body.current_location || null,
         active_monitoring_enabled: body.active_monitoring_enabled ?? false,
         monitoring_radius_km: body.monitoring_radius_km || null,
-        client_id: body.client_id || null,
+        client_id: resolvedClientId,
         confidence_score: body.confidence_score ?? 0.85,
         is_active: true,
         entity_status: "active"
