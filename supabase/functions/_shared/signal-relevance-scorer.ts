@@ -60,6 +60,11 @@ const LOW_VALUE_PATTERNS = [
   /\bski\s+resort\b/i,
   /\brecipe\s+for\b/i,
   /\bfashion\s+(show|week)\b/i,
+  // Organizational "About Us" descriptions — no actionable intelligence
+  /\bis\s+(?:a|an)\s+(?:alliance|coalition|network|movement|organization|group)\s+(?:of|made\s+up\s+of)\b/i,
+  /\bworking\s+together\s+to\s+hold\s+their\s+government\b/i,
+  /\borganizing\s+in\s+their\s+communities\b/i,
+  /\bbroad[\s-]based\s+(?:alliance|coalition|network)\b/i,
 ];
 
 // ═══ TEMPORAL DECAY ═══
