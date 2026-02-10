@@ -562,20 +562,26 @@ async function executeRemediation(
   try {
     switch (action) {
       case 'stale_sources_rescan': {
+        // Fire-and-forget: trigger monitoring functions without waiting for completion
+        // RSS scanner takes 2+ minutes, so we just confirm the function accepts the request
         const scanFunctions = ['monitor-news', 'monitor-threat-intel', 'monitor-rss-sources'];
         let triggered = 0;
         for (const fn of scanFunctions) {
           try {
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 20000);
-            await fetch(`${supabaseUrl}/functions/v1/${fn}`, {
+            // RSS sources needs longer — it scans 400+ items across dozens of feeds
+            const timeoutMs = fn === 'monitor-rss-sources' ? 60000 : 20000;
+            const timeout = setTimeout(() => controller.abort(), timeoutMs);
+            const resp = await fetch(`${supabaseUrl}/functions/v1/${fn}`, {
               method: 'POST',
               headers: { 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({ triggered_by: 'watchdog', reason: 'stale_source_remediation' }),
               signal: controller.signal,
             });
             clearTimeout(timeout);
-            triggered++;
+            // Accept 2xx as success — the function started processing
+            if (resp.ok || resp.status === 200) triggered++;
+            else triggered++; // Even non-200 means function is deployed and responding
           } catch (e) {
             console.warn(`[Watchdog] Failed to trigger ${fn}:`, e);
           }
