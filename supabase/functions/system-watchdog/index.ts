@@ -774,12 +774,16 @@ async function executeRemediation(
       }
 
       case 'fix_orphaned_entities': {
-        const { data: orphaned } = await supabase.from('entities').select('id').is('client_id', null).eq('is_active', true).limit(50);
+        // Instead of deactivating, assign orphaned entities to the default active client
+        const { data: defaultClient } = await supabase.from('clients').select('id, name').eq('status', 'active').limit(1).maybeSingle();
+        if (!defaultClient) return { action, finding, success: false, details: 'No active client found to assign orphaned entities to' };
+
+        const { data: orphaned } = await supabase.from('entities').select('id').is('client_id', null).eq('is_active', true).limit(200);
         if (!orphaned || orphaned.length === 0) return { action, finding, success: true, details: 'No orphaned entities found' };
 
         const ids = orphaned.map((e: any) => e.id);
-        const { error } = await supabase.from('entities').update({ is_active: false }).in('id', ids);
-        return { action, finding, success: !error, details: error ? `Fix failed: ${error.message}` : `Deactivated ${ids.length} orphaned entities` };
+        const { error } = await supabase.from('entities').update({ client_id: defaultClient.id }).in('id', ids);
+        return { action, finding, success: !error, details: error ? `Fix failed: ${error.message}` : `Assigned ${ids.length} orphaned entities to client "${defaultClient.name}"` };
       }
 
       case 'close_stale_bugs': {
