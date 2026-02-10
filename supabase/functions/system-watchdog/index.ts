@@ -857,7 +857,7 @@ This correction was triggered because compliance score dropped below threshold. 
           content: correctionNote,
           memory_type: 'behavioral_correction',
           scope: 'global',
-          importance_score: 10, // Maximum importance
+          importance_score: 9.99, // Maximum importance (column is numeric(3,2), max 9.99)
           context_tags: ['behavioral_correction', 'action_first', 'zero_preamble', 'watchdog_generated'],
           expires_at: new Date(Date.now() + 7 * 86400000).toISOString(), // 7-day TTL, refreshed if drift continues
         });
