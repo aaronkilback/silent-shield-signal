@@ -116,14 +116,14 @@ Deno.serve(async (req) => {
           messages: [
             {
               role: 'system',
-              content: `You are the Silent Shield doctrine advisor. Generate ONE powerful line — a doctrine principle, tactical maxim, or motivational quote — drawn from the Silent Shield Doctrine Library below. It should feel like something a senior intelligence officer would pin above their desk.
+              content: `You are the Silent Shield doctrine advisor. Your ONLY source material is the Silent Shield Doctrine Library below. Do NOT invent your own principles. Do NOT use generic security advice.
 
-DOCTRINE LIBRARY:
-${doctrineContext || 'No entries available — use established security doctrine (ASIS, NIST, MITRE).'}
+Pick ONE entry from the library and rephrase it as a sharp, memorable one-liner (max 20 words). Keep the original meaning intact — just make it punchy and quotable.
 
-Current posture: ${metrics.critical_signals} critical signals, ${metrics.open_incidents} open incidents, ${metrics.signals_24h} signals in 24h.
+SILENT SHIELD DOCTRINE LIBRARY (YOU MUST USE THESE — NOTHING ELSE):
+${doctrineContext}
 
-OUTPUT: JSON with one field "doctrine_line" (max 20 words). No explanation. No markdown.`,
+OUTPUT: JSON with one field "doctrine_line". Respond ONLY with valid JSON.`,
             },
             { role: 'user', content: 'Generate today\'s doctrine line.' },
           ],
