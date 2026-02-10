@@ -56,6 +56,7 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - Source reliability weighting (0.0-1.0) with 14-day temporal decay
 - EXPECTED: Steady flow. Zero signals for 6+ hours = pipeline stall
 - REMEDIATION: Trigger monitoring source re-scans via edge functions
+- ADAPTIVE THRESHOLDS: Signal volume baselines auto-adjust based on 30-day rolling averages. If the platform is growing (>20% increase), stale thresholds widen. If declining (>20% drop), investigate root cause before alerting.
 
 ### AEGIS AI Assistant (CRITICAL)
 - Primary user interface — agent-mediated UI philosophy
@@ -92,6 +93,15 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - 5 CRITICAL: get-user-tenants, agent-chat, dashboard-ai-assistant, system-health-check, ingest-signal
 - REMEDIATION: Cannot redeploy — flag for human attention
 
+## ADAPTIVE THRESHOLD TUNING
+You will receive an "adaptiveThresholds" object with auto-calculated baselines:
+- signalStaleHours: How many hours of zero signals before alerting (adjusts with platform growth)
+- minDailySignals: Expected minimum daily signal volume (rolling 30-day average)
+- orphanedSignalThreshold: How many orphans before warning (scales with total signal volume)
+- bugBacklogThreshold: How many stale bugs before alerting
+- dbLatencyWarningMs: Database response time threshold
+USE THESE THRESHOLDS instead of hardcoded values. They self-adjust as the platform grows.
+
 ## PHASE 1: ANALYSIS OUTPUT FORMAT
 Respond with ONLY valid JSON (no markdown):
 {
@@ -106,9 +116,10 @@ Respond with ONLY valid JSON (no markdown):
       "analysis": "What you observed and WHY it matters (2-3 sentences). Reference learnings if relevant.",
       "recommendation": "What action to take. If past remediations failed, suggest alternatives.",
       "canAutoRemediate": true/false,
-      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "none",
+      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "none",
       "isRecurring": true/false,
-      "learningNote": "What you learned about this issue from history (or 'First occurrence')"
+      "learningNote": "What you learned about this issue from history (or 'First occurrence')",
+      "thresholdAdjustment": null | { "metric": "string", "currentValue": number, "suggestedValue": number, "reason": "string" }
     }
   ],
   "suppressedChecks": ["Normal things you checked and suppressed"],
@@ -166,6 +177,14 @@ Only set shouldStillAlert=true if there are unresolved warning+ issues remaining
 //                    TELEMETRY & TYPES
 // ═══════════════════════════════════════════════════════════════
 
+interface AdaptiveThresholds {
+  signalStaleHours: number;
+  minDailySignals: number;
+  orphanedSignalThreshold: number;
+  bugBacklogThreshold: number;
+  dbLatencyWarningMs: number;
+}
+
 interface TelemetryData {
   timestamp: string;
   edgeFunctions: { name: string; status: string; responseTime?: number; error?: string }[];
@@ -181,6 +200,7 @@ interface TelemetryData {
   autonomousOps: { recentActions: number; lastActionAge: string };
   aiHealth: { systemHealthCheckStatus: number | null };
   historicalBaseline: { avgDailySignals: number; avgWeeklyBugs: number };
+  adaptiveThresholds: AdaptiveThresholds;
 }
 
 interface Finding {
@@ -195,6 +215,7 @@ interface Finding {
   isRecurring?: boolean;
   learningNote?: string;
   effectivenessScore?: number;
+  thresholdAdjustment?: { metric: string; currentValue: number; suggestedValue: number; reason: string } | null;
 }
 
 interface AIAnalysis {
@@ -491,6 +512,25 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     aiHealthStatus = resp.status;
   } catch { aiHealthStatus = null; }
 
+  // Calculate adaptive thresholds based on historical data
+  const avgDailySignals = Math.round((avgSignalsResult.count || 0) / 30);
+  const avgWeeklyBugs = Math.round((avgBugsResult.count || 0) / 4.3);
+  const totalSignals30d = avgSignalsResult.count || 0;
+  
+  // Self-tuning: thresholds scale with platform volume
+  const adaptiveThresholds: AdaptiveThresholds = {
+    // If platform averages 100+/day, a 6h gap is less alarming than if it averages 10/day
+    signalStaleHours: avgDailySignals > 100 ? 8 : avgDailySignals > 50 ? 6 : 4,
+    // Minimum expected daily signals: 60% of rolling average (allows natural variance)
+    minDailySignals: Math.max(1, Math.round(avgDailySignals * 0.6)),
+    // Orphan threshold scales: 1% of monthly volume or minimum 5
+    orphanedSignalThreshold: Math.max(5, Math.round(totalSignals30d * 0.01)),
+    // Bug backlog: scale with weekly average
+    bugBacklogThreshold: Math.max(3, Math.round(avgWeeklyBugs * 1.5)),
+    // DB latency: start conservative, could be tuned by learnings
+    dbLatencyWarningMs: 2000,
+  };
+
   return {
     timestamp: now.toISOString(),
     edgeFunctions,
@@ -505,7 +545,8 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     database: { connected: dbConnected, responseTimeMs: Date.now() - dbStart },
     autonomousOps: { recentActions: autonomousActionsResult.count || 0, lastActionAge },
     aiHealth: { systemHealthCheckStatus: aiHealthStatus },
-    historicalBaseline: { avgDailySignals: Math.round((avgSignalsResult.count || 0) / 30), avgWeeklyBugs: Math.round((avgBugsResult.count || 0) / 4.3) },
+    historicalBaseline: { avgDailySignals, avgWeeklyBugs },
+    adaptiveThresholds,
   };
 }
 
@@ -657,6 +698,28 @@ async function executeRemediation(
         });
         clearTimeout(timeout);
         return { action, finding, success: resp.ok, details: resp.ok ? 'Autonomous operations loop re-triggered' : `Trigger returned ${resp.status}` };
+      }
+
+      case 'adjust_thresholds': {
+        // Store threshold adjustment as a learning for the next run
+        const adjustment = finding.thresholdAdjustment;
+        if (!adjustment) return { action, finding, success: false, details: 'No threshold adjustment specified' };
+        
+        // Log the adjustment as a high-importance learning note
+        const { error } = await supabase.from('watchdog_learnings').insert({
+          run_id: 'threshold_adjustment',
+          severity: 'info',
+          finding_category: 'Self-Improvement',
+          finding_title: `Threshold Adjusted: ${adjustment.metric}`,
+          ai_learning_note: `${adjustment.metric}: ${adjustment.currentValue} → ${adjustment.suggestedValue}. Reason: ${adjustment.reason}`,
+          effectiveness_score: 1.0,
+          telemetry_snapshot: { adjustment },
+        });
+        
+        return { 
+          action, finding, success: !error, 
+          details: error ? `Failed to store adjustment: ${error.message}` : `Threshold ${adjustment.metric} adjusted: ${adjustment.currentValue} → ${adjustment.suggestedValue} (${adjustment.reason})` 
+        };
       }
 
       default:
@@ -853,7 +916,7 @@ Deno.serve(async (req) => {
     try {
       analysis = await callAI(
         FORTRESS_SYSTEM_KNOWLEDGE,
-        `Analyze this telemetry AND your learning history to make informed decisions. Skip remediations with poor track records. Identify recurring patterns.\n\n${JSON.stringify(analysisInput, null, 2)}`
+        `Analyze this telemetry AND your learning history to make informed decisions. Skip remediations with poor track records. Identify recurring patterns. USE the adaptiveThresholds to calibrate your severity judgments — these auto-adjust with platform growth.\n\n${JSON.stringify(analysisInput, null, 2)}`
       );
     } catch (e) {
       console.error('[Watchdog] AI analysis failed:', e);

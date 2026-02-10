@@ -346,7 +346,7 @@ WHEN TO USE:
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-realtime-preview-2024-12-17',
+        model: 'gpt-realtime-2025-08-28',
         modalities: ['audio', 'text'],
         voice: 'ash',
         input_audio_format: 'pcm16',
