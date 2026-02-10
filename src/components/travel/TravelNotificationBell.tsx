@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatDistanceToNow } from "date-fns";
 import { useNavigate } from "react-router-dom";
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect } from "react";
 
 /**
  * Compact travel alert bell for the global header.
@@ -17,7 +17,17 @@ import { useCallback, useState } from "react";
 export function TravelNotificationBell() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [dismissedRiskChangeIds, setDismissedRiskChangeIds] = useState<Set<string>>(new Set());
+
+  // Persist dismissed risk change IDs in localStorage
+  const STORAGE_KEY = "dismissed-risk-change-ids";
+  const [dismissedRiskChangeIds, setDismissedRiskChangeIds] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
 
   const { data: alerts = [] } = useQuery({
     queryKey: ["travel-alerts-global"],
@@ -79,12 +89,17 @@ export function TravelNotificationBell() {
     setDismissedRiskChangeIds(prev => {
       const next = new Set(prev);
       riskChanges.forEach((c: any) => next.add(c.id));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([...next]));
       return next;
     });
   }, [alerts, riskChanges, queryClient]);
 
   const dismissRiskChange = useCallback((changeId: string) => {
-    setDismissedRiskChangeIds(prev => new Set(prev).add(changeId));
+    setDismissedRiskChangeIds(prev => {
+      const next = new Set(prev).add(changeId);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([...next]));
+      return next;
+    });
   }, []);
 
   const handleAlertClick = useCallback(async (alertId: string) => {
