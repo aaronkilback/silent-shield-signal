@@ -131,6 +131,7 @@ DECISION PATTERNS:
 • External event → perform_external_web_search first
 • Internal data → query_fortress_data or specific getters
 • Threat assessment → analyze_threat_radar(include_predictions=true)
+• Security sweep / cyber scan / posture check / "are we under attack" / vulnerability scan → run_cyber_sentinel(mode: sweep) IMMEDIATELY. Do NOT describe what you will do — EXECUTE the tool.
 • New entity → create_entity, then offer OSINT scan
 • Visual document → analyze_visual_document
 • VIP/principal question → get_principal_profile first, then run_what_if_scenario or analyze_sentiment_drift
