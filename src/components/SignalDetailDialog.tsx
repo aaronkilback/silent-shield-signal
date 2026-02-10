@@ -4,6 +4,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon, Copy, Check, FileWarning, ExternalLink, Shield, MessageCircle, Heart, Share2, Hash, AtSign, Image } from "lucide-react";
+import { FacebookVideoEmbed, isFacebookVideoUrl } from "@/components/signals/FacebookVideoEmbed";
 import { formatDistanceToNow } from "date-fns";
 import { useState, useEffect } from "react";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
@@ -460,6 +461,16 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                     </a>
                   </div>
                 )}
+
+                {/* Facebook Video/Live Embed */}
+                {(() => {
+                  const fbUrl = signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link;
+                  return isFacebookVideoUrl(fbUrl) ? (
+                    <div className="border-t border-border pt-3 mt-2">
+                      <FacebookVideoEmbed url={fbUrl} />
+                    </div>
+                  ) : null;
+                })()}
 
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Clock className="w-3 h-3" />
