@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, CheckCircle, MapPin, Plane, Scan } from "lucide-react";
+import { AlertTriangle, CheckCircle, MapPin, Plane, Scan, TrendingUp, TrendingDown } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -18,6 +18,7 @@ export function TravelAlertsPanel() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["travel-alerts"] });
+      queryClient.invalidateQueries({ queryKey: ["travel-risk-changes"] });
       queryClient.invalidateQueries({ queryKey: ["itineraries"] });
       toast.success(`Scanned ${data.monitored} itineraries for risks`);
     },
@@ -38,6 +39,22 @@ export function TravelAlertsPanel() {
         `)
         .eq("is_active", true)
         .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const { data: riskChanges } = useQuery({
+    queryKey: ["travel-risk-changes"],
+    queryFn: async () => {
+      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+      const { data, error } = await supabase
+        .from("itinerary_scan_history")
+        .select("id, itinerary_id, scanned_at, risk_level, previous_risk_level, risk_changed")
+        .eq("risk_changed", true)
+        .gte("scanned_at", threeDaysAgo)
+        .order("scanned_at", { ascending: false })
+        .limit(20);
       if (error) throw error;
       return data;
     },
@@ -118,6 +135,8 @@ export function TravelAlertsPanel() {
     return <div>Loading alerts...</div>;
   }
 
+  const totalItems = (alerts?.length || 0) + (riskChanges?.length || 0);
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -133,9 +152,16 @@ export function TravelAlertsPanel() {
             {scanMutation.isPending ? "Scanning..." : "Scan for Risks"}
           </Button>
         </div>
-        <Badge variant="outline">
-          {alerts?.filter(a => !a.acknowledged).length || 0} Active
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline">
+            {alerts?.filter(a => !a.acknowledged).length || 0} Active Alerts
+          </Badge>
+          {(riskChanges?.length || 0) > 0 && (
+            <Badge variant="outline" className="border-amber-500/50 text-amber-600">
+              {riskChanges?.length} Risk Changes
+            </Badge>
+          )}
+        </div>
       </div>
 
       <div className="space-y-3">
@@ -229,9 +255,53 @@ export function TravelAlertsPanel() {
           </Card>
         ))}
 
-        {alerts?.length === 0 && (
+        {/* Risk Level Changes */}
+        {riskChanges && riskChanges.length > 0 && (
+          <>
+            <h3 className="text-lg font-semibold pt-4 flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Recent Risk Level Changes
+            </h3>
+            {riskChanges.map((change: any) => {
+              const isEscalation = ["medium", "high", "critical"].includes(change.risk_level) &&
+                ["low", "medium"].includes(change.previous_risk_level) &&
+                change.risk_level !== change.previous_risk_level;
+              return (
+                <Card
+                  key={`risk-${change.id}`}
+                  className={`p-4 ${isEscalation ? "border-amber-500/30" : ""}`}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className={`p-2 rounded-lg ${isEscalation ? "bg-amber-500/10 text-amber-600" : "bg-emerald-500/10 text-emerald-600"}`}>
+                      {isEscalation ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
+                    </div>
+                    <div className="flex-1 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <h3 className="font-semibold">
+                          Risk Level {isEscalation ? "Increased" : "Decreased"}
+                        </h3>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline">{change.previous_risk_level?.toUpperCase()}</Badge>
+                          <span className="text-muted-foreground">→</span>
+                          <Badge variant={isEscalation ? "destructive" : "secondary"}>
+                            {change.risk_level?.toUpperCase()}
+                          </Badge>
+                        </div>
+                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        {format(new Date(change.scanned_at), "PPp")}
+                      </span>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </>
+        )}
+
+        {totalItems === 0 && (
           <Card className="p-8 text-center text-muted-foreground">
-            No active alerts. All travelers are safe.
+            No active alerts or recent risk changes. All travelers are safe.
           </Card>
         )}
       </div>
