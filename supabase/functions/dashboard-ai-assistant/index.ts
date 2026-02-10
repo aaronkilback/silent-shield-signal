@@ -3,6 +3,7 @@ import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, 
 // fortress-infrastructure.ts removed from system prompt to reduce token count (~5000 tokens saved)
 import { AEGIS_CORE_IDENTITY, AEGIS_CHAT_MODIFIERS, ANTI_FABRICATION_RULES, TOOL_USAGE_GUIDANCE, AEGIS_CAPABILITY_MANIFEST, getTimeContext } from "../_shared/aegis-persona.ts";
 import { FORTRESS_PLATFORM_OVERVIEW, FORTRESS_AEGIS_CAPABILITIES, FORTRESS_WORKFLOW_INSTRUCTIONS, AEGIS_TOOL_SUMMARIZER_PROMPT, AEGIS_REPORT_PRESENTER_PROMPT, AEGIS_AGENT_CREATION_PROMPT, AEGIS_DATA_PRESENTER_PROMPT } from "../_shared/fortress-operational-prompt.ts";
+import { aegisToolDefinitions } from "../_shared/aegis-tool-definitions.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
