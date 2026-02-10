@@ -1021,6 +1021,23 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           }
         }
       },
+      {
+        type: "function",
+        function: {
+          name: "search_social_media",
+          description: `SOCIAL MEDIA SEARCH: Search across X/Twitter, Facebook, Instagram, and Reddit for posts about a specific incident, event, person, or topic. Uses Perplexity AI to find real social media posts and discussions. Use when users ask to check social media for mentions of an event.`,
+          parameters: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "What to search for" },
+              platforms: { type: "array", items: { type: "string", enum: ["twitter", "facebook", "instagram", "reddit", "all"] }, description: "Platforms to search (default: all)" },
+              time_filter: { type: "string", enum: ["hour", "day", "week", "month"], description: "How recent (default: day)" },
+              location: { type: "string", description: "Geographic focus" },
+            },
+            required: ["query"],
+          }
+        }
+      },
       // ═══════════════════════════════════════════════════════════════════════════
       //           PRINCIPAL INTELLIGENCE SUITE TOOLS (Phase 6)
       // ═══════════════════════════════════════════════════════════════════════════
@@ -2077,6 +2094,56 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
                 message: 'External search unavailable.'
               } 
             });
+          }
+          
+        } else if (funcName === 'search_social_media') {
+          const PERPLEXITY_API_KEY = Deno.env.get("PERPLEXITY_API_KEY");
+          if (!PERPLEXITY_API_KEY) {
+            toolResults.push({ tool: 'search_social_media', result: { success: false, message: 'Perplexity API key not configured' } });
+          } else {
+            const targetPlatforms = args.platforms?.includes("all") || !args.platforms ? ["twitter", "facebook", "instagram", "reddit"] : args.platforms;
+            const recencyMap: Record<string, string> = { hour: "day", day: "day", week: "week", month: "month" };
+            const recency = recencyMap[args.time_filter || "day"] || "day";
+            
+            try {
+              const perplexityResponse = await fetch("https://api.perplexity.ai/chat/completions", {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${PERPLEXITY_API_KEY}`, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: "sonar",
+                  messages: [
+                    { role: "system", content: "You are a social media intelligence analyst. Search for social media posts about the given topic. For each post found, extract: platform, author/handle, post content/summary, URL if available, approximate date, and sentiment. If you find no relevant posts, say so clearly." },
+                    { role: "user", content: `Find social media posts about: ${args.query}${args.location ? ` Location focus: ${args.location}` : ""}. Search across: ${targetPlatforms.join(", ")}. Time range: last ${args.time_filter || "day"}.` }
+                  ],
+                  search_recency_filter: recency,
+                }),
+              });
+
+              if (!perplexityResponse.ok) {
+                const errText = await perplexityResponse.text();
+                console.error("[search_social_media] Perplexity error:", errText);
+                toolResults.push({ tool: 'search_social_media', result: { success: false, message: `Search failed: ${perplexityResponse.status}` } });
+              } else {
+                const perplexityResult = await perplexityResponse.json();
+                const content = perplexityResult.choices?.[0]?.message?.content || "No results found";
+                const citations = perplexityResult.citations || [];
+                
+                toolResults.push({ 
+                  tool: 'search_social_media', 
+                  result: { 
+                    success: true, 
+                    platforms_searched: targetPlatforms,
+                    time_range: args.time_filter || "last 24 hours",
+                    location_focus: args.location || "Global",
+                    results: content,
+                    source_urls: citations 
+                  } 
+                });
+              }
+            } catch (searchErr) {
+              console.error("[search_social_media] Error:", searchErr);
+              toolResults.push({ tool: 'search_social_media', result: { success: false, message: 'Social media search failed' } });
+            }
           }
           
         // ═══════════════════════════════════════════════════════════════════════════
