@@ -1,14 +1,19 @@
 /**
- * System Watchdog — Self-Healing AI Agent
+ * System Watchdog — Self-Healing & Self-Improving AI Agent
  * 
  * An intelligent agent that UNDERSTANDS how Fortress works,
  * DETECTS issues, ATTEMPTS autonomous fixes, VERIFIES results,
- * and REPORTS what was fixed vs. what still needs human attention.
+ * LEARNS from outcomes, and REPORTS what was fixed vs. what needs attention.
  * 
- * Pipeline: Collect Telemetry → AI Analysis → Auto-Remediate → Re-Verify → Email Report
+ * Pipeline: Load Learnings → Collect Telemetry → AI Analysis → Auto-Remediate → Re-Verify → Store Learnings → Email Report
+ * 
+ * Self-Improvement Loop:
+ * - Tracks which remediations succeed/fail over time
+ * - Identifies recurring issues and escalates them
+ * - Adjusts baselines as the platform grows
+ * - Feeds historical context into AI analysis for smarter decisions
  * 
  * Runs every 6 hours via pg_cron. Emails ak@silentshieldsecurity.com
- * with a full intelligence report including remediation outcomes.
  */
 
 import { Resend } from "npm:resend@2.0.0";
@@ -21,10 +26,25 @@ const ALERT_EMAIL = 'ak@silentshieldsecurity.com';
 // ═══════════════════════════════════════════════════════════════
 
 const FORTRESS_SYSTEM_KNOWLEDGE = `
-You are the Fortress System Watchdog Agent — an autonomous self-healing AI for a corporate security intelligence platform called Fortress, built by Silent Shield Security.
+You are the Fortress System Watchdog Agent — an autonomous self-healing, self-improving AI for a corporate security intelligence platform called Fortress, built by Silent Shield Security.
 
 ## YOUR MISSION
-You monitor platform health every 6 hours. You receive raw telemetry, determine issues, and PRESCRIBE specific remediation actions the system can take autonomously. After remediation, you receive verification results and compose a final report.
+You monitor platform health every 6 hours. You receive raw telemetry AND your own historical learnings from past runs. Use those learnings to make smarter decisions, avoid repeating failed fixes, and detect patterns humans would miss.
+
+## SELF-IMPROVEMENT PROTOCOL
+You will receive a LEARNING HISTORY section with:
+- Past findings and their remediation outcomes (success/failure rates)
+- Recurring issues that keep reappearing despite fixes
+- Effectiveness scores for each remediation strategy
+- Your own past observations and notes
+
+USE THIS HISTORY TO:
+1. Skip remediations that have consistently failed (effectiveness < 0.3)
+2. Escalate recurring issues that self-healing cannot solve
+3. Notice trends (e.g., "orphaned signals spike every Monday" or "source X fails after updates")
+4. Adjust severity based on whether an issue is new vs. chronic
+5. Recommend NEW remediation strategies if old ones aren't working
+6. Note when the platform is growing (more signals, more users) and adjust baselines
 
 ## PLATFORM ARCHITECTURE
 Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
@@ -83,14 +103,17 @@ Respond with ONLY valid JSON (no markdown):
       "category": "Signal Pipeline" | "AEGIS AI" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops",
       "severity": "critical" | "warning" | "info",
       "title": "Short title",
-      "analysis": "What you observed and WHY it matters (2-3 sentences)",
-      "recommendation": "What action to take",
+      "analysis": "What you observed and WHY it matters (2-3 sentences). Reference learnings if relevant.",
+      "recommendation": "What action to take. If past remediations failed, suggest alternatives.",
       "canAutoRemediate": true/false,
-      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "none"
+      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "none",
+      "isRecurring": true/false,
+      "learningNote": "What you learned about this issue from history (or 'First occurrence')"
     }
   ],
   "suppressedChecks": ["Normal things you checked and suppressed"],
-  "trendNote": "Optional trend observation"
+  "trendNote": "Trend observation including growth patterns",
+  "selfImprovementNotes": ["Observations about your own effectiveness, baseline drift, or new patterns discovered"]
 }
 
 ## What is NORMAL (suppress):
@@ -106,7 +129,12 @@ Set shouldAlert=false if only minor info-level observations. Alert for warning+ 
 const VERIFICATION_PROMPT = `
 You are reviewing the results of automated remediation actions taken by the Fortress System Watchdog.
 
-For each remediation attempt, you received the original finding and the outcome. Compose a final assessment:
+For each remediation attempt, you received the original finding, the outcome, AND historical effectiveness data for that remediation type.
+
+Use the effectiveness history to:
+1. Downgrade confidence if this fix has a poor track record
+2. Suggest alternative approaches if the same fix keeps failing
+3. Mark issues as "chronic" if they've recurred 3+ times
 
 ## OUTPUT FORMAT (JSON only, no markdown):
 {
@@ -118,13 +146,16 @@ For each remediation attempt, you received the original finding and the outcome.
       "category": "string",
       "severity": "critical" | "warning" | "info" | "resolved",
       "title": "string",
-      "analysis": "Updated analysis incorporating remediation result",
+      "analysis": "Updated analysis incorporating remediation result and historical context",
       "recommendation": "What remains to be done (or 'No action needed — resolved')",
-      "remediationStatus": "fixed" | "partially_fixed" | "failed" | "not_attempted" | "not_applicable"
+      "remediationStatus": "fixed" | "partially_fixed" | "failed" | "not_attempted" | "not_applicable" | "chronic",
+      "effectivenessScore": 0.0-1.0,
+      "learningNote": "What should be remembered for next run"
     }
   ],
   "suppressedChecks": [],
-  "trendNote": "optional"
+  "trendNote": "optional",
+  "selfImprovementNotes": ["Observations about remediation effectiveness"]
 }
 
 Mark findings as "resolved" severity and "fixed" remediationStatus if remediation succeeded.
@@ -161,6 +192,9 @@ interface Finding {
   canAutoRemediate?: boolean;
   remediationAction?: string;
   remediationStatus?: string;
+  isRecurring?: boolean;
+  learningNote?: string;
+  effectivenessScore?: number;
 }
 
 interface AIAnalysis {
@@ -171,6 +205,7 @@ interface AIAnalysis {
   suppressedChecks: string[];
   trendNote?: string;
   shouldStillAlert?: boolean;
+  selfImprovementNotes?: string[];
 }
 
 interface RemediationResult {
@@ -180,8 +215,185 @@ interface RemediationResult {
   details: string;
 }
 
+interface LearningHistory {
+  recentFindings: { category: string; title: string; action: string; success: boolean; count: number; lastSeen: string; effectivenessScore: number }[];
+  recurringIssues: { category: string; title: string; occurrences: number; lastFixWorked: boolean }[];
+  effectivenessStats: { action: string; successRate: number; totalAttempts: number }[];
+  platformGrowth: { signalsTrend: string; entitiesTrend: string; usersTrend: string };
+  pastSelfNotes: string[];
+}
+
 const CRITICAL_FUNCTIONS = ['get-user-tenants', 'agent-chat', 'dashboard-ai-assistant', 'system-health-check', 'ingest-signal'];
 const OPERATIONAL_FUNCTIONS = ['send-daily-briefing', 'support-chat', 'ai-decision-engine', 'autonomous-operations-loop', 'monitor-travel-risks'];
+
+// ═══════════════════════════════════════════════════════════════
+//                 SELF-IMPROVEMENT: LEARNING HISTORY
+// ═══════════════════════════════════════════════════════════════
+
+async function loadLearningHistory(supabase: any): Promise<LearningHistory> {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+
+  // Fetch recent findings with outcomes
+  const [recentResult, recurringResult, effectivenessResult, pastNotesResult] = await Promise.all([
+    supabase
+      .from('watchdog_learnings')
+      .select('finding_category, finding_title, remediation_action, remediation_success, effectiveness_score, created_at')
+      .gte('created_at', thirtyDaysAgo)
+      .order('created_at', { ascending: false })
+      .limit(50),
+    supabase
+      .from('watchdog_learnings')
+      .select('finding_category, finding_title, recurrence_count, remediation_success')
+      .eq('was_recurring', true)
+      .gte('created_at', thirtyDaysAgo)
+      .order('recurrence_count', { ascending: false })
+      .limit(20),
+    supabase
+      .from('watchdog_effectiveness')
+      .select('*')
+      .limit(20),
+    supabase
+      .from('watchdog_learnings')
+      .select('ai_learning_note')
+      .not('ai_learning_note', 'is', null)
+      .gte('created_at', sevenDaysAgo)
+      .order('created_at', { ascending: false })
+      .limit(10),
+  ]);
+
+  // Aggregate recent findings
+  const findingMap = new Map<string, any>();
+  for (const r of (recentResult.data || [])) {
+    const key = `${r.finding_category}::${r.finding_title}`;
+    if (!findingMap.has(key)) {
+      findingMap.set(key, {
+        category: r.finding_category,
+        title: r.finding_title,
+        action: r.remediation_action || 'none',
+        success: r.remediation_success ?? false,
+        count: 1,
+        lastSeen: r.created_at,
+        effectivenessScore: r.effectiveness_score ?? 0.5,
+      });
+    } else {
+      const existing = findingMap.get(key);
+      existing.count++;
+      if (r.remediation_success) existing.success = true;
+    }
+  }
+
+  // Platform growth signals
+  const [signalsCount30d, signalsCount7d, entitiesCount] = await Promise.all([
+    supabase.from('signals').select('*', { count: 'exact', head: true }).gte('created_at', thirtyDaysAgo),
+    supabase.from('signals').select('*', { count: 'exact', head: true }).gte('created_at', sevenDaysAgo),
+    supabase.from('entities').select('*', { count: 'exact', head: true }).eq('is_active', true),
+  ]);
+
+  const avgDaily30 = Math.round((signalsCount30d.count || 0) / 30);
+  const avgDaily7 = Math.round((signalsCount7d.count || 0) / 7);
+  const signalsTrend = avgDaily7 > avgDaily30 * 1.2 ? 'growing' : avgDaily7 < avgDaily30 * 0.8 ? 'declining' : 'stable';
+
+  return {
+    recentFindings: Array.from(findingMap.values()),
+    recurringIssues: (recurringResult.data || []).map((r: any) => ({
+      category: r.finding_category,
+      title: r.finding_title,
+      occurrences: r.recurrence_count,
+      lastFixWorked: r.remediation_success ?? false,
+    })),
+    effectivenessStats: (effectivenessResult.data || []).map((r: any) => ({
+      action: r.remediation_action,
+      successRate: r.total_attempts > 0 ? r.successes / r.total_attempts : 0,
+      totalAttempts: r.total_attempts,
+    })),
+    platformGrowth: {
+      signalsTrend,
+      entitiesTrend: (entitiesCount.count || 0) > 1000 ? 'large' : 'normal',
+      usersTrend: 'stable', // Could be enhanced with profiles count
+    },
+    pastSelfNotes: (pastNotesResult.data || []).map((r: any) => r.ai_learning_note).filter(Boolean),
+  };
+}
+
+async function storeLearnings(
+  supabase: any,
+  runId: string,
+  analysis: AIAnalysis,
+  remediations: RemediationResult[],
+  learningHistory: LearningHistory,
+  telemetry: TelemetryData,
+): Promise<void> {
+  const rows: any[] = [];
+
+  for (const finding of analysis.findings) {
+    const remediation = remediations.find(r => r.finding.title === finding.title);
+    
+    // Check if this is a recurring issue
+    const pastOccurrences = learningHistory.recentFindings.filter(
+      f => f.category === finding.category && f.title === finding.title
+    );
+    const isRecurring = pastOccurrences.length > 0;
+    const recurrenceCount = isRecurring ? (pastOccurrences[0]?.count || 0) + 1 : 1;
+
+    // Calculate effectiveness score
+    let effectiveness = 0.5;
+    if (remediation) {
+      const pastEffectiveness = learningHistory.effectivenessStats.find(
+        e => e.action === remediation.action
+      );
+      if (pastEffectiveness && pastEffectiveness.totalAttempts > 2) {
+        // Weighted average: 70% historical, 30% current result
+        effectiveness = pastEffectiveness.successRate * 0.7 + (remediation.success ? 1.0 : 0.0) * 0.3;
+      } else {
+        effectiveness = remediation.success ? 0.8 : 0.2;
+      }
+    }
+
+    rows.push({
+      run_id: runId,
+      severity: finding.severity,
+      finding_category: finding.category,
+      finding_title: finding.title,
+      remediation_action: remediation?.action || null,
+      remediation_success: remediation?.success ?? null,
+      remediation_details: remediation?.details || null,
+      was_recurring: isRecurring,
+      recurrence_count: recurrenceCount,
+      learned_pattern: finding.learningNote || null,
+      effectiveness_score: effectiveness,
+      telemetry_snapshot: {
+        signals6h: telemetry.signalPipeline.recentSignalCount,
+        orphanedSignals: telemetry.dataIntegrity.orphanedSignals,
+        openBugs: telemetry.bugReports.totalOpen,
+        dbLatency: telemetry.database.responseTimeMs,
+      },
+      ai_learning_note: finding.learningNote || null,
+    });
+  }
+
+  // Store self-improvement notes as a summary learning
+  if (analysis.selfImprovementNotes && analysis.selfImprovementNotes.length > 0) {
+    rows.push({
+      run_id: runId,
+      severity: 'info',
+      finding_category: 'Self-Improvement',
+      finding_title: 'Watchdog Self-Assessment',
+      ai_learning_note: analysis.selfImprovementNotes.join(' | '),
+      effectiveness_score: 1.0,
+      telemetry_snapshot: {
+        signals6h: telemetry.signalPipeline.recentSignalCount,
+        overallSeverity: analysis.severity,
+      },
+    });
+  }
+
+  if (rows.length > 0) {
+    const { error } = await supabase.from('watchdog_learnings').insert(rows);
+    if (error) console.error('[Watchdog] Failed to store learnings:', error);
+    else console.log(`[Watchdog] 🧠 Stored ${rows.length} learnings for future runs`);
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 //                    TELEMETRY COLLECTOR
@@ -330,15 +542,26 @@ async function executeRemediation(
   finding: Finding,
   supabase: any,
   supabaseUrl: string,
-  anonKey: string
+  anonKey: string,
+  learningHistory: LearningHistory,
 ): Promise<RemediationResult> {
   const action = finding.remediationAction || 'none';
+  
+  // Check if this remediation has a poor track record
+  const pastEffectiveness = learningHistory.effectivenessStats.find(e => e.action === action);
+  if (pastEffectiveness && pastEffectiveness.totalAttempts > 3 && pastEffectiveness.successRate < 0.2) {
+    console.log(`[Watchdog] ⏭️ Skipping ${action} — historical success rate too low (${(pastEffectiveness.successRate * 100).toFixed(0)}% over ${pastEffectiveness.totalAttempts} attempts)`);
+    return {
+      action, finding, success: false,
+      details: `Skipped: historical success rate is ${(pastEffectiveness.successRate * 100).toFixed(0)}% over ${pastEffectiveness.totalAttempts} attempts. Needs human intervention or new strategy.`,
+    };
+  }
+
   console.log(`[Watchdog] 🔧 Attempting remediation: ${action} for "${finding.title}"`);
 
   try {
     switch (action) {
       case 'stale_sources_rescan': {
-        // Trigger key monitoring functions to restart signal flow
         const scanFunctions = ['monitor-news', 'monitor-threat-intel', 'monitor-rss-sources'];
         let triggered = 0;
         for (const fn of scanFunctions) {
@@ -374,7 +597,6 @@ async function executeRemediation(
       }
 
       case 'fix_orphaned_signals': {
-        // Get default client to assign orphaned signals to
         const { data: defaultClient } = await supabase.from('clients').select('id').limit(1).single();
         if (!defaultClient) return { action, finding, success: false, details: 'No default client found to assign orphaned signals' };
 
@@ -387,7 +609,6 @@ async function executeRemediation(
       }
 
       case 'fix_orphaned_entities': {
-        // Deactivate orphaned entities rather than deleting
         const { data: orphaned } = await supabase.from('entities').select('id').is('client_id', null).eq('is_active', true).limit(50);
         if (!orphaned || orphaned.length === 0) return { action, finding, success: true, details: 'No orphaned entities found' };
 
@@ -397,7 +618,6 @@ async function executeRemediation(
       }
 
       case 'close_stale_bugs': {
-        // Auto-close bugs that have been open >30 days with no updates
         const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
         const { data: staleBugs } = await supabase
           .from('bug_reports')
@@ -445,14 +665,14 @@ async function executeRemediation(
 //                    EMAIL BUILDER
 // ═══════════════════════════════════════════════════════════════
 
-function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remediations: RemediationResult[]): string {
+function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remediations: RemediationResult[], learningHistory: LearningHistory): string {
   const now = new Date().toLocaleString('en-US', { timeZone: 'America/Edmonton' });
 
   const severityColor: Record<string, string> = { critical: '#7f1d1d', degraded: '#78350f', monitoring: '#1e3a5f', healthy: '#14532d' };
   const severityIcon: Record<string, string> = { critical: '🔴', degraded: '⚠️', monitoring: '🔍', healthy: '✅' };
 
   const resolved = analysis.findings.filter(f => f.remediationStatus === 'fixed');
-  const partiallyFixed = analysis.findings.filter(f => f.remediationStatus === 'partially_fixed');
+  const chronic = analysis.findings.filter(f => f.remediationStatus === 'chronic');
   const unresolved = analysis.findings.filter(f => f.severity === 'critical' || f.severity === 'warning');
   const info = analysis.findings.filter(f => f.severity === 'info');
 
@@ -460,16 +680,20 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
     const statusBadge = f.remediationStatus === 'fixed' ? '<span style="background: #14532d; color: #4ade80; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">✅ AUTO-FIXED</span>' :
       f.remediationStatus === 'partially_fixed' ? '<span style="background: #78350f; color: #fbbf24; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">⚡ PARTIAL FIX</span>' :
       f.remediationStatus === 'failed' ? '<span style="background: #7f1d1d; color: #fca5a5; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">❌ FIX FAILED</span>' :
-      f.remediationStatus === 'not_applicable' ? '' : '';
+      f.remediationStatus === 'chronic' ? '<span style="background: #4a1d96; color: #c4b5fd; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">🔁 CHRONIC</span>' :
+      '';
+
+    const recurringBadge = f.isRecurring ? '<span style="background: #1e3a5f; color: #93c5fd; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 4px;">↻ recurring</span>' : '';
 
     return `
       <div style="background: ${bgColor}; border-left: 3px solid ${borderColor}; padding: 14px 18px; margin-bottom: 10px; border-radius: 4px;">
         <div style="margin-bottom: 6px;">
-          <strong style="color: ${color}; font-size: 14px;">${f.title}</strong>${statusBadge}
+          <strong style="color: ${color}; font-size: 14px;">${f.title}</strong>${statusBadge}${recurringBadge}
           <span style="color: #666; font-size: 11px; text-transform: uppercase; float: right;">${f.category}</span>
         </div>
         <p style="margin: 0 0 8px; color: #d4d4d4; font-size: 13px; line-height: 1.5;">${f.analysis}</p>
         <p style="margin: 0; color: #93c5fd; font-size: 13px;">→ ${f.recommendation}</p>
+        ${f.learningNote ? `<p style="margin: 6px 0 0; color: #a78bfa; font-size: 12px; font-style: italic;">🧠 ${f.learningNote}</p>` : ''}
       </div>`;
   };
 
@@ -489,6 +713,19 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
     </div>
   ` : '';
 
+  // Self-improvement section
+  const selfImprovementSection = (analysis.selfImprovementNotes && analysis.selfImprovementNotes.length > 0) ? `
+    <div style="background: #1a0533; border: 1px solid #6d28d9; padding: 18px; margin-top: 20px; border-radius: 6px;">
+      <h2 style="color: #a78bfa; font-size: 13px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: 1.5px;">🧠 Watchdog Self-Improvement Notes</h2>
+      ${analysis.selfImprovementNotes.map(note => `
+        <p style="margin: 0 0 8px; color: #c4b5fd; font-size: 13px; line-height: 1.5;">• ${note}</p>
+      `).join('')}
+      <p style="margin: 12px 0 0; color: #7c3aed; font-size: 11px;">
+        Learning from ${learningHistory.recentFindings.length} past findings • ${learningHistory.recurringIssues.length} chronic patterns tracked • Platform signals: ${learningHistory.platformGrowth.signalsTrend}
+      </p>
+    </div>
+  ` : '';
+
   return `
 <!DOCTYPE html>
 <html>
@@ -501,7 +738,7 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
         ${severityIcon[analysis.severity] || '⚠️'} Fortress Watchdog Intelligence Report
       </h1>
       <p style="margin: 8px 0 0; font-size: 14px; color: #e0e0e0; line-height: 1.4;">${analysis.overallAssessment}</p>
-      <p style="margin: 6px 0 0; font-size: 12px; color: #aaa;">${now} MT • Status: ${analysis.severity.toUpperCase()} ${resolved.length > 0 ? `• ${resolved.length} issue${resolved.length !== 1 ? 's' : ''} auto-resolved` : ''}</p>
+      <p style="margin: 6px 0 0; font-size: 12px; color: #aaa;">${now} MT • Status: ${analysis.severity.toUpperCase()} ${resolved.length > 0 ? `• ${resolved.length} auto-resolved` : ''} ${chronic.length > 0 ? `• ${chronic.length} chronic` : ''}</p>
     </div>
     
     <div style="padding: 22px 28px;">
@@ -510,6 +747,11 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
       ${resolved.length > 0 ? `
         <h2 style="color: #4ade80; font-size: 13px; margin: 0 0 14px; text-transform: uppercase; letter-spacing: 1.5px;">✅ Auto-Resolved</h2>
         ${resolved.map(f => renderFinding(f, '#4ade80', '#22c55e', '#052e16')).join('')}
+      ` : ''}
+
+      ${chronic.length > 0 ? `
+        <h2 style="color: #a78bfa; font-size: 13px; margin: 20px 0 14px; text-transform: uppercase; letter-spacing: 1.5px;">🔁 Chronic Issues (Needs Strategic Fix)</h2>
+        ${chronic.map(f => renderFinding(f, '#c4b5fd', '#7c3aed', '#1a0533')).join('')}
       ` : ''}
 
       ${unresolved.length > 0 ? `
@@ -529,6 +771,8 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
         </div>
       ` : ''}
 
+      ${selfImprovementSection}
+
       ${analysis.suppressedChecks?.length > 0 ? `
         <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid #222;">
           <p style="color: #666; font-size: 12px; margin: 0;"><strong>Suppressed (normal):</strong> ${analysis.suppressedChecks.join(' • ')}</p>
@@ -545,7 +789,7 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
           <td>Auto-ops: ${telemetry.autonomousOps.recentActions}</td>
         </tr>
       </table>
-      <p style="margin: 8px 0 0; font-size: 11px; color: #444;">Fortress Self-Healing Watchdog • Detect → Fix → Verify → Report</p>
+      <p style="margin: 8px 0 0; font-size: 11px; color: #444;">Fortress Self-Healing & Self-Improving Watchdog • Detect → Fix → Learn → Evolve</p>
     </div>
   </div>
 </body>
@@ -568,38 +812,66 @@ Deno.serve(async (req) => {
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
     if (!RESEND_API_KEY) throw new Error('RESEND_API_KEY not configured');
 
-    console.log('[Watchdog] 🧠 Phase 1: Collecting telemetry...');
+    const runId = crypto.randomUUID();
+
+    // Phase 0: Load learning history
+    console.log('[Watchdog] 🧠 Phase 0: Loading learning history...');
+    let learningHistory: LearningHistory;
+    try {
+      learningHistory = await loadLearningHistory(supabase);
+      console.log(`[Watchdog] Loaded ${learningHistory.recentFindings.length} past findings, ${learningHistory.recurringIssues.length} recurring issues, ${learningHistory.effectivenessStats.length} effectiveness records`);
+    } catch (e) {
+      console.warn('[Watchdog] Failed to load learning history (first run?):', e);
+      learningHistory = { recentFindings: [], recurringIssues: [], effectivenessStats: [], platformGrowth: { signalsTrend: 'unknown', entitiesTrend: 'unknown', usersTrend: 'unknown' }, pastSelfNotes: [] };
+    }
+
+    // Phase 1: Collect telemetry
+    console.log('[Watchdog] 📡 Phase 1: Collecting telemetry...');
     const telemetry = await collectTelemetry(supabase, supabaseUrl, anonKey);
     console.log(`[Watchdog] Telemetry: signals6h=${telemetry.signalPipeline.recentSignalCount}, stale=${telemetry.signalPipeline.staleSources.length}, bugs=${telemetry.bugReports.totalOpen}`);
 
-    // Phase 2: AI Analysis
-    console.log('[Watchdog] 🧠 Phase 2: AI analysis...');
+    // Phase 2: AI Analysis WITH learning context
+    console.log('[Watchdog] 🧠 Phase 2: AI analysis with learning context...');
+    const analysisInput = {
+      telemetry,
+      learningHistory: {
+        recentFindings: learningHistory.recentFindings.slice(0, 20),
+        recurringIssues: learningHistory.recurringIssues,
+        effectivenessStats: learningHistory.effectivenessStats,
+        platformGrowth: learningHistory.platformGrowth,
+        pastSelfNotes: learningHistory.pastSelfNotes.slice(0, 5),
+      },
+    };
+
     let analysis: AIAnalysis;
     try {
-      analysis = await callAI(FORTRESS_SYSTEM_KNOWLEDGE, `Analyze this telemetry and prescribe remediation actions where possible:\n\n${JSON.stringify(telemetry, null, 2)}`);
+      analysis = await callAI(
+        FORTRESS_SYSTEM_KNOWLEDGE,
+        `Analyze this telemetry AND your learning history to make informed decisions. Skip remediations with poor track records. Identify recurring patterns.\n\n${JSON.stringify(analysisInput, null, 2)}`
+      );
     } catch (e) {
       console.error('[Watchdog] AI analysis failed:', e);
       analysis = {
         shouldAlert: true, overallAssessment: 'AI analysis engine failed — raw telemetry review needed.',
-        severity: 'monitoring', findings: [], suppressedChecks: [],
+        severity: 'monitoring', findings: [], suppressedChecks: [], selfImprovementNotes: ['AI analysis failed — investigate gateway health'],
       };
     }
     console.log(`[Watchdog] AI verdict: severity=${analysis.severity}, findings=${analysis.findings.length}, remediable=${analysis.findings.filter(f => f.canAutoRemediate).length}`);
 
-    // Phase 3: Auto-Remediate
+    // Phase 3: Auto-Remediate (with learning-informed decisions)
     const remediableFindings = analysis.findings.filter(f => f.canAutoRemediate && f.remediationAction && f.remediationAction !== 'none');
     const remediationResults: RemediationResult[] = [];
 
     if (remediableFindings.length > 0) {
       console.log(`[Watchdog] 🔧 Phase 3: Attempting ${remediableFindings.length} remediation(s)...`);
       for (const finding of remediableFindings) {
-        const result = await executeRemediation(finding, supabase, supabaseUrl, anonKey);
+        const result = await executeRemediation(finding, supabase, supabaseUrl, anonKey, learningHistory);
         remediationResults.push(result);
         console.log(`[Watchdog] ${result.success ? '✅' : '❌'} ${result.action}: ${result.details}`);
       }
 
-      // Phase 4: Re-verify with AI
-      console.log('[Watchdog] 🧠 Phase 4: AI re-verification after remediation...');
+      // Phase 4: Re-verify with AI (include effectiveness context)
+      console.log('[Watchdog] 🧠 Phase 4: AI re-verification with effectiveness history...');
       try {
         const verificationInput = {
           originalAnalysis: analysis,
@@ -609,18 +881,21 @@ Deno.serve(async (req) => {
             success: r.success,
             details: r.details,
           })),
+          effectivenessHistory: learningHistory.effectivenessStats,
+          recurringIssues: learningHistory.recurringIssues,
         };
         const verified = await callAI(VERIFICATION_PROMPT, JSON.stringify(verificationInput, null, 2));
-        // Merge verification results
         analysis.overallAssessment = verified.overallAssessment || analysis.overallAssessment;
         analysis.severity = verified.severity || analysis.severity;
         analysis.findings = verified.findings || analysis.findings;
         analysis.shouldAlert = verified.shouldStillAlert ?? analysis.shouldAlert;
         analysis.suppressedChecks = verified.suppressedChecks || analysis.suppressedChecks;
         analysis.trendNote = verified.trendNote || analysis.trendNote;
+        if (verified.selfImprovementNotes) {
+          analysis.selfImprovementNotes = [...(analysis.selfImprovementNotes || []), ...verified.selfImprovementNotes];
+        }
       } catch (e) {
         console.warn('[Watchdog] Re-verification failed, using original analysis:', e);
-        // Manually update findings with remediation results
         for (const result of remediationResults) {
           const finding = analysis.findings.find(f => f.title === result.finding.title);
           if (finding) {
@@ -633,7 +908,15 @@ Deno.serve(async (req) => {
       console.log('[Watchdog] No auto-remediable issues found — skipping remediation phase');
     }
 
-    // Phase 5: Log metrics
+    // Phase 5: Store learnings for future runs
+    console.log('[Watchdog] 🧠 Phase 5: Storing learnings...');
+    try {
+      await storeLearnings(supabase, runId, analysis, remediationResults, learningHistory, telemetry);
+    } catch (e) {
+      console.warn('[Watchdog] Failed to store learnings:', e);
+    }
+
+    // Phase 6: Log metrics
     try {
       const healthScore = analysis.severity === 'healthy' ? 1.0 : analysis.severity === 'monitoring' ? 0.8 : analysis.severity === 'degraded' ? 0.5 : 0.2;
       await supabase.from('automation_metrics').insert({
@@ -657,17 +940,20 @@ Deno.serve(async (req) => {
       } catch { /* logging is best-effort */ }
     }
 
-    // Phase 6: Email (always send if remediations were attempted, otherwise only on alert)
+    // Phase 7: Email (always send if remediations were attempted, otherwise only on alert)
     const shouldEmail = analysis.shouldAlert || remediationResults.length > 0;
 
     if (shouldEmail) {
       const resend = new Resend(RESEND_API_KEY);
       const fixedCount = remediationResults.filter(r => r.success).length;
       const unresolvedCount = analysis.findings.filter(f => f.severity === 'critical' || f.severity === 'warning').length;
+      const chronicCount = analysis.findings.filter(f => f.remediationStatus === 'chronic').length;
 
       let subject: string;
-      if (fixedCount > 0 && unresolvedCount === 0) {
+      if (fixedCount > 0 && unresolvedCount === 0 && chronicCount === 0) {
         subject = `✅ Fortress Watchdog: ${fixedCount} issue${fixedCount !== 1 ? 's' : ''} auto-resolved — all systems nominal`;
+      } else if (chronicCount > 0) {
+        subject = `🔁 Fortress: ${chronicCount} chronic issue${chronicCount !== 1 ? 's' : ''} ${fixedCount > 0 ? `+ ${fixedCount} fixed` : '— needs strategic intervention'}`;
       } else if (fixedCount > 0 && unresolvedCount > 0) {
         subject = `⚠️ Fortress: ${fixedCount} fixed, ${unresolvedCount} still need attention`;
       } else if (analysis.severity === 'critical') {
@@ -680,21 +966,22 @@ Deno.serve(async (req) => {
         from: fromEmail,
         to: [ALERT_EMAIL],
         subject: subject.substring(0, 150),
-        html: buildAlertEmail(analysis, telemetry, remediationResults),
+        html: buildAlertEmail(analysis, telemetry, remediationResults, learningHistory),
       });
 
       if (emailError) console.error('[Watchdog] Email failed:', emailError);
       else console.log(`[Watchdog] 📧 Report sent to ${ALERT_EMAIL}`);
 
       return successResponse({
-        success: true, severity: analysis.severity,
+        success: true, severity: analysis.severity, runId,
         findings: analysis.findings.length, remediations: remediationResults.length,
-        fixed: fixedCount, emailSent: !emailError,
+        fixed: fixedCount, chronic: chronicCount, emailSent: !emailError,
+        learningsStored: true,
       });
     }
 
     console.log('[Watchdog] ✅ All systems nominal — no email needed');
-    return successResponse({ success: true, severity: analysis.severity, findings: 0, emailSent: false, assessment: analysis.overallAssessment });
+    return successResponse({ success: true, severity: analysis.severity, runId, findings: 0, emailSent: false, learningsStored: true, assessment: analysis.overallAssessment });
 
   } catch (error) {
     console.error('[Watchdog] Fatal error:', error);

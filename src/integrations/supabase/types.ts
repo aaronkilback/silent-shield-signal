@@ -9066,6 +9066,60 @@ export type Database = {
         }
         Relationships: []
       }
+      watchdog_learnings: {
+        Row: {
+          ai_learning_note: string | null
+          created_at: string
+          effectiveness_score: number | null
+          finding_category: string
+          finding_title: string
+          id: string
+          learned_pattern: string | null
+          recurrence_count: number | null
+          remediation_action: string | null
+          remediation_details: string | null
+          remediation_success: boolean | null
+          run_id: string
+          severity: string
+          telemetry_snapshot: Json | null
+          was_recurring: boolean | null
+        }
+        Insert: {
+          ai_learning_note?: string | null
+          created_at?: string
+          effectiveness_score?: number | null
+          finding_category: string
+          finding_title: string
+          id?: string
+          learned_pattern?: string | null
+          recurrence_count?: number | null
+          remediation_action?: string | null
+          remediation_details?: string | null
+          remediation_success?: boolean | null
+          run_id: string
+          severity: string
+          telemetry_snapshot?: Json | null
+          was_recurring?: boolean | null
+        }
+        Update: {
+          ai_learning_note?: string | null
+          created_at?: string
+          effectiveness_score?: number | null
+          finding_category?: string
+          finding_title?: string
+          id?: string
+          learned_pattern?: string | null
+          recurrence_count?: number | null
+          remediation_action?: string | null
+          remediation_details?: string | null
+          remediation_success?: boolean | null
+          run_id?: string
+          severity?: string
+          telemetry_snapshot?: Json | null
+          was_recurring?: boolean | null
+        }
+        Relationships: []
+      }
       webhook_deliveries: {
         Row: {
           attempt_count: number
@@ -9508,7 +9562,19 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      watchdog_effectiveness: {
+        Row: {
+          avg_effectiveness: number | null
+          failures: number | null
+          finding_category: string | null
+          last_seen: string | null
+          recurring_issues: number | null
+          remediation_action: string | null
+          successes: number | null
+          total_attempts: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       calculate_signal_hash: { Args: { text_content: string }; Returns: string }
