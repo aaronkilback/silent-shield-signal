@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Shield, AlertTriangle, Radio, TrendingUp, X, ChevronRight, Loader2, Cpu } from "lucide-react";
+import { FortifiedPosture } from "@/components/FortifiedPosture";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -242,6 +243,14 @@ export const LoginBriefing = ({ onAskAegis }: LoginBriefingProps) => {
                 ))}
               </div>
             )}
+
+            {/* Fortified Operating Posture */}
+            <FortifiedPosture
+              highPrioritySignals={data.highPrioritySignals}
+              criticalIncidents={data.criticalIncidents}
+              openIncidents={data.openIncidents}
+              signalCount={data.signalCount}
+            />
           </div>
         ) : null}
       </div>
