@@ -56,9 +56,29 @@ export function TravelAlertsPanel() {
         .eq("id", alertId);
       if (error) throw error;
     },
+    onMutate: async (alertId) => {
+      // Optimistic update — immediately mark as acknowledged in cache
+      await queryClient.cancelQueries({ queryKey: ["travel-alerts"] });
+      const previous = queryClient.getQueryData<any[]>(["travel-alerts"]);
+      queryClient.setQueryData<any[]>(["travel-alerts"], (old) =>
+        old?.map((a) =>
+          a.id === alertId
+            ? { ...a, acknowledged: true, acknowledged_at: new Date().toISOString() }
+            : a
+        ) ?? []
+      );
+      return { previous };
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["travel-alerts"] });
       toast.success("Alert acknowledged");
+    },
+    onError: (_err, _alertId, context) => {
+      // Rollback on failure
+      if (context?.previous) {
+        queryClient.setQueryData(["travel-alerts"], context.previous);
+      }
+      toast.error("Failed to acknowledge alert");
     },
   });
 
