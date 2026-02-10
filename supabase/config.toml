@@ -504,3 +504,6 @@ verify_jwt = false
 
 [functions.generate-posture-content]
 verify_jwt = false
+
+[functions.cyber-sentinel]
+verify_jwt = false

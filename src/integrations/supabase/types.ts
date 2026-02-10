@@ -2784,6 +2784,185 @@ export type Database = {
         }
         Relationships: []
       }
+      cyber_sentinel_sweeps: {
+        Row: {
+          ai_assessment: string | null
+          completed_at: string | null
+          created_at: string
+          findings_count: number
+          id: string
+          responses_executed: number
+          started_at: string
+          status: string
+          sweep_summary: string | null
+          sweep_type: string
+          telemetry: Json | null
+          threats_detected: number
+        }
+        Insert: {
+          ai_assessment?: string | null
+          completed_at?: string | null
+          created_at?: string
+          findings_count?: number
+          id?: string
+          responses_executed?: number
+          started_at?: string
+          status?: string
+          sweep_summary?: string | null
+          sweep_type?: string
+          telemetry?: Json | null
+          threats_detected?: number
+        }
+        Update: {
+          ai_assessment?: string | null
+          completed_at?: string | null
+          created_at?: string
+          findings_count?: number
+          id?: string
+          responses_executed?: number
+          started_at?: string
+          status?: string
+          sweep_summary?: string | null
+          sweep_type?: string
+          telemetry?: Json | null
+          threats_detected?: number
+        }
+        Relationships: []
+      }
+      cyber_threat_events: {
+        Row: {
+          ai_analysis: string | null
+          confidence_score: number
+          created_at: string
+          event_type: string
+          id: string
+          is_resolved: boolean
+          related_event_ids: string[] | null
+          resolution_notes: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          response_details: Json | null
+          response_taken: string
+          severity: string
+          tenant_id: string | null
+          threat_details: Json
+          threat_source: Json
+          tripwire_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          ai_analysis?: string | null
+          confidence_score?: number
+          created_at?: string
+          event_type: string
+          id?: string
+          is_resolved?: boolean
+          related_event_ids?: string[] | null
+          resolution_notes?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          response_details?: Json | null
+          response_taken?: string
+          severity?: string
+          tenant_id?: string | null
+          threat_details?: Json
+          threat_source?: Json
+          tripwire_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          ai_analysis?: string | null
+          confidence_score?: number
+          created_at?: string
+          event_type?: string
+          id?: string
+          is_resolved?: boolean
+          related_event_ids?: string[] | null
+          resolution_notes?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          response_details?: Json | null
+          response_taken?: string
+          severity?: string
+          tenant_id?: string | null
+          threat_details?: Json
+          threat_source?: Json
+          tripwire_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cyber_threat_events_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cyber_threat_events_tripwire_id_fkey"
+            columns: ["tripwire_id"]
+            isOneToOne: false
+            referencedRelation: "cyber_tripwires"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cyber_tripwires: {
+        Row: {
+          cooldown_minutes: number
+          created_at: string
+          created_by: string | null
+          description: string | null
+          detection_config: Json
+          id: string
+          is_active: boolean
+          name: string
+          response_tier: string
+          severity: string
+          tenant_id: string | null
+          tripwire_type: string
+          updated_at: string
+        }
+        Insert: {
+          cooldown_minutes?: number
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          detection_config?: Json
+          id?: string
+          is_active?: boolean
+          name: string
+          response_tier?: string
+          severity?: string
+          tenant_id?: string | null
+          tripwire_type?: string
+          updated_at?: string
+        }
+        Update: {
+          cooldown_minutes?: number
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          detection_config?: Json
+          id?: string
+          is_active?: boolean
+          name?: string
+          response_tier?: string
+          severity?: string
+          tenant_id?: string | null
+          tripwire_type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cyber_tripwires_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       doctrine_library: {
         Row: {
           content_text: string | null

@@ -116,6 +116,7 @@ TOOL EXECUTION GUIDE:
 🔍 SEARCH & QUERY: perform_external_web_search, query_fortress_data, get_recent_signals, search_entities
 🎯 CREATE & MANAGE: create_entity, inject_test_signal(use client_name), manage_incident_ticket(create/update/escalate/close)
 🛡️ THREAT INTEL: analyze_threat_radar(include_predictions=true), check_dark_web_exposure, run_vip_deep_scan, get_threat_intel_feeds
+🔒 CYBER DEFENSE: run_cyber_sentinel(mode: sweep|status|check_auth|check_api) — Platform cyber defense agent with tripwires
 📄 DOCUMENTS: get_document_content, analyze_visual_document (maps, PDFs, images)
 📊 REPORTS: generate_fortress_report(type: executive|risk_snapshot|security_briefing|security_bulletin)
 🌍 EXPERTISE: query_expert_knowledge(MITRE/NIST/ISO/CISA), get_tech_radar(domains)
@@ -3573,6 +3574,52 @@ Use when:
           }
         },
         required: ["title"]
+      }
+    }
+  },
+  // ══════════════════════════════════════════════════════════════════════════
+  // CYBER SENTINEL — Platform Cyber Defense Tool
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    type: "function",
+    function: {
+      name: "run_cyber_sentinel",
+      description: `CYBER SENTINEL: Fortress platform's cyber defense agent that deploys digital tripwires and monitors for cyberattacks.
+
+CAPABILITIES:
+- Detect brute force login attacks, credential stuffing, and session anomalies
+- Monitor API abuse patterns, rate limit violations, and endpoint probing
+- Identify data exfiltration attempts and bulk extraction patterns
+- Detect SQL injection and XSS attempts via content violation monitoring
+- Execute graduated responses: monitor → warn → throttle → block → lockdown
+- AI-powered threat assessment for critical events
+- Real-time cyber posture reporting (GREEN/YELLOW/ORANGE/RED)
+
+USE WHEN ASKED ABOUT:
+- "Are we under attack?"
+- "Check for cyber threats"
+- "Run a security sweep"
+- "What's our cyber posture?"
+- "Any login attacks?"
+- "Check for API abuse"
+- "Tripwire status"
+- "Cyber defense report"
+
+MODES:
+- sweep: Full spectrum scan (auth + API + data exfiltration)
+- status: Current cyber posture with tripwire health
+- check_auth: Auth-focused scan only
+- check_api: API abuse scan only`,
+      parameters: {
+        type: "object",
+        properties: {
+          mode: {
+            type: "string",
+            description: "Scan mode: sweep (full scan), status (posture report), check_auth (auth attacks only), check_api (API abuse only)",
+            enum: ["sweep", "status", "check_auth", "check_api"]
+          }
+        },
+        required: ["mode"]
       }
     }
   }
@@ -11526,6 +11573,44 @@ The signal is now in the database with status 'triaged' and rules have been appl
         participants_added: 1 + (agent_ids?.length || 0),
         note: `Briefing session "${title}" created. You can add agenda items, invite more participants, and start the session when ready.`
       };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // CYBER SENTINEL EXECUTION HANDLER
+    // ══════════════════════════════════════════════════════════════════════════
+    case "run_cyber_sentinel": {
+      const { mode = "status" } = args;
+      console.log(`[run_cyber_sentinel] Mode: ${mode}`);
+
+      try {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+        const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+
+        const sentinelResponse = await fetch(`${supabaseUrl}/functions/v1/cyber-sentinel`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${serviceRoleKey}`,
+          },
+          body: JSON.stringify({ mode }),
+        });
+
+        if (!sentinelResponse.ok) {
+          const errText = await sentinelResponse.text();
+          return { error: `Cyber Sentinel returned ${sentinelResponse.status}: ${errText}` };
+        }
+
+        const result = await sentinelResponse.json();
+        return {
+          ...result,
+          tool_note: mode === 'status' 
+            ? `Cyber posture is ${result.posture_level}. ${result.active_tripwires} tripwires active. ${result.last_24h?.total_events || 0} events in the last 24 hours.`
+            : `Sweep complete. ${result.events_detected || 0} events detected, ${result.critical_threats || 0} critical. ${result.responses_executed || 0} responses executed.`,
+        };
+      } catch (error) {
+        console.error('[run_cyber_sentinel] Error:', error);
+        return { error: `Cyber Sentinel invocation failed: ${error instanceof Error ? error.message : 'Unknown error'}` };
+      }
     }
 
     default:
