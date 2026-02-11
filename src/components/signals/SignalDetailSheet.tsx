@@ -7,6 +7,7 @@ import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, 
 import { format, differenceInDays } from "date-fns";
 import { SignalAgeBadge } from "./SignalAgeBadge";
 import { FacebookVideoEmbed, isFacebookVideoUrl } from "./FacebookVideoEmbed";
+import { SignalUpdatesTimeline } from "./SignalUpdatesTimeline";
 
 interface SignalDetailSheetProps {
   open: boolean;
@@ -353,6 +354,10 @@ export function SignalDetailSheet({
                 </div>
               </>
             )}
+
+            {/* Live Updates Timeline */}
+            <Separator />
+            <SignalUpdatesTimeline signalId={signal.id} />
 
             {/* Related Signals Count */}
             {signal.signal_count && signal.signal_count > 1 && (
