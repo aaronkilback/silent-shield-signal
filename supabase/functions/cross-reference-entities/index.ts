@@ -1,22 +1,22 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 async function extractNamesFromPDF(base64Data: string, columnName: string): Promise<string[]> {
-  const openaiKey = Deno.env.get('OPENAI_API_KEY');
-  if (!openaiKey) {
-    throw new Error('OpenAI API key not configured for PDF parsing');
+  const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+  if (!LOVABLE_API_KEY) {
+    throw new Error('LOVABLE_API_KEY not configured for PDF parsing');
   }
 
   // Extract the base64 content
   const pdfBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${openaiKey}`,
+      'Authorization': `Bearer ${LOVABLE_API_KEY}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'gpt-4o',
+      model: 'google/gemini-2.5-flash',
       messages: [
         {
           role: 'system',
@@ -43,22 +43,19 @@ Example: ["John Smith", "Acme Corporation", "Jane Doe"]`
           ]
         }
       ],
-      max_tokens: 4000,
     }),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error('OpenAI API error:', errorText);
+    console.error('AI Gateway error:', response.status, errorText);
     throw new Error(`Failed to parse PDF: ${response.status}`);
   }
 
   const result = await response.json();
   const content = result.choices?.[0]?.message?.content || '[]';
   
-  // Parse the JSON array from the response
   try {
-    // Try to extract JSON array from the response
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     if (jsonMatch) {
       return JSON.parse(jsonMatch[0]);
@@ -66,7 +63,6 @@ Example: ["John Smith", "Acme Corporation", "Jane Doe"]`
     return JSON.parse(content);
   } catch (e) {
     console.error('Failed to parse AI response as JSON:', content);
-    // Fallback: split by newlines and clean up
     return content.split('\n')
       .map((line: string) => line.replace(/^[-*\d.)\s]+/, '').trim())
       .filter((line: string) => line.length > 0 && line.length < 100);
