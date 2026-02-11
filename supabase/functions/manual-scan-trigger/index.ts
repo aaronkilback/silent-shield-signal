@@ -26,6 +26,8 @@ Deno.serve(async (req) => {
       'monitor-facebook',
       'monitor-instagram',
       'monitor-entity-proximity',
+      'monitor-naad-alerts',
+      'monitor-emergency-google',
     ];
 
     const results = [];
