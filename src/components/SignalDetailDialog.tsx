@@ -4,6 +4,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon, Copy, Check, FileWarning, ExternalLink, Shield, MessageCircle, Heart, Share2, Hash, AtSign, Image } from "lucide-react";
+import { SignalUpdatesTimeline } from "@/components/signals/SignalUpdatesTimeline";
 import { FacebookVideoEmbed, isFacebookVideoUrl } from "@/components/signals/FacebookVideoEmbed";
 import { formatDistanceToNow } from "date-fns";
 import { useState, useEffect } from "react";
@@ -788,6 +789,10 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                 </p>
               </div>
             )}
+
+            {/* Live Updates Timeline */}
+            <Separator />
+            <SignalUpdatesTimeline signalId={signal.id} />
           </div>
         </ScrollArea>
       </DialogContent>
