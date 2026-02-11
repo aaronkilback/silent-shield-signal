@@ -1,0 +1,1 @@
+ALTER TABLE public.travel_alerts ADD COLUMN source_urls text[] DEFAULT '{}';
