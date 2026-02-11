@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, CheckCircle, MapPin, Plane, Scan, TrendingUp, TrendingDown } from "lucide-react";
+import { AlertTriangle, CheckCircle, MapPin, Plane, Scan, TrendingUp, TrendingDown, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 
@@ -241,6 +241,34 @@ export function TravelAlertsPanel() {
                     </ul>
                   </div>
                 )}
+
+                {(alert as any).source_urls && (alert as any).source_urls.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium flex items-center gap-1">
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Sources:
+                    </p>
+                    <ul className="text-sm space-y-0.5">
+                      {(alert as any).source_urls.map((url: string, idx: number) => {
+                        let domain = url;
+                        try { domain = new URL(url).hostname.replace('www.', ''); } catch {}
+                        return (
+                          <li key={idx}>
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline text-xs"
+                            >
+                              {domain}
+                            </a>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+
 
                 <div className="flex items-center justify-between pt-2">
                   <span className="text-xs text-muted-foreground">

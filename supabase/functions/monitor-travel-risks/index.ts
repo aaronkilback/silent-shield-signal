@@ -118,16 +118,19 @@ Return as JSON: { "flights": [...], "airport_conditions": {...}, "weather_impact
         
         const data = await response.json();
         const content = data.choices?.[0]?.message?.content;
+        const citations = data.citations || [];
         
         if (content) {
           try {
-            return JSON.parse(content);
+            const parsed = JSON.parse(content);
+            parsed.citations = citations;
+            return parsed;
           } catch {
             console.error("Failed to parse flight status JSON");
-            return null;
+            return { citations };
           }
         }
-        return null;
+        return { citations };
       } catch (error) {
         console.error("Error fetching flight status:", error);
         return null;
@@ -622,6 +625,15 @@ Respond with a JSON object:
               continue;
             }
 
+            // Collect citation URLs from Perplexity responses
+            const citationUrls: string[] = [];
+            if (destinationIntel?.citations?.length) {
+              citationUrls.push(...destinationIntel.citations.slice(0, 5));
+            }
+            if (flightStatus?.citations?.length) {
+              citationUrls.push(...flightStatus.citations.slice(0, 3));
+            }
+
             await supabaseClient.from("travel_alerts").insert({
               itinerary_id: itinerary.id,
               traveler_id: itinerary.traveler_id,
@@ -633,6 +645,7 @@ Respond with a JSON object:
               affected_flights: alert.affected_flights || [],
               recommended_actions: alert.recommended_actions || [],
               source: alert.source || "AI Risk Assessment",
+              source_urls: citationUrls.length > 0 ? citationUrls : [],
             });
           }
         }

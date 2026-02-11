@@ -8686,6 +8686,7 @@ export type Database = {
           recommended_actions: string[] | null
           severity: string
           source: string | null
+          source_urls: string[] | null
           title: string
           traveler_id: string | null
         }
@@ -8704,6 +8705,7 @@ export type Database = {
           recommended_actions?: string[] | null
           severity?: string
           source?: string | null
+          source_urls?: string[] | null
           title: string
           traveler_id?: string | null
         }
@@ -8722,6 +8724,7 @@ export type Database = {
           recommended_actions?: string[] | null
           severity?: string
           source?: string | null
+          source_urls?: string[] | null
           title?: string
           traveler_id?: string | null
         }
