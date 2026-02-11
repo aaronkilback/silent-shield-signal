@@ -507,3 +507,9 @@ verify_jwt = false
 
 [functions.cyber-sentinel]
 verify_jwt = false
+
+[functions.monitor-naad-alerts]
+verify_jwt = false
+
+[functions.monitor-emergency-google]
+verify_jwt = false
