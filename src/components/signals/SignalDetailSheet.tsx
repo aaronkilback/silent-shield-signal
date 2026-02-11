@@ -9,6 +9,8 @@ import { format, differenceInDays } from "date-fns";
 import { SignalAgeBadge } from "./SignalAgeBadge";
 import { FacebookVideoEmbed, isFacebookVideoUrl } from "./FacebookVideoEmbed";
 import { SignalUpdatesTimeline } from "./SignalUpdatesTimeline";
+import { extractHttpUrl } from "@/lib/extractHttpUrl";
+
 
 interface SignalDetailSheetProps {
   open: boolean;
@@ -76,9 +78,10 @@ export function SignalDetailSheet({
     (Array.isArray(signal.sources_json) ? signal.sources_json : [signal.sources_json]) : 
     [];
 
-  // Extract source URL from sources
-  const sourceUrl = sources.find((s: any) => s?.url || s?.link)?.url || 
-                    sources.find((s: any) => s?.url || s?.link)?.link;
+  // Extract source URL from sources (and sanitize it)
+  const rawSourceUrl = sources.find((s: any) => s?.url || s?.link)?.url ||
+                       sources.find((s: any) => s?.url || s?.link)?.link;
+  const sourceUrl = extractHttpUrl(rawSourceUrl);
 
   // Detect if this is a social media signal
   const sourceMetadata = signal.raw_json?.source_metadata || signal.raw_json;
@@ -387,22 +390,35 @@ export function SignalDetailSheet({
                 <div>
                   <h4 className="text-sm font-medium mb-2">Sources</h4>
                   <div className="space-y-2">
-                    {sources.map((source: any, idx: number) => (
-                      <div key={idx} className="text-sm bg-muted/50 p-2 rounded">
-                        {source?.name || source?.source || (typeof source === 'string' ? source : JSON.stringify(source))}
-                        {source?.url && (
-                          <a 
-                            href={source.url} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="ml-2 text-primary hover:underline inline-flex items-center gap-1"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                            View
-                          </a>
-                        )}
-                      </div>
-                    ))}
+                    {sources.map((source: any, idx: number) => {
+                      const label =
+                        source?.name ||
+                        source?.source ||
+                        (typeof source === "string" ? source : JSON.stringify(source));
+
+                      const href = extractHttpUrl(
+                        source?.url || source?.link || (typeof source === "string" ? source : null)
+                      );
+
+                      return (
+                        <div key={idx} className="text-sm bg-muted/50 p-2 rounded">
+                          <span className="break-words">
+                            {typeof label === "string" && href ? label.replace(href, "").trim() || "Source" : label}
+                          </span>
+                          {href && (
+                            <a
+                              href={href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="ml-2 text-primary hover:underline inline-flex items-center gap-1"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              View
+                            </a>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </>

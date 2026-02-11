@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { SignalAgeIndicator } from "@/components/signals/SignalAgeBadge";
+import { extractHttpUrl } from "@/lib/extractHttpUrl";
+
 
 
 interface Signal {
@@ -332,16 +334,20 @@ export const LiveEventFeed = () => {
                             View feed →
                           </a>
                         ) : (
-                          signal.raw_json.url && (
-                            <a 
-                              href={signal.raw_json.url} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="ml-2 text-primary hover:underline"
-                            >
-                              View →
-                            </a>
-                          )
+                          (() => {
+                            const href = extractHttpUrl(signal.raw_json?.url);
+                            if (!href) return null;
+                            return (
+                              <a
+                                href={href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="ml-2 text-primary hover:underline"
+                              >
+                                View →
+                              </a>
+                            );
+                          })()
                         )}
                       </p>
                     )}

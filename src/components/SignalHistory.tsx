@@ -15,6 +15,8 @@ import { SignalDetailDialog } from "./SignalDetailDialog";
 import { SignalFeedback } from "./SignalFeedback";
 import { SignalScoreExplainer } from "./SignalScoreExplainer";
 import { toast } from "sonner";
+import { extractHttpUrl } from "@/lib/extractHttpUrl";
+
 
 // Helper to decode HTML entities and clean text
 const cleanSignalText = (text: string): string => {
@@ -92,6 +94,7 @@ export const SignalHistory = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedSignalIds, setSelectedSignalIds] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
+  const [updateCounts, setUpdateCounts] = useState<Record<string, number>>({});
   const { selectedClientId } = useClientSelection();
   
   // Filter states
@@ -139,6 +142,30 @@ export const SignalHistory = () => {
       supabase.removeChannel(channel);
     };
   }, [selectedClientId]);
+
+  const fetchUpdateCounts = async (signalIds: string[]) => {
+    if (signalIds.length === 0) {
+      setUpdateCounts({});
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('signal_updates')
+      .select('signal_id')
+      .in('signal_id', signalIds);
+
+    if (error) {
+      console.error('Error fetching update counts:', error);
+      return;
+    }
+
+    const counts: Record<string, number> = {};
+    for (const row of data || []) {
+      const sid = (row as any).signal_id as string;
+      counts[sid] = (counts[sid] || 0) + 1;
+    }
+    setUpdateCounts(counts);
+  };
 
   const loadSignals = async () => {
     try {
@@ -202,7 +229,7 @@ export const SignalHistory = () => {
       }));
       
       setSignals(dataWithSources as any);
-    } catch (error) {
+      await fetchUpdateCounts((dataWithSources || []).map((s: any) => s.id));
       console.error('Error loading signals:', error);
     } finally {
       setLoading(false);
@@ -594,6 +621,11 @@ export const SignalHistory = () => {
                     {signal.rule_priority.toUpperCase()}
                   </Badge>
                 )}
+                {updateCounts[signal.id] > 0 && (
+                  <Badge variant="secondary" className="h-5 px-2 text-xs">
+                    Updated · {updateCounts[signal.id]}
+                  </Badge>
+                )}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <SignalScoreExplainer signalId={signal.id} score={signal.relevance_score} />
@@ -626,18 +658,23 @@ export const SignalHistory = () => {
                   ingestedAt={signal.created_at} 
                 />
                 {/* Source link */}
-                {(signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link) && (
-                  <a
-                    href={signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-primary hover:underline"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                    Source
-                  </a>
-                )}
+                {(() => {
+                  const raw = signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link;
+                  const href = extractHttpUrl(raw);
+                  if (!href) return null;
+                  return (
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-primary hover:underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Source
+                    </a>
+                  );
+                })()}
               </div>
               {signal.sources && (
                 <span className="font-medium">{signal.sources.name}</span>
