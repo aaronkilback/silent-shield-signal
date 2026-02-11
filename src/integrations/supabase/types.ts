@@ -7401,6 +7401,60 @@ export type Database = {
         }
         Relationships: []
       }
+      signal_updates: {
+        Row: {
+          content: string
+          content_hash: string | null
+          created_at: string
+          found_at: string
+          id: string
+          incident_id: string | null
+          metadata: Json | null
+          signal_id: string
+          source_name: string | null
+          source_url: string | null
+        }
+        Insert: {
+          content: string
+          content_hash?: string | null
+          created_at?: string
+          found_at?: string
+          id?: string
+          incident_id?: string | null
+          metadata?: Json | null
+          signal_id: string
+          source_name?: string | null
+          source_url?: string | null
+        }
+        Update: {
+          content?: string
+          content_hash?: string | null
+          created_at?: string
+          found_at?: string
+          id?: string
+          incident_id?: string | null
+          metadata?: Json | null
+          signal_id?: string
+          source_name?: string | null
+          source_url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_updates_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_updates_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       signals: {
         Row: {
           applied_rules: Json | null
