@@ -21,22 +21,30 @@ interface NAADAlert {
   language: string;
 }
 
-/** Strip HTML/XML tags and decode entities */
 function stripXml(text: string): string {
+  if (!text) return '';
+
   return text
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')  // Unwrap CDATA
-    .replace(/&lt;br\s*\/?&gt;/gi, '. ')             // Encoded <br> tags
-    .replace(/<br\s*\/?>/gi, '. ')                   // Literal <br> tags
-    .replace(/&lt;[^&]*&gt;/g, ' ')                  // Encoded HTML tags
-    .replace(/<[^>]+>/g, ' ')                        // Literal HTML tags
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
+    // Unwrap CDATA
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+
+    // Decode entities (do &amp; first so &amp;lt; becomes &lt;)
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
     .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/\.\s*\./g, '.')                        // Clean double periods
-    .replace(/\s+/g, ' ')                            // Collapse whitespace
+    .replace(/&apos;/gi, "'")
+
+    // Normalize line breaks
+    .replace(/<br\s*\/?>/gi, '. ')
+
+    // Strip any remaining tags (including decoded CAP/XML)
+    .replace(/<[^>]+>/g, ' ')
+
+    // Clean up whitespace/punctuation
+    .replace(/\s+/g, ' ')
+    .replace(/\.\s*\./g, '.')
     .trim();
 }
 
@@ -44,23 +52,35 @@ function stripXml(text: string): string {
 function isFrenchAlert(alert: NAADAlert): boolean {
   const text = `${alert.title} ${alert.summary}`.toLowerCase();
   // Explicit language tag
-  if (alert.language === 'fr' || alert.language === 'fr-CA') return true;
-  // French NAAD patterns
-  if (/en vigueur|terminé|annulé|avertissement|avis|bulletin météorologique|spécial/.test(text)) return true;
+  if (alert.language === 'fr' || alert.language === 'fr-ca') return true;
+
+  // Strong French NAAD patterns
+  if (/\balerte\b|en vigueur|terminé|annulé|annulée|avertissement|avis|bulletin météorologique|spécial|mise à jour|urgence/.test(text)) return true;
+  if (/\bceci est un message\b|n'est pas prévu|distribution au public/.test(text)) return true;
+
+  // Common French connector words in NAAD boilerplate
   if (/\bde\b.*\bla\b.*\bpour\b/.test(text)) return true;
-  if (/ceci est un message|n'est pas prévu|distribution au public/.test(text)) return true;
+
   // French weather terms
   if (/poudrerie|froid|neige|pluie verglaçante|brouillard|tempête/.test(text)) return true;
+
   return false;
 }
 
-/** Extract a normalized "event fingerprint" to group bilingual duplicates and updates */
 function getEventFingerprint(alert: NAADAlert): string {
-  // NAAD IDs often contain an OID that's shared across bilingual pairs
-  // Extract the OID portion: urn:oid:2.49.0.1.124.XXXXXXXXXX.YYYY
-  const oidMatch = alert.id.match(/urn[_:]oid[_:]([\d.]+)/);
+  // Preferred: NAAD OIDs shared across bilingual pairs (and often across updates)
+  const oidMatch = alert.id.match(/urn[_:]oid[_:]([\d.]+)/i);
   if (oidMatch) return oidMatch[1];
-  // Fallback: use the full ID stripped of language markers
+
+  // Fallback: CAP-origin identifier embedded in the human-readable summary
+  // Example: "Originated from CAP Alert: BCRCMP, 2026-02-10T14:15:03-08:00, 426A"
+  const text = `${alert.title} ${alert.summary}`;
+  const capMatch =
+    text.match(/Originated from CAP Alert:\s*[^,]+,\s*[^,]+,\s*([A-Za-z0-9_-]+)/i) ||
+    text.match(/\bCAP Alert:\s*[^,]+,\s*[^,]+,\s*([A-Za-z0-9_-]+)/i);
+  if (capMatch?.[1]) return capMatch[1];
+
+  // Final fallback: ID stripped of language markers
   return alert.id.replace(/[-_](fr|en)/gi, '');
 }
 
@@ -160,11 +180,13 @@ Deno.serve(async (req) => {
         throw new Error(`Feed returned ${response.status}`);
       }
 
-      const xmlText = await response.text();
-      const alerts = parseAtomFeed(xmlText);
-      totalAlerts = alerts.length;
+        const xmlText = await response.text();
+        const alerts = parseAtomFeed(xmlText);
+        // Process oldest→newest so we create the original signal first, then nest later updates.
+        alerts.sort((a, b) => new Date(a.updated).getTime() - new Date(b.updated).getTime());
+        totalAlerts = alerts.length;
 
-      console.log(`[NAAD] Parsed ${alerts.length} alerts`);
+        console.log(`[NAAD] Parsed ${alerts.length} alerts`);
 
       // Track seen event fingerprints to skip bilingual duplicates within this batch
       const seenFingerprints = new Set<string>();
@@ -214,19 +236,29 @@ Deno.serve(async (req) => {
         // 6. Check if a signal with same fingerprint already exists → nest as update
         const { data: existingSignal } = await supabase
           .from('signals')
-          .select('id')
+          .select('id, normalized_text, created_at')
           .eq('content_hash', contentHash)
+          .order('created_at', { ascending: true })
+          .limit(1)
           .maybeSingle();
 
+        const wouldBeSignalText = `[NAAD Emergency Alert] ${alert.title}. ${alert.summary}`;
+        const normalize = (t: string) => t.toLowerCase().replace(/\s+/g, ' ').trim();
+
         if (existingSignal) {
-          // Nest as update to existing signal instead of creating duplicate
-          const updateHash = `naad_update|${alert.id}|${alert.updated}`;
-          const updateHashData = encoder.encode(updateHash);
+          // Only store an update if it adds new information (not a reprint of the same text)
+          if (normalize(existingSignal.normalized_text || '') === normalize(wouldBeSignalText)) {
+            continue;
+          }
+
+          // Dedupe updates by their cleaned content (NOT timestamps/IDs) so reruns don't flood updates
+          const updateText = `[NAAD Update] ${alert.title}. ${alert.summary}`;
+          const encoder = new TextEncoder();
+          const updateHashData = encoder.encode(`naad_update|${existingSignal.id}|${normalize(updateText)}`);
           const updateHashBuffer = await crypto.subtle.digest('SHA-256', updateHashData);
           const updateHashArray = Array.from(new Uint8Array(updateHashBuffer));
           const updateContentHash = updateHashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
-          // Check if this exact update already exists
           const { data: existingUpdate } = await supabase
             .from('signal_updates')
             .select('id')
@@ -238,7 +270,7 @@ Deno.serve(async (req) => {
               .from('signal_updates')
               .insert({
                 signal_id: existingSignal.id,
-                content: `[NAAD Update] ${alert.title}. ${alert.summary}`,
+                content: updateText,
                 source_name: 'naad_emergency_alerts',
                 source_url: alert.link || null,
                 content_hash: updateContentHash,
@@ -246,6 +278,7 @@ Deno.serve(async (req) => {
                   alert_id: alert.id,
                   updated: alert.updated,
                   category: alert.category,
+                  event_fingerprint: fingerprint,
                 },
               });
 
