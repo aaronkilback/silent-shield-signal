@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
@@ -9,6 +10,7 @@ import { format } from "date-fns";
 
 export function TravelAlertsPanel() {
   const queryClient = useQueryClient();
+  const [showAcknowledged, setShowAcknowledged] = useState(false);
 
   const scanMutation = useMutation({
     mutationFn: async () => {
@@ -28,17 +30,22 @@ export function TravelAlertsPanel() {
   });
 
   const { data: alerts, isLoading } = useQuery({
-    queryKey: ["travel-alerts"],
+    queryKey: ["travel-alerts", showAcknowledged],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("travel_alerts")
         .select(`
           *,
           travelers:traveler_id (name),
           itineraries:itinerary_id (trip_name)
         `)
-        .eq("is_active", true)
         .order("created_at", { ascending: false });
+      
+      if (!showAcknowledged) {
+        query = query.eq("is_active", true);
+      }
+      
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
@@ -153,6 +160,13 @@ export function TravelAlertsPanel() {
           </Button>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant={showAcknowledged ? "default" : "outline"}
+            onClick={() => setShowAcknowledged(!showAcknowledged)}
+          >
+            {showAcknowledged ? "Hide Acknowledged" : "Show Acknowledged"}
+          </Button>
           <Badge variant="outline">
             {alerts?.filter(a => !a.acknowledged).length || 0} Active Alerts
           </Badge>
