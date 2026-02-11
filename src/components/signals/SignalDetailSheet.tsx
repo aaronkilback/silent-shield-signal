@@ -54,9 +54,13 @@ export function SignalDetailSheet({
   onAssign,
   onDismiss,
 }: SignalDetailSheetProps) {
+  const [updateCount, setUpdateCount] = useState(0);
+
   if (!signal) return null;
 
-  const [updateCount, setUpdateCount] = useState(0);
+  // This sheet is used both for actual `signals` rows and for `signal_correlation_groups` rows.
+  // Updates are always linked to the *primary signal* (signal_updates.signal_id).
+  const updatesSignalId = signal.primary_signal_id || signal.id;
 
   const getSeverityColor = (severity: string | null) => {
     switch (severity?.toLowerCase()) {
@@ -368,7 +372,7 @@ export function SignalDetailSheet({
 
             {/* Live Updates Timeline */}
             <Separator />
-            <SignalUpdatesTimeline signalId={signal.id} onCountChange={setUpdateCount} />
+            <SignalUpdatesTimeline signalId={updatesSignalId} onCountChange={setUpdateCount} />
 
             {/* Related Signals Count */}
             {signal.signal_count && signal.signal_count > 1 && (
