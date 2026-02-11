@@ -610,14 +610,16 @@ Respond with a JSON object:
         for (const alert of assessment.alerts) {
           // Only create alerts for medium severity and above
           if (["medium", "high", "critical"].includes(alert.severity)) {
-            // Check for existing active or acknowledged alert of the same type for this itinerary
-            const { data: existingAlert } = await supabaseClient
+            // Check for existing alert of the same type for this itinerary (active OR acknowledged)
+            const { data: existingAlerts } = await supabaseClient
               .from("travel_alerts")
-              .select("id, acknowledged")
+              .select("id, acknowledged, is_active, created_at")
               .eq("itinerary_id", itinerary.id)
               .eq("alert_type", alert.type)
-              .eq("is_active", true)
-              .maybeSingle();
+              .order("created_at", { ascending: false })
+              .limit(1);
+
+            const existingAlert = existingAlerts?.[0];
 
             // Skip if an alert of this type already exists (acknowledged or not)
             if (existingAlert) {
