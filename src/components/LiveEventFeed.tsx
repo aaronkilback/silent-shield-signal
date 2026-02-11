@@ -81,6 +81,8 @@ export const LiveEventFeed = () => {
   const [signals, setSignals] = useState<Signal[]>([]);
   const visibleSignalIdsRef = useRef<Set<string>>(new Set());
   const [updateCounts, setUpdateCounts] = useState<Record<string, number>>({});
+  const [recentlyUpdated, setRecentlyUpdated] = useState<Set<string>>(new Set());
+  const [lastUpdateTime, setLastUpdateTime] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState<string>('7d'); // Default to last 7 days for live feed
 
@@ -187,6 +189,22 @@ export const LiveEventFeed = () => {
             ...prev,
             [sid]: (prev[sid] || 0) + 1,
           }));
+
+          // Track update timestamp so we can sort updated signals to top
+          setLastUpdateTime((prev) => ({
+            ...prev,
+            [sid]: Date.now(),
+          }));
+
+          // Mark as recently updated (visual glow) — auto-clear after 30s
+          setRecentlyUpdated((prev) => new Set(prev).add(sid));
+          setTimeout(() => {
+            setRecentlyUpdated((prev) => {
+              const next = new Set(prev);
+              next.delete(sid);
+              return next;
+            });
+          }, 30000);
         }
       )
       .subscribe();
@@ -222,6 +240,16 @@ export const LiveEventFeed = () => {
     return signalDate >= cutoff;
   });
 
+  // Sort: signals with recent updates float to top, then by received_at
+  const sortedSignals = [...filteredSignals].sort((a, b) => {
+    const aUpdate = lastUpdateTime[a.id] || 0;
+    const bUpdate = lastUpdateTime[b.id] || 0;
+    if (aUpdate || bUpdate) {
+      return bUpdate - aUpdate;
+    }
+    return new Date(b.received_at).getTime() - new Date(a.received_at).getTime();
+  });
+
   return (
     <Card className="p-6 bg-card border-border">
       <div className="flex items-center justify-between mb-4">
@@ -244,7 +272,7 @@ export const LiveEventFeed = () => {
         </div>
       </div>
       
-      {filteredSignals.length === 0 ? (
+      {sortedSignals.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
           <Shield className="w-12 h-12 mx-auto mb-4 opacity-50" />
           <p>{signals.length === 0 ? 'No signals detected yet' : 'No signals in selected time range'}</p>
@@ -252,10 +280,17 @@ export const LiveEventFeed = () => {
         </div>
       ) : (
         <div className="space-y-3">
-          {filteredSignals.map((signal) => (
+          {sortedSignals.map((signal) => {
+            const isRecentlyUpdated = recentlyUpdated.has(signal.id);
+            const hasUpdates = updateCounts[signal.id] > 0;
+            return (
             <div
               key={signal.id}
-              className="p-4 rounded-lg bg-secondary/50 border border-border hover:border-primary/50 transition-all duration-200 animate-fade-in"
+              className={`p-4 rounded-lg border transition-all duration-500 ${
+                isRecentlyUpdated
+                  ? 'bg-primary/5 border-primary/40 ring-1 ring-primary/20 shadow-md shadow-primary/10'
+                  : 'bg-secondary/50 border-border hover:border-primary/50'
+              } animate-fade-in`}
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 space-y-2">
@@ -272,9 +307,16 @@ export const LiveEventFeed = () => {
                     <Badge variant="outline" className="text-xs font-mono">
                       {signal.status}
                     </Badge>
-                    {updateCounts[signal.id] > 0 && (
-                      <Badge variant="secondary" className="text-xs font-mono">
-                        Updated · {updateCounts[signal.id]}
+                    {hasUpdates && (
+                      <Badge 
+                        variant="secondary" 
+                        className={`text-xs font-mono ${
+                          isRecentlyUpdated 
+                            ? 'bg-primary/20 text-primary border-primary/30 animate-pulse' 
+                            : ''
+                        }`}
+                      >
+                        {isRecentlyUpdated ? '🔴 ' : ''}Updated · {updateCounts[signal.id]}
                       </Badge>
                     )}
                     {signal.location && (
@@ -355,7 +397,9 @@ export const LiveEventFeed = () => {
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
+
         </div>
       )}
     </Card>
