@@ -352,6 +352,27 @@ async function runOSINTMonitorsInBackground(supabase: any) {
       }
     }
 
+    // After all monitors, run signal consolidation to merge cross-source duplicates
+    try {
+      const consolidateResponse = await fetch(
+        `${Deno.env.get('SUPABASE_URL')}/functions/v1/consolidate-signals`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+          },
+          body: JSON.stringify({ hours_back: 24 })
+        }
+      );
+      if (consolidateResponse.ok) {
+        const result = await consolidateResponse.json();
+        console.log(`Signal consolidation: merged ${result.signals_merged || 0} duplicates`);
+      }
+    } catch (error) {
+      console.error('Error running signal consolidation:', error);
+    }
+
     // Update metrics
     await updateMetrics(supabase, {
       osint_scans_completed: monitorsRun
