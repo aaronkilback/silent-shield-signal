@@ -308,18 +308,24 @@ Deno.serve(async (req) => {
           .maybeSingle();
 
         const wouldBeSignalText = `[NAAD Emergency Alert] ${alert.title}. ${alert.summary}`;
-        const normalize = (t: string) => t.toLowerCase().replace(/\s+/g, ' ').trim();
+        const normalizeForDedupe = (t: string) =>
+          t
+            .toLowerCase()
+            .replace(/https?:\/\/\S+/g, " ")
+            .replace(/[^a-z0-9]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
 
         if (existingSignal) {
           // Only store an update if it adds new information (not a reprint of the same text)
-          if (normalize(existingSignal.normalized_text || '') === normalize(wouldBeSignalText)) {
+          if (normalizeForDedupe(existingSignal.normalized_text || '') === normalizeForDedupe(wouldBeSignalText)) {
             continue;
           }
 
           // Dedupe updates by their cleaned content (NOT timestamps/IDs) so reruns don't flood updates
           const updateText = `[NAAD Update] ${alert.title}. ${alert.summary}`;
           const encoder = new TextEncoder();
-          const updateHashData = encoder.encode(`naad_update|${existingSignal.id}|${normalize(updateText)}`);
+          const updateHashData = encoder.encode(`naad_update|${existingSignal.id}|${normalizeForDedupe(updateText)}`);
           const updateHashBuffer = await crypto.subtle.digest('SHA-256', updateHashData);
           const updateHashArray = Array.from(new Uint8Array(updateHashBuffer));
           const updateContentHash = updateHashArray.map(b => b.toString(16).padStart(2, '0')).join('');

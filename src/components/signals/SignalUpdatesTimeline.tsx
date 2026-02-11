@@ -3,6 +3,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { ExternalLink, Radio, Clock } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { extractHttpUrl } from "@/lib/extractHttpUrl";
+
 
 interface SignalUpdate {
   id: string;
@@ -104,17 +106,21 @@ export function SignalUpdatesTimeline({ signalId, onCountChange }: SignalUpdates
                   <span>{update.source_name}</span>
                 )}
 
-                {update.source_url && (
-                  <a
-                    href={update.source_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-primary hover:underline"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    Source
-                  </a>
-                )}
+                {(() => {
+                  const href = extractHttpUrl(update.source_url);
+                  if (!href) return null;
+                  return (
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-primary hover:underline"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      Source
+                    </a>
+                  );
+                })()}
               </div>
             </div>
           </div>
