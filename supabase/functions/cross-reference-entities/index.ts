@@ -135,31 +135,38 @@ Deno.serve(async (req) => {
 
     console.log(`Checking against ${entities?.length || 0} entities`);
 
-    // Cross-reference names with entities using fuzzy matching
+    // Cross-reference names with strict matching to avoid false positives
+    function isWordBoundaryMatch(haystack: string, needle: string): boolean {
+      // Only allow partial matches if the needle is substantial (6+ chars)
+      if (needle.length < 6) return false;
+      // Check word boundaries using regex
+      const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b${escaped}\\b`, 'i');
+      return regex.test(haystack);
+    }
+
     const results = names.map(name => {
       const nameLower = name.toLowerCase().trim();
+      if (nameLower.length < 2) return { name, matched: false };
       
-      // Check for exact name match or alias match
       const matchedEntity = entities?.find(entity => {
         const entityNameLower = entity.name.toLowerCase().trim();
         
-        // Exact match
-        if (entityNameLower === nameLower) {
-          return true;
+        // Exact match (always valid)
+        if (entityNameLower === nameLower) return true;
+        
+        // Word-boundary partial match only for substantial names
+        if (isWordBoundaryMatch(entityNameLower, nameLower) || isWordBoundaryMatch(nameLower, entityNameLower)) {
+          // Additional guard: both strings must be at least 60% of each other's length
+          const ratio = Math.min(nameLower.length, entityNameLower.length) / Math.max(nameLower.length, entityNameLower.length);
+          if (ratio >= 0.6) return true;
         }
         
-        // Partial match (name contains or is contained)
-        if (entityNameLower.includes(nameLower) || nameLower.includes(entityNameLower)) {
-          return true;
-        }
-        
-        // Check aliases
+        // Check aliases - exact match only
         if (entity.aliases) {
           return entity.aliases.some((alias: string) => {
             const aliasLower = alias.toLowerCase().trim();
-            return aliasLower === nameLower || 
-                   aliasLower.includes(nameLower) || 
-                   nameLower.includes(aliasLower);
+            return aliasLower === nameLower;
           });
         }
         
@@ -177,10 +184,7 @@ Deno.serve(async (req) => {
         };
       }
 
-      return {
-        name,
-        matched: false
-      };
+      return { name, matched: false };
     });
 
     const matchCount = results.filter(r => r.matched).length;
