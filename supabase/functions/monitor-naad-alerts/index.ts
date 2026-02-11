@@ -21,30 +21,64 @@ interface NAADAlert {
   language: string;
 }
 
-function stripXml(text: string): string {
-  if (!text) return '';
+async function sha256Hex(text: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(text));
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 
-  return text
+function decodeNumericEntities(input: string): string {
+  if (!input) return '';
+
+  return input
+    // Decimal entities: &#8217;
+    .replace(/&#(\d+);/g, (_m, dec) => {
+      const code = Number(dec);
+      if (!Number.isFinite(code)) return _m;
+      try {
+        return String.fromCodePoint(code);
+      } catch {
+        return _m;
+      }
+    })
+    // Hex entities: &#x2019;
+    .replace(/&#x([0-9a-f]+);/gi, (_m, hex) => {
+      const code = parseInt(String(hex), 16);
+      if (!Number.isFinite(code)) return _m;
+      try {
+        return String.fromCodePoint(code);
+      } catch {
+        return _m;
+      }
+    });
+}
+
+function stripXml(text: string): string {
+  if (!text) return "";
+
+  return decodeNumericEntities(text)
     // Unwrap CDATA
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
 
     // Decode entities (do &amp; first so &amp;lt; becomes &lt;)
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, "&")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/g, "'")
     .replace(/&apos;/gi, "'")
 
     // Normalize line breaks
-    .replace(/<br\s*\/?>/gi, '. ')
+    .replace(/<br\s*\/?>/gi, ". ")
 
     // Strip any remaining tags (including decoded CAP/XML)
-    .replace(/<[^>]+>/g, ' ')
+    .replace(/<[^>]+>/g, " ")
 
     // Clean up whitespace/punctuation
-    .replace(/\s+/g, ' ')
-    .replace(/\.\s*\./g, '.')
+    .replace(/\s+/g, " ")
+    .replace(/\.\s*\./g, ".")
     .trim();
 }
 
@@ -67,35 +101,59 @@ function isFrenchAlert(alert: NAADAlert): boolean {
   return false;
 }
 
-function getEventFingerprint(alert: NAADAlert): string {
+function getFingerprintCandidates(alert: NAADAlert): { canonical: string; candidates: string[] } {
   const text = `${alert.title} ${alert.summary}`;
 
-  // Extract the CAP issuing authority (e.g., "BCRCMP") which is shared across
-  // original, update, and cancellation alerts for the same event.
+  // Extract the CAP issuing authority (e.g., "BCRCMP")
   const capAuthorityMatch = text.match(/Originated from CAP Alert:\s*([A-Za-z0-9]+)/i);
   const authority = capAuthorityMatch?.[1]?.toUpperCase() || '';
 
   // Normalize the event type by stripping status prefixes like Cancelled/Updated/Amended
   const eventType = alert.title
-    .replace(/cancelled\s+/i, '')
-    .replace(/updated?\s+/i, '')
-    .replace(/amended?\s+/i, '')
+    .replace(/^\s*(cancel+ed|cancel+led)\s+/i, '')
+    .replace(/^\s*updated?\s+/i, '')
+    .replace(/^\s*amended?\s+/i, '')
+    .replace(/^\s*(cancellation of|cancelation of)\s+/i, '')
     .trim()
     .toLowerCase();
 
-  if (authority) {
-    // Group by authority + event type only (no date) so same-event alerts
-    // spanning midnight boundaries still merge correctly.
-    return `${authority}|${eventType}`;
-  }
+  const authorityEventType = authority ? `${authority}|${eventType}` : '';
 
-  // Fallback: NAAD OIDs (shared across bilingual pairs)
+  // CAP event identifier often appears as the 3rd value after "Originated from CAP Alert:".
+  // Example: "Originated from CAP Alert: BCRCMP, 2026-..., 426A44E9-..."
+  const capEventIdMatch = text.match(/Originated from CAP Alert:\s*[^,]+,\s*[^,]+,\s*([A-Za-z0-9_-]+)/i);
+  const capEventId = capEventIdMatch?.[1]?.trim() || '';
+
+  // NAAD OIDs (shared across bilingual pairs and often across updates)
   const oidMatch = alert.id.match(/urn[_:]oid[_:]([\d.]+)/i);
-  if (oidMatch) return oidMatch[1];
+  const oid = oidMatch?.[1] || '';
 
   // Final fallback: ID stripped of language markers
-  return alert.id.replace(/[-_](fr|en)/gi, '');
+  const cleanedId = alert.id.replace(/[-_](fr|en)/gi, '');
+
+  // Canonical: prefer the existing (authority|eventType) scheme when available
+  // to avoid breaking dedupe against previously-ingested signals.
+  const canonical = authorityEventType || capEventId || oid || cleanedId;
+
+  const candidates: string[] = [];
+  const pushUnique = (v: string) => {
+    if (!v) return;
+    if (!candidates.includes(v)) candidates.push(v);
+  };
+
+  pushUnique(canonical);
+  pushUnique(authorityEventType);
+  pushUnique(capEventId);
+  pushUnique(oid);
+  pushUnique(cleanedId);
+
+  return { canonical, candidates };
 }
+
+function getEventFingerprint(alert: NAADAlert): string {
+  return getFingerprintCandidates(alert).canonical;
+}
+
 
 function parseAtomFeed(xmlText: string): NAADAlert[] {
   const alerts: NAADAlert[] = [];
@@ -220,30 +278,31 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // 4. Generate event fingerprint (used for content_hash grouping)
-        const fingerprint = getEventFingerprint(alert);
+        // 4. Generate fingerprint candidates + hashes (lets us match older signals even if
+        // some feed entries omit CAP authority lines, OIDs, etc.)
+        const { canonical, candidates } = getFingerprintCandidates(alert);
+        const candidateHashes = await Promise.all(
+          candidates.map((fp) => sha256Hex(`naad|${fp}`))
+        );
 
-        // 5. Generate content hash using event fingerprint (not raw title)
-        const encoder = new TextEncoder();
-        const hashData = encoder.encode(`naad|${fingerprint}`);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', hashData);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        const contentHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        // Use the canonical fingerprint for any newly-created signal
+        const contentHash = candidateHashes[0];
 
-        // Check rejected hashes
+        // Check rejected hashes (match against ANY candidate hash)
         const { data: rejected } = await supabase
           .from('rejected_content_hashes')
           .select('id')
-          .eq('content_hash', contentHash)
+          .in('content_hash', candidateHashes)
+          .limit(1)
           .maybeSingle();
 
         if (rejected) continue;
 
-        // 6. Check if a signal with same fingerprint already exists → nest as update
+        // 5. Check if a signal with any candidate fingerprint already exists → nest as update
         const { data: existingSignal } = await supabase
           .from('signals')
           .select('id, normalized_text, created_at')
-          .eq('content_hash', contentHash)
+          .in('content_hash', candidateHashes)
           .order('created_at', { ascending: true })
           .limit(1)
           .maybeSingle();
@@ -280,12 +339,12 @@ Deno.serve(async (req) => {
                 source_name: 'naad_emergency_alerts',
                 source_url: alert.link || null,
                 content_hash: updateContentHash,
-                metadata: {
-                  alert_id: alert.id,
-                  updated: alert.updated,
-                  category: alert.category,
-                  event_fingerprint: fingerprint,
-                },
+                  metadata: {
+                    alert_id: alert.id,
+                    updated: alert.updated,
+                    category: alert.category,
+                    event_fingerprint: canonical,
+                  },
               });
 
             if (!updateError) {
@@ -324,7 +383,7 @@ Deno.serve(async (req) => {
             raw_json: {
               source: 'naad_emergency_alerts',
               alert_id: alert.id,
-              event_fingerprint: fingerprint,
+              event_fingerprint: canonical,
               category: alert.category,
               classification,
               url: alert.link || `https://rss.naad-adna.pelmorex.com/`,

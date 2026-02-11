@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +53,8 @@ export function SignalDetailSheet({
   onDismiss,
 }: SignalDetailSheetProps) {
   if (!signal) return null;
+
+  const [updateCount, setUpdateCount] = useState(0);
 
   const getSeverityColor = (severity: string | null) => {
     switch (severity?.toLowerCase()) {
@@ -128,6 +131,11 @@ export function SignalDetailSheet({
               {signal.confidence != null && (
                 <Badge variant="outline">
                   {Math.round(signal.confidence)}% confidence
+                </Badge>
+              )}
+              {updateCount > 0 && (
+                <Badge variant="secondary" className="text-xs">
+                  Updated · {updateCount}
                 </Badge>
               )}
             </div>
@@ -357,7 +365,7 @@ export function SignalDetailSheet({
 
             {/* Live Updates Timeline */}
             <Separator />
-            <SignalUpdatesTimeline signalId={signal.id} />
+            <SignalUpdatesTimeline signalId={signal.id} onCountChange={setUpdateCount} />
 
             {/* Related Signals Count */}
             {signal.signal_count && signal.signal_count > 1 && (

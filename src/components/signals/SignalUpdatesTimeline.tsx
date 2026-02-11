@@ -15,9 +15,10 @@ interface SignalUpdate {
 
 interface SignalUpdatesTimelineProps {
   signalId: string;
+  onCountChange?: (count: number) => void;
 }
 
-export function SignalUpdatesTimeline({ signalId }: SignalUpdatesTimelineProps) {
+export function SignalUpdatesTimeline({ signalId, onCountChange }: SignalUpdatesTimelineProps) {
   const [updates, setUpdates] = useState<SignalUpdate[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -31,6 +32,7 @@ export function SignalUpdatesTimeline({ signalId }: SignalUpdatesTimelineProps) 
 
       if (!error && data) {
         setUpdates(data);
+        onCountChange?.(data.length);
       }
       setLoading(false);
     };
@@ -49,7 +51,11 @@ export function SignalUpdatesTimeline({ signalId }: SignalUpdatesTimelineProps) 
           filter: `signal_id=eq.${signalId}`,
         },
         (payload) => {
-          setUpdates((prev) => [payload.new as SignalUpdate, ...prev]);
+          setUpdates((prev) => {
+            const next = [payload.new as SignalUpdate, ...prev];
+            onCountChange?.(next.length);
+            return next;
+          });
         }
       )
       .subscribe();
@@ -57,7 +63,7 @@ export function SignalUpdatesTimeline({ signalId }: SignalUpdatesTimelineProps) 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [signalId]);
+  }, [signalId, onCountChange]);
 
   if (loading) return null;
   if (updates.length === 0) return null;

@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, Shield, Activity, Zap, Link as LinkIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { SignalAgeIndicator } from "@/components/signals/SignalAgeBadge";
@@ -77,6 +77,8 @@ const getSeverityIcon = (severity: string | null) => {
 export const LiveEventFeed = () => {
   const { selectedClientId, isContextReady } = useClientSelection();
   const [signals, setSignals] = useState<Signal[]>([]);
+  const visibleSignalIdsRef = useRef<Set<string>>(new Set());
+  const [updateCounts, setUpdateCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState<string>('7d'); // Default to last 7 days for live feed
 
@@ -85,6 +87,30 @@ export const LiveEventFeed = () => {
     if (!isContextReady) {
       return;
     }
+
+    const fetchUpdateCounts = async (signalIds: string[]) => {
+      if (signalIds.length === 0) {
+        setUpdateCounts({});
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('signal_updates')
+        .select('signal_id')
+        .in('signal_id', signalIds);
+
+      if (error) {
+        console.error('Error fetching signal update counts:', error);
+        return;
+      }
+
+      const counts: Record<string, number> = {};
+      for (const row of data || []) {
+        const sid = (row as any).signal_id as string;
+        counts[sid] = (counts[sid] || 0) + 1;
+      }
+      setUpdateCounts(counts);
+    };
 
     // Fetch initial signals
     const fetchSignals = async () => {
@@ -106,14 +132,16 @@ export const LiveEventFeed = () => {
         console.error('Error fetching signals:', error);
       } else if (data) {
         setSignals(data);
+        visibleSignalIdsRef.current = new Set(data.map((s) => s.id));
+        await fetchUpdateCounts(data.map((s) => s.id));
       }
       setLoading(false);
     };
 
     fetchSignals();
 
-    // Subscribe to realtime updates
-    const channel = supabase
+    // Subscribe to realtime updates (new signals)
+    const signalsChannel = supabase
       .channel(`signals-changes-${selectedClientId || 'all'}`)
       .on(
         'postgres_changes',
@@ -135,8 +163,35 @@ export const LiveEventFeed = () => {
       )
       .subscribe();
 
+    // Subscribe to realtime updates (signal updates) so the "Updated" badge stays fresh
+    const updatesChannel = supabase
+      .channel(`signal-updates-feed-${selectedClientId || 'all'}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'signal_updates'
+        },
+        (payload) => {
+          const update = payload.new as any;
+          const sid = update?.signal_id as string | undefined;
+          if (!sid) return;
+
+          // Only increment if this signal is currently visible in the feed
+          if (!visibleSignalIdsRef.current.has(sid)) return;
+
+          setUpdateCounts((prev) => ({
+            ...prev,
+            [sid]: (prev[sid] || 0) + 1,
+          }));
+        }
+      )
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(signalsChannel);
+      supabase.removeChannel(updatesChannel);
     };
   }, [selectedClientId, isContextReady]);
 
@@ -215,6 +270,11 @@ export const LiveEventFeed = () => {
                     <Badge variant="outline" className="text-xs font-mono">
                       {signal.status}
                     </Badge>
+                    {updateCounts[signal.id] > 0 && (
+                      <Badge variant="secondary" className="text-xs font-mono">
+                        Updated · {updateCounts[signal.id]}
+                      </Badge>
+                    )}
                     {signal.location && (
                       <Badge variant="secondary" className="text-xs">
                         📍 {signal.location}
@@ -262,15 +322,26 @@ export const LiveEventFeed = () => {
                     {signal.raw_json?.source && (
                       <p className="text-xs text-muted-foreground">
                         Source: {signal.raw_json.source}
-                        {signal.raw_json.url && (
-                          <a 
-                            href={signal.raw_json.url} 
-                            target="_blank" 
+                        {signal.raw_json.source === 'naad_emergency_alerts' ? (
+                          <a
+                            href="https://rss.naad-adna.pelmorex.com/"
+                            target="_blank"
                             rel="noopener noreferrer"
                             className="ml-2 text-primary hover:underline"
                           >
-                            View →
+                            View feed →
                           </a>
+                        ) : (
+                          signal.raw_json.url && (
+                            <a 
+                              href={signal.raw_json.url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="ml-2 text-primary hover:underline"
+                            >
+                              View →
+                            </a>
+                          )
                         )}
                       </p>
                     )}
