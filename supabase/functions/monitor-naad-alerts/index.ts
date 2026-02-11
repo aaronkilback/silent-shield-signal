@@ -68,17 +68,30 @@ function isFrenchAlert(alert: NAADAlert): boolean {
 }
 
 function getEventFingerprint(alert: NAADAlert): string {
-  // Preferred: NAAD OIDs shared across bilingual pairs (and often across updates)
+  const text = `${alert.title} ${alert.summary}`;
+
+  // Extract the CAP issuing authority (e.g., "BCRCMP") which is shared across
+  // original, update, and cancellation alerts for the same event.
+  const capAuthorityMatch = text.match(/Originated from CAP Alert:\s*([A-Za-z0-9]+)/i);
+  const authority = capAuthorityMatch?.[1]?.toUpperCase() || '';
+
+  // Normalize the event type by stripping status prefixes like Cancelled/Updated/Amended
+  const eventType = alert.title
+    .replace(/cancelled\s+/i, '')
+    .replace(/updated?\s+/i, '')
+    .replace(/amended?\s+/i, '')
+    .trim()
+    .toLowerCase();
+
+  if (authority) {
+    // Group by authority + event type only (no date) so same-event alerts
+    // spanning midnight boundaries still merge correctly.
+    return `${authority}|${eventType}`;
+  }
+
+  // Fallback: NAAD OIDs (shared across bilingual pairs)
   const oidMatch = alert.id.match(/urn[_:]oid[_:]([\d.]+)/i);
   if (oidMatch) return oidMatch[1];
-
-  // Fallback: CAP-origin identifier embedded in the human-readable summary
-  // Example: "Originated from CAP Alert: BCRCMP, 2026-02-10T14:15:03-08:00, 426A"
-  const text = `${alert.title} ${alert.summary}`;
-  const capMatch =
-    text.match(/Originated from CAP Alert:\s*[^,]+,\s*[^,]+,\s*([A-Za-z0-9_-]+)/i) ||
-    text.match(/\bCAP Alert:\s*[^,]+,\s*[^,]+,\s*([A-Za-z0-9_-]+)/i);
-  if (capMatch?.[1]) return capMatch[1];
 
   // Final fallback: ID stripped of language markers
   return alert.id.replace(/[-_](fr|en)/gi, '');
@@ -188,9 +201,6 @@ Deno.serve(async (req) => {
 
         console.log(`[NAAD] Parsed ${alerts.length} alerts`);
 
-      // Track seen event fingerprints to skip bilingual duplicates within this batch
-      const seenFingerprints = new Set<string>();
-
       for (const alert of alerts) {
         // 1. Filter French alerts
         if (isFrenchAlert(alert)) {
@@ -210,12 +220,8 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // 4. Deduplicate bilingual pairs within this batch
+        // 4. Generate event fingerprint (used for content_hash grouping)
         const fingerprint = getEventFingerprint(alert);
-        if (seenFingerprints.has(fingerprint)) {
-          continue;
-        }
-        seenFingerprints.add(fingerprint);
 
         // 5. Generate content hash using event fingerprint (not raw title)
         const encoder = new TextEncoder();
