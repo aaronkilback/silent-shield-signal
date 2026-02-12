@@ -47,6 +47,8 @@ const EVENT_TYPE_PATTERNS: Array<{ pattern: RegExp; eventType: string }> = [
   { pattern: /\b(earthquake|seismic)\b/i, eventType: 'earthquake' },
   { pattern: /\b(evacuation\s*order|civil\s*emergency)\b/i, eventType: 'civil_emergency' },
   { pattern: /\b(terrorist|terrorism|radicali[sz])\b/i, eventType: 'terrorism' },
+  { pattern: /\b(mass\s*casualty|multiple\s*deaths|deaths?\s*reported|fatalities|tragedy|tragic|massacre)\b/i, eventType: 'mass_casualty' },
+  { pattern: /\b(lockdown|shelter[\s-]in[\s-]place|police\s*incident|critical\s*incident)\b/i, eventType: 'critical_incident' },
 ];
 
 function extractLocations(text: string): string[] {
@@ -83,8 +85,14 @@ function buildClusterKeys(text: string): string[] {
 
   if (locations.length === 0 || eventTypes.length === 0) return [];
 
+  // Filter out province-level locations — too broad for clustering
+  const PROVINCE_LEVEL = new Set(['b.c.', 'bc', 'british columbia', 'alberta', 'saskatchewan', 'manitoba', 'ontario', 'quebec', 'nova scotia', 'new brunswick', 'pei', 'newfoundland', 'yukon', 'nwt', 'nunavut']);
+  const specificLocations = locations.filter(loc => !PROVINCE_LEVEL.has(loc));
+  
+  if (specificLocations.length === 0) return [];
+
   const keys: string[] = [];
-  for (const loc of locations) {
+  for (const loc of specificLocations) {
     for (const et of eventTypes) {
       keys.push(`${loc}|${et}`);
     }
@@ -133,6 +141,10 @@ Deno.serve(async (req) => {
     const clusterMap = new Map<string, string[]>();
     const signalMap = new Map<string, SignalRow>();
 
+    // Track location-only clusters for aggressive matching
+    const locationMap = new Map<string, string[]>();
+    const PROVINCE_LEVEL = new Set(['b.c.', 'bc', 'british columbia', 'alberta', 'saskatchewan', 'manitoba', 'ontario', 'quebec', 'nova scotia', 'new brunswick', 'pei', 'newfoundland', 'yukon', 'nwt', 'nunavut']);
+
     for (const sig of signals) {
       signalMap.set(sig.id, sig as SignalRow);
       const text = `${sig.title || ''} ${sig.normalized_text || ''}`;
@@ -140,6 +152,15 @@ Deno.serve(async (req) => {
       for (const key of keys) {
         if (!clusterMap.has(key)) clusterMap.set(key, []);
         clusterMap.get(key)!.push(sig.id);
+      }
+
+      // Aggressive: cluster by specific city/town alone (not province-level)
+      const locations = extractLocations(text);
+      for (const loc of locations) {
+        if (PROVINCE_LEVEL.has(loc)) continue;
+        const locKey = `loc_only|${loc}`;
+        if (!locationMap.has(locKey)) locationMap.set(locKey, []);
+        locationMap.get(locKey)!.push(sig.id);
       }
     }
 
@@ -158,6 +179,15 @@ Deno.serve(async (req) => {
     for (const ids of clusterMap.values()) {
       for (let i = 1; i < ids.length; i++) {
         union(ids[0], ids[i]);
+      }
+    }
+
+    // Aggressive location-only clustering: signals about the same specific town/city
+    for (const ids of locationMap.values()) {
+      if (ids.length > 1) {
+        for (let i = 1; i < ids.length; i++) {
+          union(ids[0], ids[i]);
+        }
       }
     }
 
