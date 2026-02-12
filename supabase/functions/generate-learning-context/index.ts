@@ -577,6 +577,7 @@ Deno.serve(async (req) => {
       implicit_feedback: { approvals: implicitApproved.length, rejections: implicitRejected.length, total_events: implicitEvents?.length || 0 },
       cross_signal_clusters: { count: clusters.length, top_clusters: clusters.slice(0, 5).map(c => ({ label: c.label, size: c.signals.length, score: c.score })) },
       seasonal_patterns: { categories_analyzed: Object.keys(monthlySpikes).length },
+      universal_feedback: Object.fromEntries(Object.entries(universalStats || {}).map(([type, stats]) => [type, { positive: stats.positive, negative: stats.negative, total: stats.total }])),
       profiles_updated: profileUpserts.length + 1,
       category_profiles: categoryData.size,
       generated_at: new Date().toISOString()
@@ -608,7 +609,60 @@ Deno.serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // PHASE 14: Recommendations
+    // PHASE 14: Universal feedback learning (briefings, reports, travel alerts, etc.)
+    // ═══════════════════════════════════════════════════════════════
+
+    const { data: universalFeedback } = await supabase
+      .from('feedback_events')
+      .select('object_type, feedback, notes, correction, feedback_context, source_function, created_at')
+      .neq('object_type', 'signal')
+      .order('created_at', { ascending: false })
+      .limit(500);
+
+    const universalStats: Record<string, { positive: number; negative: number; total: number; corrections: string[] }> = {};
+    
+    for (const fb of (universalFeedback || [])) {
+      const type = fb.object_type || 'unknown';
+      if (!universalStats[type]) universalStats[type] = { positive: 0, negative: 0, total: 0, corrections: [] };
+      universalStats[type].total++;
+      
+      if (['positive', 'relevant', 'confirmed', 'approved'].includes(fb.feedback)) {
+        universalStats[type].positive++;
+      } else {
+        universalStats[type].negative++;
+      }
+      
+      if (fb.correction) {
+        universalStats[type].corrections.push(fb.correction);
+      }
+    }
+
+    // Upsert quality profiles for each object type
+    for (const [type, stats] of Object.entries(universalStats)) {
+      if (stats.total < 1) continue;
+      const satisfactionRate = stats.total > 0 ? stats.positive / stats.total : 0.5;
+      
+      await supabase.from('learning_profiles').upsert({
+        profile_type: `quality:${type}`,
+        features: {
+          positive_count: stats.positive,
+          negative_count: stats.negative,
+          total_feedback: stats.total,
+          satisfaction_rate: Math.round(satisfactionRate * 100) / 100,
+          correction_count: stats.corrections.length,
+          recent_corrections: stats.corrections.slice(0, 5),
+          last_analyzed: new Date().toISOString(),
+        },
+        sample_count: stats.total,
+        last_updated: new Date().toISOString(),
+        weight: 1.0,
+      }, { onConflict: 'profile_type' });
+    }
+
+    console.log(`[Learning] Universal feedback: ${Object.keys(universalStats).length} object types, ${(universalFeedback || []).length} total events`);
+
+    // ═══════════════════════════════════════════════════════════════
+    // PHASE 15: Recommendations
     // ═══════════════════════════════════════════════════════════════
 
     const recommendations = [];
@@ -628,6 +682,18 @@ Deno.serve(async (req) => {
     }
     if (uncertainSignals.length > 10) {
       recommendations.push({ area: 'Active Learning', priority: 'low', issue: `${uncertainSignals.length} signals need human review`, action: 'Review queued signals to improve precision' });
+    }
+
+    // Universal feedback recommendations
+    for (const [type, stats] of Object.entries(universalStats)) {
+      if (stats.total >= 3 && stats.negative > stats.positive) {
+        recommendations.push({
+          area: `${type.replace(/_/g, ' ')} Quality`,
+          priority: stats.negative / stats.total > 0.7 ? 'high' : 'medium',
+          issue: `${stats.negative}/${stats.total} ${type} outputs rated negatively`,
+          action: `Review AI prompts and content quality for ${type}`,
+        });
+      }
     }
 
     console.log(`[Learning] ═══ Cycle v3 complete: ${recommendations.length} recommendations ═══`);
