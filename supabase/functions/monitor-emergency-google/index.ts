@@ -1,5 +1,35 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { createHistoryEntry, completeHistoryEntry, failHistoryEntry } from "../_shared/monitoring-history.ts";
+import { scoreSignalRelevance, isTestContent } from "../_shared/signal-relevance-scorer.ts";
+
+// Emergency keywords that MUST appear in the content for it to be a real emergency signal
+const EMERGENCY_CONTENT_VALIDATORS = [
+  /\bactive\s+shooter\b/i,
+  /\bshots?\s+fired\b/i,
+  /\barmed\s+(person|suspect|individual)\b/i,
+  /\bbomb\s+threat\b/i,
+  /\bexplosion\b/i,
+  /\bsuspicious\s+package\b/i,
+  /\bhostage\b/i,
+  /\bbarricade[d]?\b/i,
+  /\bstandoff\b/i,
+  /\bmass\s+casualt(y|ies)\b/i,
+  /\bmultiple\s+victims?\b/i,
+  /\bmass\s+stabbing\b/i,
+  /\bamber\s+alert\b/i,
+  /\bchild\s+abduction\b/i,
+  /\bevacuation\s+order\b/i,
+  /\bcivil\s+emergency\b/i,
+  /\bterroris[tm]\b/i,
+  /\bradicalized\b/i,
+  /\bschool\s+shoot/i,
+  /\bmass\s+shooting\b/i,
+  /\blockdown\b/i,
+  /\bRCMP\b/,
+  /\bpolice\s+(respond|investigating|confirm)/i,
+  /\bkilled\b.*\b(shoot|attack|stab)/i,
+  /\bdead\b.*\b(shoot|attack|incident)/i,
+];
 
 /**
  * Google News Emergency Keyword Monitor
@@ -108,24 +138,52 @@ Deno.serve(async (req) => {
 
           if (existing) continue;
 
+          // ═══ CONTENT VALIDATION GATE ═══
+          // Google results often include irrelevant pages. Require at least one
+          // emergency keyword to actually appear in the title or snippet.
+          const fullText = `${item.title} ${item.snippet}`;
+          const fullTextLower = fullText.toLowerCase();
+
+          const hasEmergencyContent = EMERGENCY_CONTENT_VALIDATORS.some(pattern => pattern.test(fullText));
+          if (!hasEmergencyContent) {
+            console.log(`[EmergencyGoogle] ✗ Skipping non-emergency result: ${item.title.substring(0, 60)}`);
+            continue;
+          }
+
+          // Skip test content
+          if (isTestContent(fullText)) continue;
+
+          // Run through relevance scorer for additional filtering
+          const relevanceResult = await scoreSignalRelevance(
+            supabase,
+            fullText,
+            'emergency',
+            70,
+            'google_emergency_keywords'
+          );
+
+          if (relevanceResult.recommendation === 'suppress') {
+            console.log(`[EmergencyGoogle] ✗ Suppressed by relevance scorer: ${item.title.substring(0, 60)}`);
+            continue;
+          }
+
           // Classify severity from content
-          const fullText = `${item.title} ${item.snippet}`.toLowerCase();
           let severity = 'high';
           let category = 'emergency';
 
-          if (/active shooter|shots fired|armed person|mass casualty|mass stabbing/.test(fullText)) {
+          if (/active shooter|shots fired|armed person|mass casualty|mass stabbing/i.test(fullTextLower)) {
             severity = 'critical';
             category = 'active_threat';
-          } else if (/bomb|explosion|terrorist|terrorism/.test(fullText)) {
+          } else if (/bomb|explosion|terrorist|terrorism/i.test(fullTextLower)) {
             severity = 'critical';
             category = 'terrorism';
-          } else if (/amber alert|child abduction/.test(fullText)) {
+          } else if (/amber alert|child abduction/i.test(fullTextLower)) {
             severity = 'critical';
             category = 'amber_alert';
-          } else if (/hostage|barricade|standoff/.test(fullText)) {
+          } else if (/hostage|barricade|standoff/i.test(fullTextLower)) {
             severity = 'critical';
             category = 'hostage';
-          } else if (/evacuation|civil emergency/.test(fullText)) {
+          } else if (/evacuation|civil emergency/i.test(fullTextLower)) {
             severity = 'high';
             category = 'civil_emergency';
           }
@@ -137,9 +195,9 @@ Deno.serve(async (req) => {
               const locations = (client.locations || []).map((l: string) => l.toLowerCase());
               const keywords = (client.monitoring_keywords || []).map((k: string) => k.toLowerCase());
 
-              const locationMatch = locations.some((loc: string) => fullText.includes(loc));
-              const keywordMatch = keywords.some((kw: string) => fullText.includes(kw));
-              const nameMatch = fullText.includes(client.name.toLowerCase());
+              const locationMatch = locations.some((loc: string) => fullTextLower.includes(loc));
+              const keywordMatch = keywords.some((kw: string) => fullTextLower.includes(kw));
+              const nameMatch = fullTextLower.includes(client.name.toLowerCase());
 
               if (locationMatch || keywordMatch || nameMatch) {
                 matchedClientId = client.id;
@@ -157,15 +215,17 @@ Deno.serve(async (req) => {
               severity,
               location: item.displayLink || 'Canada',
               content_hash: contentHash,
+              relevance_score: relevanceResult.score,
               raw_json: {
                 source: 'google_emergency_keywords',
                 url: item.link,
                 snippet: item.snippet,
                 display_link: item.displayLink,
                 search_query: query,
+                relevance_factors: relevanceResult.factors,
               },
-              status: 'new',
-              confidence: 0.90,
+              status: relevanceResult.recommendation === 'low_confidence' ? 'low_confidence' : 'new',
+              confidence: relevanceResult.confidence,
             });
 
           if (!signalError) {
