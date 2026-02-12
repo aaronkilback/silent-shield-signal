@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import DOMPurify from 'dompurify';
 import { useActivityTracking } from "@/hooks/useActivityTracking";
 import { generatePdfFromHtml } from "@/utils/htmlToPdf";
+import { useReportArchive } from "@/hooks/useReportArchive";
 
 // Configure DOMPurify for safe HTML rendering in reports
 const sanitizeHtml = (html: string): string => {
@@ -24,6 +25,7 @@ const sanitizeHtml = (html: string): string => {
 export const ExecutiveReportGenerator = () => {
   const { toast } = useToast();
   const { trackReportGeneration } = useActivityTracking();
+  const { persistReport } = useReportArchive();
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [periodDays, setPeriodDays] = useState<string>("7");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -72,9 +74,24 @@ export const ExecutiveReportGenerator = () => {
         // Track report generation (excludes super_admin)
         trackReportGeneration('executive', data.metadata?.client || 'Unknown');
         
+        // Auto-archive the report
+        const clientName = data.metadata?.client || 'Unknown';
+        const periodEnd = new Date();
+        const periodStart = new Date();
+        periodStart.setDate(periodStart.getDate() - parseInt(periodDays));
+        persistReport.mutate({
+          report_type: 'executive',
+          title: `Executive Report — ${clientName} (${periodDays}d)`,
+          client_id: selectedClientId,
+          period_start: periodStart.toISOString(),
+          period_end: periodEnd.toISOString(),
+          html_content: data.html,
+          metadata: { client_name: clientName, period_days: parseInt(periodDays) },
+        });
+        
         toast({
-          title: "Report Generated",
-          description: `Executive intelligence report for ${data.metadata.client} is ready.`,
+          title: "Report Generated & Archived",
+          description: `Executive intelligence report for ${clientName} is ready and saved to your archive.`,
         });
       }
     } catch (error) {

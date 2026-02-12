@@ -3875,6 +3875,63 @@ export type Database = {
           },
         ]
       }
+      generated_reports: {
+        Row: {
+          client_id: string | null
+          created_at: string
+          html_content: string
+          id: string
+          metadata: Json | null
+          pdf_storage_path: string | null
+          period_end: string | null
+          period_start: string | null
+          report_type: string
+          title: string
+          user_id: string
+        }
+        Insert: {
+          client_id?: string | null
+          created_at?: string
+          html_content: string
+          id?: string
+          metadata?: Json | null
+          pdf_storage_path?: string | null
+          period_end?: string | null
+          period_start?: string | null
+          report_type: string
+          title: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string | null
+          created_at?: string
+          html_content?: string
+          id?: string
+          metadata?: Json | null
+          pdf_storage_path?: string | null
+          period_end?: string | null
+          period_start?: string | null
+          report_type?: string
+          title?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "generated_reports_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "generated_reports_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       geospatial_maps: {
         Row: {
           created_at: string
@@ -6548,6 +6605,72 @@ export type Database = {
             columns: ["report_id"]
             isOneToOne: false
             referencedRelation: "reports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      report_schedules: {
+        Row: {
+          client_id: string
+          config: Json | null
+          created_at: string
+          day_of_week: number | null
+          email_recipients: string[]
+          frequency: string
+          hour_utc: number
+          id: string
+          is_active: boolean
+          last_run_at: string | null
+          next_run_at: string | null
+          report_type: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          config?: Json | null
+          created_at?: string
+          day_of_week?: number | null
+          email_recipients?: string[]
+          frequency?: string
+          hour_utc?: number
+          id?: string
+          is_active?: boolean
+          last_run_at?: string | null
+          next_run_at?: string | null
+          report_type: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string
+          config?: Json | null
+          created_at?: string
+          day_of_week?: number | null
+          email_recipients?: string[]
+          frequency?: string
+          hour_utc?: number
+          id?: string
+          is_active?: boolean
+          last_run_at?: string | null
+          next_run_at?: string | null
+          report_type?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "report_schedules_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_schedules_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]

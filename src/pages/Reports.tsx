@@ -2,6 +2,8 @@ import { Header } from "@/components/Header";
 import { ExecutiveReportGenerator } from "@/components/ExecutiveReportGenerator";
 import { RiskSnapshotExport } from "@/components/RiskSnapshotExport";
 import { SecurityBulletinGenerator } from "@/components/SecurityBulletinGenerator";
+import { ReportArchive } from "@/components/reports/ReportArchive";
+import { ReportScheduleManager } from "@/components/reports/ReportScheduleManager";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
@@ -42,7 +44,7 @@ const Reports = () => {
             </div>
             <div>
               <h1 className="text-3xl font-bold text-foreground">Reports</h1>
-              <p className="text-muted-foreground">Generate and export security intelligence reports</p>
+              <p className="text-muted-foreground">Generate, archive, and schedule intelligence reports</p>
             </div>
           </div>
           <Link to="/benchmark">
@@ -53,6 +55,13 @@ const Reports = () => {
           </Link>
         </div>
 
+        {/* Report Archive */}
+        <ReportArchive />
+
+        {/* Scheduled Reports */}
+        <ReportScheduleManager />
+
+        {/* Generators */}
         <div className="grid grid-cols-1 gap-6">
           <SecurityBulletinGenerator />
           <ExecutiveReportGenerator />
