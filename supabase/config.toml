@@ -1,5 +1,8 @@
 project_id = "udbjjeppbgwjlqmaeftn"
 
+[functions.briefing-feedback]
+verify_jwt = false
+
 [functions.extract-conversation-memory]
 verify_jwt = false
 

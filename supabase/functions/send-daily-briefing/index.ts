@@ -200,8 +200,12 @@ Tone: Calm, authoritative, zero jargon. If metrics are all low/zero, state "No e
     const aiData = await aiResponse.json();
     const briefingText = aiData.choices?.[0]?.message?.content || 'Unable to generate briefing content.';
 
+    // Build feedback URL base
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
+    const feedbackBaseUrl = `${supabaseUrl}/functions/v1/briefing-feedback`;
+
     // Build HTML email
-    const emailHtml = buildBriefingEmail(briefingText, metrics, dateContext, doctrineLine);
+    const emailHtml = buildBriefingEmail(briefingText, metrics, dateContext, doctrineLine, feedbackBaseUrl);
 
     // Send to all configured recipients
     let sentCount = 0;
@@ -270,11 +274,15 @@ function formatBriefingLines(text: string): string {
 function buildBriefingEmail(
   briefingText: string,
   metrics: Record<string, number>,
-  dateContext: { currentDateFormatted: string; currentTime24h: string; currentTimezone: string },
-  doctrineLine: string
+  dateContext: { currentDateFormatted: string; currentTime24h: string; currentTimezone: string; currentDateISO: string },
+  doctrineLine: string,
+  feedbackBaseUrl: string
 ): string {
   const riskColor = metrics.risk_score >= 70 ? '#dc2626' : metrics.risk_score >= 40 ? '#f59e0b' : '#059669';
   const riskLabel = metrics.risk_score >= 70 ? 'ELEVATED' : metrics.risk_score >= 40 ? 'MODERATE' : 'NORMAL';
+
+  const thumbsUpUrl = `${feedbackBaseUrl}?f=positive&d=${dateContext.currentDateISO}`;
+  const thumbsDownUrl = `${feedbackBaseUrl}?f=negative&d=${dateContext.currentDateISO}`;
 
   const doctrineSection = doctrineLine ? `
     <!-- Doctrine Line -->
@@ -333,6 +341,16 @@ function buildBriefingEmail(
     </div>
 
     ${doctrineSection}
+
+    <!-- Feedback Section -->
+    <div style="padding:20px 30px; border-top:1px solid #334155; text-align:center;">
+      <p style="color:#64748b; font-size:12px; margin:0 0 12px; text-transform:uppercase; letter-spacing:0.5px;">Was this briefing useful?</p>
+      <div style="display:inline-flex; gap:16px;">
+        <a href="${thumbsUpUrl}" style="display:inline-block; padding:10px 24px; background:#059669; color:#fff; text-decoration:none; border-radius:8px; font-size:14px; font-weight:600;">👍 Useful</a>
+        <a href="${thumbsDownUrl}" style="display:inline-block; padding:10px 24px; background:#334155; color:#94a3b8; text-decoration:none; border-radius:8px; font-size:14px; font-weight:600;">👎 Not Useful</a>
+      </div>
+      <p style="color:#475569; font-size:11px; margin:10px 0 0;">Your feedback trains Fortress to deliver better intelligence.</p>
+    </div>
 
     <!-- Footer -->
     <div style="padding:20px 30px; background:#0f172a; border-top:1px solid #334155; text-align:center;">

@@ -3830,30 +3830,39 @@ export type Database = {
       }
       feedback_events: {
         Row: {
+          correction: string | null
           created_at: string | null
           feedback: string
+          feedback_context: Json | null
           id: string
           notes: string | null
           object_id: string
           object_type: string
+          source_function: string | null
           user_id: string | null
         }
         Insert: {
+          correction?: string | null
           created_at?: string | null
           feedback: string
+          feedback_context?: Json | null
           id?: string
           notes?: string | null
           object_id: string
           object_type: string
+          source_function?: string | null
           user_id?: string | null
         }
         Update: {
+          correction?: string | null
           created_at?: string | null
           feedback?: string
+          feedback_context?: Json | null
           id?: string
           notes?: string | null
           object_id?: string
           object_type?: string
+          source_function?: string | null
           user_id?: string | null
         }
         Relationships: [
@@ -8826,6 +8835,44 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      universal_learning_log: {
+        Row: {
+          created_at: string
+          details: Json | null
+          feedback_event_id: string | null
+          id: string
+          learning_action: string
+          object_type: string
+          profile_types_updated: string[] | null
+        }
+        Insert: {
+          created_at?: string
+          details?: Json | null
+          feedback_event_id?: string | null
+          id?: string
+          learning_action: string
+          object_type: string
+          profile_types_updated?: string[] | null
+        }
+        Update: {
+          created_at?: string
+          details?: Json | null
+          feedback_event_id?: string | null
+          id?: string
+          learning_action?: string
+          object_type?: string
+          profile_types_updated?: string[] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "universal_learning_log_feedback_event_id_fkey"
+            columns: ["feedback_event_id"]
+            isOneToOne: false
+            referencedRelation: "feedback_events"
             referencedColumns: ["id"]
           },
         ]
