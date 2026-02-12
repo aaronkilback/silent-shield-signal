@@ -516,3 +516,9 @@ verify_jwt = false
 
 [functions.monitor-emergency-google]
 verify_jwt = false
+
+[functions.persist-report]
+verify_jwt = false
+
+[functions.scheduled-report-delivery]
+verify_jwt = false

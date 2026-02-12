@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import DOMPurify from 'dompurify';
 import { generatePdfFromHtml } from "@/utils/htmlToPdf";
+import { useReportArchive } from "@/hooks/useReportArchive";
 
 // Configure DOMPurify for safe HTML rendering in reports
 const sanitizeHtml = (html: string): string => {
@@ -21,11 +22,12 @@ const sanitizeHtml = (html: string): string => {
 export const RiskSnapshotExport = () => {
   const [loading, setLoading] = useState(false);
   const [reportHtml, setReportHtml] = useState<string | null>(null);
+  const { persistReport } = useReportArchive();
 
   const generateReport = async () => {
     setLoading(true);
     try {
-      const periodEnd = new Date();
+      const genDate = new Date();
       const { data, error } = await supabase.functions.invoke("generate-report", {
         body: {
           report_type: "72h-snapshot",
@@ -35,7 +37,20 @@ export const RiskSnapshotExport = () => {
 
       if (error) throw error;
       setReportHtml(data.html);
-      toast.success("72-Hour Risk Snapshot generated successfully");
+      
+      // Auto-archive
+      const periodEnd = new Date();
+      const periodStart = new Date();
+      periodStart.setHours(periodStart.getHours() - 72);
+      persistReport.mutate({
+        report_type: 'risk_snapshot',
+        title: `72-Hour Risk Snapshot (${periodEnd.toISOString().split('T')[0]})`,
+        period_start: periodStart.toISOString(),
+        period_end: periodEnd.toISOString(),
+        html_content: data.html,
+      });
+      
+      toast.success("Risk Snapshot generated and archived");
     } catch (error) {
       console.error("Error generating report:", error);
       toast.error("Failed to generate report");
