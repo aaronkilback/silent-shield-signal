@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
 import { getAntiHallucinationPrompt } from "../_shared/anti-hallucination.ts";
 import { 
@@ -391,18 +392,12 @@ Deno.serve(async (req) => {
     if (isSimpleAcknowledgment(message)) {
       console.log("Detected simple acknowledgment, using fast response path");
       
-      const ackResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-2.5-flash-lite',
-          messages: [
-            {
-              role: 'system',
-              content: `You are a helpful security AI agent. The user just sent a simple acknowledgment message (like "ok great", "thanks", "got it", etc.).
+      const ackResult = await callAiGateway({
+        model: 'google/gemini-2.5-flash-lite',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a helpful security AI agent. The user just sent a simple acknowledgment message (like "ok great", "thanks", "got it", etc.).
 
 CRITICAL RULES:
 1. Respond BRIEFLY - just 1-2 short sentences
@@ -418,18 +413,16 @@ Examples of good responses:
 - "👍 Happy to help anytime."
 
 Respond naturally and briefly.`
-            },
-            ...conversation_history.slice(-3),
-            { role: 'user', content: message }
-          ],
-        }),
+          },
+          ...conversation_history.slice(-3),
+          { role: 'user', content: message }
+        ],
+        functionName: 'agent-chat:ack',
       });
 
-      if (ackResponse.ok) {
-        const ackData = await ackResponse.json();
-        const ackContent = ackData.choices?.[0]?.message?.content || "Got it! Let me know if you need anything else.";
+      if (ackResult.content) {
         return new Response(
-          JSON.stringify({ response: ackContent, tools_executed: [], reliability: { validated: true, fast_path: true } }),
+          JSON.stringify({ response: ackResult.content, tools_executed: [], reliability: { validated: true, fast_path: true } }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -1175,33 +1168,25 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
 
     // Call AI Gateway with tools - using retry wrapper for reliability
     const makeAICall = async (msgs: any[], includeTools: boolean = true) => {
-      const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-3-flash-preview',
-          messages: msgs,
+      const result = await callAiGateway({
+        model: 'google/gemini-3-flash-preview',
+        messages: msgs,
+        functionName: 'agent-chat',
+        retries: RELIABILITY_CONFIG.maxRetries - 1,
+        extraBody: {
           temperature: RELIABILITY_CONFIG.temperature,
           ...(includeTools ? { tools } : {}),
-        }),
+        },
       });
 
-      if (!response.ok) {
-        if (response.status === 429) {
-          throw new Error('RATE_LIMIT');
-        }
-        if (response.status === 402) {
-          throw new Error('PAYMENT_REQUIRED');
-        }
-        const errorText = await response.text();
-        console.error('AI Gateway error:', response.status, errorText);
-        throw new Error(`AI Gateway error: ${response.status}`);
+      if (result.error) {
+        if (result.error.includes('429')) throw new Error('RATE_LIMIT');
+        if (result.error.includes('402')) throw new Error('PAYMENT_REQUIRED');
+        if (result.circuitOpen) throw new Error('AI Gateway circuit is open');
+        throw new Error(result.error);
       }
 
-      return response.json();
+      return result.raw;
     };
 
     let data: any;

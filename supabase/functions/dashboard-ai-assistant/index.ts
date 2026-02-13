@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGatewayStream } from "../_shared/ai-gateway.ts";
 import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, upsertProject, touchProject } from "../_shared/user-memory.ts";
 import { logError } from "../_shared/error-logger.ts";
 // fortress-infrastructure.ts removed from system prompt to reduce token count (~5000 tokens saved)
@@ -17,8 +18,34 @@ const corsHeaders = {
 // Timeout for AI API calls (45 seconds - well under edge function limits)
 const AI_TIMEOUT_MS = 45000;
 
-// Helper to fetch with timeout
+// Helper to fetch with timeout — delegates to callAiGatewayStream for AI gateway URLs
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
+  // If this is an AI gateway call, use the resilient wrapper
+  if (url.includes('ai.gateway.lovable.dev')) {
+    const bodyObj = JSON.parse(options.body as string);
+    const result = await callAiGatewayStream({
+      model: bodyObj.model || 'google/gemini-2.5-flash',
+      messages: bodyObj.messages || [],
+      functionName: 'dashboard-ai-assistant',
+      timeoutMs,
+      extraBody: (() => {
+        const { model: _m, messages: _msgs, stream: _s, ...rest } = bodyObj;
+        return Object.keys(rest).length > 0 ? rest : undefined;
+      })(),
+    });
+
+    if (result.error || !result.stream) {
+      throw new Error(result.error || 'AI Gateway stream failed');
+    }
+
+    // Return a Response-like object the existing code can use
+    return new Response(result.stream, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  }
+
+  // Non-AI-gateway URLs: standard fetch with timeout
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -33,7 +60,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(
-        `AI request timed out after ${timeoutMs / 1000} seconds. Please try again with a simpler request.`,
+        `Request timed out after ${timeoutMs / 1000} seconds. Please try again with a simpler request.`,
       );
     }
     throw error;
