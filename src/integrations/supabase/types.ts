@@ -4936,6 +4936,8 @@ export type Database = {
       }
       investigation_entries: {
         Row: {
+          ai_suggestion_accepted: boolean | null
+          ai_suggestion_original: string | null
           created_at: string | null
           created_by: string | null
           created_by_name: string | null
@@ -4947,6 +4949,8 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          ai_suggestion_accepted?: boolean | null
+          ai_suggestion_original?: string | null
           created_at?: string | null
           created_by?: string | null
           created_by_name?: string | null
@@ -4958,6 +4962,8 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          ai_suggestion_accepted?: boolean | null
+          ai_suggestion_original?: string | null
           created_at?: string | null
           created_by?: string | null
           created_by_name?: string | null
@@ -5083,6 +5089,122 @@ export type Database = {
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      investigation_similarity_cache: {
+        Row: {
+          created_at: string
+          id: string
+          investigation_id: string
+          similar_investigation_id: string
+          similarity_factors: Json | null
+          similarity_score: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          investigation_id: string
+          similar_investigation_id: string
+          similarity_factors?: Json | null
+          similarity_score?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          investigation_id?: string
+          similar_investigation_id?: string
+          similarity_factors?: Json | null
+          similarity_score?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investigation_similarity_cache_investigation_id_fkey"
+            columns: ["investigation_id"]
+            isOneToOne: false
+            referencedRelation: "investigations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investigation_similarity_cache_similar_investigation_id_fkey"
+            columns: ["similar_investigation_id"]
+            isOneToOne: false
+            referencedRelation: "investigations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      investigation_templates: {
+        Row: {
+          avg_days_to_close: number | null
+          avg_entry_count: number | null
+          category: string
+          client_id: string | null
+          common_entity_types: string[] | null
+          common_entry_patterns: string[] | null
+          confidence_score: number | null
+          created_at: string
+          derived_from_count: number | null
+          derived_from_ids: string[] | null
+          description: string | null
+          id: string
+          template_name: string
+          times_accepted: number | null
+          times_used: number | null
+          typical_information_structure: string | null
+          typical_recommendations: string[] | null
+          typical_synopsis_structure: string | null
+          updated_at: string
+        }
+        Insert: {
+          avg_days_to_close?: number | null
+          avg_entry_count?: number | null
+          category?: string
+          client_id?: string | null
+          common_entity_types?: string[] | null
+          common_entry_patterns?: string[] | null
+          confidence_score?: number | null
+          created_at?: string
+          derived_from_count?: number | null
+          derived_from_ids?: string[] | null
+          description?: string | null
+          id?: string
+          template_name: string
+          times_accepted?: number | null
+          times_used?: number | null
+          typical_information_structure?: string | null
+          typical_recommendations?: string[] | null
+          typical_synopsis_structure?: string | null
+          updated_at?: string
+        }
+        Update: {
+          avg_days_to_close?: number | null
+          avg_entry_count?: number | null
+          category?: string
+          client_id?: string | null
+          common_entity_types?: string[] | null
+          common_entry_patterns?: string[] | null
+          confidence_score?: number | null
+          created_at?: string
+          derived_from_count?: number | null
+          derived_from_ids?: string[] | null
+          description?: string | null
+          id?: string
+          template_name?: string
+          times_accepted?: number | null
+          times_used?: number | null
+          typical_information_structure?: string | null
+          typical_recommendations?: string[] | null
+          typical_synopsis_structure?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investigation_templates_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
             referencedColumns: ["id"]
           },
         ]
