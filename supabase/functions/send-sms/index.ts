@@ -122,11 +122,10 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Append case reference tag to message for reply routing
-    const caseTag = `[${investigation.file_number}]`;
-    const fullMessage = message.includes(investigation.file_number)
-      ? message
-      : `${message}\n\n${caseTag}`;
+    // Send the message as-is — no visible case tag appended
+    // Inbound replies are routed by matching the sender's phone number
+    // to recent outbound conversations, not by requiring a tag in the reply
+    const fullMessage = message;
 
     // Send via Twilio REST API
     const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`;
