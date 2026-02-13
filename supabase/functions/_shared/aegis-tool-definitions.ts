@@ -1641,4 +1641,30 @@ CRITICAL ANTI-FABRICATION RULES FOR BULLETINS:
       },
     },
   },
+  // ══════════════════════════════════════════════════════════════════════════
+  // SYSTEM HEALTH & LEARNING INTROSPECTION
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    type: "function",
+    function: {
+      name: "get_system_health",
+      description: `SYSTEM HEALTH & ADAPTIVE INTELLIGENCE INTROSPECTION: Check the health and learning status of the Fortress neural net. Returns:
+- Learning session recency and quality score
+- Adaptive thresholds (suppress/low-confidence levels)
+- Drift detection alerts (threat landscape shifts)
+- Quality scores per output type (briefings, reports, signals)
+- Source reliability rankings
+- Seasonal pattern warnings
+- Recent analyst corrections to learn from
+- Monitoring pipeline health (failed functions)
+- Active learning queue size (signals needing human review)
+
+Use when users ask about system health, learning status, neural net performance, or when you need to understand current platform calibration.`,
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
 ];
