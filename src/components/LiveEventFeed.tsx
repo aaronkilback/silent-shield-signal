@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { SignalAgeIndicator } from "@/components/signals/SignalAgeBadge";
 import { extractHttpUrl } from "@/lib/extractHttpUrl";
+import { SignalFeedback } from "@/components/SignalFeedback";
 
 
 
@@ -295,6 +296,7 @@ export const LiveEventFeed = () => {
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 space-y-2">
                   <div className="flex items-center gap-2 flex-wrap">
+                    <SignalFeedback signalId={signal.id} compact />
                     <Badge className={`${getSeverityColor(getEffectiveSeverity(signal))} font-mono text-xs`}>
                       <span className="flex items-center gap-1">
                         {getSeverityIcon(getEffectiveSeverity(signal))}

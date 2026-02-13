@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
     switch (objectType) {
       case 'signal':
         await handleSignalFeedback(supabase, objectId, feedback);
-        learningActions.push(...await updateSignalLearning(supabase, objectId, feedback));
+        learningActions.push(...await updateSignalLearning(supabase, objectId, feedback, feedbackContext));
         break;
 
       case 'incident':
@@ -147,30 +147,56 @@ async function handleEntitySuggestionFeedback(supabase: ReturnType<typeof create
 // UNIVERSAL LEARNING FUNCTIONS
 // ═══════════════════════════════════════════════════════════
 
-async function updateSignalLearning(supabase: ReturnType<typeof createServiceClient>, objectId: string, feedback: string): Promise<string[]> {
-  const { data } = await supabase.from('signals').select('title, description, signal_type, severity_score, normalized_text, source_type, rule_category').eq('id', objectId).single();
+async function updateSignalLearning(supabase: ReturnType<typeof createServiceClient>, objectId: string, feedback: string, context?: Record<string, unknown>): Promise<string[]> {
+  const { data } = await supabase.from('signals').select('title, description, signal_type, severity_score, normalized_text, source_type, rule_category, category, source_id').eq('id', objectId).single();
   if (!data) return [];
 
   const text = `${data.title || ''} ${data.description || ''} ${data.normalized_text || ''}`.toLowerCase();
   const profileType = (feedback === 'relevant' || feedback === 'confirmed') ? 'approved_signal_patterns' : 'rejected_signal_patterns';
   
-  await upsertLearningProfile(supabase, profileType, extractKeywords(text));
+  const keywords = extractKeywords(text);
+  
+  // Enrich with contextual reason from the analyst
+  const reason = context?.reason as string | undefined;
+  if (reason) {
+    keywords[`reason:${reason}`] = 3; // Weight reasons heavily
+  }
 
-  // Also update source-specific profile
+  await upsertLearningProfile(supabase, profileType, keywords);
+
+  const profiles: string[] = [profileType];
+
+  // Source-specific learning
   if (data.source_type) {
     const sourceProfile = `source:${data.source_type}_${feedback === 'relevant' ? 'approved' : 'rejected'}`;
-    await upsertLearningProfile(supabase, sourceProfile, extractKeywords(text));
+    await upsertLearningProfile(supabase, sourceProfile, keywords);
+    profiles.push(`source:${data.source_type}`);
   }
 
-  // Update category-specific profile
-  if (data.rule_category) {
-    await upsertLearningProfile(supabase, `category:${data.rule_category}`, {
+  // Category-specific learning
+  if (data.rule_category || data.category) {
+    const cat = data.rule_category || data.category;
+    const catFeatures: Record<string, number> = {
       [`${feedback}_count`]: 1,
       total_feedback: 1,
-    });
+    };
+    if (reason) catFeatures[`reason:${reason}`] = 1;
+    await upsertLearningProfile(supabase, `category:${cat}`, catFeatures);
+    profiles.push(`category:${cat}`);
   }
 
-  return [profileType, data.source_type ? `source:${data.source_type}` : null, data.rule_category ? `category:${data.rule_category}` : null].filter(Boolean) as string[];
+  // Reason-specific pattern tracking (e.g. "too many duplicates from this source")
+  if (reason && feedback === 'irrelevant') {
+    await upsertLearningProfile(supabase, `rejection_reason:${reason}`, {
+      total: 1,
+      ...(data.source_type ? { [`source:${data.source_type}`]: 1 } : {}),
+      ...(data.category ? { [`category:${data.category}`]: 1 } : {}),
+      ...extractKeywords(text),
+    });
+    profiles.push(`rejection_reason:${reason}`);
+  }
+
+  return profiles;
 }
 
 async function updateIncidentLearning(supabase: ReturnType<typeof createServiceClient>, objectId: string, feedback: string): Promise<string[]> {
