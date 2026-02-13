@@ -1881,6 +1881,123 @@ export const workspacesTests = {
 };
 
 // ============================================
+// WRITE-PATH TESTS (RLS INSERT/UPDATE/DELETE)
+// ============================================
+
+export const writePathTests = {
+  name: 'Write-Path RLS & Schema Compliance',
+  tests: [
+    {
+      name: 'Can insert and delete investigation_entries',
+      fn: async () => {
+        const { data: investigations } = await supabase
+          .from('investigations')
+          .select('id')
+          .limit(1);
+        
+        if (!investigations?.length) return;
+        
+        const { data: entry, error: insertError } = await supabase
+          .from('investigation_entries')
+          .insert({
+            investigation_id: investigations[0].id,
+            entry_text: '[E2E TEST] Write-path test entry — safe to delete',
+          })
+          .select('id')
+          .single();
+        
+        if (insertError) {
+          throw new Error(`INSERT into investigation_entries failed (RLS WITH CHECK issue?): ${insertError.message}`);
+        }
+        
+        if (entry?.id) {
+          await supabase.from('investigation_entries').delete().eq('id', entry.id);
+        }
+      },
+    },
+    {
+      name: 'Can insert entity with required fields (location)',
+      fn: async () => {
+        const { data: clients } = await supabase
+          .from('clients')
+          .select('id')
+          .limit(1);
+        
+        const { data: entity, error: insertError } = await supabase
+          .from('entities')
+          .insert({
+            name: '[E2E TEST] Write-path location',
+            type: 'location',
+            client_id: clients?.[0]?.id || null,
+            risk_level: 'low',
+            entity_status: 'active',
+            is_active: true,
+          })
+          .select('id')
+          .single();
+        
+        if (insertError) {
+          throw new Error(`INSERT into entities failed (missing required fields?): ${insertError.message}`);
+        }
+        
+        if (entity?.id) {
+          await supabase.from('entities').delete().eq('id', entity.id);
+        }
+      },
+    },
+    {
+      name: 'Can update investigation status',
+      fn: async () => {
+        const { data: investigations } = await supabase
+          .from('investigations')
+          .select('id, file_status')
+          .limit(1);
+        
+        if (!investigations?.length) return;
+        
+        const { error: updateError } = await supabase
+          .from('investigations')
+          .update({ file_status: investigations[0].file_status || 'open' })
+          .eq('id', investigations[0].id);
+        
+        if (updateError) {
+          throw new Error(`UPDATE investigations failed (RLS issue?): ${updateError.message}`);
+        }
+      },
+    },
+    {
+      name: 'RLS does not mask schema errors on entity insert',
+      fn: async () => {
+        const { error } = await supabase
+          .from('entities')
+          .insert({
+            name: '[E2E TEST] Missing fields test',
+            type: 'location',
+          } as any)
+          .select('id')
+          .single();
+        
+        if (!error) {
+          const { data } = await supabase
+            .from('entities')
+            .select('id')
+            .eq('name', '[E2E TEST] Missing fields test')
+            .limit(1);
+          if (data?.[0]?.id) {
+            await supabase.from('entities').delete().eq('id', data[0].id);
+          }
+          return;
+        }
+        
+        if (error.message?.includes('row-level security')) {
+          throw new Error(`Schema validation masked by RLS — missing required fields cause silent RLS rejection instead of clear error`);
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
 // API & WEBHOOKS TESTS
 // ============================================
 
@@ -5889,6 +6006,9 @@ export async function runAllTests(): Promise<TestSuite[]> {
     securityAccessTests,
     signalFeedbackTests,
     activityTrackingTests,
+    
+    // Write-Path RLS Tests
+    writePathTests,
     
     // Voice Features
     voiceFeaturesTests,
