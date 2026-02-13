@@ -111,12 +111,28 @@ Deno.serve(async (req: Request) => {
     }
 
     // Find the investigation by file_number
-    const { data: investigation, error: lookupError } = await supabase
+    // Try exact match first, then ilike
+    let investigation: any = null;
+    let lookupError: any = null;
+    
+    const { data: exactMatch, error: exactError } = await supabase
       .from("investigations")
-      .select("id, file_number, client_id, tenant_id")
-      .or(`file_number.ilike.%${caseRef}%`)
-      .limit(1)
+      .select("id, file_number, client_id")
+      .eq("file_number", caseRef)
       .maybeSingle();
+    
+    if (exactMatch) {
+      investigation = exactMatch;
+    } else {
+      const { data: fuzzyMatch, error: fuzzyError } = await supabase
+        .from("investigations")
+        .select("id, file_number, client_id")
+        .ilike("file_number", `%${caseRef}%`)
+        .limit(1)
+        .maybeSingle();
+      investigation = fuzzyMatch;
+      lookupError = fuzzyError;
+    }
 
     if (lookupError || !investigation) {
       console.log(`[IngestComm] Investigation not found for ref: ${caseRef}`);
@@ -187,7 +203,7 @@ Deno.serve(async (req: Request) => {
         provider_status: "received",
         platform_number: metadata.to || null,
         investigation_entry_id: entry.id,
-        tenant_id: investigation.tenant_id || null,
+        tenant_id: null,
         message_timestamp: timestamp,
       })
       .select("id")
