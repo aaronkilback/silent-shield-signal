@@ -1087,6 +1087,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                       <SelectItem value="complainant">Complainant</SelectItem>
                       <SelectItem value="witness">Witness</SelectItem>
                       <SelectItem value="suspect">Suspect</SelectItem>
+                      <SelectItem value="supervisor">Supervisor</SelectItem>
                       <SelectItem value="other">Other</SelectItem>
                     </SelectContent>
                   </Select>
