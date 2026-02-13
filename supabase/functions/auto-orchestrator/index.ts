@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { logError } from "./_shared/error-logger.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -337,9 +338,19 @@ async function runOSINTMonitorsInBackground(supabase: any) {
             console.log(`Executed ${monitor}`);
           } else {
             console.error(`Failed to execute ${monitor}: ${response.statusText}`);
+            await logError(new Error(`Monitor ${monitor} failed: ${response.statusText}`), {
+              functionName: 'auto-orchestrator',
+              severity: response.status === 429 ? 'warning' : 'error',
+              requestContext: { monitor, status: response.status },
+            });
           }
         } catch (error) {
           console.error(`Error running ${monitor}:`, error);
+          await logError(error, {
+            functionName: 'auto-orchestrator',
+            severity: 'error',
+            requestContext: { monitor },
+          });
         }
       });
 

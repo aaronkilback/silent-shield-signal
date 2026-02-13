@@ -1,4 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { logError } from "../_shared/error-logger.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -9,11 +11,6 @@ Deno.serve(async (req) => {
     console.log('Modeling geopolitical risk impact');
 
     const supabase = createServiceClient();
-
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
-    }
 
     // Fetch recent geopolitical/international threat signals
     const { data: geopoliticalSignals } = await supabase
@@ -85,32 +82,19 @@ Consider:
 
 Provide actionable foresight for strategic decision-making.`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are an expert geopolitical risk analyst specializing in long-term strategic foresight and security planning for global operations.' },
-          { role: 'user', content: analysisPrompt }
-        ],
-      }),
+    const result = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are an expert geopolitical risk analyst specializing in long-term strategic foresight and security planning for global operations.' },
+        { role: 'user', content: analysisPrompt }
+      ],
+      functionName: 'model-geopolitical-risk',
+      dlqOnFailure: true,
+      dlqPayload: { geopolitical_event, client_business_units, analysis_horizon_months },
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('AI Gateway error:', response.status, errorText);
-      throw new Error('AI Gateway error');
-    }
-
-    const data = await response.json();
-    const analysis = data.choices?.[0]?.message?.content;
-
-    if (!analysis) {
-      throw new Error('No analysis generated');
+    if (result.error) {
+      throw new Error(result.error);
     }
 
     console.log('Geopolitical risk model completed');
@@ -118,11 +102,12 @@ Provide actionable foresight for strategic decision-making.`;
     return successResponse({ 
       geopolitical_event,
       analysis_horizon_months,
-      risk_analysis: analysis,
+      risk_analysis: result.content,
       generated_at: new Date().toISOString()
     });
   } catch (error) {
     console.error('Error in model-geopolitical-risk:', error);
+    await logError(error, { functionName: 'model-geopolitical-risk', severity: 'error' });
     return errorResponse(error instanceof Error ? error.message : 'Unknown error occurred', 500);
   }
 });

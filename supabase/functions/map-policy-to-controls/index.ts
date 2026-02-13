@@ -1,4 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { logError } from "../_shared/error-logger.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -9,11 +11,6 @@ Deno.serve(async (req) => {
     console.log('Mapping policy to controls for client:', client_id);
 
     const supabase = createServiceClient();
-
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
-    }
 
     // Fetch client configuration to understand current controls
     const { data: client, error: clientError } = await supabase
@@ -102,32 +99,19 @@ Analyze the policy document and map each policy requirement to existing or missi
 
 Provide a clear, actionable compliance gap analysis that enables prioritized remediation planning.`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are an expert compliance analyst specializing in security control mapping and gap analysis.' },
-          { role: 'user', content: mappingPrompt }
-        ],
-      }),
+    const result = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are an expert compliance analyst specializing in security control mapping and gap analysis.' },
+        { role: 'user', content: mappingPrompt }
+      ],
+      functionName: 'map-policy-to-controls',
+      dlqOnFailure: true,
+      dlqPayload: { client_id, policy_name },
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('AI Gateway error:', response.status, errorText);
-      throw new Error('AI Gateway error');
-    }
-
-    const data = await response.json();
-    const mapping = data.choices?.[0]?.message?.content;
-
-    if (!mapping) {
-      throw new Error('No mapping generated');
+    if (result.error) {
+      throw new Error(result.error);
     }
 
     console.log('Policy-to-control mapping completed');
@@ -135,11 +119,12 @@ Provide a clear, actionable compliance gap analysis that enables prioritized rem
     return successResponse({ 
       client_id,
       policy_name,
-      control_mapping: mapping,
+      control_mapping: result.content,
       analyzed_at: new Date().toISOString()
     });
   } catch (error) {
     console.error('Error in map-policy-to-controls:', error);
+    await logError(error, { functionName: 'map-policy-to-controls', severity: 'error' });
     return errorResponse(error instanceof Error ? error.message : 'Unknown error occurred', 500);
   }
 });
