@@ -548,7 +548,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
           created_by: user.id,
           risk_level: 'medium',
           confidence_score: 0.7,
-          entity_status: 'active',
+          entity_status: 'confirmed',
           is_active: true,
           description: [person.position, person.company].filter(Boolean).join(' at ') || null,
           attributes: {
@@ -599,7 +599,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
           created_by: user?.id,
           client_id: investigation?.client_id || null,
           risk_level: 'low',
-          entity_status: 'active',
+          entity_status: 'confirmed',
           is_active: true,
           confidence_score: 0.7,
           attributes: {

@@ -115,7 +115,7 @@ Deno.serve(async (req: Request) => {
         client_id: resolvedClientId,
         confidence_score: body.confidence_score ?? 0.85,
         is_active: true,
-        entity_status: "active"
+        entity_status: "confirmed"
       };
 
       const { data: newEntity, error: createError } = await supabase
