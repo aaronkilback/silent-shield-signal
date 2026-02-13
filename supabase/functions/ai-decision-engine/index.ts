@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -259,12 +260,6 @@ Deno.serve(async (req) => {
     }
 
     console.log(`Using AI analysis for high-priority signal ${signal_id}`);
-    // Use Lovable AI to make autonomous decisions
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
-    }
     
     console.log('Calling AI with signal:', {
       id: signal.id,
@@ -273,18 +268,12 @@ Deno.serve(async (req) => {
       client: signal.clients?.name
     });
     
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          {
-            role: 'system',
-            content: `You are a strategic threat intelligence analyst and autonomous SOC decision engine.
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a strategic threat intelligence analyst and autonomous SOC decision engine.
 
 Your responsibilities:
 1. Assess threat severity and strategic impact of the CURRENT signal
@@ -331,10 +320,10 @@ Respond with structured JSON containing:
   "campaign_assessment": "ONLY if direct evidence exists of coordination. Otherwise state 'No evidence of coordinated campaign'.",
   "sector_implications": "Industry-wide relevance based on the specific incident type"
 }`
-          },
-          {
-            role: 'user',
-            content: `Analyze this security signal with strategic intelligence focus:
+        },
+        {
+          role: 'user',
+          content: `Analyze this security signal with strategic intelligence focus:
 
 === CURRENT SIGNAL ===
 Signal: ${signal.normalized_text}
@@ -370,8 +359,12 @@ IMPORTANT: These signals are provided for REFERENCE ONLY. Do NOT assume they are
 4. Recommend containment and remediation actions
 
 REMEMBER: Correlation requires explicit evidence. Do not fabricate links between unrelated events.`
-          }
-        ],
+        }
+      ],
+      functionName: 'ai-decision-engine',
+      dlqOnFailure: true,
+      dlqPayload: { signal_id },
+      extraBody: {
         tools: [{
           type: 'function',
           function: {
@@ -401,20 +394,17 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
           }
         }],
         tool_choice: { type: 'function', function: { name: 'make_decision' } }
-      })
+      },
     });
 
-    const aiData = await aiResponse.json();
-    
-    console.log('AI response status:', aiResponse.status);
-    console.log('AI response data:', JSON.stringify(aiData).slice(0, 500)); // Log first 500 chars
-    
-    if (!aiResponse.ok) {
-      console.error('AI API error response:', aiData);
-      throw new Error(`AI API error (${aiResponse.status}): ${JSON.stringify(aiData)}`);
+    if (aiResult.error) {
+      throw new Error(aiResult.error);
     }
     
-    if (!aiData.choices || !aiData.choices[0] || !aiData.choices[0].message?.tool_calls) {
+    const aiData = aiResult.raw;
+    console.log('AI response data:', JSON.stringify(aiData).slice(0, 500));
+    
+    if (!aiData?.choices?.[0]?.message?.tool_calls) {
       console.error('Invalid AI response structure. Full response:', JSON.stringify(aiData));
       throw new Error('Invalid AI response structure - no tool calls found');
     }

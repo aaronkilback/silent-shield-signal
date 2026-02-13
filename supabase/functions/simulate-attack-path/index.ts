@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -6,11 +7,6 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-
-    if (!LOVABLE_API_KEY) {
-      return errorResponse('LOVABLE_API_KEY not configured', 500);
-    }
 
     const { threat_actor_profile, target_asset_id, vulnerability_id } = await req.json();
 
@@ -98,34 +94,22 @@ SIMULATION REQUIREMENTS:
 Provide a structured, realistic attack path simulation with specific technical details and mitigation recommendations.`;
 
     // Call AI for simulation
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          {
-            role: "system",
-            content: "You are a threat modeling and attack simulation expert. Provide detailed, realistic attack path simulations based on threat intelligence."
-          },
-          {
-            role: "user",
-            content: simulationPrompt
-          }
-        ],
-      }),
+    const aiResult = await callAiGateway({
+      model: "google/gemini-2.5-flash",
+      messages: [
+        { role: "system", content: "You are a threat modeling and attack simulation expert. Provide detailed, realistic attack path simulations based on threat intelligence." },
+        { role: "user", content: simulationPrompt }
+      ],
+      functionName: "simulate-attack-path",
+      dlqOnFailure: true,
+      dlqPayload: { threat_actor_profile, target_asset_id, vulnerability_id },
     });
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      throw new Error(`AI API error: ${aiResponse.status} - ${errorText}`);
+    if (aiResult.error) {
+      throw new Error(aiResult.error);
     }
 
-    const aiResult = await aiResponse.json();
-    const simulationAnalysis = aiResult.choices[0].message.content;
+    const simulationAnalysis = aiResult.content;
 
     // Extract key findings for structured response
     const likelihoodMatch = simulationAnalysis.match(/Likelihood[:\s]+(\w+)/i);

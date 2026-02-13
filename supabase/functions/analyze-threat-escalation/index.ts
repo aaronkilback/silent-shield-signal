@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -9,11 +10,6 @@ Deno.serve(async (req) => {
     console.log('Analyzing threat escalation for signal:', signal_id);
 
     const supabaseClient = createServiceClient();
-
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
-    }
 
     // Get the target signal
     const { data: signal } = await supabaseClient
@@ -65,27 +61,22 @@ Provide:
 4. Suggested preventive actions
 5. Similar historical cases`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
-        messages: [
-          { role: 'system', content: 'You are a security threat analyst specializing in threat escalation prediction.' },
-          { role: 'user', content: analysisPrompt }
-        ],
-      }),
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-3-flash-preview',
+      messages: [
+        { role: 'system', content: 'You are a security threat analyst specializing in threat escalation prediction.' },
+        { role: 'user', content: analysisPrompt }
+      ],
+      functionName: 'analyze-threat-escalation',
+      dlqOnFailure: true,
+      dlqPayload: { signal_id },
     });
 
-    if (!response.ok) {
-      throw new Error('AI analysis failed');
+    if (aiResult.error) {
+      throw new Error(aiResult.error);
     }
 
-    const data = await response.json();
-    const analysis = data.choices?.[0]?.message?.content;
+    const analysis = aiResult.content;
 
     console.log('Threat escalation analysis complete');
 
