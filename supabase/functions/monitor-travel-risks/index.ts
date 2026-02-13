@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -21,10 +22,7 @@ Deno.serve(async (req) => {
 
     console.log(`Monitoring ${itineraries?.length || 0} active itineraries`);
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY not configured");
-    }
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY"); // Still needed for Perplexity helper check
     
     const PERPLEXITY_API_KEY = Deno.env.get("PERPLEXITY_API_KEY");
     
@@ -479,25 +477,22 @@ Respond with a JSON object:
   }
 }`;
 
-      // Call AI for risk assessment
-      const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
-          messages: [
-            {
-              role: "system",
-              content: "You are a travel risk analyst with access to current world events, weather patterns, and travel advisories. Provide REALISTIC risk assessments based on ACTUAL conditions at the destination. Only create alerts for genuine, verified risks - not hypothetical scenarios. Focus on destination-specific threats, route-specific issues, and time-sensitive concerns. If the destination is generally safe with no current threats, indicate low risk.",
-            },
-            {
-              role: "user",
-              content: prompt,
-            },
-          ],
+      // Call AI for risk assessment via resilient gateway
+      const aiResult = await callAiGateway({
+        model: 'google/gemini-2.5-flash',
+        messages: [
+          {
+            role: "system",
+            content: "You are a travel risk analyst with access to current world events, weather patterns, and travel advisories. Provide REALISTIC risk assessments based on ACTUAL conditions at the destination. Only create alerts for genuine, verified risks - not hypothetical scenarios. Focus on destination-specific threats, route-specific issues, and time-sensitive concerns. If the destination is generally safe with no current threats, indicate low risk.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        functionName: 'monitor-travel-risks',
+        retries: 2,
+        extraBody: {
           tools: [
             {
               type: "function",
@@ -551,16 +546,15 @@ Respond with a JSON object:
             type: "function",
             function: { name: "assess_travel_risks" },
           },
-        }),
+        },
       });
 
-      if (!aiResponse.ok) {
-        console.error(`AI analysis failed for itinerary ${itinerary.id}:`, await aiResponse.text());
+      if (aiResult.error) {
+        console.error(`AI analysis failed for itinerary ${itinerary.id}:`, aiResult.error);
         continue;
       }
 
-      const aiData = await aiResponse.json();
-      const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+      const toolCall = aiResult.raw?.choices?.[0]?.message?.tool_calls?.[0];
       
       if (!toolCall) {
         console.log(`No risk assessment generated for itinerary ${itinerary.id}`);
