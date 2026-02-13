@@ -1,22 +1,28 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 async function extractNamesFromPDF(base64Data: string, columnName: string): Promise<string[]> {
-  const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-  if (!LOVABLE_API_KEY) {
-    throw new Error('LOVABLE_API_KEY not configured for PDF parsing');
-  }
-
-  // Extract the base64 content
   const pdfBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
 
-  const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'google/gemini-2.5-flash',
+  const aiResult = await callAiGateway({
+    model: 'google/gemini-2.5-flash',
+    messages: [
+      {
+        role: 'system',
+        content: `You are a document parser specializing in extracting names from documents. 
+Extract all person names, organization names, or entity names from the document.
+Focus on names that appear in lists, tables, or as subjects of the document.
+If a specific column or field named "${columnName}" exists, prioritize names from there.
+Return ONLY a JSON array of strings containing the names, nothing else.
+Example: ["John Smith", "Acme Corporation", "Jane Doe"]`
+      },
+      {
+        role: 'user',
+        content: `Extract all names from this PDF document. Look for any column or section labeled "${columnName}" if present.`
+      }
+    ],
+    functionName: 'cross-reference-entities',
+    extraBody: {
       messages: [
         {
           role: 'system',
@@ -30,30 +36,19 @@ Example: ["John Smith", "Acme Corporation", "Jane Doe"]`
         {
           role: 'user',
           content: [
-            {
-              type: 'text',
-              text: `Extract all names from this PDF document. Look for any column or section labeled "${columnName}" if present.`
-            },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:application/pdf;base64,${pdfBase64}`
-              }
-            }
+            { type: 'text', text: `Extract all names from this PDF document. Look for any column or section labeled "${columnName}" if present.` },
+            { type: 'image_url', image_url: { url: `data:application/pdf;base64,${pdfBase64}` } }
           ]
         }
-      ],
-    }),
+      ]
+    },
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('AI Gateway error:', response.status, errorText);
-    throw new Error(`Failed to parse PDF: ${response.status}`);
+  if (aiResult.error) {
+    throw new Error(`Failed to parse PDF: ${aiResult.error}`);
   }
 
-  const result = await response.json();
-  const content = result.choices?.[0]?.message?.content || '[]';
+  const content = aiResult.content || '[]';
   
   try {
     const jsonMatch = content.match(/\[[\s\S]*\]/);

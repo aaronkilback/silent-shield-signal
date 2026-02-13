@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -92,29 +93,21 @@ Focus on practical, implementable measures across:
 
 Format your response as a structured JSON array of countermeasures.`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are an expert tactical security advisor specializing in threat mitigation and defense optimization.' },
-          { role: 'user', content: analysisPrompt }
-        ],
-      }),
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are an expert tactical security advisor specializing in threat mitigation and defense optimization.' },
+        { role: 'user', content: analysisPrompt }
+      ],
+      functionName: 'recommend-tactical-countermeasures',
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('AI Gateway error:', response.status, errorText);
+    if (aiResult.error) {
+      console.error('AI Gateway error:', aiResult.error);
       throw new Error('AI Gateway error');
     }
 
-    const data = await response.json();
-    const recommendations = data.choices?.[0]?.message?.content;
+    const recommendations = aiResult.content;
 
     if (!recommendations) {
       throw new Error('No recommendations generated');

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { getAntiHallucinationPrompt, getCriticalDateContext, calculateIncidentAge } from "../_shared/anti-hallucination.ts";
 import { buildMemoryContext, storeAgentMemory } from "../_shared/agent-memory.ts";
 import { buildGraphContext, discoverIncidentConnections } from "../_shared/knowledge-graph.ts";
@@ -337,39 +338,28 @@ Provide your specialized analysis following the output format specified.`;
 
     console.log(`Dispatching ${selectedAgent} for incident ${incident_id}`);
 
-    // Call AI
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: agentModel,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
+    const aiResult = await callAiGateway({
+      model: agentModel,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      functionName: 'incident-agent-orchestrator',
+      extraBody: {
         ...(agentModel.startsWith('openai/') ? { max_completion_tokens: 4000 } : { max_tokens: 4000 }),
         temperature: 0.7
-      })
+      },
     });
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      console.error('AI API error:', aiResponse.status, errorText);
-      
-      if (aiResponse.status === 429) {
-        throw new Error('Rate limited. Please try again later.');
+    if (aiResult.error) {
+      console.error('AI API error:', aiResult.error);
+      if (aiResult.circuitOpen) {
+        throw new Error('AI Gateway circuit is open. Please try again later.');
       }
-      if (aiResponse.status === 402) {
-        throw new Error('AI credits exhausted. Please add credits to continue.');
-      }
-      throw new Error(`AI API error: ${aiResponse.status}`);
+      throw new Error(`AI API error: ${aiResult.error}`);
     }
 
-    const aiData = await aiResponse.json();
-    const analysisContent = aiData.choices?.[0]?.message?.content;
+    const analysisContent = aiResult.content;
 
     if (!analysisContent) {
       throw new Error('No analysis content received from AI');

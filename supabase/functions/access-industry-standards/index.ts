@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -261,34 +262,25 @@ Format as structured JSON:
       );
     }
 
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${lovableApiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-pro',
-        messages: [
-          { role: 'system', content: 'You are an industry standards expert with deep knowledge of security, safety, and compliance frameworks across Canadian industries. Provide accurate, actionable guidance.' },
-          { role: 'user', content: standardsPrompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 4000,
-      }),
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-pro',
+      messages: [
+        { role: 'system', content: 'You are an industry standards expert with deep knowledge of security, safety, and compliance frameworks across Canadian industries. Provide accurate, actionable guidance.' },
+        { role: 'user', content: standardsPrompt }
+      ],
+      functionName: 'access-industry-standards',
+      extraBody: { temperature: 0.3, max_tokens: 4000 },
     });
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      console.error('AI API error:', errorText);
+    if (aiResult.error) {
+      console.error('AI API error:', aiResult.error);
       return new Response(
-        JSON.stringify({ error: 'Failed to access industry standards', details: errorText }),
+        JSON.stringify({ error: 'Failed to access industry standards', details: aiResult.error }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const aiData = await aiResponse.json();
-    const responseContent = aiData.choices?.[0]?.message?.content || '';
+    const responseContent = aiResult.content || '';
 
     // Parse response
     let standardsResults;

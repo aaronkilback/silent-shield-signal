@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 interface ProcessRequest {
   mapId: string;
@@ -52,15 +53,13 @@ For each asset, provide:
 
 Return as JSON array of assets. Be thorough - extract every identifiable feature.`;
 
-        // Call Lovable AI for extraction
-        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${LOVABLE_API_KEY}`
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-2.5-pro',
+        const aiResult = await callAiGateway({
+          model: 'google/gemini-2.5-pro',
+          messages: [
+            { role: 'user', content: extractionPrompt }
+          ],
+          functionName: 'process-geospatial-map',
+          extraBody: {
             messages: [
               {
                 role: 'user',
@@ -71,10 +70,10 @@ Return as JSON array of assets. Be thorough - extract every identifiable feature
               }
             ],
             response_format: { type: 'json_object' }
-          })
+          },
         });
 
-        if (!aiResponse.ok) {
+        if (aiResult.error) {
           // Fallback: create placeholder entry for manual processing
           console.log('AI extraction unavailable, creating placeholder for manual entry');
           
@@ -105,8 +104,7 @@ Return as JSON array of assets. Be thorough - extract every identifiable feature
           return;
         }
 
-        const aiResult = await aiResponse.json();
-        const extractedContent = aiResult.choices?.[0]?.message?.content || '{"assets":[]}';
+        const extractedContent = aiResult.content || '{"assets":[]}';
         
         let assets: any[] = [];
         try {

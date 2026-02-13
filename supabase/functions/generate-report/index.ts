@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -97,29 +98,16 @@ Deno.serve(async (req) => {
         if (!LOVABLE_API_KEY) return { ...signal, recommendations: 'AI recommendations unavailable' };
         
         try {
-          const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: 'google/gemini-2.5-flash',
-              messages: [
-                {
-                  role: 'system',
-                  content: 'You are a cybersecurity analyst. Provide 3-4 brief, actionable recommendations for responding to this security signal. Be concise and specific.'
-                },
-                {
-                  role: 'user',
-                  content: `Signal: ${signal.normalized_text}\nSeverity: ${signal.severity}\nCategory: ${signal.category}\nLocation: ${signal.location || 'Unknown'}`
-                }
-              ],
-            }),
+          const aiResult = await callAiGateway({
+            model: 'google/gemini-2.5-flash',
+            messages: [
+              { role: 'system', content: 'You are a cybersecurity analyst. Provide 3-4 brief, actionable recommendations for responding to this security signal. Be concise and specific.' },
+              { role: 'user', content: `Signal: ${signal.normalized_text}\nSeverity: ${signal.severity}\nCategory: ${signal.category}\nLocation: ${signal.location || 'Unknown'}` }
+            ],
+            functionName: 'generate-report',
           });
 
-          const aiData = await aiResponse.json();
-          const recommendations = aiData.choices?.[0]?.message?.content || 'No recommendations available';
+          const recommendations = aiResult.content || 'No recommendations available';
           return { ...signal, recommendations };
         } catch (error) {
           console.error('Error generating recommendations:', error);
@@ -149,31 +137,18 @@ Provide:
 
 Keep it executive-friendly and action-oriented.`;
 
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a security intelligence analyst creating executive briefings.'
-          },
-          {
-            role: 'user',
-            content: summaryPrompt
-          }
-        ],
-      }),
+    const summaryResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are a security intelligence analyst creating executive briefings.' },
+        { role: 'user', content: summaryPrompt }
+      ],
+      functionName: 'generate-report',
     });
 
     let executiveSummary = 'Report generation in progress...';
-    if (aiResponse.ok) {
-      const aiData = await aiResponse.json();
-      executiveSummary = aiData.choices?.[0]?.message?.content || executiveSummary;
+    if (summaryResult.content) {
+      executiveSummary = summaryResult.content;
     }
 
     // Create report record
