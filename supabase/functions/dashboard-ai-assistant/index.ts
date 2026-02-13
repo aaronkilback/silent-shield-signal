@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, upsertProject, touchProject } from "../_shared/user-memory.ts";
 // fortress-infrastructure.ts removed from system prompt to reduce token count (~5000 tokens saved)
 import { AEGIS_CORE_IDENTITY, AEGIS_CHAT_MODIFIERS, ANTI_FABRICATION_RULES, TOOL_USAGE_GUIDANCE, AEGIS_CAPABILITY_MANIFEST, getTimeContext } from "../_shared/aegis-persona.ts";
+import { getLearningPromptBlock, getSystemHealthMetrics } from "../_shared/learning-context-builder.ts";
 import { FORTRESS_PLATFORM_OVERVIEW, FORTRESS_AEGIS_CAPABILITIES, FORTRESS_WORKFLOW_INSTRUCTIONS, AEGIS_TOOL_SUMMARIZER_PROMPT, AEGIS_REPORT_PRESENTER_PROMPT, AEGIS_AGENT_CREATION_PROMPT, AEGIS_DATA_PRESENTER_PROMPT } from "../_shared/fortress-operational-prompt.ts";
 import { aegisToolDefinitions } from "../_shared/aegis-tool-definitions.ts";
 import { extractPlannedTestSignalFromText, extractPlannedFortressQueryFromText, extractPlannedAgentFromText } from "../_shared/aegis-forced-execution.ts";
@@ -91,7 +92,7 @@ function isMetaConversation(text: string): boolean {
 
 // Build the unified AEGIS system prompt from shared modules
 // Single source of truth — no more inline prompt duplication
-function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = ""): string {
+function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = ""): string {
   const timeContext = getTimeContext();
   
   return `${AEGIS_CORE_IDENTITY}
@@ -103,7 +104,7 @@ ${AEGIS_CHAT_MODIFIERS}
 ═══ CURRENT TIME ═══
 ${timeContext.full}
 ${tenantKnowledgeContext}${behavioralCorrectionContext}
-
+${learningContext ? `\n${learningContext}\n` : ''}
 ${FORTRESS_PLATFORM_OVERVIEW}
 
 ${FORTRESS_AEGIS_CAPABILITIES}
@@ -7432,6 +7433,23 @@ The signal is now in the database with status 'triaged' and rules have been appl
       }
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // SYSTEM HEALTH & LEARNING INTROSPECTION
+    // ══════════════════════════════════════════════════════════════════════════
+    case "get_system_health": {
+      console.log(`[get_system_health] Fetching neural net health metrics`);
+      try {
+        const healthMetrics = await getSystemHealthMetrics(supabaseClient);
+        return {
+          ...healthMetrics,
+          tool_note: `Neural net last trained ${healthMetrics.learning.sessionAge} (quality: ${healthMetrics.learning.lastSessionQuality}). ${healthMetrics.drift.alert ? '⚠️ DRIFT DETECTED: ' + healthMetrics.drift.summary : 'Threat landscape stable.'}. ${healthMetrics.feedback24h} feedback events in last 24h. ${healthMetrics.monitoringHealth.failures > 0 ? `🔴 ${healthMetrics.monitoringHealth.failures} monitoring failures detected.` : '✅ All monitors healthy.'}`,
+        };
+      } catch (error) {
+        console.error('[get_system_health] Error:', error);
+        return { error: `System health check failed: ${error instanceof Error ? error.message : 'Unknown error'}` };
+      }
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -7512,6 +7530,15 @@ ${tenantKnowledge.map(k => `[${k.knowledge_type?.toUpperCase() || 'CONTEXT'}]${k
       } catch (authErr) {
         console.log("Could not extract user from auth token (non-fatal):", authErr);
       }
+    }
+
+    // Fetch adaptive learning context from the neural net
+    let learningContext = "";
+    try {
+      learningContext = await getLearningPromptBlock(supabaseClient, 'standard');
+      console.log(`[AEGIS] Loaded adaptive learning context (${learningContext.length} chars)`);
+    } catch (e) {
+      console.warn("[AEGIS] Failed to load learning context (non-fatal):", e);
     }
 
     // Load active behavioral corrections from watchdog (global agent_memory)
@@ -7778,7 +7805,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         messages: [
           {
             role: "system",
-            content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext),
+            content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext),
           },
           ...processedMessages,
         ],
