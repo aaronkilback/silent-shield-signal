@@ -591,10 +591,14 @@ ${clientContext}
 
 EXTRACT THE FOLLOWING:
 
-1. **ENTITIES** - Named people, organizations, locations, infrastructure:
+1. **ENTITIES** - Extract ALL named people, organizations, locations, infrastructure, groups mentioned anywhere in the report:
+   - Extract EVERY person name mentioned, even if only mentioned once
+   - Extract EVERY organization, company, group, or collective name
+   - Extract EVERY location name (cities, provinces, regions, facilities, landmarks)
    - Match against existing entities when possible
-   - Include confidence score (0.0-1.0)
+   - Include confidence score (0.0-1.0) - use 0.5+ for names clearly mentioned in the text
    - Provide context where mentioned
+   - Do NOT skip names just because they seem minor - extract ALL of them
 
 2. **THREAT SIGNALS** - Security-relevant events, activities, concerns:
    - Category: protest, surveillance, work_interruption, sabotage, violence, data_exposure, social_sentiment, health_concern, regulatory, legal, operational, environmental, cyber
@@ -616,8 +620,9 @@ EXTRACT THE FOLLOWING:
    - Impact assessment
 
 IMPORTANT:
-- Be precise - only extract information explicitly stated
-- Confidence must be >= 0.6
+- Extract EVERY named entity in the document - people, organizations, groups, locations, infrastructure
+- Do NOT skip entities - it is better to extract too many than too few
+- Use confidence 0.5 for entities mentioned once, higher for repeated mentions
 - Match entity names to existing entities when possible
 - Group related signals
 - Only create incidents for significant events`
@@ -748,7 +753,7 @@ Extract entities, threat signals, risk assessments, and any incidents requiring 
       console.log(`Processing ${intelligence.entities.length} extracted entities...`);
       
       for (const entity of intelligence.entities) {
-        if (entity.confidence < 0.6) {
+        if (entity.confidence < 0.3) {
           console.log(`Skipping entity "${entity.name}" - confidence ${entity.confidence} below threshold`);
           continue;
         }
