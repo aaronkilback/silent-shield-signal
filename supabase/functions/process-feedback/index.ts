@@ -77,6 +77,12 @@ Deno.serve(async (req) => {
         break;
     }
 
+    // ── Cross-domain learning propagation ──
+    if (objectType === 'signal' && feedbackContext?.category) {
+      const crossDomainActions = await propagateCrossDomainLearning(supabase, feedbackContext.category as string, feedback);
+      learningActions.push(...crossDomainActions);
+    }
+
     // Log learning actions
     if (feedbackEvent?.id && learningActions.length > 0) {
       await supabase.from('universal_learning_log').insert({
@@ -427,4 +433,42 @@ async function updateEntitySuggestionLearning(supabase: ReturnType<typeof create
   } catch (error) {
     console.error('Error updating entity learning:', error instanceof Error ? error.message : error);
   }
+}
+
+// ═══════════════════════════════════════════════════════════
+// CROSS-DOMAIN LEARNING
+// ═══════════════════════════════════════════════════════════
+
+const RELATED_CATEGORIES: Record<string, string[]> = {
+  'protest': ['civil_unrest', 'demonstration', 'strike'],
+  'civil_unrest': ['protest', 'riot', 'demonstration'],
+  'cyber_attack': ['data_breach', 'ransomware', 'cyber_threat'],
+  'data_breach': ['cyber_attack', 'insider_threat'],
+  'terrorism': ['extremism', 'bomb_threat', 'active_shooter'],
+  'natural_disaster': ['earthquake', 'wildfire', 'flood', 'severe_weather'],
+  'insider_threat': ['data_breach', 'sabotage', 'unauthorized_access'],
+  'supply_chain': ['logistics_disruption', 'vendor_risk'],
+};
+
+async function propagateCrossDomainLearning(
+  supabase: ReturnType<typeof createServiceClient>,
+  category: string,
+  feedback: string
+): Promise<string[]> {
+  const related = RELATED_CATEGORIES[category.toLowerCase()];
+  if (!related || related.length === 0) return [];
+
+  const profiles: string[] = [];
+  const feedbackType = (feedback === 'relevant' || feedback === 'confirmed') ? 'positive' : 'negative';
+
+  for (const relatedCat of related) {
+    const profileType = `cross_domain:${relatedCat}`;
+    await upsertLearningProfile(supabase, profileType, {
+      [`from_${category}_${feedbackType}`]: 0.3, // 30% weight for cross-domain
+      cross_domain_total: 1,
+    });
+    profiles.push(profileType);
+  }
+
+  return profiles;
 }
