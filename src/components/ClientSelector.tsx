@@ -51,25 +51,38 @@ export const ClientSelector = ({
   const { selectedClientId, setSelectedClientId } = useClientSelection();
 
   useEffect(() => {
-    fetchClients();
+    let channel: ReturnType<typeof supabase.channel> | null = null;
 
-    const channel = supabase
-      .channel('client-selector-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'clients'
-        },
-        () => {
-          fetchClients();
-        }
-      )
-      .subscribe();
+    const init = async () => {
+      // Wait for auth session before querying RLS-protected table
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) {
+        setLoading(false);
+        return;
+      }
+
+      await fetchClients();
+
+      channel = supabase
+        .channel('client-selector-changes')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'clients'
+          },
+          () => {
+            fetchClients();
+          }
+        )
+        .subscribe();
+    };
+
+    init();
 
     return () => {
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
     };
   }, []);
 
