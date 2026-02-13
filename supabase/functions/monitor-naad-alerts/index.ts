@@ -343,7 +343,7 @@ Deno.serve(async (req) => {
                 signal_id: existingSignal.id,
                 content: updateText,
                 source_name: 'naad_emergency_alerts',
-                source_url: `https://alerts.pelmorex.com/`,
+                source_url: alert.link || `https://alerts.pelmorex.com/`,
                 content_hash: updateContentHash,
                   metadata: {
                     alert_id: alert.id,
@@ -392,8 +392,7 @@ Deno.serve(async (req) => {
               event_fingerprint: canonical,
               category: alert.category,
               classification,
-              url: `https://alerts.pelmorex.com/`,
-              raw_cap_url: alert.link || null,
+              url: alert.link || `https://alerts.pelmorex.com/`,
               updated: alert.updated,
             },
             status: 'new',
