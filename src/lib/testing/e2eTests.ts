@@ -638,7 +638,9 @@ export const entityRelationshipsTests = {
           // Family
           'family_member', 'parent_company',
           // System-generated
-          'created_from'
+          'created_from',
+          // Warning & threat targeting
+          'target_of_warning', 'subject_of', 'warned_about'
         ];
         
         const { data: relationships, error } = await supabase
