@@ -204,7 +204,7 @@ const InvestigationDetail = () => {
   });
 
   const { data: locations = [] } = useQuery({
-    queryKey: ['investigation-locations', id],
+    queryKey: ['investigation-locations', id, investigation?.correlated_entity_ids],
     queryFn: async () => {
       if (!investigation?.correlated_entity_ids || investigation.correlated_entity_ids.length === 0) {
         return [];
