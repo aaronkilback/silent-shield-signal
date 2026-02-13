@@ -73,7 +73,7 @@ Deno.serve(async (req: Request) => {
     if (isUuid) {
       const result = await supabase
         .from("investigations")
-        .select("id, file_number, client_id, tenant_id")
+        .select("id, file_number, client_id")
         .eq("id", trimmedId)
         .single();
       investigation = result.data;
@@ -82,7 +82,7 @@ Deno.serve(async (req: Request) => {
       // Try file_number first, then ilike for flexibility
       const result = await supabase
         .from("investigations")
-        .select("id, file_number, client_id, tenant_id")
+        .select("id, file_number, client_id")
         .eq("file_number", trimmedId)
         .single();
       investigation = result.data;
@@ -92,7 +92,7 @@ Deno.serve(async (req: Request) => {
       if (invError || !investigation) {
         const result2 = await supabase
           .from("investigations")
-          .select("id, file_number, client_id, tenant_id")
+          .select("id, file_number, client_id")
           .ilike("file_number", trimmedId)
           .single();
         investigation = result2.data;
@@ -197,7 +197,7 @@ Deno.serve(async (req: Request) => {
         provider_status: twilioResult.status,
         platform_number: twilioFrom,
         investigation_entry_id: entry?.id || null,
-        tenant_id: investigation.tenant_id || null,
+        tenant_id: null,
         message_timestamp: now,
       })
       .select("id")
