@@ -159,7 +159,7 @@ Deno.serve(async (req: Request) => {
 
       if (source === "sms") {
         return new Response(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>We received your message but couldn't match it to an active case. Please contact your investigator directly.</Message></Response>`,
+          '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
           { headers: { ...corsHeaders, "Content-Type": "text/xml" } }
         );
       }
@@ -240,10 +240,10 @@ Deno.serve(async (req: Request) => {
 
     console.log(`[IngestComm] Created entry ${entry.id} + comm ${comm?.id} for case ${investigation.file_number} from ${source}`);
 
-    // For Twilio, return TwiML confirmation
+    // For Twilio, return empty TwiML — no auto-reply to the recipient
     if (source === "sms") {
       return new Response(
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>Logged to case ${investigation.file_number}.</Message></Response>`,
+        '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
         { headers: { ...corsHeaders, "Content-Type": "text/xml" } }
       );
     }
