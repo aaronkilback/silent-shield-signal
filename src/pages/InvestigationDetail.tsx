@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import { 
   ArrowLeft, Save, Plus, Trash2, Upload, Download, 
   FileText, Image as ImageIcon, Video, Music, File,
-  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X, MapPin, Map
+  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X, MapPin, Map, Building2
 } from "lucide-react";
 import { WorkspaceButton } from "@/components/workspace";
 import { format } from "date-fns";
@@ -652,6 +652,70 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
     }
   };
 
+  const convertCompanyToEntity = async (person: any) => {
+    if (!user || !person.company?.trim()) return;
+
+    try {
+      const companyName = person.company.trim();
+
+      // Check if entity already exists
+      const { data: existing } = await supabase
+        .from('entities')
+        .select('id, name')
+        .ilike('name', companyName)
+        .limit(1)
+        .maybeSingle();
+
+      if (existing) {
+        const currentEntityIds = investigation?.correlated_entity_ids || [];
+        if (!currentEntityIds.includes(existing.id)) {
+          await supabase
+            .from('investigations')
+            .update({ correlated_entity_ids: [...currentEntityIds, existing.id] })
+            .eq('id', id);
+          queryClient.invalidateQueries({ queryKey: ['investigation', id] });
+        }
+        toast.success(`${existing.name} already exists — linked to investigation`);
+        return;
+      }
+
+      const { data: entity, error: entityError } = await supabase
+        .from('entities')
+        .insert({
+          name: companyName,
+          type: 'organization' as const,
+          client_id: investigation?.client_id || null,
+          created_by: user.id,
+          risk_level: 'medium',
+          confidence_score: 0.7,
+          entity_status: 'confirmed',
+          is_active: true,
+          description: `Organization linked from investigation ${investigation?.file_number || ''}`.trim(),
+          attributes: {
+            source_investigation: investigation?.file_number,
+            associated_person: person.name
+          }
+        })
+        .select()
+        .single();
+
+      if (entityError) throw entityError;
+
+      const currentEntityIds = investigation?.correlated_entity_ids || [];
+      if (!currentEntityIds.includes(entity.id)) {
+        await supabase
+          .from('investigations')
+          .update({ correlated_entity_ids: [...currentEntityIds, entity.id] })
+          .eq('id', id);
+      }
+
+      queryClient.invalidateQueries({ queryKey: ['investigation', id] });
+      toast.success(`${companyName} created as organization entity and linked`);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to convert company to entity");
+    }
+  };
+
   const addLocation = async () => {
     if (!newLocationName.trim() || !id) return;
 
@@ -1243,10 +1307,22 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                             variant="outline" 
                             size="sm"
                             onClick={() => convertPersonToEntity(person)}
+                            title="Promote person to entity"
                           >
-                            <Users className="w-4 h-4 mr-2" />
-                            To Entity
+                            <Users className="w-4 h-4 mr-1" />
+                            Person
                           </Button>
+                          {person.company?.trim() && (
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => convertCompanyToEntity(person)}
+                              title="Promote company to organization entity"
+                            >
+                              <Building2 className="w-4 h-4 mr-1" />
+                              Company
+                            </Button>
+                          )}
                           <Button 
                             variant="ghost" 
                             size="icon"
