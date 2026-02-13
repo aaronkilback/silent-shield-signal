@@ -1,0 +1,1 @@
+ALTER TABLE public.investigation_persons ADD COLUMN email text;
