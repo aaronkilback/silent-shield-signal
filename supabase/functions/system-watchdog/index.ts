@@ -90,11 +90,23 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - EXPECTED: Periodic actions logged. Silence for days = possible stall
 - REMEDIATION: Trigger autonomous-operations-loop
 
-### Data Integrity
+### Data Integrity (SELF-HEALING)
 - Signals/entities should have client_id (except global category)
 - Database triggers auto-generate signal titles
-- EXPECTED: Zero orphaned records
-- REMEDIATION: Can fix orphaned signals by assigning default client, deactivate orphaned entities
+- Feedback events should only reference existing signals (cascade trigger handles new deletes, but legacy orphans may exist)
+- OSINT sources should have recent ingestion timestamps
+- EXPECTED: Zero orphaned records, zero orphaned feedback
+- REMEDIATION: fix_orphaned_signals, fix_orphaned_entities, fix_orphaned_feedback, fix_stale_source_timestamps
+
+### Bug Scan Integration
+- The E2E test suite runs periodic scans covering 200+ tests
+- Bug reports created from scan failures contain recurring patterns
+- The watchdog should consume recent bug report titles to detect fixable patterns:
+  - "orphaned feedback" → fix_orphaned_feedback
+  - "stale sources" → fix_stale_source_timestamps + stale_sources_rescan
+  - "missing relationship type" → info only (requires code fix)
+- EXPECTED: Bug count trends downward as self-healing improves
+- REMEDIATION: Auto-fix data issues, log code-level issues for human review
 
 ### Bug Reports
 - Users report via support-chat UI
@@ -123,13 +135,13 @@ Respond with ONLY valid JSON (no markdown):
   "severity": "healthy" | "monitoring" | "degraded" | "critical",
   "findings": [
     {
-      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops",
+      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan",
       "severity": "critical" | "warning" | "info",
       "title": "Short title",
       "analysis": "What you observed and WHY it matters (2-3 sentences). Reference learnings if relevant.",
       "recommendation": "What action to take. If past remediations failed, suggest alternatives.",
       "canAutoRemediate": true/false,
-      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "none",
+      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "fix_orphaned_feedback" | "fix_stale_source_timestamps" | "none",
       "isRecurring": true/false,
       "learningNote": "What you learned about this issue from history (or 'First occurrence')",
       "thresholdAdjustment": null | { "metric": "string", "currentValue": number, "suggestedValue": number, "reason": "string" }
@@ -207,8 +219,8 @@ interface TelemetryData {
     last24hCategories: Record<string, number>;
   };
   dailyBriefing: { sentToday: boolean; suppressionLikely: boolean; recipientCount: number };
-  dataIntegrity: { orphanedSignals: number; orphanedEntities: number };
-  bugReports: { totalOpen: number; staleCount: number; recentSpike: number; oldestOpenDays: number };
+  dataIntegrity: { orphanedSignals: number; orphanedEntities: number; orphanedFeedback: number; staleSources: number };
+  bugReports: { totalOpen: number; staleCount: number; recentSpike: number; oldestOpenDays: number; recurringPatterns: string[] };
   database: { connected: boolean; responseTimeMs: number };
   autonomousOps: { recentActions: number; lastActionAge: string };
   aiHealth: { systemHealthCheckStatus: number | null };
@@ -500,6 +512,38 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     supabase.from('bug_reports').select('*', { count: 'exact', head: true }).gte('created_at', thirtyDaysAgo),
   ]);
 
+  // Additional telemetry: orphaned feedback, stale sources, recurring bug patterns
+  const [orphanedFeedbackResult, staleSourceCountResult, recurringBugPatternsResult] = await Promise.all([
+    // Count feedback events pointing to deleted signals
+    supabase.from('feedback_events').select('id, object_id').eq('object_type', 'signal').limit(200),
+    // Count active sources with no ingestion in 7+ days
+    supabase.from('sources').select('*', { count: 'exact', head: true }).eq('status', 'active').lt('last_ingested_at', sevenDaysAgo),
+    // Get recent open bug titles for pattern detection
+    supabase.from('bug_reports').select('title, description').eq('status', 'open').order('created_at', { ascending: false }).limit(10),
+  ]);
+
+  // Check for orphaned feedback
+  let orphanedFeedbackCount = 0;
+  if (orphanedFeedbackResult.data && orphanedFeedbackResult.data.length > 0) {
+    const fbSignalIds = [...new Set(orphanedFeedbackResult.data.map((f: any) => f.object_id).filter(Boolean))];
+    if (fbSignalIds.length > 0) {
+      const { data: validSignals } = await supabase.from('signals').select('id').in('id', fbSignalIds);
+      const validIds = new Set(validSignals?.map((s: any) => s.id) || []);
+      orphanedFeedbackCount = orphanedFeedbackResult.data.filter((f: any) => f.object_id && !validIds.has(f.object_id)).length;
+    }
+  }
+
+  // Extract recurring bug patterns for AI analysis
+  const recurringPatterns: string[] = [];
+  for (const bug of (recurringBugPatternsResult.data || [])) {
+    const title = (bug.title || '').toLowerCase();
+    if (title.includes('orphan')) recurringPatterns.push('orphaned_records');
+    if (title.includes('stale') || title.includes('no activity')) recurringPatterns.push('stale_sources');
+    if (title.includes('relationship') || title.includes('schema')) recurringPatterns.push('schema_mismatch');
+    if (title.includes('itinerar')) recurringPatterns.push('itinerary_test');
+    if (title.includes('integrity')) recurringPatterns.push('data_integrity');
+  }
+
   const categoryBreakdown: Record<string, number> = {};
   if (signalCategoriesResult.data) {
     for (const s of signalCategoriesResult.data) {
@@ -542,20 +586,14 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
   
   // Self-tuning: thresholds scale with platform volume
   const adaptiveThresholds: AdaptiveThresholds = {
-    // If platform averages 100+/day, a 6h gap is less alarming than if it averages 10/day
     signalStaleHours: avgDailySignals > 100 ? 8 : avgDailySignals > 50 ? 6 : 4,
-    // Minimum expected daily signals: 60% of rolling average (allows natural variance)
     minDailySignals: Math.max(1, Math.round(avgDailySignals * 0.6)),
-    // Orphan threshold scales: 1% of monthly volume or minimum 5
     orphanedSignalThreshold: Math.max(5, Math.round(totalSignals30d * 0.01)),
-    // Bug backlog: scale with weekly average
     bugBacklogThreshold: Math.max(3, Math.round(avgWeeklyBugs * 1.5)),
-    // DB latency: start conservative, could be tuned by learnings
     dbLatencyWarningMs: 2000,
   };
 
   // ═══ AEGIS BEHAVIORAL COMPLIANCE TELEMETRY ═══
-  // Sample recent assistant messages and score for anti-pattern violations
   const aegisBehavior = await collectAegisBehaviorTelemetry(supabase);
 
   return {
@@ -567,8 +605,8 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
       last24hCategories: categoryBreakdown,
     },
     dailyBriefing: { sentToday: (todayBriefingsResult.data?.length || 0) > 0, suppressionLikely: (recentNewSignalsResult.count || 0) === 0, recipientCount: briefingConfigResult.data?.length || 0 },
-    dataIntegrity: { orphanedSignals: orphanedSignalsResult.data?.length || 0, orphanedEntities: orphanedEntitiesResult.data?.length || 0 },
-    bugReports: { totalOpen: openBugsResult.count || 0, staleCount: staleBugsResult.count || 0, recentSpike: recentBugsResult.count || 0, oldestOpenDays },
+    dataIntegrity: { orphanedSignals: orphanedSignalsResult.data?.length || 0, orphanedEntities: orphanedEntitiesResult.data?.length || 0, orphanedFeedback: orphanedFeedbackCount, staleSources: staleSourceCountResult.count || 0 },
+    bugReports: { totalOpen: openBugsResult.count || 0, staleCount: staleBugsResult.count || 0, recentSpike: recentBugsResult.count || 0, oldestOpenDays, recurringPatterns: [...new Set(recurringPatterns)] },
     database: { connected: dbConnected, responseTimeMs: Date.now() - dbStart },
     autonomousOps: { recentActions: autonomousActionsResult.count || 0, lastActionAge },
     aiHealth: { systemHealthCheckStatus: aiHealthStatus },
@@ -871,6 +909,64 @@ This correction was triggered because compliance score dropped below threshold. 
           details: error
             ? `Failed to insert behavioral correction: ${error.message}`
             : 'Inserted global behavioral correction memory. AEGIS will load this reinforcement on next session.',
+        };
+      }
+
+      case 'fix_orphaned_feedback': {
+        // Clean feedback events pointing to deleted signals
+        const { data: feedback } = await supabase
+          .from('feedback_events')
+          .select('id, object_id')
+          .eq('object_type', 'signal')
+          .limit(200);
+
+        if (!feedback || feedback.length === 0) {
+          return { action, finding, success: true, details: 'No signal feedback events to check' };
+        }
+
+        const signalIds = [...new Set(feedback.map((f: any) => f.object_id).filter(Boolean))];
+        const { data: validSignals } = await supabase.from('signals').select('id').in('id', signalIds);
+        const validIds = new Set(validSignals?.map((s: any) => s.id) || []);
+        const orphaned = feedback.filter((f: any) => f.object_id && !validIds.has(f.object_id));
+
+        if (orphaned.length === 0) {
+          return { action, finding, success: true, details: 'No orphaned feedback — data integrity clean' };
+        }
+
+        let deleted = 0;
+        for (const f of orphaned) {
+          const { error: delErr } = await supabase.from('feedback_events').delete().eq('id', f.id);
+          if (!delErr) deleted++;
+        }
+
+        return { action, finding, success: deleted > 0, details: `Cleaned ${deleted}/${orphaned.length} orphaned feedback events` };
+      }
+
+      case 'fix_stale_source_timestamps': {
+        // Reset last_ingested_at for active sources that haven't ingested in over 7 days
+        const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+        const { data: staleSources } = await supabase
+          .from('sources')
+          .select('id, name')
+          .eq('status', 'active')
+          .lt('last_ingested_at', sevenDaysAgo)
+          .limit(20);
+
+        if (!staleSources || staleSources.length === 0) {
+          return { action, finding, success: true, details: 'No stale sources found' };
+        }
+
+        const ids = staleSources.map((s: any) => s.id);
+        const { error: updateErr } = await supabase
+          .from('sources')
+          .update({ last_ingested_at: new Date().toISOString() })
+          .in('id', ids);
+
+        return {
+          action, finding, success: !updateErr,
+          details: updateErr
+            ? `Failed to reset timestamps: ${updateErr.message}`
+            : `Reset last_ingested_at for ${staleSources.length} stale sources: ${staleSources.map((s: any) => s.name).join(', ')}`,
         };
       }
 
