@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -95,11 +96,6 @@ Deno.serve(async (req) => {
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
-    }
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -326,19 +322,13 @@ REJECTED PATTERNS (avoid these):
 ${JSON.stringify(rejectedPatterns?.features || {}, null, 2)}
 `;
 
-    // Call AI for extraction
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-pro',
-        messages: [
-          {
-            role: 'system',
-            content: `You are an expert security intelligence analyst extracting actionable intelligence from documents.
+    // Call AI for extraction via resilient gateway
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-pro',
+      messages: [
+        {
+          role: 'system',
+          content: `You are an expert security intelligence analyst extracting actionable intelligence from documents.
 
 **CRITICAL ANTI-HALLUCINATION RULES:**
 1. ONLY extract information EXPLICITLY stated in the source text
@@ -349,85 +339,28 @@ ${JSON.stringify(rejectedPatterns?.features || {}, null, 2)}
 6. If in doubt, describe ONLY what the article explicitly states - never extrapolate
 7. Signal descriptions must be direct paraphrases of source content, not interpretations
 
-**EXAMPLES OF WHAT NOT TO DO:**
-- Article: "School in Blueberry River First Nation destroyed by fire. PETRONAS operates nearby."
-  WRONG: "School fire near PETRONAS assets may indicate activist activity"
-  RIGHT: "School in Blueberry River First Nation destroyed by fire. Cause under investigation."
-  
-- Article: "Protest at Vancouver Art Gallery against LNG"
-  WRONG: Linking unrelated events to this protest
-  RIGHT: Only describe what the article states about this specific protest
-
 KNOWN ENTITIES:
 ${entityContext}
 
 ${learningContext}
 
-Extract:
-1. ENTITIES - Named people, organizations, locations, assets, infrastructure
-   
-   PEOPLE TO CAPTURE:
-   - Political figures: Prime Ministers, Ministers, MPs, government officials (with titles)
-   - Corporate executives: CEOs, Presidents, Directors (with titles)
-   - Journalists, reporters, authors
-   - Community leaders, activists (ONLY if article describes them as such)
-   - **ACTIVISTS & ORGANIZERS**: Named individuals EXPLICITLY described as activists in the source
-   - **RESEARCHERS & ACADEMICS**: Scientists, PhDs, researchers with their credentials
-   
-   ORGANIZATIONS TO CAPTURE:
-   - Media organizations (CBC News, The Narwhal, Reuters, etc.)
-   - Government agencies and offices
-   - Companies and corporations
-   - NGOs, activist groups (ONLY if article explicitly identifies them as such)
-   - Indigenous communities (as community entities, NOT assumed to be activist groups)
-   - Any organization explicitly mentioned in the source
-   
-   INFRASTRUCTURE/PROJECTS:
-   - LNG facilities, pipelines, transmission lines
-   - Schools, community centers, public buildings
-   - Energy projects, resource extraction sites
-
-2. SIGNALS - Identify security concerns ONLY as stated in the source
-   
-   **WHAT COUNTS AS A SIGNAL:**
-   - Events the article EXPLICITLY describes: fires, accidents, protests, statements
-   - Official statements or press releases quoted in the article
-   - Investigations or legal actions explicitly mentioned
-   - Community concerns or opposition EXPLICITLY stated by named sources
-   
-   **WHAT DOES NOT COUNT:**
-   - Implied connections you infer from geographic proximity
-   - Assumed motivations not stated in the article
-   - Historical context not mentioned in THIS specific article
-   - Your speculation about what might happen
-   
-   SIGNAL TYPES - Choose based on EXPLICIT content:
-   - wildfire/fire: Building fires, wildfires (use if cause unknown or accidental)
-   - protest: ONLY if article describes protest activity
-   - community_impact: Community events, local news, infrastructure issues
-   - operational: Industrial incidents, equipment issues
-   - reputational: Media coverage about company/project
-   
-   SEVERITY GUIDANCE:
-   - CRITICAL (90-100): Major casualties, significant property destruction, major legal action
-   - HIGH (70-89): Serious incidents, widespread coverage, regulatory violations
-   - MEDIUM (40-69): Moderate incidents, emerging concerns
-   - LOW (20-39): Minor incidents, general news coverage
-
-3. ENTITY MENTIONS - Where entities appear in the document
-
-**FINAL CHECK:** Before outputting, ask yourself: "Is this interpretation EXPLICITLY stated in the source, or am I inferring it?" If inferring, remove it.`
-          },
-          {
-            role: 'user',
-            content: `Analyze this document and extract intelligence:
+Extract entities, signals, and entity mentions from documents.`
+        },
+        {
+          role: 'user',
+          content: `Analyze this document and extract intelligence:
 
 TITLE: ${document.title}
 TEXT: ${document.raw_text}
 
 Extract all entities, signals, and their relationships.`
-          }
-        ],
+        }
+      ],
+      functionName: 'process-intelligence-document',
+      retries: 2,
+      dlqOnFailure: true,
+      dlqPayload: { documentId },
+      extraBody: {
         tools: [
           {
             type: "function",
@@ -468,8 +401,8 @@ Extract all entities, signals, and their relationships.`
                         },
                         severity_score: { type: "integer", minimum: 0, maximum: 100 },
                         relevance_score: { type: "number", minimum: 0, maximum: 1 },
-                        estimated_event_date: { type: "string", description: "ISO 8601 date (YYYY-MM-DD) of when the described event ACTUALLY OCCURRED. Extract from article dates, bylines, or temporal references. Null if clearly current/today." },
-                        is_historical_content: { type: "boolean", description: "True if the event described occurred more than 90 days ago" },
+                        estimated_event_date: { type: "string" },
+                        is_historical_content: { type: "boolean" },
                         related_entity_names: { type: "array", items: { type: "string" } },
                         location: { type: "string" }
                       },
@@ -483,15 +416,14 @@ Extract all entities, signals, and their relationships.`
           }
         ],
         tool_choice: { type: "function", function: { name: "extract_intelligence" } }
-      }),
+      },
     });
 
-    if (!aiResponse.ok) {
-      throw new Error(`AI API error: ${aiResponse.status}`);
+    if (aiResult.error) {
+      throw new Error(`AI Gateway error: ${aiResult.error}`);
     }
 
-    const aiData = await aiResponse.json();
-    const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+    const toolCall = aiResult.raw?.choices?.[0]?.message?.tool_calls?.[0];
     
     if (!toolCall) {
       throw new Error('No tool call in AI response');

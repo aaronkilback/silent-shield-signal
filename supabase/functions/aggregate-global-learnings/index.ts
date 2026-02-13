@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -178,28 +179,19 @@ ${patterns.map(p => `- ${p.type}: ${p.content} (confidence: ${p.confidence.toFix
 
 Provide insights that would help ANY security team, without revealing specifics about individual organizations. Format as a JSON array of strings.`;
 
-        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${lovableApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-2.5-flash',
-            messages: [
-              { role: 'system', content: 'You are a security intelligence analyst. Provide actionable, anonymized insights based on aggregate patterns. Return only a JSON array of insight strings.' },
-              { role: 'user', content: analysisPrompt }
-            ],
-            temperature: 0.3,
-          }),
+        const aiResult = await callAiGateway({
+          model: 'google/gemini-2.5-flash',
+          messages: [
+            { role: 'system', content: 'You are a security intelligence analyst. Provide actionable, anonymized insights based on aggregate patterns. Return only a JSON array of insight strings.' },
+            { role: 'user', content: analysisPrompt }
+          ],
+          functionName: 'aggregate-global-learnings',
+          extraBody: { temperature: 0.3 },
         });
 
-        if (aiResponse.ok) {
-          const aiData = await aiResponse.json();
-          const content = aiData.choices?.[0]?.message?.content || '';
+        if (aiResult.content) {
           try {
-            // Try to parse JSON from the response
-            const jsonMatch = content.match(/\[[\s\S]*\]/);
+            const jsonMatch = aiResult.content.match(/\[[\s\S]*\]/);
             if (jsonMatch) {
               aiInsights = JSON.parse(jsonMatch[0]);
             }
