@@ -1,4 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { logError } from "../_shared/error-logger.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -9,11 +11,6 @@ Deno.serve(async (req) => {
     console.log('Identifying precursor indicators:', { threat_type, client_id });
 
     const supabaseClient = createServiceClient();
-
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
-    }
 
     const timeframeCutoff = new Date(Date.now() - timeframe_hours * 60 * 60 * 1000).toISOString();
 
@@ -74,27 +71,20 @@ Identify:
 4. Recommended preventive actions
 5. Confidence level and timeline estimate`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are a strategic threat intelligence analyst specializing in early warning detection and precursor pattern recognition.' },
-          { role: 'user', content: analysisPrompt }
-        ],
-      }),
+    const result = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are a strategic threat intelligence analyst specializing in early warning detection and precursor pattern recognition.' },
+        { role: 'user', content: analysisPrompt }
+      ],
+      functionName: 'identify-precursor-indicators',
+      dlqOnFailure: true,
+      dlqPayload: { threat_type, client_id, timeframe_hours },
     });
 
-    if (!response.ok) {
-      throw new Error('AI analysis failed');
+    if (result.error) {
+      throw new Error(result.error);
     }
-
-    const data = await response.json();
-    const analysis = data.choices?.[0]?.message?.content;
 
     console.log('Precursor indicator analysis complete');
 
@@ -102,7 +92,7 @@ Identify:
       threat_type,
       client_id,
       timeframe_hours,
-      precursor_analysis: analysis,
+      precursor_analysis: result.content,
       intelligence_summary: {
         total_signals: recentSignals?.length || 0,
         sources: Object.keys(signalsBySource),
@@ -113,6 +103,7 @@ Identify:
     });
   } catch (error) {
     console.error('Error in identify-precursor-indicators:', error);
+    await logError(error, { functionName: 'identify-precursor-indicators', severity: 'error' });
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
