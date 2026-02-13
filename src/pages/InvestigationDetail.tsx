@@ -30,6 +30,7 @@ import { InvestigationComms } from "@/components/investigations/InvestigationCom
 // Configure DOMPurify for safe HTML rendering in reports
 const sanitizeHtml = (html: string): string => {
   return DOMPurify.sanitize(html, {
+    WHOLE_DOCUMENT: true,
     ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'p', 'br', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'div', 'span', 'img', 'style', 'head', 'body', 'html', 'meta', 'a'],
     ALLOWED_ATTR: ['class', 'style', 'src', 'alt', 'width', 'height', 'href', 'charset', 'content', 'colspan'],
     ALLOW_DATA_ATTR: false,
