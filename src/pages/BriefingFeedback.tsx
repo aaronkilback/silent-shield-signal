@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 
 const POSITIVE_REASONS = [
   { value: "actionable_intel", label: "Actionable intelligence" },
+  { value: "useful_general_knowledge", label: "Useful general knowledge" },
   { value: "good_summary", label: "Good summary of key events" },
   { value: "right_priority", label: "Right priorities highlighted" },
   { value: "saved_time", label: "Saved me time" },
@@ -135,7 +136,7 @@ const BriefingFeedback = () => {
                 <h2 className="text-lg font-semibold text-foreground">Thank You</h2>
                 <p className="text-sm text-muted-foreground max-w-xs mx-auto">
                   {isPositive
-                    ? "Useful general knowledge. We'll keep delivering actionable intelligence."
+                    ? "Your feedback helps us maintain briefing quality. We'll keep delivering actionable intelligence."
                     : "Your feedback is noted. We'll adjust future briefings to better meet your needs."}
                 </p>
                 <div className="w-10 h-0.5 bg-gradient-to-r from-primary to-accent mx-auto rounded-full" />
