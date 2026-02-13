@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGateway, callAiGatewayStream } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -32,20 +33,14 @@ function detectBugReport(messages: any[]): boolean {
   return bugPatterns.some(pattern => pattern.test(content));
 }
 
-async function extractBugDetails(messages: any[], apiKey: string): Promise<BugReport | null> {
+async function extractBugDetails(messages: any[]): Promise<BugReport | null> {
   try {
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash-lite",
-        messages: [
-          {
-            role: "system",
-            content: `Extract bug report details from the conversation. Return a JSON object with:
+    const result = await callAiGateway({
+      model: "google/gemini-2.5-flash-lite",
+      messages: [
+        {
+          role: "system",
+          content: `Extract bug report details from the conversation. Return a JSON object with:
 {
   "title": "Brief title (max 100 chars)",
   "description": "Full description of the issue",
@@ -56,20 +51,16 @@ async function extractBugDetails(messages: any[], apiKey: string): Promise<BugRe
   "is_complete": true/false
 }
 Return ONLY valid JSON, no markdown.`
-          },
-          ...messages.slice(-10),
-        ],
-        response_format: { type: "json_object" },
-      }),
+        },
+        ...messages.slice(-10),
+      ],
+      functionName: 'support-chat:extract-bug',
+      extraBody: { response_format: { type: "json_object" } },
     });
 
-    if (!response.ok) return null;
+    if (!result.content) return null;
     
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) return null;
-    
-    const parsed = JSON.parse(content);
+    const parsed = JSON.parse(result.content);
     if (!parsed.is_complete) return null;
     
     return {
@@ -93,11 +84,6 @@ Deno.serve(async (req) => {
 
   try {
     const { messages, action, bugData } = await req.json();
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY is not configured");
-    }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -200,27 +186,21 @@ Deno.serve(async (req) => {
     };
 
     if (isSimpleAcknowledgment(messages)) {
-      const ackResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-flash-lite",
-          messages: [
-            {
-              role: "system",
-              content: `You are a helpful support assistant. The user sent a simple acknowledgment. Respond BRIEFLY - just 1-2 short sentences. Simply acknowledge and offer to help with anything else.`
-            },
-            ...messages.slice(-3),
-          ],
-          stream: true,
-        }),
+      const ackResult = await callAiGatewayStream({
+        model: "google/gemini-2.5-flash-lite",
+        messages: [
+          {
+            role: "system",
+            content: `You are a helpful support assistant. The user sent a simple acknowledgment. Respond BRIEFLY - just 1-2 short sentences. Simply acknowledge and offer to help with anything else.`
+          },
+          ...messages.slice(-3),
+        ],
+        functionName: 'support-chat:ack',
+        timeoutMs: 10000,
       });
 
-      if (ackResponse.ok) {
-        return new Response(ackResponse.body, {
+      if (ackResult.stream) {
+        return new Response(ackResult.stream, {
           headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
         });
       }
@@ -231,7 +211,7 @@ Deno.serve(async (req) => {
     let bugReportContext = '';
     
     if (isBugReport) {
-      const bugDetails = await extractBugDetails(messages, LOVABLE_API_KEY);
+      const bugDetails = await extractBugDetails(messages);
       
       if (bugDetails) {
         bugReportContext = `\n\n**BUG DETECTION ACTIVE**
@@ -280,29 +260,21 @@ ${bugReportContext}
 
 Be helpful, concise, and professional. If you don't know something, say so.`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...messages.slice(-20),
-        ],
-        stream: true,
-      }),
+    const streamResult = await callAiGatewayStream({
+      model: "google/gemini-2.5-flash",
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...messages.slice(-20),
+      ],
+      functionName: 'support-chat',
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("AI Gateway error:", response.status, errorText);
-      throw new Error(`AI Gateway error: ${response.status}`);
+    if (streamResult.error) {
+      console.error("AI Gateway stream error:", streamResult.error);
+      throw new Error(`AI Gateway error: ${streamResult.error}`);
     }
 
-    return new Response(response.body, {
+    return new Response(streamResult.stream!, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
 
