@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -280,31 +281,23 @@ Deno.serve(async (req) => {
             );
           }
 
-          const verifyResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: 'google/gemini-2.5-flash',
-              messages: [{ role: 'user', content: aiContent }],
-              max_tokens: 10
-            })
+          const verifyResult = await callAiGateway({
+            model: 'google/gemini-2.5-flash',
+            messages: [{ role: 'user', content: aiContent }],
+            functionName: 'scan-entity-photos',
+            extraBody: { max_tokens: 10 },
           });
 
-          if (verifyResponse.ok) {
-            const verifyData = await verifyResponse.json();
-            const aiAnswer = verifyData.choices[0]?.message?.content?.trim().toUpperCase();
-
-            console.log(`AI verification: ${aiAnswer}`);
-
-            if (aiAnswer !== 'YES') {
-              console.log('AI rejected image');
-              continue;
-            }
-          } else {
+          if (verifyResult.error) {
             console.log('AI verification failed, skipping');
+            continue;
+          }
+
+          const aiAnswer = verifyResult.content?.trim().toUpperCase();
+          console.log(`AI verification: ${aiAnswer}`);
+
+          if (aiAnswer !== 'YES') {
+            console.log('AI rejected image');
             continue;
           }
         }

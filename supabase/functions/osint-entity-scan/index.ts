@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -147,39 +148,18 @@ Deno.serve(async (req) => {
                 
                 if (allPartsPresent) {
                   // Use AI to verify this is actually about the same person
-                  const verifyResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-                    method: 'POST',
-                    headers: {
-                      'Authorization': `Bearer ${lovableApiKey}`,
-                      'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                      model: 'google/gemini-2.5-flash',
-                      messages: [
-                        {
-                          role: 'system',
-                          content: 'You are verifying if a web search result is actually about a specific person. Respond with only "YES" or "NO".'
-                        },
-                        {
-                          role: 'user',
-                          content: `Is this search result about the person "${entity.name}"?
-                          
-Description of the person we're looking for: ${entity.description || 'No description available'}
-
-Search result title: ${item.title}
-Search result snippet: ${item.snippet || 'No snippet'}
-URL: ${item.link}
-
-Answer YES only if this content is clearly about the same specific individual named "${entity.name}". Answer NO if it's about a different person who happens to have a similar name, or if it's unrelated content.`
-                        }
-                      ],
-                      max_tokens: 10
-                    }),
+                  const verifyResult = await callAiGateway({
+                    model: 'google/gemini-2.5-flash',
+                    messages: [
+                      { role: 'system', content: 'You are verifying if a web search result is actually about a specific person. Respond with only "YES" or "NO".' },
+                      { role: 'user', content: `Is this search result about the person "${entity.name}"?\n\nDescription: ${entity.description || 'No description available'}\n\nSearch result title: ${item.title}\nSearch result snippet: ${item.snippet || 'No snippet'}\nURL: ${item.link}\n\nAnswer YES only if this content is clearly about the same specific individual named "${entity.name}". Answer NO if it's about a different person who happens to have a similar name, or if it's unrelated content.` }
+                    ],
+                    functionName: 'osint-entity-scan',
+                    extraBody: { max_tokens: 10 },
                   });
                   
-                  if (verifyResponse.ok) {
-                    const verifyData = await verifyResponse.json();
-                    const answer = verifyData.choices?.[0]?.message?.content?.trim().toUpperCase();
+                  if (!verifyResult.error) {
+                    const answer = verifyResult.content?.trim().toUpperCase();
                     isRelevant = answer === 'YES';
                     console.log(`Relevance check for "${item.title}" vs "${entity.name}": ${answer}`);
                   }
@@ -236,90 +216,51 @@ Answer YES only if this content is clearly about the same specific individual na
         }
 
         // PART 2: Perform AI-powered relationship analysis
-        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${lovableApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-2.5-flash',
-            messages: [
-              {
-                role: 'system',
-                content: 'You are an OSINT analyst expert. Analyze the provided entity and identify potential relationships with other entities based on open-source intelligence. Return structured data about relationships.'
-              },
-              {
-                role: 'user',
-                content: `Analyze this entity for OSINT intelligence and identify potential relationships:
-
-Entity Name: ${entity.name}
-Entity Type: ${entity.type}
-Description: ${entity.description || 'Not provided'}
-Aliases: ${entity.aliases?.join(', ') || 'None'}
-Risk Level: ${entity.risk_level || 'Unknown'}
-Threat Indicators: ${entity.threat_indicators?.join(', ') || 'None'}
-
-Identify up to 5 potential entities this might be related to and the type of relationship. Consider:
-- Professional associations
-- Geographic connections
-- Organizational memberships
-- Communication patterns
-- Transaction history
-- Social connections
-
-Format your response as a JSON array of relationship suggestions with this structure:
-[
-  {
-    "target_entity_name": "name of related entity",
-    "target_entity_type": "person|organization|location|infrastructure|domain|ip_address|email|phone|vehicle|other",
-    "relationship_type": "associated_with|works_for|reports_to|owns|located_at|communicates_with|etc",
-    "description": "brief description of the relationship",
-    "confidence": 0.0-1.0
-  }
-]`
-              }
-            ],
-            tools: [
-              {
-                type: 'function',
-                function: {
-                  name: 'suggest_relationships',
-                  description: 'Suggest potential entity relationships based on OSINT',
-                  parameters: {
-                    type: 'object',
-                    properties: {
-                      relationships: {
-                        type: 'array',
-                        items: {
-                          type: 'object',
-                          properties: {
-                            target_entity_name: { type: 'string' },
-                            target_entity_type: { type: 'string' },
-                            relationship_type: { type: 'string' },
-                            description: { type: 'string' },
-                            confidence: { type: 'number' }
-                          },
-                          required: ['target_entity_name', 'target_entity_type', 'relationship_type', 'confidence']
-                        }
+        const relationshipResult = await callAiGateway({
+          model: 'google/gemini-2.5-flash',
+          messages: [
+            { role: 'system', content: 'You are an OSINT analyst expert. Analyze the provided entity and identify potential relationships with other entities based on open-source intelligence. Return structured data about relationships.' },
+            { role: 'user', content: `Analyze this entity for OSINT intelligence and identify potential relationships:\n\nEntity Name: ${entity.name}\nEntity Type: ${entity.type}\nDescription: ${entity.description || 'Not provided'}\nAliases: ${entity.aliases?.join(', ') || 'None'}\nRisk Level: ${entity.risk_level || 'Unknown'}\nThreat Indicators: ${entity.threat_indicators?.join(', ') || 'None'}\n\nIdentify up to 5 potential entities this might be related to and the type of relationship. Consider:\n- Professional associations\n- Geographic connections\n- Organizational memberships\n- Communication patterns\n- Transaction history\n- Social connections\n\nFormat your response as a JSON array of relationship suggestions with this structure:\n[\n  {\n    "target_entity_name": "name of related entity",\n    "target_entity_type": "person|organization|location|infrastructure|domain|ip_address|email|phone|vehicle|other",\n    "relationship_type": "associated_with|works_for|reports_to|owns|located_at|communicates_with|etc",\n    "description": "brief description of the relationship",\n    "confidence": 0.0-1.0\n  }\n]` }
+          ],
+          functionName: 'osint-entity-scan',
+          extraBody: {
+            tools: [{
+              type: 'function',
+              function: {
+                name: 'suggest_relationships',
+                description: 'Suggest potential entity relationships based on OSINT',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    relationships: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          target_entity_name: { type: 'string' },
+                          target_entity_type: { type: 'string' },
+                          relationship_type: { type: 'string' },
+                          description: { type: 'string' },
+                          confidence: { type: 'number' }
+                        },
+                        required: ['target_entity_name', 'target_entity_type', 'relationship_type', 'confidence']
                       }
-                    },
-                    required: ['relationships']
-                  }
+                    }
+                  },
+                  required: ['relationships']
                 }
               }
-            ],
+            }],
             tool_choice: { type: 'function', function: { name: 'suggest_relationships' } }
-          }),
+          },
         });
 
-        if (!aiResponse.ok) {
-          console.error(`AI API error for ${entity.name}:`, aiResponse.status);
+        if (relationshipResult.error) {
+          console.error(`AI API error for ${entity.name}:`, relationshipResult.error);
           continue;
         }
 
-        const aiData = await aiResponse.json();
-        const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+        const toolCall = relationshipResult.raw?.choices?.[0]?.message?.tool_calls?.[0];
         
         if (!toolCall) {
           console.log(`No relationships found for ${entity.name}`);
