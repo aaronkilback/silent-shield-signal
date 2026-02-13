@@ -534,3 +534,9 @@ verify_jwt = false
 
 [functions.ingest-communication]
 verify_jwt = false
+
+[functions.send-sms]
+verify_jwt = false
+
+[functions.list-communications]
+verify_jwt = false

@@ -9,20 +9,23 @@ const corsHeaders = {
  * Ingest Communication Endpoint
  * 
  * Accepts incoming SMS (Twilio webhook), email forwards, or manual submissions
- * and creates investigation entries automatically.
+ * and creates investigation entries + communication records automatically.
  * 
  * Routing: Messages must include a case reference tag like #INV-2024-001
  * or the investigation file_number to be routed correctly.
+ * 
+ * Multi-investigator: Inbound messages are matched to the investigator
+ * who last messaged this contact on this case.
  */
 
 // Extract case reference tag from message text
 function extractCaseReference(text: string): string | null {
-  // Match patterns like #INV-2024-001, #2024-001, FILE-123, etc.
   const patterns = [
     /#?(INV[-\s]?\d{4}[-\s]?\d{1,5})/i,
     /#?(FILE[-\s]?\d{1,10})/i,
     /#?(\d{4}[-\s]\d{3,5})/,
     /(?:case|file|ref|inv)[:\s#]*([A-Z0-9\-]+)/i,
+    /\[([A-Z0-9\-]+)\]\s*$/i, // Match [FILE-123] at end of message (our appended tag)
   ];
 
   for (const pattern of patterns) {
@@ -72,7 +75,6 @@ Deno.serve(async (req: Request) => {
     }
 
     if (!messageBody.trim()) {
-      // For Twilio, return TwiML empty response
       if (source === "sms") {
         return new Response(
           '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
@@ -91,7 +93,6 @@ Deno.serve(async (req: Request) => {
     if (!caseRef) {
       console.log(`[IngestComm] No case reference found in message from ${senderIdentifier}`);
 
-      // For Twilio, reply asking for a case reference
       if (source === "sms") {
         return new Response(
           `<?xml version="1.0" encoding="UTF-8"?><Response><Message>No case reference found. Please include a file number (e.g. #INV-2024-001) in your message.</Message></Response>`,
@@ -112,7 +113,7 @@ Deno.serve(async (req: Request) => {
     // Find the investigation by file_number
     const { data: investigation, error: lookupError } = await supabase
       .from("investigations")
-      .select("id, file_number, client_id")
+      .select("id, file_number, client_id, tenant_id")
       .or(`file_number.ilike.%${caseRef}%`)
       .limit(1)
       .maybeSingle();
@@ -136,7 +137,7 @@ Deno.serve(async (req: Request) => {
     // Build entry text with source context
     const sourceLabel = source === "sms" ? "SMS" : source === "email" ? "Email" : source;
     const timestamp = new Date().toISOString();
-    const entryText = `[${sourceLabel.toUpperCase()} — ${senderIdentifier || "Unknown sender"} — ${timestamp}]\n\n${messageBody}`;
+    const entryText = `[${sourceLabel.toUpperCase()} RECEIVED — From: ${senderIdentifier || "Unknown sender"} — ${timestamp}]\n\n${messageBody}`;
 
     // Create investigation entry
     const { data: entry, error: entryError } = await supabase
@@ -154,7 +155,50 @@ Deno.serve(async (req: Request) => {
       throw entryError;
     }
 
-    console.log(`[IngestComm] Created entry ${entry.id} for case ${investigation.file_number} from ${source}`);
+    // Find the investigator who last communicated with this contact on this case
+    // This attributes inbound messages to the correct investigator's thread
+    let investigatorUserId: string | null = null;
+    if (senderIdentifier) {
+      const { data: lastComm } = await supabase
+        .from("investigation_communications")
+        .select("investigator_user_id")
+        .eq("investigation_id", investigation.id)
+        .eq("contact_identifier", senderIdentifier)
+        .eq("direction", "outbound")
+        .order("message_timestamp", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      investigatorUserId = lastComm?.investigator_user_id || null;
+    }
+
+    // Log to investigation_communications for thread consistency
+    const { data: comm, error: commError } = await supabase
+      .from("investigation_communications")
+      .insert({
+        investigation_id: investigation.id,
+        investigator_user_id: investigatorUserId || "00000000-0000-0000-0000-000000000000", // system placeholder if no match
+        contact_name: null,
+        contact_identifier: senderIdentifier,
+        channel: source === "sms" ? "sms" : source === "email" ? "email" : "sms",
+        direction: "inbound",
+        message_body: messageBody,
+        provider_message_id: metadata.twilio_sid || null,
+        provider_status: "received",
+        platform_number: metadata.to || null,
+        investigation_entry_id: entry.id,
+        tenant_id: investigation.tenant_id || null,
+        message_timestamp: timestamp,
+      })
+      .select("id")
+      .single();
+
+    if (commError) {
+      console.error("[IngestComm] Failed to log communication:", commError);
+      // Non-fatal — entry was already created
+    }
+
+    console.log(`[IngestComm] Created entry ${entry.id} + comm ${comm?.id} for case ${investigation.file_number} from ${source}`);
 
     // For Twilio, return TwiML confirmation
     if (source === "sms") {
@@ -169,9 +213,11 @@ Deno.serve(async (req: Request) => {
         success: true,
         message: `Communication logged to case ${investigation.file_number}`,
         entry_id: entry.id,
+        communication_id: comm?.id,
         investigation_id: investigation.id,
         source,
         case_reference: caseRef,
+        matched_investigator: investigatorUserId,
       }),
       { status: 201, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
