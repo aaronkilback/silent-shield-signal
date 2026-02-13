@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import { 
   ArrowLeft, Save, Plus, Trash2, Upload, Download, 
   FileText, Image as ImageIcon, Video, Music, File,
-  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X, MapPin, Map, Building2
+  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X, MapPin, Map, Building2, MessageSquare
 } from "lucide-react";
 import { WorkspaceButton } from "@/components/workspace";
 import { format } from "date-fns";
@@ -25,6 +25,7 @@ import { LocationsMap } from "@/components/LocationsMap";
 import DOMPurify from 'dompurify';
 import { ImageLightbox } from "@/components/ui/image-lightbox";
 import { EntityPersonLookup } from "@/components/investigations/EntityPersonLookup";
+import { InvestigationComms } from "@/components/investigations/InvestigationComms";
 
 // Configure DOMPurify for safe HTML rendering in reports
 const sanitizeHtml = (html: string): string => {
@@ -1052,6 +1053,10 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
             <TabsTrigger value="persons">Persons</TabsTrigger>
             <TabsTrigger value="locations">Locations</TabsTrigger>
             <TabsTrigger value="entries">Entries</TabsTrigger>
+            <TabsTrigger value="comms">
+              <MessageSquare className="w-4 h-4 mr-1" />
+              Comms
+            </TabsTrigger>
             <TabsTrigger value="attachments">Attachments</TabsTrigger>
             <TabsTrigger value="references">Cross-References</TabsTrigger>
           </TabsList>
@@ -1550,6 +1555,15 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="comms" className="space-y-6">
+            {investigation && (
+              <InvestigationComms
+                investigationId={investigation.id}
+                fileNumber={investigation.file_number}
+              />
+            )}
           </TabsContent>
 
           <TabsContent value="attachments" className="space-y-6">
