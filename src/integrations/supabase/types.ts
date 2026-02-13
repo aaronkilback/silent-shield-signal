@@ -4889,6 +4889,92 @@ export type Database = {
           },
         ]
       }
+      investigation_communications: {
+        Row: {
+          channel: string
+          contact_identifier: string
+          contact_name: string | null
+          created_at: string
+          direction: string
+          id: string
+          investigation_entry_id: string | null
+          investigation_id: string
+          investigator_user_id: string
+          message_body: string
+          message_timestamp: string
+          platform_number: string | null
+          provider_message_id: string | null
+          provider_status: string | null
+          tenant_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          channel?: string
+          contact_identifier: string
+          contact_name?: string | null
+          created_at?: string
+          direction: string
+          id?: string
+          investigation_entry_id?: string | null
+          investigation_id: string
+          investigator_user_id: string
+          message_body: string
+          message_timestamp?: string
+          platform_number?: string | null
+          provider_message_id?: string | null
+          provider_status?: string | null
+          tenant_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          channel?: string
+          contact_identifier?: string
+          contact_name?: string | null
+          created_at?: string
+          direction?: string
+          id?: string
+          investigation_entry_id?: string | null
+          investigation_id?: string
+          investigator_user_id?: string
+          message_body?: string
+          message_timestamp?: string
+          platform_number?: string | null
+          provider_message_id?: string | null
+          provider_status?: string | null
+          tenant_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investigation_communications_investigation_entry_id_fkey"
+            columns: ["investigation_entry_id"]
+            isOneToOne: false
+            referencedRelation: "investigation_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investigation_communications_investigation_id_fkey"
+            columns: ["investigation_id"]
+            isOneToOne: false
+            referencedRelation: "investigations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investigation_communications_investigator_user_id_fkey"
+            columns: ["investigator_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investigation_communications_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       investigation_compliance: {
         Row: {
           approved_at: string | null
