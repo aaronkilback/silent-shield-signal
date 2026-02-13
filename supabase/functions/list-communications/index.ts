@@ -55,11 +55,32 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // Resolve investigation_id: accept either UUID or file_number
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let resolvedId = investigationId;
+
+    if (!uuidRegex.test(investigationId)) {
+      // Treat as file_number and look up UUID
+      const { data: inv, error: invErr } = await supabase
+        .from("investigations")
+        .select("id")
+        .eq("file_number", investigationId)
+        .single();
+
+      if (invErr || !inv) {
+        return new Response(
+          JSON.stringify({ error: `Investigation not found for file_number: ${investigationId}` }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      resolvedId = inv.id;
+    }
+
     // Build query
     let query = supabase
       .from("investigation_communications")
       .select("*")
-      .eq("investigation_id", investigationId)
+      .eq("investigation_id", resolvedId)
       .order("message_timestamp", { ascending: true });
 
     if (contactIdentifier) {
