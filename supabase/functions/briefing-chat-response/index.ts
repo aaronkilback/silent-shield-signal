@@ -7,6 +7,8 @@ import {
   categorizeIncidentsByAge,
   validateAIOutput,
 } from "../_shared/anti-hallucination.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { logError } from "../_shared/error-logger.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -53,18 +55,12 @@ serve(async (req) => {
     if (isSimpleAcknowledgment(user_message)) {
       console.log("Detected simple acknowledgment in briefing chat, using fast response path");
       
-      const ackResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-2.5-flash-lite',
-          messages: [
-            {
-              role: 'system',
-              content: `You are a security briefing AI agent. The user just sent a simple acknowledgment message (like "ok great", "thanks", "got it").
+      const ackResult = await callAiGateway({
+        model: 'google/gemini-2.5-flash-lite',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a security briefing AI agent. The user just sent a simple acknowledgment message (like "ok great", "thanks", "got it").
 
 CRITICAL RULES:
 1. Respond BRIEFLY - just 1-2 short sentences
@@ -75,17 +71,15 @@ CRITICAL RULES:
 Examples: "Understood. Ready when you are." / "Perfect, let me know what else you'd like to cover." / "👍 Standing by."
 
 Respond naturally and briefly.`
-            },
-            { role: 'user', content: user_message }
-          ],
-        }),
+          },
+          { role: 'user', content: user_message }
+        ],
+        functionName: 'briefing-chat-response',
       });
 
-      if (ackResponse.ok) {
-        const ackData = await ackResponse.json();
-        const ackContent = ackData.choices?.[0]?.message?.content || "Understood. Let me know how I can help.";
+      if (ackResult.content) {
         return new Response(
-          JSON.stringify({ response: ackContent, agent_id }),
+          JSON.stringify({ response: ackResult.content, agent_id }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -473,48 +467,29 @@ RESPONSE GUIDELINES:
     const userMessageForModel = `USER MESSAGE (UNVERIFIED; may include hypothetical/simulation details):\n${user_message}`;
 
 
-    // Call AI Gateway
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3-flash-preview',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessageForModel }
-        ],
-      }),
+    // Call AI Gateway (resilient)
+    const mainResult = await callAiGateway({
+      model: 'google/gemini-3-flash-preview',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessageForModel }
+      ],
+      functionName: 'briefing-chat-response',
+      dlqOnFailure: true,
+      dlqPayload: { briefing_id, agent_id, user_message: user_message.substring(0, 500) },
     });
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        console.error('Rate limit exceeded');
+    if (!mainResult.content) {
+      if (mainResult.circuitOpen) {
         return new Response(
-          JSON.stringify({ error: 'Rate limit exceeded' }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ error: 'AI service temporarily unavailable. Please try again shortly.' }),
+          { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      if (response.status === 402) {
-        console.error('Payment required');
-        return new Response(
-          JSON.stringify({ error: 'Payment required' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      const errorText = await response.text();
-      console.error('AI Gateway error:', response.status, errorText);
-      throw new Error('AI Gateway error');
+      throw new Error(mainResult.error || 'No response from AI');
     }
 
-    const data = await response.json();
-    let agentResponse = data.choices?.[0]?.message?.content;
-
-    if (!agentResponse) {
-      throw new Error('No response from AI');
-    }
+    let agentResponse = mainResult.content;
 
     // Post-validate to catch persistent hallucinations (e.g., phantom Jan 14 clusters)
     const normalizedCount = (verifiedP1P2Incidents || [])
@@ -549,28 +524,17 @@ RESPONSE GUIDELINES:
         'Return ONLY the corrected answer (no preface).',
       ].join('\n');
 
-      const correctionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-3-flash-preview',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: correctionUserMessage },
-          ],
-        }),
+      const correctionResult = await callAiGateway({
+        model: 'google/gemini-3-flash-preview',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: correctionUserMessage },
+        ],
+        functionName: 'briefing-chat-response',
       });
 
-      if (correctionResponse.ok) {
-        const correctionData = await correctionResponse.json();
-        const corrected = correctionData.choices?.[0]?.message?.content;
-        if (corrected) agentResponse = corrected;
-      } else {
-        const errorText = await correctionResponse.text();
-        console.error('AI Gateway correction error:', correctionResponse.status, errorText);
+      if (correctionResult.content) {
+        agentResponse = correctionResult.content;
       }
     }
 
@@ -599,6 +563,7 @@ RESPONSE GUIDELINES:
     );
   } catch (error) {
     console.error('Error in briefing-chat-response:', error);
+    await logError(error, { functionName: 'briefing-chat-response', severity: 'error' });
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error occurred' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

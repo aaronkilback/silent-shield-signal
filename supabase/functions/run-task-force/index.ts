@@ -1,4 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { logError } from "../_shared/error-logger.ts";
 
 // Evidence level hierarchy
 const EVIDENCE_LEVELS = ['E0', 'E1', 'E2', 'E3', 'E4'];
@@ -573,27 +575,22 @@ Generate the Commander's Intent with:
 
 Keep response concise and actionable.`;
 
-    const intentResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: leader.ai_agents?.system_prompt || 'You are a tactical team leader.' },
-          { role: 'user', content: commanderIntentPrompt }
-        ],
-      }),
+    const intentResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: leader.ai_agents?.system_prompt || 'You are a tactical team leader.' },
+        { role: 'user', content: commanderIntentPrompt }
+      ],
+      functionName: 'run-task-force',
+      dlqOnFailure: true,
+      dlqPayload: { mission_id, phase: 'commander_intent' },
     });
 
-    if (!intentResponse.ok) {
-      throw new Error('Failed to generate commander intent');
+    if (intentResult.error) {
+      throw new Error('Failed to generate commander intent: ' + intentResult.error);
     }
 
-    const intentData = await intentResponse.json();
-    const commanderIntent = intentData.choices?.[0]?.message?.content || '';
+    const commanderIntent = intentResult.content || '';
 
     // Update mission with commander intent
     await supabase
@@ -625,24 +622,17 @@ RULES OF ENGAGEMENT:
 
 Provide your analysis for this mission. Include Confidence, Assumptions, Unknowns, and validation steps.`;
 
-      const agentResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-2.5-flash',
-          messages: [
-            { role: 'system', content: agent.ai_agents?.system_prompt || `You are ${agent.ai_agents?.codename}.` },
-            { role: 'user', content: agentPrompt }
-          ],
-        }),
+      const agentResult = await callAiGateway({
+        model: 'google/gemini-2.5-flash',
+        messages: [
+          { role: 'system', content: agent.ai_agents?.system_prompt || `You are ${agent.ai_agents?.codename}.` },
+          { role: 'user', content: agentPrompt }
+        ],
+        functionName: 'run-task-force',
       });
 
-      if (agentResponse.ok) {
-        const agentData = await agentResponse.json();
-        agentOutputs[agent.ai_agents?.codename || 'unknown'] = agentData.choices?.[0]?.message?.content || '';
+      if (agentResult.content) {
+        agentOutputs[agent.ai_agents?.codename || 'unknown'] = agentResult.content;
       }
     }
 
@@ -673,26 +663,18 @@ Create a consolidated mission report with:
 
 Ensure compliance with RoE - no absolute certainty claims, proper evidence tagging.`;
 
-    const synthesisResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: leader.ai_agents?.system_prompt || 'You are a tactical team leader.' },
-          { role: 'user', content: synthesisPrompt }
-        ],
-      }),
+    const synthesisResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: leader.ai_agents?.system_prompt || 'You are a tactical team leader.' },
+        { role: 'user', content: synthesisPrompt }
+      ],
+      functionName: 'run-task-force',
+      dlqOnFailure: true,
+      dlqPayload: { mission_id, phase: 'synthesis' },
     });
 
-    let finalReport = '';
-    if (synthesisResponse.ok) {
-      const synthesisData = await synthesisResponse.json();
-      finalReport = synthesisData.choices?.[0]?.message?.content || '';
-    }
+    let finalReport = synthesisResult.content || '';
 
     // Phase 4: Run lint validation
     const lintResult = runLintChecker(finalReport, {
@@ -744,6 +726,7 @@ Ensure compliance with RoE - no absolute certainty claims, proper evidence taggi
 
   } catch (error) {
     console.error('Error running task force:', error);
+    await logError(error, { functionName: 'run-task-force', severity: 'error' });
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, upsertProject, touchProject } from "../_shared/user-memory.ts";
+import { logError } from "../_shared/error-logger.ts";
 // fortress-infrastructure.ts removed from system prompt to reduce token count (~5000 tokens saved)
 import { AEGIS_CORE_IDENTITY, AEGIS_CHAT_MODIFIERS, ANTI_FABRICATION_RULES, TOOL_USAGE_GUIDANCE, AEGIS_CAPABILITY_MANIFEST, getTimeContext } from "../_shared/aegis-persona.ts";
 import { getLearningPromptBlock, getSystemHealthMetrics } from "../_shared/learning-context-builder.ts";
@@ -8499,6 +8500,7 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
     });
   } catch (error) {
     console.error("Dashboard AI assistant error:", error);
+    await logError(error, { functionName: 'dashboard-ai-assistant', severity: 'error' });
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

@@ -2,6 +2,8 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "npm:zod@3.22.4";
 import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
 import { isTestContent, scoreSignalRelevance } from '../_shared/signal-relevance-scorer.ts';
+import { callAiGateway, callAiGatewayJson } from '../_shared/ai-gateway.ts';
+import { logError } from '../_shared/error-logger.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -226,21 +228,13 @@ Deno.serve(async (req) => {
 
         console.log(`Extracted ${contentForAnalysis.length} characters from website`);
 
-        const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-        
-        // Enhanced AI analysis with better prompting
-        const analysisResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-2.5-flash',
-            messages: [
-              {
-                role: 'system',
-                content: `You are a corporate security intelligence analyst specializing in threat assessment. Analyze web content for security-relevant information including:
+        // Enhanced AI analysis with better prompting (resilient)
+        const analysisResult = await callAiGateway({
+          model: 'google/gemini-2.5-flash',
+          messages: [
+            {
+              role: 'system',
+              content: `You are a corporate security intelligence analyst specializing in threat assessment. Analyze web content for security-relevant information including:
 - Direct threats or security incidents
 - Activist campaigns or protests targeting corporations
 - Legal disputes or regulatory actions
@@ -249,10 +243,10 @@ Deno.serve(async (req) => {
 - Supply chain or infrastructure vulnerabilities
 
 Provide a structured, actionable summary focused on business impact.`
-              },
-              {
-                role: 'user',
-                content: `Analyze this content from ${url}
+            },
+            {
+              role: 'user',
+              content: `Analyze this content from ${url}
 
 CONTENT:
 ${contentForAnalysis}
@@ -265,14 +259,15 @@ Provide a clear summary including:
 5. ACTIONABLE INTEL: What specific details (dates, locations, actors, tactics) are relevant for security teams?
 
 Be specific and concise. Focus on facts, not speculation.`
-              }
-            ],
-            max_completion_tokens: 1200
-          }),
+            }
+          ],
+          functionName: 'ingest-signal',
+          extraBody: { max_completion_tokens: 1200 },
+          dlqOnFailure: true,
+          dlqPayload: { url, signalText: signalText.substring(0, 500) },
         });
 
-        const analysisData = await analysisResponse.json();
-        const analysis = analysisData.choices?.[0]?.message?.content || '';
+        const analysis = analysisResult.content || '';
         
         signalText = `Website Analysis - ${url}\n\n${analysis}`;
         signalLocation = url;
@@ -326,37 +321,7 @@ Be specific and concise. Focus on facts, not speculation.`
     const rulesResult = applyRules(signalText);
     console.log('Rules matched:', rulesResult);
     
-    // Step 2: Enhance with AI classification
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          {
-            role: 'system',
-            content: `You are a security intelligence classifier. Analyze security events and extract:
-- normalized_text: clean summary
-- entity_tags: array of entities (IPs, domains, usernames)
-- location: geographic location if mentioned
-- category: type (malware, phishing, intrusion, data_exfil, etc)
-- severity: critical, high, medium, or low
-- confidence: 0-100 score
-Respond ONLY with valid JSON.`
-          },
-          {
-            role: 'user',
-            content: signalText
-          }
-        ],
-      }),
-    });
-
+    // Step 2: Enhance with AI classification (resilient)
     let classification = {
       normalized_text: signalText,
       entity_tags: [],
@@ -366,30 +331,36 @@ Respond ONLY with valid JSON.`
       confidence: 0.5
     };
 
-    if (aiResponse.ok) {
-      const aiData = await aiResponse.json();
-      const aiContent = aiData.choices?.[0]?.message?.content;
-      if (aiContent) {
-        try {
-          // Strip markdown code blocks if present
-          let jsonStr = aiContent.trim();
-          if (jsonStr.startsWith('```')) {
-            jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-          }
-          
-          const parsed = JSON.parse(jsonStr);
-          classification = { ...classification, ...parsed };
-          // Normalize confidence to 0-1 range
-          if (parsed.confidence && parsed.confidence > 1) {
-            classification.confidence = parsed.confidence / 100;
-          }
-          // Keep rules-based severity if matched
-          if (rulesResult.severity) {
-            classification.severity = rulesResult.severity;
-          }
-        } catch (e) {
-          console.error('Failed to parse AI response:', e);
-        }
+    const classResult = await callAiGatewayJson({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a security intelligence classifier. Analyze security events and extract:
+- normalized_text: clean summary
+- entity_tags: array of entities (IPs, domains, usernames)
+- location: geographic location if mentioned
+- category: type (malware, phishing, intrusion, data_exfil, etc)
+- severity: critical, high, medium, or low
+- confidence: 0-100 score
+Respond ONLY with valid JSON.`
+        },
+        { role: 'user', content: signalText }
+      ],
+      functionName: 'ingest-signal',
+      dlqOnFailure: true,
+      dlqPayload: { signalText: signalText.substring(0, 500) },
+    });
+
+    if (classResult.data) {
+      classification = { ...classification, ...classResult.data };
+      // Normalize confidence to 0-1 range
+      if (classResult.data.confidence && classResult.data.confidence > 1) {
+        classification.confidence = classResult.data.confidence / 100;
+      }
+      // Keep rules-based severity if matched
+      if (rulesResult.severity) {
+        classification.severity = rulesResult.severity;
       }
     }
 
