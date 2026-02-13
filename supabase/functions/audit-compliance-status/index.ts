@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -19,10 +20,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
-    }
+    // LOVABLE_API_KEY handled by callAiGateway
 
     // Fetch client data
     const { data: client, error: clientError } = await supabase
@@ -168,29 +166,22 @@ Conduct a comprehensive compliance audit for the specified policy area. Provide:
 
 Provide evidence-based findings derived from the operational data provided.`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are an expert compliance auditor specializing in security and operational compliance assessments.' },
-          { role: 'user', content: auditPrompt }
-        ],
-      }),
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are an expert compliance auditor specializing in security and operational compliance assessments.' },
+        { role: 'user', content: auditPrompt }
+      ],
+      functionName: 'audit-compliance-status',
+      dlqOnFailure: true,
+      dlqPayload: { client_id, policy_area },
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('AI Gateway error:', response.status, errorText);
+    if (aiResult.error) {
       throw new Error('AI Gateway error');
     }
 
-    const data = await response.json();
-    const auditReport = data.choices?.[0]?.message?.content;
+    const auditReport = aiResult.content;
 
     if (!auditReport) {
       throw new Error('No audit report generated');

@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -6,7 +7,7 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
-    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY")!;
+    // LOVABLE_API_KEY handled by callAiGateway;
 
     const { client_operation_flow, threat_scenario } = await req.json();
 
@@ -132,35 +133,28 @@ ANALYSIS REQUIREMENTS:
 
 Provide a structured, actionable failure point analysis with specific technical and operational details.`;
 
-    // Call AI for analysis
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${lovableApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          {
-            role: "system",
-            content: "You are a business continuity and operational resilience expert. Provide detailed, actionable analysis of critical failure points and vulnerabilities."
-          },
-          {
-            role: "user",
-            content: analysisPrompt
-          }
-        ],
-      }),
+    const aiResult = await callAiGateway({
+      model: "google/gemini-2.5-flash",
+      messages: [
+        {
+          role: "system",
+          content: "You are a business continuity and operational resilience expert. Provide detailed, actionable analysis of critical failure points and vulnerabilities."
+        },
+        {
+          role: "user",
+          content: analysisPrompt
+        }
+      ],
+      functionName: "identify-critical-failure-points",
+      dlqOnFailure: true,
+      dlqPayload: { client_operation_flow, threat_scenario },
     });
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      throw new Error(`AI API error: ${aiResponse.status} - ${errorText}`);
+    if (aiResult.error) {
+      throw new Error(`AI Gateway error: ${aiResult.error}`);
     }
 
-    const aiResult = await aiResponse.json();
-    const failureAnalysis = aiResult.choices[0].message.content;
+    const failureAnalysis = aiResult.content;
 
     // Extract structured findings
     const criticalPointsCount = (failureAnalysis.match(/Critical Failure Point/gi) || []).length;

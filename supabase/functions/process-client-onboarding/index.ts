@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -39,33 +40,25 @@ Deno.serve(async (req) => {
       onboarding_data: clientData,
     };
 
-    // Use AI to generate risk assessment
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          {
-            role: 'system',
-            content: `You are a security risk analyst. Analyze client onboarding data and provide:
+    // Use AI to generate risk assessment via resilient gateway
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a security risk analyst. Analyze client onboarding data and provide:
 - threat_profile: array of potential threats based on industry and assets
 - risk_score: 0-100 overall risk score
 - risk_factors: array of specific risk factors
 - recommendations: array of security recommendations
 Respond ONLY with valid JSON.`
-          },
-          {
-            role: 'user',
-            content: JSON.stringify(normalizedData)
-          }
-        ],
-      }),
+        },
+        {
+          role: 'user',
+          content: JSON.stringify(normalizedData)
+        }
+      ],
+      functionName: 'process-client-onboarding',
     });
 
     let riskAssessment = {
@@ -76,16 +69,12 @@ Respond ONLY with valid JSON.`
       generated_at: new Date().toISOString(),
     };
 
-    if (aiResponse.ok) {
-      const aiData = await aiResponse.json();
-      const aiContent = aiData.choices?.[0]?.message?.content;
-      if (aiContent) {
-        try {
-          const parsed = JSON.parse(aiContent);
-          riskAssessment = { ...riskAssessment, ...parsed, generated_at: new Date().toISOString() };
-        } catch (e) {
-          console.error('Failed to parse AI response:', e);
-        }
+    if (aiResult.content) {
+      try {
+        const parsed = JSON.parse(aiResult.content);
+        riskAssessment = { ...riskAssessment, ...parsed, generated_at: new Date().toISOString() };
+      } catch (e) {
+        console.error('Failed to parse AI response:', e);
       }
     }
 

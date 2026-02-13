@@ -1,15 +1,12 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
   try {
-    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY")!;
-    
-    if (!lovableApiKey) {
-      throw new Error("LOVABLE_API_KEY not configured");
-    }
+    // LOVABLE_API_KEY is handled by callAiGateway
     
     const supabase = createServiceClient();
 
@@ -124,34 +121,28 @@ CONVERSATIONAL STYLE:
 Generate a dynamic decision tree node that guides the analyst through optimal response workflow.`;
 
     // Call AI for decision guidance
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${lovableApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          {
-            role: "system",
-            content: "You are an expert incident response guide. Provide clear, step-by-step decision support to security analysts navigating complex incident response workflows. Focus on reducing cognitive load and ensuring consistent, optimal decisions."
-          },
-          {
-            role: "user",
-            content: guidancePrompt
-          }
-        ],
-      }),
+    const aiResult = await callAiGateway({
+      model: "google/gemini-2.5-flash",
+      messages: [
+        {
+          role: "system",
+          content: "You are an expert incident response guide. Provide clear, step-by-step decision support to security analysts navigating complex incident response workflows. Focus on reducing cognitive load and ensuring consistent, optimal decisions."
+        },
+        {
+          role: "user",
+          content: guidancePrompt
+        }
+      ],
+      functionName: "guide-decision-tree",
+      dlqOnFailure: true,
+      dlqPayload: { incident_id, current_state },
     });
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      throw new Error(`AI API error: ${aiResponse.status} - ${errorText}`);
+    if (aiResult.error) {
+      throw new Error(`AI Gateway error: ${aiResult.error}`);
     }
 
-    const aiResult = await aiResponse.json();
-    const guidance = aiResult.choices[0].message.content;
+    const guidance = aiResult.content;
 
     // Extract recommended next state from guidance
     const nextStateMatch = guidance.match(/next state[:\s]+(\w+)/i);
