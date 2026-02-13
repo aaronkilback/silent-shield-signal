@@ -6,6 +6,7 @@
  */
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -14,9 +15,6 @@ Deno.serve(async (req) => {
   try {
     const { image_url, source_type, source_id, analysis_focus } = await req.json();
     if (!image_url) throw new Error('image_url is required');
-
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY not configured');
 
     const supabase = createServiceClient();
     const focusPrompt = analysis_focus || 'general security analysis';
@@ -48,25 +46,22 @@ Output structured JSON with these fields:
 - security_relevance ("none" | "low" | "medium" | "high" | "critical")
 - summary (string, 1-2 sentences)`;
 
-    // Use tool calling for structured output
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3-pro-preview',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: `Analyze this image. Focus: ${focusPrompt}` },
-              { type: 'image_url', image_url: { url: image_url } },
-            ],
-          },
-        ],
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-3-pro-preview',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: `Analyze this image. Focus: ${focusPrompt}` },
+            { type: 'image_url', image_url: { url: image_url } },
+          ],
+        },
+      ],
+      functionName: 'vision-analysis',
+      dlqOnFailure: true,
+      dlqPayload: { source_type, source_id, analysis_focus },
+      extraBody: {
         tools: [{
           type: 'function',
           function: {
@@ -92,31 +87,20 @@ Output structured JSON with these fields:
         }],
         tool_choice: { type: 'function', function: { name: 'report_vision_analysis' } },
         max_tokens: 2000,
-      }),
+      },
     });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      if (response.status === 429) return errorResponse('Rate limited. Try again shortly.', 429);
-      if (response.status === 402) return errorResponse('AI credits exhausted.', 402);
-      throw new Error(`Vision API error: ${response.status} ${errText}`);
-    }
-
-    const data = await response.json();
 
     // Extract structured output from tool call
     let analysis: any = {};
-    const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+    const toolCall = aiResult.raw?.choices?.[0]?.message?.tool_calls?.[0];
     if (toolCall?.function?.arguments) {
       try {
         analysis = JSON.parse(toolCall.function.arguments);
       } catch {
-        // Fallback to parsing content
-        analysis = { summary: data.choices?.[0]?.message?.content || 'Analysis failed', confidence: 0.3 };
+        analysis = { summary: aiResult.content || 'Analysis failed', confidence: 0.3 };
       }
     } else {
-      // Fallback: use content as summary
-      analysis = { summary: data.choices?.[0]?.message?.content || 'No analysis', confidence: 0.3 };
+      analysis = { summary: aiResult.content || 'No analysis', confidence: 0.3 };
     }
 
     // Store results

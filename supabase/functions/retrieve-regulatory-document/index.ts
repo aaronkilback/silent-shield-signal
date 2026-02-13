@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 interface RegulatoryDocumentRequest {
   jurisdiction: string;
@@ -7,7 +8,6 @@ interface RegulatoryDocumentRequest {
   document_type?: 'act' | 'regulation' | 'standard' | 'guideline' | 'policy';
 }
 
-// Known regulatory documents and their key information
 const REGULATORY_DOCUMENTS: Record<string, Record<string, Record<string, unknown>>> = {
   'BC': {
     'Security Services Act': {
@@ -134,7 +134,6 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
 
     const { 
       jurisdiction, 
@@ -147,20 +146,16 @@ Deno.serve(async (req) => {
       return errorResponse('jurisdiction and document_name are required', 400);
     }
 
-    // Normalize jurisdiction
     const normalizedJurisdiction = jurisdiction.toUpperCase()
       .replace('BRITISH COLUMBIA', 'BC')
       .replace('FEDERAL', 'Canada');
 
-    // Check if we have this document in our registry
     const jurisdictionDocs = REGULATORY_DOCUMENTS[normalizedJurisdiction];
     let documentInfo = null;
     
     if (jurisdictionDocs) {
-      // Try exact match first
       documentInfo = jurisdictionDocs[document_name];
       
-      // If not found, try fuzzy match
       if (!documentInfo) {
         const docNames = Object.keys(jurisdictionDocs);
         const matchedName = docNames.find(name => 
@@ -173,14 +168,12 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Also check knowledge base for any stored documents
     const { data: kbDocs } = await supabase
       .from('archival_documents')
       .select('id, filename, summary, content_text, tags, metadata')
       .or(`filename.ilike.%${document_name}%,summary.ilike.%${document_name}%`)
       .limit(3);
 
-    // Build AI prompt for detailed document information
     const documentPrompt = `You are a legal document specialist with expertise in Canadian regulatory frameworks.
 
 Document Request:
@@ -256,37 +249,20 @@ Format as structured JSON:
   "disclaimer": "string"
 }`;
 
-    if (!lovableApiKey) {
-      return errorResponse('LOVABLE_API_KEY not configured', 500);
-    }
-
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${lovableApiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-pro',
-        messages: [
-          { role: 'system', content: 'You are a regulatory document expert specializing in Canadian law. Provide accurate, detailed information about regulatory documents with proper citations.' },
-          { role: 'user', content: documentPrompt }
-        ],
-        temperature: 0.2,
-        max_tokens: 4000,
-      }),
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-pro',
+      messages: [
+        { role: 'system', content: 'You are a regulatory document expert specializing in Canadian law. Provide accurate, detailed information about regulatory documents with proper citations.' },
+        { role: 'user', content: documentPrompt }
+      ],
+      functionName: 'retrieve-regulatory-document',
+      dlqOnFailure: true,
+      dlqPayload: { jurisdiction, document_name, section_or_part },
+      extraBody: { temperature: 0.2, max_tokens: 4000 },
     });
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      console.error('AI API error:', errorText);
-      return errorResponse(`Failed to retrieve document information: ${errorText}`, 500);
-    }
+    const responseContent = aiResult.content;
 
-    const aiData = await aiResponse.json();
-    const responseContent = aiData.choices?.[0]?.message?.content || '';
-
-    // Parse response
     let documentDetails;
     try {
       const jsonMatch = responseContent.match(/```json\n?([\s\S]*?)\n?```/) || 

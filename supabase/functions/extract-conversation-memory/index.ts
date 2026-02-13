@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -13,7 +14,6 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -70,7 +70,7 @@ Deno.serve(async (req) => {
       .map(m => `${m.role.toUpperCase()}: ${m.content}`)
       .join('\n\n');
 
-    if (lovableApiKey) {
+    try {
       const extractionPrompt = `Analyze this conversation and extract key facts, decisions, and preferences:
 
 ${conversationText.substring(0, 8000)}
@@ -84,87 +84,77 @@ Return JSON:
   "important_decisions": ["decision 1", ...]
 }`;
 
-      try {
-        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${lovableApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-2.5-flash',
-            messages: [{ role: 'user', content: extractionPrompt }],
-          }),
-        });
+      const aiResult = await callAiGateway({
+        model: 'google/gemini-2.5-flash',
+        messages: [{ role: 'user', content: extractionPrompt }],
+        functionName: 'extract-conversation-memory',
+        dlqOnFailure: false,
+      });
 
-        if (aiResponse.ok) {
-          const aiData = await aiResponse.json();
-          const responseContent = aiData.choices?.[0]?.message?.content || '';
-          
-          const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            const extracted = JSON.parse(jsonMatch[0]);
-            
-            await supabase
-              .from('conversation_summaries')
-              .upsert({
-                conversation_id,
-                user_id: user.id,
-                title: extracted.title || 'Archived conversation',
-                summary: extracted.summary || 'No summary available',
-                key_facts: extracted.key_facts || [],
-                message_count: messages.length,
-                first_message_at: messages[0].created_at,
-                last_message_at: messages[messages.length - 1].created_at,
-              }, { onConflict: 'conversation_id,user_id' });
+      const responseContent = aiResult.content || '';
+      
+      const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const extracted = JSON.parse(jsonMatch[0]);
+        
+        await supabase
+          .from('conversation_summaries')
+          .upsert({
+            conversation_id,
+            user_id: user.id,
+            title: extracted.title || 'Archived conversation',
+            summary: extracted.summary || 'No summary available',
+            key_facts: extracted.key_facts || [],
+            message_count: messages.length,
+            first_message_at: messages[0].created_at,
+            last_message_at: messages[messages.length - 1].created_at,
+          }, { onConflict: 'conversation_id,user_id' });
 
-            const memories = [
-              ...(extracted.key_facts || []).map((fact: string) => ({
-                user_id: user.id,
-                memory_type: 'fact',
-                content: fact,
-                context_tags: ['archived-conversation'],
-                importance_score: 0.7,
-                scope: 'user',
-              })),
-              ...(extracted.user_preferences || []).map((pref: string) => ({
-                user_id: user.id,
-                memory_type: 'preference',
-                content: pref,
-                context_tags: ['archived-conversation'],
-                importance_score: 0.8,
-                scope: 'user',
-              })),
-              ...(extracted.important_decisions || []).map((dec: string) => ({
-                user_id: user.id,
-                memory_type: 'decision',
-                content: dec,
-                context_tags: ['archived-conversation'],
-                importance_score: 0.9,
-                scope: 'user',
-              })),
-            ];
+        const memories = [
+          ...(extracted.key_facts || []).map((fact: string) => ({
+            user_id: user.id,
+            memory_type: 'fact',
+            content: fact,
+            context_tags: ['archived-conversation'],
+            importance_score: 0.7,
+            scope: 'user',
+          })),
+          ...(extracted.user_preferences || []).map((pref: string) => ({
+            user_id: user.id,
+            memory_type: 'preference',
+            content: pref,
+            context_tags: ['archived-conversation'],
+            importance_score: 0.8,
+            scope: 'user',
+          })),
+          ...(extracted.important_decisions || []).map((dec: string) => ({
+            user_id: user.id,
+            memory_type: 'decision',
+            content: dec,
+            context_tags: ['archived-conversation'],
+            importance_score: 0.9,
+            scope: 'user',
+          })),
+        ];
 
-            if (memories.length > 0) {
-              await supabase.from('conversation_memory').insert(memories);
-            }
-
-            console.log(`[MemoryExtract] Extracted ${memories.length} memories`);
-
-            return new Response(
-              JSON.stringify({
-                success: true,
-                memories_extracted: memories.length,
-                title: extracted.title,
-                summary: extracted.summary,
-              }),
-              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            );
-          }
+        if (memories.length > 0) {
+          await supabase.from('conversation_memory').insert(memories);
         }
-      } catch (aiError) {
-        console.error('[MemoryExtract] AI extraction failed:', aiError);
+
+        console.log(`[MemoryExtract] Extracted ${memories.length} memories`);
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            memories_extracted: memories.length,
+            title: extracted.title,
+            summary: extracted.summary,
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
       }
+    } catch (aiError) {
+      console.error('[MemoryExtract] AI extraction failed:', aiError);
     }
 
     // Fallback without AI

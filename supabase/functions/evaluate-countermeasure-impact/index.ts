@@ -1,4 +1,5 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -7,11 +8,6 @@ Deno.serve(async (req) => {
   try {
     const { countermeasure_plan, threat_scenario_id } = await req.json();
     console.log('[CountermeasureImpact] Evaluating countermeasure impact for scenario:', threat_scenario_id);
-
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      return errorResponse('LOVABLE_API_KEY not configured', 500);
-    }
 
     const supabase = createServiceClient();
 
@@ -63,29 +59,18 @@ Consider:
 
 Provide a structured evaluation that helps security teams prioritize countermeasure deployment.`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are an expert defense analyst specializing in tactical security evaluation and optimization.' },
-          { role: 'user', content: evaluationPrompt }
-        ],
-      }),
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are an expert defense analyst specializing in tactical security evaluation and optimization.' },
+        { role: 'user', content: evaluationPrompt }
+      ],
+      functionName: 'evaluate-countermeasure-impact',
+      dlqOnFailure: true,
+      dlqPayload: { threat_scenario_id, countermeasure_plan },
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('[CountermeasureImpact] AI Gateway error:', response.status, errorText);
-      return errorResponse('AI Gateway error', 500);
-    }
-
-    const data = await response.json();
-    const evaluation = data.choices?.[0]?.message?.content;
+    const evaluation = aiResult.content;
 
     if (!evaluation) {
       return errorResponse('No evaluation generated', 500);

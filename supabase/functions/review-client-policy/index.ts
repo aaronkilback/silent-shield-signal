@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 interface ClientPolicyRequest {
   client_id?: string;
@@ -14,7 +15,6 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
 
     const { 
       client_id,
@@ -22,7 +22,7 @@ Deno.serve(async (req) => {
       policy_name,
       policy_type = 'all',
       analysis_type = 'summary'
-    }: ClientPolicyRequest = await req.json();
+    } = await req.json();
 
     if (!client_id && !client_name) {
       return errorResponse('Either client_id or client_name is required', 400);
@@ -180,35 +180,19 @@ Format as structured JSON:
   ]
 }`;
 
-    if (!lovableApiKey) {
-      return errorResponse('LOVABLE_API_KEY not configured', 500);
-    }
-
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${lovableApiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-pro',
-        messages: [
-          { role: 'system', content: 'You are a policy analysis expert specializing in security, HR, and operational policies. Provide thorough, actionable analysis while maintaining confidentiality.' },
-          { role: 'user', content: analysisPrompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 4000,
-      }),
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-pro',
+      messages: [
+        { role: 'system', content: 'You are a policy analysis expert specializing in security, HR, and operational policies. Provide thorough, actionable analysis while maintaining confidentiality.' },
+        { role: 'user', content: analysisPrompt }
+      ],
+      functionName: 'review-client-policy',
+      dlqOnFailure: true,
+      dlqPayload: { client_id: client.id, policy_type, analysis_type },
+      extraBody: { temperature: 0.3, max_tokens: 4000 },
     });
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      console.error('AI API error:', errorText);
-      return errorResponse(`Failed to analyze policies: ${errorText}`, 500);
-    }
-
-    const aiData = await aiResponse.json();
-    const responseContent = aiData.choices?.[0]?.message?.content || '';
+    const responseContent = aiResult.content;
 
     // Parse response
     let analysisResults;

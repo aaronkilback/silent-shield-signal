@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -23,11 +24,6 @@ Deno.serve(async (req) => {
     if (userError || !userData?.user) {
       console.error("Failed to load user:", userError);
       return errorResponse("Unauthorized", 401);
-    }
-
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY not configured");
     }
 
     console.log(`Processing travel security report: ${file_name} from ${provider}`);
@@ -66,32 +62,30 @@ Extract the following information in a structured JSON format:
 
 Parse the document content carefully and extract all relevant security intelligence.`;
 
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
-        messages: [
-          {
-            role: "system",
-            content: "You are an expert at parsing security briefing documents from providers like International SOS, Control Risks, and other security consultancies. Extract structured intelligence data accurately."
-          },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:${file_type};base64,${file_base64}`
-                }
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-pro',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an expert at parsing security briefing documents from providers like International SOS, Control Risks, and other security consultancies. Extract structured intelligence data accurately.'
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:${file_type};base64,${file_base64}`
               }
-            ]
-          }
-        ],
+            }
+          ]
+        }
+      ],
+      functionName: 'parse-travel-security-report',
+      dlqOnFailure: true,
+      dlqPayload: { file_name, provider },
+      extraBody: {
         tools: [
           {
             type: "function",
@@ -149,17 +143,11 @@ Parse the document content carefully and extract all relevant security intellige
           type: "function",
           function: { name: "extract_security_intelligence" }
         }
-      }),
+      },
     });
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      console.error("AI parsing failed:", errorText);
-      throw new Error("Failed to parse security report");
-    }
-
-    const aiData = await aiResponse.json();
-    const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+    // Extract structured output from tool call
+    const toolCall = aiResult.raw?.choices?.[0]?.message?.tool_calls?.[0];
     
     if (!toolCall) {
       throw new Error("No structured data extracted from report");

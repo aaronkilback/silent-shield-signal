@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -7,11 +8,6 @@ const corsHeaders = {
 
 /**
  * Auto-enrich entities with generic descriptions
- * 
- * Workflow:
- * 1. Identify entities with generic/missing descriptions
- * 2. Search for more details via OSINT and internal data
- * 3. Propose updates for human review (or auto-apply if configured)
  */
 
 const GENERIC_PATTERNS = [
@@ -27,7 +23,7 @@ const GENERIC_PATTERNS = [
   /^\.$/,
 ];
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -35,7 +31,6 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const { 
@@ -51,7 +46,6 @@ serve(async (req) => {
     let entitiesToProcess: any[] = [];
 
     if (batch_mode) {
-      // Find entities with generic descriptions
       const { data: allEntities } = await supabase
         .from('entities')
         .select('id, name, type, description, risk_level, aliases, threat_indicators, client_id')
@@ -89,13 +83,9 @@ serve(async (req) => {
         // Gather internal context about this entity
         let internalContext = '';
 
-        // Check for mentions in signals
         const { data: mentions } = await supabase
           .from('entity_mentions')
-          .select(`
-            context,
-            signal:signals(normalized_text, category, severity)
-          `)
+          .select(`context, signal:signals(normalized_text, category, severity)`)
           .eq('entity_id', entity.id)
           .order('created_at', { ascending: false })
           .limit(5);
@@ -106,13 +96,9 @@ serve(async (req) => {
           ).join('\n');
         }
 
-        // Check for related documents
         const { data: docMentions } = await supabase
           .from('document_entity_mentions')
-          .select(`
-            mention_text,
-            document:ingested_documents(title)
-          `)
+          .select(`mention_text, document:ingested_documents(title)`)
           .eq('entity_id', entity.id)
           .limit(5);
 
@@ -122,19 +108,12 @@ serve(async (req) => {
           ).join('\n');
         }
 
-        // Use AI to enrich the entity
-        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-2.5-flash',
-            messages: [
-              {
-                role: 'system',
-                content: `You are a corporate security intelligence analyst. Enrich entity profiles with relevant, actionable information.
+        const aiResult = await callAiGateway({
+          model: 'google/gemini-2.5-flash',
+          messages: [
+            {
+              role: 'system',
+              content: `You are a corporate security intelligence analyst. Enrich entity profiles with relevant, actionable information.
 
 Based on the entity name, type, and any available context, provide:
 1. A comprehensive description (2-4 sentences focusing on security relevance)
@@ -144,10 +123,10 @@ Based on the entity name, type, and any available context, provide:
 5. Associations with other entities/groups
 
 Be factual and specific. If you cannot determine information with confidence, indicate uncertainty.`
-              },
-              {
-                role: 'user',
-                content: `Enrich this entity profile:
+            },
+            {
+              role: 'user',
+              content: `Enrich this entity profile:
 
 Name: ${entity.name}
 Type: ${entity.type}
@@ -155,8 +134,12 @@ Current Description: ${entity.description || 'None'}
 Known Aliases: ${(entity.aliases || []).join(', ') || 'None'}
 
 ${internalContext ? `Internal Intelligence:\n${internalContext}` : 'No internal intelligence available'}`
-              }
-            ],
+            }
+          ],
+          functionName: 'auto-enrich-entities',
+          dlqOnFailure: true,
+          dlqPayload: { entity_id: entity.id, entity_name: entity.name },
+          extraBody: {
             tools: [
               {
                 type: "function",
@@ -166,44 +149,14 @@ ${internalContext ? `Internal Intelligence:\n${internalContext}` : 'No internal 
                   parameters: {
                     type: "object",
                     properties: {
-                      description: {
-                        type: "string",
-                        description: "Comprehensive 2-4 sentence description"
-                      },
-                      aliases: {
-                        type: "array",
-                        items: { type: "string" },
-                        description: "Known alternate names"
-                      },
-                      threat_indicators: {
-                        type: "array",
-                        items: { type: "string" },
-                        description: "Security threat indicators"
-                      },
-                      risk_level: {
-                        type: "string",
-                        enum: ["critical", "high", "medium", "low", "unknown"],
-                        description: "Assessed risk level"
-                      },
-                      risk_justification: {
-                        type: "string",
-                        description: "Explanation for risk assessment"
-                      },
-                      associations: {
-                        type: "array",
-                        items: { type: "string" },
-                        description: "Related entities or groups"
-                      },
-                      confidence: {
-                        type: "number",
-                        minimum: 0,
-                        maximum: 1,
-                        description: "Confidence in the enrichment accuracy"
-                      },
-                      needs_human_review: {
-                        type: "boolean",
-                        description: "True if information is uncertain and needs verification"
-                      }
+                      description: { type: "string", description: "Comprehensive 2-4 sentence description" },
+                      aliases: { type: "array", items: { type: "string" }, description: "Known alternate names" },
+                      threat_indicators: { type: "array", items: { type: "string" }, description: "Security threat indicators" },
+                      risk_level: { type: "string", enum: ["critical", "high", "medium", "low", "unknown"], description: "Assessed risk level" },
+                      risk_justification: { type: "string", description: "Explanation for risk assessment" },
+                      associations: { type: "array", items: { type: "string" }, description: "Related entities or groups" },
+                      confidence: { type: "number", minimum: 0, maximum: 1, description: "Confidence in the enrichment accuracy" },
+                      needs_human_review: { type: "boolean", description: "True if information is uncertain and needs verification" }
                     },
                     required: ["description", "confidence"],
                     additionalProperties: false
@@ -212,15 +165,10 @@ ${internalContext ? `Internal Intelligence:\n${internalContext}` : 'No internal 
               }
             ],
             tool_choice: { type: "function", function: { name: "enrich_entity_profile" } }
-          }),
+          },
         });
 
-        if (!aiResponse.ok) {
-          throw new Error(`AI gateway error: ${aiResponse.status}`);
-        }
-
-        const aiData = await aiResponse.json();
-        const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+        const toolCall = aiResult.raw?.choices?.[0]?.message?.tool_calls?.[0];
 
         if (!toolCall) {
           throw new Error('No tool call in AI response');
@@ -228,13 +176,11 @@ ${internalContext ? `Internal Intelligence:\n${internalContext}` : 'No internal 
 
         const enrichment = JSON.parse(toolCall.function.arguments);
 
-        // Determine if we should apply the update
         const shouldApply = auto_apply && 
           enrichment.confidence >= min_confidence && 
           !enrichment.needs_human_review;
 
         if (shouldApply) {
-          // Apply the enrichment directly
           const updatePayload: any = {
             description: enrichment.description,
             risk_level: enrichment.risk_level || entity.risk_level,
@@ -251,10 +197,7 @@ ${internalContext ? `Internal Intelligence:\n${internalContext}` : 'No internal 
             updatePayload.threat_indicators = [...new Set([...existingIndicators, ...enrichment.threat_indicators])];
           }
 
-          await supabase
-            .from('entities')
-            .update(updatePayload)
-            .eq('id', entity.id);
+          await supabase.from('entities').update(updatePayload).eq('id', entity.id);
 
           results.push({
             entity_id: entity.id,
@@ -272,7 +215,6 @@ ${internalContext ? `Internal Intelligence:\n${internalContext}` : 'No internal 
           console.log(`[auto-enrich-entities] Applied enrichment to ${entity.name}`);
 
         } else {
-          // Create a suggestion for human review
           await supabase
             .from('entity_suggestions')
             .insert({
