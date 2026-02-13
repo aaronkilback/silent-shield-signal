@@ -24,6 +24,7 @@ import html2canvas from 'html2canvas';
 import { LocationsMap } from "@/components/LocationsMap";
 import DOMPurify from 'dompurify';
 import { ImageLightbox } from "@/components/ui/image-lightbox";
+import { EntityPersonLookup } from "@/components/investigations/EntityPersonLookup";
 
 // Configure DOMPurify for safe HTML rendering in reports
 const sanitizeHtml = (html: string): string => {
@@ -1084,10 +1085,16 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                       <SelectItem value="other">Other</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Input 
-                    placeholder="Name"
+                  <EntityPersonLookup
                     value={newPersonName}
-                    onChange={(e) => setNewPersonName(e.target.value)}
+                    onChange={setNewPersonName}
+                    onEntitySelect={(entity) => {
+                      const attrs = entity.attributes as Record<string, string> | null;
+                      if (attrs?.phone) setNewPersonPhone(attrs.phone);
+                      if (attrs?.position) setNewPersonPosition(attrs.position);
+                      if (attrs?.company) setNewPersonCompany(attrs.company);
+                      if (entity.type === 'organization') setNewPersonCompany(entity.name);
+                    }}
                   />
                   <Input 
                     placeholder="Phone"
