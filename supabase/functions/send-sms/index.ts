@@ -15,6 +15,15 @@ const corsHeaders = {
  * Supports multi-investigator conversations per case.
  */
 
+// Normalize phone to E.164 format (+1XXXXXXXXXX)
+function normalizePhone(phone: string): string {
+  const digits = phone.replace(/[^\d+]/g, '');
+  if (digits.startsWith('+')) return digits;
+  if (digits.length === 10) return '+1' + digits;
+  if (digits.length === 11 && digits.startsWith('1')) return '+' + digits;
+  return '+' + digits;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -59,6 +68,9 @@ Deno.serve(async (req: Request) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    // Normalize recipient phone number to E.164
+    const normalizedTo = normalizePhone(to_number);
 
     // Resolve investigation_id: accept either UUID or file_number
     const trimmedId = String(investigation_id).trim();
@@ -130,7 +142,7 @@ Deno.serve(async (req: Request) => {
     // Send via Twilio REST API
     const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`;
     const twilioBody = new URLSearchParams({
-      To: to_number,
+      To: normalizedTo,
       From: twilioFrom,
       Body: fullMessage,
     });
@@ -166,7 +178,7 @@ Deno.serve(async (req: Request) => {
     const investigatorName = profile?.name || "Unknown Investigator";
 
     // Create investigation entry for unified timeline
-    const entryText = `[SMS SENT — To: ${contact_name || to_number} — ${now}]\n\n${message}`;
+    const entryText = `[SMS SENT — To: ${contact_name || normalizedTo} — ${now}]\n\n${message}`;
     const { data: entry, error: entryError } = await supabase
       .from("investigation_entries")
       .insert({
@@ -188,7 +200,7 @@ Deno.serve(async (req: Request) => {
         investigation_id: investigation.id,
         investigator_user_id: userId,
         contact_name: contact_name || null,
-        contact_identifier: to_number,
+        contact_identifier: normalizedTo,
         channel: "sms",
         direction: "outbound",
         message_body: message,

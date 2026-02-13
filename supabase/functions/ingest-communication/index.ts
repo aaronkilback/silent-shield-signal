@@ -35,6 +35,15 @@ function extractCaseReference(text: string): string | null {
   return null;
 }
 
+// Normalize phone to E.164 format (+1XXXXXXXXXX)
+function normalizePhone(phone: string): string {
+  const digits = phone.replace(/[^\d+]/g, '');
+  if (digits.startsWith('+')) return digits;
+  if (digits.length === 10) return '+1' + digits;
+  if (digits.length === 11 && digits.startsWith('1')) return '+' + digits;
+  return '+' + digits;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -56,7 +65,7 @@ Deno.serve(async (req: Request) => {
     if (contentType.includes("application/x-www-form-urlencoded")) {
       source = "sms";
       const formData = await req.formData();
-      senderIdentifier = formData.get("From")?.toString() || "";
+      senderIdentifier = normalizePhone(formData.get("From")?.toString() || "");
       messageBody = formData.get("Body")?.toString() || "";
       metadata = {
         twilio_sid: formData.get("MessageSid")?.toString() || "",
