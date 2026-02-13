@@ -1,4 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGateway, callAiGatewayJson } from "../_shared/ai-gateway.ts";
+import { logError } from "../_shared/error-logger.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -329,21 +331,6 @@ Provide a JSON response with exactly this structure:
 Be specific, cite EXACT data from above, and use executive-appropriate language. DO NOT claim clusters or groups that don't exist in the data.`;
 
     console.log('Generating executive flash banner...');
-    const flashResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are a security intelligence advisor. Always respond with valid JSON only, no markdown.' },
-          { role: 'user', content: flashPrompt }
-        ],
-      }),
-    });
-
     let executiveFlash = {
       mostPressingIssue: 'Intelligence analysis in progress',
       confidence: 'Medium',
@@ -352,19 +339,15 @@ Be specific, cite EXACT data from above, and use executive-appropriate language.
       deadlineUrgency: '48 hours'
     };
 
-    if (flashResponse.ok) {
-      try {
-        const flashData = await flashResponse.json();
-        const content = flashData.choices?.[0]?.message?.content || '';
-        // Extract JSON from response
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          executiveFlash = JSON.parse(jsonMatch[0]);
-        }
-      } catch (e) {
-        console.error('Error parsing flash response:', e);
-      }
-    }
+    const flashResult = await callAiGatewayJson({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are a security intelligence advisor. Always respond with valid JSON only, no markdown.' },
+        { role: 'user', content: flashPrompt }
+      ],
+      functionName: 'generate-executive-report',
+    });
+    if (flashResult.data) executiveFlash = flashResult.data;
 
     // Generate Impact Ladders for top issues
     const impactPrompt = `As a security strategist, create impact ladders for the top 3 threats facing ${client.name}.
@@ -385,34 +368,16 @@ For each major threat, provide a JSON array with this structure:
 Provide exactly 3 impact ladders. Be specific and actionable. Use executive language.`;
 
     console.log('Generating impact ladders...');
-    const impactResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are a strategic security advisor. Always respond with valid JSON only.' },
-          { role: 'user', content: impactPrompt }
-        ],
-      }),
-    });
-
     let impactLadders: ImpactLadder[] = [];
-    if (impactResponse.ok) {
-      try {
-        const impactData = await impactResponse.json();
-        const content = impactData.choices?.[0]?.message?.content || '';
-        const jsonMatch = content.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          impactLadders = JSON.parse(jsonMatch[0]);
-        }
-      } catch (e) {
-        console.error('Error parsing impact response:', e);
-      }
-    }
+    const impactResult = await callAiGatewayJson<ImpactLadder[]>({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are a strategic security advisor. Always respond with valid JSON only.' },
+        { role: 'user', content: impactPrompt }
+      ],
+      functionName: 'generate-executive-report',
+    });
+    if (impactResult.data) impactLadders = impactResult.data;
 
     // Generate executive summary with tone transformation
     const summaryPrompt = `You are a security intelligence analyst creating an executive summary for ${client.name}.
@@ -451,26 +416,16 @@ Write a professional 2-3 paragraph executive summary that:
 CRITICAL: Do NOT claim incidents "appeared" or "emerged" on dates other than their actual opened_at dates. Do NOT fabricate clusters or groups.`;
 
     console.log('Generating executive summary...');
-    const summaryResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are a professional security intelligence analyst writing for C-level executives. Use formal, business-appropriate language.' },
-          { role: 'user', content: summaryPrompt }
-        ],
-      }),
-    });
-
     let executiveSummary = 'Analysis in progress...';
-    if (summaryResponse.ok) {
-      const summaryData = await summaryResponse.json();
-      executiveSummary = applyToneTransformation(summaryData.choices?.[0]?.message?.content || executiveSummary);
-    }
+    const summaryResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are a professional security intelligence analyst writing for C-level executives. Use formal, business-appropriate language.' },
+        { role: 'user', content: summaryPrompt }
+      ],
+      functionName: 'generate-executive-report',
+    });
+    if (summaryResult.content) executiveSummary = applyToneTransformation(summaryResult.content);
 
     // Generate action items with ownership suggestions
     const actionsPrompt = `As a security operations advisor, create 3-5 actionable recommendations for ${client.name}.
@@ -496,58 +451,47 @@ For each recommendation, provide JSON:
 Be specific and actionable. Max 5 items.`;
 
     console.log('Generating action items...');
-    const actionsResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are a security operations advisor. Always respond with valid JSON only.' },
-          { role: 'user', content: actionsPrompt }
-        ],
-      }),
+    let actionItems: ActionItem[] = [];
+    const actionsResult = await callAiGatewayJson({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are a security operations advisor. Always respond with valid JSON only.' },
+        { role: 'user', content: actionsPrompt }
+      ],
+      functionName: 'generate-executive-report',
     });
 
-    let actionItems: ActionItem[] = [];
-    if (actionsResponse.ok) {
+    if (actionsResult.data) {
       try {
-        const actionsData = await actionsResponse.json();
-        const content = actionsData.choices?.[0]?.message?.content || '';
-        const jsonMatch = content.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          const rawActions = JSON.parse(jsonMatch[0]);
-          const now = new Date();
-          actionItems = rawActions.map((a: any) => {
-            const deadline = new Date(now);
-            deadline.setDate(deadline.getDate() + (a.deadlineDays || 7));
-            const firstUpdate = new Date(now);
-            firstUpdate.setDate(firstUpdate.getDate() + (a.firstUpdateDays || 2));
-            
-            // Try to find a matching team member
-            let ownerName = a.ownerRole;
-            let ownerId: string | undefined;
-            for (const [id, member] of teamMap) {
-              if (member.roles.some(r => a.ownerRole.toLowerCase().includes(r))) {
-                ownerId = id;
-                ownerName = member.name;
-                break;
-              }
+        const rawActions = actionsResult.data;
+        const now = new Date();
+        actionItems = rawActions.map((a: any) => {
+          const deadline = new Date(now);
+          deadline.setDate(deadline.getDate() + (a.deadlineDays || 7));
+          const firstUpdate = new Date(now);
+          firstUpdate.setDate(firstUpdate.getDate() + (a.firstUpdateDays || 2));
+          
+          // Try to find a matching team member
+          let ownerName = a.ownerRole;
+          let ownerId: string | undefined;
+          for (const [id, member] of teamMap) {
+            if (member.roles.some(r => a.ownerRole.toLowerCase().includes(r))) {
+              ownerId = id;
+              ownerName = member.name;
+              break;
             }
+          }
 
-            return {
-              description: a.description,
-              ownerId,
-              ownerName,
-              ownerRole: a.ownerRole,
-              deadline: deadline.toISOString(),
-              firstUpdateDue: firstUpdate.toISOString(),
-              priority: a.priority || 'medium'
-            };
-          });
-        }
+          return {
+            description: a.description,
+            ownerId,
+            ownerName,
+            ownerRole: a.ownerRole,
+            deadline: deadline.toISOString(),
+            firstUpdateDue: firstUpdate.toISOString(),
+            priority: a.priority || 'medium'
+          };
+        });
       } catch (e) {
         console.error('Error parsing actions response:', e);
       }
@@ -570,26 +514,16 @@ Write 2-3 deduction paragraphs that:
 Use professional executive language.`;
 
     console.log('Generating strategic deductions...');
-    const deductionsResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are a strategic security analyst providing executive-level threat assessment.' },
-          { role: 'user', content: deductionsPrompt }
-        ],
-      }),
-    });
-
     let deductions = 'Analysis in progress...';
-    if (deductionsResponse.ok) {
-      const deductionsData = await deductionsResponse.json();
-      deductions = applyToneTransformation(deductionsData.choices?.[0]?.message?.content || deductions);
-    }
+    const deductionsResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are a strategic security analyst providing executive-level threat assessment.' },
+        { role: 'user', content: deductionsPrompt }
+      ],
+      functionName: 'generate-executive-report',
+    });
+    if (deductionsResult.content) deductions = applyToneTransformation(deductionsResult.content);
 
     // Generate detailed narratives
     const narrativesPromises = Object.entries(signalsByCategory)
@@ -610,30 +544,20 @@ Write 2-3 paragraphs that:
 
 Use executive-appropriate language.`;
 
-        const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-2.5-flash',
-            messages: [
-              { role: 'system', content: 'You are an intelligence analyst writing for executives.' },
-              { role: 'user', content: narrativePrompt }
-            ],
-          }),
+        const narrativeResult = await callAiGateway({
+          model: 'google/gemini-2.5-flash',
+          messages: [
+            { role: 'system', content: 'You are an intelligence analyst writing for executives.' },
+            { role: 'user', content: narrativePrompt }
+          ],
+          functionName: 'generate-executive-report',
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          return {
-            category,
-            narrative: applyToneTransformation(data.choices?.[0]?.message?.content || 'Analysis unavailable'),
-            signals: topSignals
-          };
-        }
-        return { category, narrative: 'Analysis unavailable', signals: topSignals };
+        return {
+          category,
+          narrative: applyToneTransformation(narrativeResult.content || 'Analysis unavailable'),
+          signals: topSignals
+        };
       });
 
     console.log('Generating detailed narratives...');
