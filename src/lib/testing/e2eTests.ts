@@ -1930,7 +1930,7 @@ export const writePathTests = {
             type: 'location',
             client_id: clients?.[0]?.id || null,
             risk_level: 'low',
-            entity_status: 'active',
+            entity_status: 'confirmed',
             is_active: true,
           })
           .select('id')
