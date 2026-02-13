@@ -23,6 +23,7 @@ Deno.serve(async (req) => {
     let userId: string | null = null;
     let notes: string | null = null;
     let correction: string | null = null;
+    let reasonContext: Record<string, string> | null = null;
 
     if (req.method === 'GET') {
       // From email link clicks
@@ -38,6 +39,11 @@ Deno.serve(async (req) => {
       userId = body.userId;
       notes = body.notes;
       correction = body.correction;
+      // Accept contextual reason from in-app feedback
+      reasonContext = body.feedbackContext || null;
+      if (reasonContext && !notes && reasonContext.reason_label) {
+        notes = reasonContext.reason_label;
+      }
     }
 
     if (!feedback) {
@@ -86,6 +92,7 @@ Deno.serve(async (req) => {
       feedback_context: {
         date: date || new Date().toISOString().slice(0, 10),
         source: req.method === 'GET' ? 'email_link' : 'api',
+        ...(reasonContext || {}),
       },
     });
 

@@ -41,6 +41,7 @@ import SuperAdminDashboard from "./pages/SuperAdminDashboard";
 import VIPDeepScan from "./pages/VIPDeepScan";
 import Consortia from "./pages/Consortia";
 import IntelligenceHub from "./pages/IntelligenceHub";
+import BriefingFeedback from "./pages/BriefingFeedback";
 import { EnsureDefaultRole } from "@/components/EnsureDefaultRole";
 import { TenantProvider } from "@/hooks/useTenant";
 
@@ -91,6 +92,7 @@ const App = () => (
                 <Route path="/vip-deep-scan" element={<VIPDeepScan />} />
                 <Route path="/consortia" element={<Consortia />} />
                 <Route path="/intelligence-hub" element={<IntelligenceHub />} />
+                <Route path="/briefing-feedback" element={<BriefingFeedback />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
