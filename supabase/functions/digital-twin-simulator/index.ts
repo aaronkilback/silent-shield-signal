@@ -1,15 +1,11 @@
 /**
  * Tier 7: Digital Twin Simulation Engine
- * 
- * Full scenario simulation combining:
- * - What-if analysis for principals and assets
- * - Attack chain modeling against real asset inventory
- * - Red team scenario generation from live threat intel
- * - Cross-referencing adversary capabilities with defenses
  */
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { getCriticalDateContext } from "../_shared/anti-hallucination.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { logError } from "../_shared/error-logger.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -18,16 +14,13 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
     const {
-      simulation_type, // 'travel_risk' | 'attack_chain' | 'adversary_action' | 'compound_crisis'
+      simulation_type,
       target_entity_id,
       target_client_id,
       scenario_parameters,
     } = body;
 
     const supabase = createServiceClient();
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY not configured');
-
     const dateContext = getCriticalDateContext();
     const simType = simulation_type || 'compound_crisis';
 
@@ -46,41 +39,27 @@ Deno.serve(async (req) => {
 
     // ========== GATHER INTELLIGENCE CONTEXT ==========
     const [
-      entityData,
-      clientData,
-      recentThreats,
-      activeIncidents,
-      vulnerabilities,
-      travelData,
-      adversaryEntities,
-      playbooks,
+      entityData, clientData, recentThreats, activeIncidents,
+      vulnerabilities, travelData, adversaryEntities, playbooks,
     ] = await Promise.all([
-      // Target entity profile
       target_entity_id
         ? supabase.from('entities').select('*').eq('id', target_entity_id).single().then(r => r.data)
         : Promise.resolve(null),
-      // Target client profile
       target_client_id
         ? supabase.from('clients').select('*').eq('id', target_client_id).single().then(r => r.data)
         : Promise.resolve(null),
-      // Recent threat signals
       supabase.from('signals').select('id, title, category, severity, normalized_text, location, entity_tags, created_at')
         .order('created_at', { ascending: false }).limit(50).then(r => r.data || []),
-      // Active incidents
       supabase.from('incidents').select('id, priority, status, severity_level')
         .eq('status', 'open').limit(20).then(r => r.data || []),
-      // Known vulnerabilities
       supabase.from('asset_vulnerabilities').select('id, vulnerability_id, severity, cvss_score, remediation_status, affected_component')
         .eq('remediation_status', 'open').order('cvss_score', { ascending: false }).limit(20).then(r => r.data || []),
-      // Travel data (if entity is a person)
       target_entity_id
         ? supabase.from('travelers').select('id, name, itineraries(*)').limit(5).then(r => r.data || [])
         : Promise.resolve([]),
-      // Adversary entities
       supabase.from('entities').select('id, name, type, threat_score, risk_level, description')
         .in('type', ['threat_actor', 'adversary', 'competitor'])
         .order('threat_score', { ascending: false }).limit(10).then(r => r.data || []),
-      // Existing playbooks for context
       supabase.from('investigation_playbooks').select('name, threat_category, steps, countermeasures, effectiveness_score')
         .eq('is_active', true).order('effectiveness_score', { ascending: false }).limit(5).then(r => r.data || []),
     ]);
@@ -141,18 +120,7 @@ ${playbooks.flatMap(p => (p.countermeasures as any[] || []).map((c: any) => `- $
 `;
 
     // ========== RUN SIMULATION ==========
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3-pro-preview',
-        messages: [
-          {
-            role: 'system',
-            content: `You are a senior Red Team simulation architect and crisis management expert. Run realistic threat simulations using real intelligence data. Your simulations must be:
+    const systemPrompt = `You are a senior Red Team simulation architect and crisis management expert. Run realistic threat simulations using real intelligence data. Your simulations must be:
 1. Grounded in the actual threat landscape data provided
 2. Specific with timelines, probabilities, and decision points
 3. Actionable with clear countermeasures
@@ -211,24 +179,25 @@ OUTPUT FORMAT (respond ONLY with valid JSON):
     "residual_risks": ["Risk 1"]
   },
   "lessons_applicable": ["Relevant past lessons"]
-}`,
-          },
-          {
-            role: 'user',
-            content: `${prompt}\n\n${contextBlock}`,
-          },
-        ],
-        max_tokens: 4000,
-        temperature: 0.4,
-      }),
+}`;
+
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-3-pro-preview',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `${prompt}\n\n${contextBlock}` },
+      ],
+      functionName: 'digital-twin-simulator',
+      extraBody: { max_tokens: 4000, temperature: 0.4 },
+      dlqOnFailure: true,
+      dlqPayload: { simulation_type: simType, target_entity_id, target_client_id },
     });
 
-    if (!aiResponse.ok) {
-      throw new Error(`AI simulation error: ${aiResponse.status}`);
+    if (aiResult.error) {
+      throw new Error(aiResult.error);
     }
 
-    const aiData = await aiResponse.json();
-    const content = aiData.choices?.[0]?.message?.content || '';
+    const content = aiResult.content || '';
 
     let simulationResults: any;
     try {
@@ -274,6 +243,7 @@ OUTPUT FORMAT (respond ONLY with valid JSON):
     });
   } catch (error) {
     console.error('[DigitalTwin] Error:', error);
+    await logError(error, { functionName: 'digital-twin-simulator', severity: 'error' });
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

@@ -1,14 +1,13 @@
 /**
  * Multi-Agent Debate Protocol (Tier 1)
- * 
- * 2-3 agents independently analyze the same incident, then a judge agent
- * synthesizes conflicting assessments into a higher-confidence conclusion.
  */
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { getAntiHallucinationPrompt, getCriticalDateContext, calculateIncidentAge } from "../_shared/anti-hallucination.ts";
 import { buildMemoryContext, storeAgentMemory } from "../_shared/agent-memory.ts";
 import { buildGraphContext, discoverIncidentConnections } from "../_shared/knowledge-graph.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { logError } from "../_shared/error-logger.ts";
 
 const DEBATE_AGENTS: Record<string, { model: string; specialty: string; prompt: string }> = {
   'THREAT-ANALYST': {
@@ -69,12 +68,8 @@ Deno.serve(async (req) => {
     const { incident_id, agents } = await req.json();
     if (!incident_id) throw new Error('incident_id is required');
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY not configured');
-
     const supabase = createServiceClient();
 
-    // Fetch incident with related data
     const { data: incident, error: incErr } = await supabase
       .from('incidents')
       .select('*, signals!incidents_signal_id_fkey(*), clients(*)')
@@ -91,7 +86,6 @@ Deno.serve(async (req) => {
     const incidentAge = calculateIncidentAge({ id: incident.id, opened_at: incident.opened_at });
     const antiHallucination = getAntiHallucinationPrompt();
 
-    // Build incident context
     const incidentContext = `
 INCIDENT: ${incident.id}
 Priority: ${incident.priority?.toUpperCase()} | Status: ${incident.status}
@@ -105,7 +99,6 @@ Client: ${incident.clients?.name || 'N/A'} (${incident.clients?.industry || 'N/A
 Entity Tags: ${incident.signals?.entity_tags?.join(', ') || 'None'}
 `;
 
-    // Fetch memory and graph context in parallel
     const [memoryContexts, graphContext, graphEdges] = await Promise.all([
       Promise.all(selectedAgents.map((a: string) => buildMemoryContext(supabase, a, incidentContext))),
       buildGraphContext(supabase, incident_id),
@@ -130,33 +123,26 @@ CRITICAL: Base ALL findings on provided evidence. Label assumptions vs confirmed
 Current date: ${dateContext.currentDateISO}`;
 
       try {
-        const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: agent.model,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: `Analyze this incident independently:\n${incidentContext}` },
-            ],
+        const agentResult = await callAiGateway({
+          model: agent.model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `Analyze this incident independently:\n${incidentContext}` },
+          ],
+          functionName: `multi-agent-debate/${agentKey}`,
+          extraBody: {
             ...(agent.model.startsWith('openai/') ? { max_completion_tokens: 3000 } : { max_tokens: 3000 }),
             temperature: 0.5,
-          }),
+          },
         });
 
-        if (!response.ok) {
-          const errText = await response.text();
-          console.error(`[Debate] ${agentKey} failed:`, response.status, errText);
-          return { agent: agentKey, analysis: `Analysis failed: ${response.status}`, error: true };
+        if (agentResult.error) {
+          console.error(`[Debate] ${agentKey} failed:`, agentResult.error);
+          return { agent: agentKey, analysis: `Analysis failed: ${agentResult.error}`, error: true };
         }
 
-        const data = await response.json();
-        const analysis = data.choices?.[0]?.message?.content || 'No analysis produced';
+        const analysis = agentResult.content || 'No analysis produced';
 
-        // Store memory of this analysis
         await storeAgentMemory(supabase, agentKey, analysis.substring(0, 1500), {
           incidentId: incident_id,
           clientId: incident.client_id,
@@ -186,34 +172,23 @@ Current date: ${dateContext.currentDateISO}`;
       `=== ${a.agent} (${a.specialty}) ===\nModel: ${a.model}\n${a.analysis}`
     ).join('\n\n---\n\n');
 
-    const judgeResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'openai/gpt-5.2',
-        messages: [
-          { role: 'system', content: `${JUDGE_PROMPT}\n\n${antiHallucination}\nCurrent date: ${dateContext.currentDateISO}` },
-          { role: 'user', content: `Incident Context:\n${incidentContext}\n\n--- INDEPENDENT ANALYSES ---\n${debateInput}` },
-        ],
-        max_completion_tokens: 4000,
-        temperature: 0.3,
-      }),
+    const judgeResult = await callAiGateway({
+      model: 'openai/gpt-5.2',
+      messages: [
+        { role: 'system', content: `${JUDGE_PROMPT}\n\n${antiHallucination}\nCurrent date: ${dateContext.currentDateISO}` },
+        { role: 'user', content: `Incident Context:\n${incidentContext}\n\n--- INDEPENDENT ANALYSES ---\n${debateInput}` },
+      ],
+      functionName: 'multi-agent-debate/judge',
+      extraBody: { max_completion_tokens: 4000, temperature: 0.3 },
+      dlqOnFailure: true,
+      dlqPayload: { incident_id, agents: selectedAgents },
     });
 
-    let synthesis = 'Judge synthesis unavailable';
+    let synthesis = judgeResult.content || 'Judge synthesis unavailable';
     let consensusScore = 0;
 
-    if (judgeResponse.ok) {
-      const judgeData = await judgeResponse.json();
-      synthesis = judgeData.choices?.[0]?.message?.content || synthesis;
-
-      // Extract consensus score from synthesis
-      const scoreMatch = synthesis.match(/CONSENSUS SCORE[:\s]*(\d+)/i);
-      consensusScore = scoreMatch ? parseInt(scoreMatch[1]) : 50;
-    }
+    const scoreMatch = synthesis.match(/CONSENSUS SCORE[:\s]*(\d+)/i);
+    consensusScore = scoreMatch ? parseInt(scoreMatch[1]) : 50;
 
     // Store debate record
     await supabase.from('agent_debate_records').insert({
@@ -265,6 +240,7 @@ Current date: ${dateContext.currentDateISO}`;
     });
   } catch (error) {
     console.error('[Debate] Error:', error);
+    await logError(error, { functionName: 'multi-agent-debate', severity: 'error' });
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes('402') || msg.includes('credits')) {
       return errorResponse('AI credits exhausted. Please add credits in Settings → Workspace → Usage.', 402);

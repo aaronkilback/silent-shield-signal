@@ -1,4 +1,5 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -8,10 +9,8 @@ Deno.serve(async (req) => {
     const supabase = createServiceClient();
     const googleApiKey = Deno.env.get('GOOGLE_SEARCH_API_KEY');
     const googleEngineId = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
 
     if (!googleApiKey || !googleEngineId) throw new Error('Google Search API not configured');
-    if (!lovableApiKey) throw new Error('Lovable AI not configured');
 
     const body = await req.json().catch(() => ({}));
     const entityId = body.entity_id;
@@ -58,25 +57,19 @@ Deno.serve(async (req) => {
 
         const searchData = await searchResponse.json();
         for (const item of searchData.items || []) {
-          const analysisResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${lovableApiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model: 'google/gemini-2.5-flash',
-              messages: [
-                { role: 'system', content: 'Analyze web search results for relevance. Return JSON with: relevance_score (0-1), is_relevant (boolean), summary, sentiment, security_concerns array, create_signal (boolean), signal_severity.' },
-                { role: 'user', content: `Analyze for entity "${entity.name}": Title: ${item.title}, URL: ${item.link}, Snippet: ${item.snippet}` }
-              ],
-              response_format: { type: 'json_object' }
-            }),
+          const aiResult = await callAiGateway({
+            model: 'google/gemini-2.5-flash',
+            messages: [
+              { role: 'system', content: 'Analyze web search results for relevance. Return JSON with: relevance_score (0-1), is_relevant (boolean), summary, sentiment, security_concerns array, create_signal (boolean), signal_severity.' },
+              { role: 'user', content: `Analyze for entity "${entity.name}": Title: ${item.title}, URL: ${item.link}, Snippet: ${item.snippet}` }
+            ],
+            functionName: 'osint-web-search',
+            extraBody: { response_format: { type: 'json_object' } },
           });
 
-          if (!analysisResponse.ok) continue;
-          const analysisData = await analysisResponse.json();
-          const content = analysisData.choices?.[0]?.message?.content;
-          if (!content) continue;
+          if (aiResult.error || !aiResult.content) continue;
 
-          const analysis = JSON.parse(content);
+          const analysis = JSON.parse(aiResult.content);
           if (!analysis.is_relevant || analysis.relevance_score < 0.5) continue;
 
           const relevanceInt = Math.round((analysis.relevance_score || 0) * 100);
