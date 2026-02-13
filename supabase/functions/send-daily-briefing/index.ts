@@ -200,9 +200,9 @@ Tone: Calm, authoritative, zero jargon. If metrics are all low/zero, state "No e
     const aiData = await aiResponse.json();
     const briefingText = aiData.choices?.[0]?.message?.content || 'Unable to generate briefing content.';
 
-    // Build feedback URL base
-    const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-    const feedbackBaseUrl = `${supabaseUrl}/functions/v1/briefing-feedback`;
+    // Build feedback URL base — link to in-app feedback page instead of raw edge function
+    const appUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || 'https://silent-shield-signal.lovable.app';
+    const feedbackBaseUrl = `${appUrl}/briefing-feedback`;
 
     // Build HTML email
     const emailHtml = buildBriefingEmail(briefingText, metrics, dateContext, doctrineLine, feedbackBaseUrl);
