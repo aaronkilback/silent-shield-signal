@@ -61,26 +61,54 @@ Deno.serve(async (req: Request) => {
     }
 
     // Resolve investigation_id: accept either UUID or file_number
+    const trimmedId = String(investigation_id).trim();
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    let invFilter: { column: string; value: string };
-    if (uuidRegex.test(investigation_id)) {
-      invFilter = { column: "id", value: investigation_id };
+    const isUuid = uuidRegex.test(trimmedId);
+
+    console.log(`[SendSMS] Resolving investigation: "${trimmedId}" (isUuid: ${isUuid})`);
+
+    let investigation;
+    let invError;
+
+    if (isUuid) {
+      const result = await supabase
+        .from("investigations")
+        .select("id, file_number, client_id, tenant_id")
+        .eq("id", trimmedId)
+        .single();
+      investigation = result.data;
+      invError = result.error;
     } else {
-      invFilter = { column: "file_number", value: investigation_id };
+      // Try file_number first, then ilike for flexibility
+      const result = await supabase
+        .from("investigations")
+        .select("id, file_number, client_id, tenant_id")
+        .eq("file_number", trimmedId)
+        .single();
+      investigation = result.data;
+      invError = result.error;
+
+      // If not found, try case-insensitive match
+      if (invError || !investigation) {
+        const result2 = await supabase
+          .from("investigations")
+          .select("id, file_number, client_id, tenant_id")
+          .ilike("file_number", trimmedId)
+          .single();
+        investigation = result2.data;
+        invError = result2.error;
+      }
     }
 
-    const { data: investigation, error: invError } = await supabase
-      .from("investigations")
-      .select("id, file_number, client_id, tenant_id")
-      .eq(invFilter.column, invFilter.value)
-      .single();
-
     if (invError || !investigation) {
+      console.error(`[SendSMS] Investigation not found: "${trimmedId}", error:`, invError);
       return new Response(
-        JSON.stringify({ error: "Investigation not found" }),
+        JSON.stringify({ error: `Investigation not found for: ${trimmedId}` }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    console.log(`[SendSMS] Resolved to investigation ${investigation.file_number} (${investigation.id})`);
 
     // Get Twilio credentials
     const twilioSid = Deno.env.get("TWILIO_ACCOUNT_SID");
