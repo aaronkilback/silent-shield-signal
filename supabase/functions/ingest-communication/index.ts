@@ -125,9 +125,11 @@ Deno.serve(async (req: Request) => {
     // (matches to the most recent outbound SMS conversation with this number)
     if (!investigation && senderIdentifier) {
       console.log(`[IngestComm] No case ref found, trying phone-based routing for ${senderIdentifier}`);
-      const { data: recentOutbound } = await supabase
+      
+      // Step 1: Find the most recent outbound SMS to this number
+      const { data: recentOutbound, error: routeError } = await supabase
         .from("investigation_communications")
-        .select("investigation_id, investigations!inner(id, file_number, client_id)")
+        .select("investigation_id")
         .eq("contact_identifier", senderIdentifier)
         .eq("direction", "outbound")
         .eq("channel", "sms")
@@ -135,9 +137,20 @@ Deno.serve(async (req: Request) => {
         .limit(1)
         .maybeSingle();
 
-      if (recentOutbound?.investigations) {
-        investigation = recentOutbound.investigations;
-        console.log(`[IngestComm] Phone-routed to case ${investigation.file_number}`);
+      console.log(`[IngestComm] Route lookup result:`, JSON.stringify(recentOutbound), `error:`, JSON.stringify(routeError));
+
+      // Step 2: If found, fetch the investigation details
+      if (recentOutbound?.investigation_id) {
+        const { data: inv } = await supabase
+          .from("investigations")
+          .select("id, file_number, client_id")
+          .eq("id", recentOutbound.investigation_id)
+          .maybeSingle();
+        
+        if (inv) {
+          investigation = inv;
+          console.log(`[IngestComm] Phone-routed to case ${investigation.file_number}`);
+        }
       }
     }
 
