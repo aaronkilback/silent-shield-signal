@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getUserFromRequest } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 /**
  * Predictive Threat Forecasting Engine
@@ -196,9 +197,8 @@ Deno.serve(async (req) => {
 
     // ── 6. AI synthesis of top forecasts ─────────────────────────────
     let ai_summary: string | null = null;
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
 
-    if (LOVABLE_API_KEY && forecasts.length > 0) {
+    if (forecasts.length > 0) {
       const topForecasts = forecasts.slice(0, 8);
       const forecastText = topForecasts.map((f, i) => {
         if (f.type === 'category_acceleration') {
@@ -213,39 +213,22 @@ Deno.serve(async (req) => {
         return `${i + 1}. ${JSON.stringify(f)}`;
       }).join('\n');
 
-      try {
-        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-            'Content-Type': 'application/json',
+      const aiResult = await callAiGateway({
+        model: 'google/gemini-3-flash-preview',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a senior intelligence analyst producing a predictive threat forecast. Synthesize the data into a concise executive briefing (150 words max). Identify the most likely threat to materialize within 48 hours. Use measured, authoritative language. No speculation beyond what the data supports. Structure: 1) Primary forecast, 2) Secondary concerns, 3) Recommended posture.`,
           },
-          body: JSON.stringify({
-            model: 'google/gemini-3-flash-preview',
-            messages: [
-              {
-                role: 'system',
-                content: `You are a senior intelligence analyst producing a predictive threat forecast. Synthesize the data into a concise executive briefing (150 words max). Identify the most likely threat to materialize within 48 hours. Use measured, authoritative language. No speculation beyond what the data supports. Structure: 1) Primary forecast, 2) Secondary concerns, 3) Recommended posture.`,
-              },
-              {
-                role: 'user',
-                content: `Forecast data from the last ${lookbackDays} days:\n${forecastText}`,
-              },
-            ],
-          }),
-        });
+          {
+            role: 'user',
+            content: `Forecast data from the last ${lookbackDays} days:\n${forecastText}`,
+          },
+        ],
+        functionName: 'predictive-forecast',
+      });
 
-        if (aiResponse.ok) {
-          const aiData = await aiResponse.json();
-          ai_summary = aiData.choices?.[0]?.message?.content || null;
-        } else if (aiResponse.status === 429) {
-          ai_summary = 'Forecast synthesis unavailable: rate limited.';
-        } else if (aiResponse.status === 402) {
-          ai_summary = 'Forecast synthesis unavailable: credits exhausted.';
-        }
-      } catch (e) {
-        console.error('AI forecast synthesis error:', e);
-      }
+      ai_summary = aiResult.content || (aiResult.error ? `Forecast synthesis unavailable: ${aiResult.error}` : null);
     }
 
     return successResponse({

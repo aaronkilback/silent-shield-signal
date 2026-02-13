@@ -1,4 +1,5 @@
 import { handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -8,10 +9,7 @@ Deno.serve(async (req) => {
     const { jurisdiction, industry_sector } = await req.json();
     console.log('[RegulatoryChanges] Monitoring for:', jurisdiction, industry_sector);
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      return errorResponse('LOVABLE_API_KEY not configured', 500);
-    }
+    // LOVABLE_API_KEY handled by callAiGateway
 
     const analysisPrompt = `You are a regulatory compliance analyst tracking security, privacy, and environmental regulations for a specific industry and jurisdiction.
 
@@ -63,29 +61,22 @@ Identify and analyze recent regulatory changes and upcoming requirements that im
 
 Focus on regulations with direct security, privacy, or operational risk implications.`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are an expert regulatory compliance analyst specializing in security, privacy, and environmental regulations.' },
-          { role: 'user', content: analysisPrompt }
-        ],
-      }),
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are an expert regulatory compliance analyst specializing in security, privacy, and environmental regulations.' },
+        { role: 'user', content: analysisPrompt }
+      ],
+      functionName: 'monitor-regulatory-changes',
+      dlqOnFailure: true,
+      dlqPayload: { jurisdiction, industry_sector },
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('[RegulatoryChanges] AI Gateway error:', response.status, errorText);
+    if (aiResult.error) {
       return errorResponse('AI Gateway error', 500);
     }
 
-    const data = await response.json();
-    const analysis = data.choices?.[0]?.message?.content;
+    const analysis = aiResult.content;
 
     if (!analysis) {
       return errorResponse('No analysis generated', 500);

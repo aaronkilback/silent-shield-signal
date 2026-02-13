@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 interface LegalQueryRequest {
   jurisdiction: string;
@@ -15,7 +16,6 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
 
     const { 
       jurisdiction, 
@@ -97,35 +97,23 @@ Format your response as structured JSON with the following schema:
   "disclaimer": "string"
 }`;
 
-    if (!lovableApiKey) {
-      return errorResponse('LOVABLE_API_KEY not configured', 500);
-    }
-
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${lovableApiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-pro',
-        messages: [
-          { role: 'system', content: 'You are a legal research AI with deep knowledge of Canadian law, particularly security, employment, and regulatory matters in BC and Alberta. Always provide accurate, well-sourced information with appropriate legal disclaimers.' },
-          { role: 'user', content: legalPrompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 4000,
-      }),
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-pro',
+      messages: [
+        { role: 'system', content: 'You are a legal research AI with deep knowledge of Canadian law, particularly security, employment, and regulatory matters in BC and Alberta. Always provide accurate, well-sourced information with appropriate legal disclaimers.' },
+        { role: 'user', content: legalPrompt }
+      ],
+      functionName: 'query-legal-database',
+      extraBody: { temperature: 0.3, max_tokens: 4000 },
+      dlqOnFailure: true,
+      dlqPayload: { jurisdiction, topic, keywords },
     });
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      console.error('AI API error:', errorText);
-      return errorResponse(`Failed to query legal database: ${errorText}`, 500);
+    if (aiResult.error) {
+      return errorResponse(`Failed to query legal database: ${aiResult.error}`, 500);
     }
 
-    const aiData = await aiResponse.json();
-    const responseContent = aiData.choices?.[0]?.message?.content || '';
+    const responseContent = aiResult.content || '';
 
     // Try to parse as JSON, fallback to structured response
     let legalResults;

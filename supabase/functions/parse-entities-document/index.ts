@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -40,28 +41,17 @@ Deno.serve(async (req) => {
 
     console.log('Extracted text length:', text.length);
 
-    // Use AI to extract entities from the text
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY is not configured');
-    }
-
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are an expert at extracting entity information from text. Extract all relevant entities with their details.'
-          },
-          {
-            role: 'user',
-            content: `Extract all entities from the following text. Return a JSON array of entities with the structure:
+    // Use AI to extract entities from the text via resilient gateway
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an expert at extracting entity information from text. Extract all relevant entities with their details.'
+        },
+        {
+          role: 'user',
+          content: `Extract all entities from the following text. Return a JSON array of entities with the structure:
 {
   "entities": [
     {
@@ -79,8 +69,10 @@ Deno.serve(async (req) => {
 
 Text to analyze:
 ${text}`
-          }
-        ],
+        }
+      ],
+      functionName: 'parse-entities-document',
+      extraBody: {
         tools: [
           {
             type: "function",
@@ -120,19 +112,15 @@ ${text}`
           }
         ],
         tool_choice: { type: "function", function: { name: "extract_entities" } }
-      }),
+      },
     });
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      console.error('AI API error:', aiResponse.status, errorText);
-      throw new Error(`AI API error: ${aiResponse.status}`);
+    if (aiResult.error) {
+      throw new Error(`AI API error: ${aiResult.error}`);
     }
 
-    const aiData = await aiResponse.json();
-    console.log('AI response received');
-
-    const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+    // Handle tool call response
+    const toolCall = aiResult.raw?.choices?.[0]?.message?.tool_calls?.[0];
     if (!toolCall) {
       throw new Error('No tool call in AI response');
     }

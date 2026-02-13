@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -10,10 +11,7 @@ Deno.serve(async (req) => {
 
     const supabase = createServiceClient();
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
-    }
+    // LOVABLE_API_KEY handled by callAiGateway
 
     // Fetch comprehensive client data
     const { data: client, error: clientError } = await supabase
@@ -100,29 +98,22 @@ Design an optimized, layered defense strategy combining technical, physical, and
 
 Consider client-specific constraints (industry regulations, operational requirements, budget) and ensure recommendations are practical and implementable.`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are an expert strategic defense architect specializing in comprehensive security program design and optimization.' },
-          { role: 'user', content: optimizationPrompt }
-        ],
-      }),
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are an expert strategic defense architect specializing in comprehensive security program design and optimization.' },
+        { role: 'user', content: optimizationPrompt }
+      ],
+      functionName: 'optimize-defense-strategies',
+      dlqOnFailure: true,
+      dlqPayload: { client_id, threat_type },
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('AI Gateway error:', response.status, errorText);
+    if (aiResult.error) {
       throw new Error('AI Gateway error');
     }
 
-    const data = await response.json();
-    const strategy = data.choices?.[0]?.message?.content;
+    const strategy = aiResult.content;
 
     if (!strategy) {
       throw new Error('No strategy generated');
