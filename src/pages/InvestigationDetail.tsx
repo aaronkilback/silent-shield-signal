@@ -49,8 +49,11 @@ const InvestigationDetail = () => {
   const [newPersonName, setNewPersonName] = useState("");
   const [newPersonStatus, setNewPersonStatus] = useState("witness");
   const [newPersonPhone, setNewPersonPhone] = useState("");
+  const [newPersonEmail, setNewPersonEmail] = useState("");
   const [newPersonPosition, setNewPersonPosition] = useState("");
   const [newPersonCompany, setNewPersonCompany] = useState("");
+  const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
+  const [editingPersonData, setEditingPersonData] = useState<Record<string, string>>({});
   const [suggestedReferences, setSuggestedReferences] = useState<any[]>([]);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const [newLocationName, setNewLocationName] = useState("");
@@ -306,6 +309,7 @@ const InvestigationDetail = () => {
           status: newPersonStatus,
           name: newPersonName,
           phone: newPersonPhone,
+          email: newPersonEmail,
           position: newPersonPosition,
           company: newPersonCompany
         });
@@ -314,6 +318,7 @@ const InvestigationDetail = () => {
 
       setNewPersonName("");
       setNewPersonPhone("");
+      setNewPersonEmail("");
       setNewPersonPosition("");
       setNewPersonCompany("");
       queryClient.invalidateQueries({ queryKey: ['investigation-persons', id] });
@@ -336,6 +341,68 @@ const InvestigationDetail = () => {
       toast.success("Person removed");
     } catch (error: any) {
       toast.error(error.message || "Failed to remove person");
+    }
+  };
+
+  const startEditPerson = (person: any) => {
+    setEditingPersonId(person.id);
+    setEditingPersonData({
+      status: person.status,
+      name: person.name,
+      phone: person.phone || '',
+      email: person.email || '',
+      position: person.position || '',
+      company: person.company || '',
+    });
+  };
+
+  const saveEditPerson = async (personId: string) => {
+    try {
+      const { error } = await supabase
+        .from('investigation_persons')
+        .update({
+          status: editingPersonData.status,
+          name: editingPersonData.name,
+          phone: editingPersonData.phone || null,
+          email: editingPersonData.email || null,
+          position: editingPersonData.position || null,
+          company: editingPersonData.company || null,
+        })
+        .eq('id', personId);
+
+      if (error) throw error;
+
+      // Sync to linked entity if one exists with the same name
+      const { data: linkedEntity } = await supabase
+        .from('entities')
+        .select('id, attributes')
+        .ilike('name', editingPersonData.name)
+        .eq('type', 'person')
+        .limit(1)
+        .maybeSingle();
+
+      if (linkedEntity) {
+        const existingAttrs = (linkedEntity.attributes as Record<string, string>) || {};
+        await supabase
+          .from('entities')
+          .update({
+            attributes: {
+              ...existingAttrs,
+              phone: editingPersonData.phone || existingAttrs.phone || '',
+              email: editingPersonData.email || existingAttrs.email || '',
+              position: editingPersonData.position || existingAttrs.position || '',
+              company: editingPersonData.company || existingAttrs.company || '',
+            } as Record<string, string>,
+            description: [editingPersonData.position, editingPersonData.company].filter(Boolean).join(' at ') || null,
+          })
+          .eq('id', linkedEntity.id);
+      }
+
+      setEditingPersonId(null);
+      queryClient.invalidateQueries({ queryKey: ['investigation-persons', id] });
+      toast.success("Person updated" + (linkedEntity ? " — entity synced" : ""));
+    } catch (error: any) {
+      toast.error(error.message || "Failed to update person");
     }
   };
 
@@ -553,6 +620,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
           description: [person.position, person.company].filter(Boolean).join(' at ') || null,
           attributes: {
             phone: person.phone,
+            email: person.email,
             position: person.position,
             company: person.company,
             investigation_status: person.status,
@@ -1078,7 +1146,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-5 gap-2">
+                <div className="grid grid-cols-6 gap-2">
                   <Select value={newPersonStatus} onValueChange={setNewPersonStatus}>
                     <SelectTrigger>
                       <SelectValue />
@@ -1097,6 +1165,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     onEntitySelect={(entity) => {
                       const attrs = entity.attributes as Record<string, string> | null;
                       if (attrs?.phone) setNewPersonPhone(attrs.phone);
+                      if (attrs?.email) setNewPersonEmail(attrs.email);
                       if (attrs?.position) setNewPersonPosition(attrs.position);
                       if (attrs?.company) setNewPersonCompany(attrs.company);
                       if (entity.type === 'organization') setNewPersonCompany(entity.name);
@@ -1106,6 +1175,11 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     placeholder="Phone"
                     value={newPersonPhone}
                     onChange={(e) => setNewPersonPhone(e.target.value)}
+                  />
+                  <Input 
+                    placeholder="Email"
+                    value={newPersonEmail}
+                    onChange={(e) => setNewPersonEmail(e.target.value)}
                   />
                   <Input 
                     placeholder="Position"
@@ -1126,28 +1200,62 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                 </div>
 
                 <div className="space-y-2">
-                  {persons.map((person) => (
-                    <div key={person.id} className="flex items-center gap-4 p-3 border rounded-lg">
-                      <span className="font-medium capitalize w-24">{person.status}</span>
-                      <span className="flex-1">{person.name}</span>
-                      <span className="text-sm text-muted-foreground">{person.phone}</span>
-                      <span className="text-sm text-muted-foreground">{person.position}</span>
-                      <span className="text-sm text-muted-foreground">{person.company}</span>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => convertPersonToEntity(person)}
-                      >
-                        <Users className="w-4 h-4 mr-2" />
-                        To Entity
-                      </Button>
-                      <Button 
-                        variant="ghost" 
-                        size="icon"
-                        onClick={() => deletePerson(person.id)}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                  {persons.map((person: any) => (
+                    <div key={person.id} className="flex items-center gap-3 p-3 border rounded-lg">
+                      {editingPersonId === person.id ? (
+                        <>
+                          <Select value={editingPersonData.status} onValueChange={(v) => setEditingPersonData(d => ({...d, status: v}))}>
+                            <SelectTrigger className="w-28">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="complainant">Complainant</SelectItem>
+                              <SelectItem value="witness">Witness</SelectItem>
+                              <SelectItem value="suspect">Suspect</SelectItem>
+                              <SelectItem value="supervisor">Supervisor</SelectItem>
+                              <SelectItem value="other">Other</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Input className="flex-1" value={editingPersonData.name} onChange={(e) => setEditingPersonData(d => ({...d, name: e.target.value}))} placeholder="Name" />
+                          <Input className="w-28" value={editingPersonData.phone} onChange={(e) => setEditingPersonData(d => ({...d, phone: e.target.value}))} placeholder="Phone" />
+                          <Input className="w-36" value={editingPersonData.email} onChange={(e) => setEditingPersonData(d => ({...d, email: e.target.value}))} placeholder="Email" />
+                          <Input className="w-28" value={editingPersonData.position} onChange={(e) => setEditingPersonData(d => ({...d, position: e.target.value}))} placeholder="Position" />
+                          <Input className="w-28" value={editingPersonData.company} onChange={(e) => setEditingPersonData(d => ({...d, company: e.target.value}))} placeholder="Company" />
+                          <Button size="sm" onClick={() => saveEditPerson(person.id)}>
+                            <Save className="w-4 h-4" />
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => setEditingPersonId(null)}>
+                            <X className="w-4 h-4" />
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-medium capitalize w-24">{person.status}</span>
+                          <span className="flex-1">{person.name}</span>
+                          <span className="text-sm text-muted-foreground">{person.phone}</span>
+                          <span className="text-sm text-muted-foreground">{person.email}</span>
+                          <span className="text-sm text-muted-foreground">{person.position}</span>
+                          <span className="text-sm text-muted-foreground">{person.company}</span>
+                          <Button variant="ghost" size="sm" onClick={() => startEditPerson(person)}>
+                            <ClipboardList className="w-4 h-4" />
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => convertPersonToEntity(person)}
+                          >
+                            <Users className="w-4 h-4 mr-2" />
+                            To Entity
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="icon"
+                            onClick={() => deletePerson(person.id)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>
