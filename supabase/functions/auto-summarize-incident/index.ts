@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 /**
  * Auto-summarize incidents by generating titles and summaries from linked signals.
@@ -97,29 +98,22 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Generate title and summary using AI
-        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-2.5-flash',
-            messages: [
-              {
-                role: 'system',
-                content: `You are a corporate security analyst. Generate concise, actionable incident titles and summaries.
+        const aiResult = await callAiGateway({
+          model: 'google/gemini-2.5-flash',
+          messages: [
+            {
+              role: 'system',
+              content: `You are a corporate security analyst. Generate concise, actionable incident titles and summaries.
 
 Rules:
 - Title: 5-12 words, include threat type and key indicator (e.g., "Unauthorized Network Access Attempt at Data Center")
 - Summary: 2-4 sentences covering: What happened, Who/What is affected, Current threat level, Immediate relevance
 - Be specific but avoid unnecessary jargon
 - Focus on business impact and actionability`
-              },
-              {
-                role: 'user',
-                content: `Generate a title and summary for this security incident:
+            },
+            {
+              role: 'user',
+              content: `Generate a title and summary for this security incident:
 
 Incident Type: ${incident.incident_type || 'Unknown'}
 Priority: ${incident.priority || 'Unknown'}
@@ -129,8 +123,10 @@ Opened: ${incident.opened_at || 'Unknown'}
 ${signalsContext ? `LINKED SIGNALS:\n${signalsContext}` : 'No linked signals available'}
 
 ${entitiesContext ? `\n${entitiesContext}` : ''}`
-              }
-            ],
+            }
+          ],
+          functionName: 'auto-summarize-incident',
+          extraBody: {
             tools: [
               {
                 type: "function",
@@ -140,28 +136,11 @@ ${entitiesContext ? `\n${entitiesContext}` : ''}`
                   parameters: {
                     type: "object",
                     properties: {
-                      title: {
-                        type: "string",
-                        description: "Concise incident title (5-12 words)"
-                      },
-                      summary: {
-                        type: "string",
-                        description: "2-4 sentence summary of the incident"
-                      },
-                      incident_type_refined: {
-                        type: "string",
-                        description: "Refined incident type classification"
-                      },
-                      key_indicators: {
-                        type: "array",
-                        items: { type: "string" },
-                        description: "Key threat indicators identified"
-                      },
-                      recommended_priority: {
-                        type: "string",
-                        enum: ["p1", "p2", "p3", "p4"],
-                        description: "Recommended priority based on analysis"
-                      }
+                      title: { type: "string", description: "Concise incident title (5-12 words)" },
+                      summary: { type: "string", description: "2-4 sentence summary of the incident" },
+                      incident_type_refined: { type: "string", description: "Refined incident type classification" },
+                      key_indicators: { type: "array", items: { type: "string" }, description: "Key threat indicators identified" },
+                      recommended_priority: { type: "string", enum: ["p1", "p2", "p3", "p4"], description: "Recommended priority based on analysis" }
                     },
                     required: ["title", "summary"],
                     additionalProperties: false
@@ -170,15 +149,14 @@ ${entitiesContext ? `\n${entitiesContext}` : ''}`
               }
             ],
             tool_choice: { type: "function", function: { name: "generate_incident_summary" } }
-          }),
+          },
         });
 
-        if (!aiResponse.ok) {
-          throw new Error(`AI gateway error: ${aiResponse.status}`);
+        if (aiResult.error) {
+          throw new Error(`AI gateway error: ${aiResult.error}`);
         }
 
-        const aiData = await aiResponse.json();
-        const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+        const toolCall = aiResult.raw?.choices?.[0]?.message?.tool_calls?.[0];
 
         if (!toolCall) {
           throw new Error('No tool call in AI response');

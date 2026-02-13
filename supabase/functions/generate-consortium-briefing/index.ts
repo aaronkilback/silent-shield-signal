@@ -1,5 +1,6 @@
 import { corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 interface GenerateBriefingRequest {
   consortium_id: string;
@@ -174,30 +175,21 @@ ${JSON.stringify(signalSummary, null, 2)}
 
 If there are no incidents or signals, generate a report noting the quiet period but maintaining vigilance for emerging threats in the ${consortium.region || "operational"} area.`;
 
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.7,
-        max_tokens: 2500,
-      }),
+    const aiResult = await callAiGateway({
+      model: "google/gemini-2.5-flash",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      functionName: "generate-consortium-briefing",
+      extraBody: { temperature: 0.7, max_tokens: 2500 },
     });
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      throw new Error(`AI Gateway error: ${errorText}`);
+    if (aiResult.error) {
+      throw new Error(`AI Gateway error: ${aiResult.error}`);
     }
 
-    const aiData = await aiResponse.json();
-    const generatedContent = aiData.choices[0]?.message?.content || "";
+    const generatedContent = aiResult.content || "";
 
     // Convert to basic HTML
     const contentHtml = generatedContent

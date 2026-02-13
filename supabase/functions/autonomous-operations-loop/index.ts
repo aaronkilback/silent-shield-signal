@@ -10,6 +10,7 @@
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { getCriticalDateContext } from "../_shared/anti-hallucination.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 interface EscalationRule {
   id: string;
@@ -181,32 +182,24 @@ Deno.serve(async (req) => {
       if (actions.send_briefing && actions.notify_emails?.length) {
         // Generate a quick situational briefing
         try {
-          const briefingResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: 'google/gemini-3-flash-preview',
-              messages: [
-                {
-                  role: 'system',
-                  content: `You are AEGIS, the autonomous security operations system. Generate a concise escalation alert briefing (150 words max). Use measured, professional language. Current date: ${dateContext.currentDateISO}. Include: 1) Trigger reason, 2) Key metrics, 3) Recommended immediate action.`,
-                },
-                {
-                  role: 'user',
-                  content: `ESCALATION TRIGGERED by rule "${rule.name}"\nReasons: ${triggerReasons.join('; ')}\nMetrics: ${JSON.stringify(metrics)}\nTop risk signals: ${JSON.stringify((highRiskScores || []).slice(0, 5))}`,
-                },
-              ],
-              max_tokens: 500,
-              temperature: 0.2,
-            }),
+          const briefingResult = await callAiGateway({
+            model: 'google/gemini-3-flash-preview',
+            messages: [
+              {
+                role: 'system',
+                content: `You are AEGIS, the autonomous security operations system. Generate a concise escalation alert briefing (150 words max). Use measured, professional language. Current date: ${dateContext.currentDateISO}. Include: 1) Trigger reason, 2) Key metrics, 3) Recommended immediate action.`,
+              },
+              {
+                role: 'user',
+                content: `ESCALATION TRIGGERED by rule "${rule.name}"\nReasons: ${triggerReasons.join('; ')}\nMetrics: ${JSON.stringify(metrics)}\nTop risk signals: ${JSON.stringify((highRiskScores || []).slice(0, 5))}`,
+              },
+            ],
+            functionName: 'autonomous-operations-loop',
+            extraBody: { max_tokens: 500, temperature: 0.2 },
           });
 
-          if (briefingResponse.ok) {
-            const briefingData = await briefingResponse.json();
-            const briefingText = briefingData.choices?.[0]?.message?.content || '';
+          if (briefingResult.content) {
+            const briefingText = briefingResult.content;
 
             // Send via notification email function
             for (const email of actions.notify_emails) {
@@ -258,32 +251,24 @@ Deno.serve(async (req) => {
       console.log(`[AutonomousLoop] Generating scheduled briefing: ${briefing.title}`);
 
       try {
-        const briefingResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-3-flash-preview',
-            messages: [
-              {
-                role: 'system',
-                content: `You are AEGIS, generating a scheduled ${briefing.briefing_type} briefing. Use the Silent Shield Executive Briefing format: Core Signal, Key Observations, Analytical Assessment, Recommended Actions. Keep it under 300 words. Professional, measured tone. Current date: ${dateContext.currentDateISO}.`,
-              },
-              {
-                role: 'user',
-                content: `Generate a ${briefing.briefing_type} briefing.\n\n24-HOUR METRICS:\n${JSON.stringify(metrics, null, 2)}\n\nLATEST SCAN:\n${JSON.stringify(latestScan?.findings || {}, null, 2)}\n\nHIGH-RISK SIGNALS:\n${JSON.stringify((highRiskScores || []).slice(0, 10), null, 2)}`,
-              },
-            ],
-            max_tokens: 1000,
-            temperature: 0.3,
-          }),
+        const scheduledResult = await callAiGateway({
+          model: 'google/gemini-3-flash-preview',
+          messages: [
+            {
+              role: 'system',
+              content: `You are AEGIS, generating a scheduled ${briefing.briefing_type} briefing. Use the Silent Shield Executive Briefing format: Core Signal, Key Observations, Analytical Assessment, Recommended Actions. Keep it under 300 words. Professional, measured tone. Current date: ${dateContext.currentDateISO}.`,
+            },
+            {
+              role: 'user',
+              content: `Generate a ${briefing.briefing_type} briefing.\n\n24-HOUR METRICS:\n${JSON.stringify(metrics, null, 2)}\n\nLATEST SCAN:\n${JSON.stringify(latestScan?.findings || {}, null, 2)}\n\nHIGH-RISK SIGNALS:\n${JSON.stringify((highRiskScores || []).slice(0, 10), null, 2)}`,
+            },
+          ],
+          functionName: 'autonomous-operations-loop',
+          extraBody: { max_tokens: 1000, temperature: 0.3 },
         });
 
-        if (briefingResponse.ok) {
-          const data = await briefingResponse.json();
-          const briefingContent = data.choices?.[0]?.message?.content || '';
+        if (scheduledResult.content) {
+          const briefingContent = scheduledResult.content;
 
           // Store as audio briefing record for playback
           for (const userId of briefing.recipient_user_ids || []) {

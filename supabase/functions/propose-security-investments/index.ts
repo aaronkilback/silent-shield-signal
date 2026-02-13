@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -119,29 +120,21 @@ Develop a strategic security investment portfolio prioritized by risk reduction 
 
 Tailor recommendations to client industry, threat profile, and operational requirements. Focus on practical, defensible investments that directly address observed threat patterns.`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are an expert strategic security investment advisor specializing in security capital planning and ROI optimization.' },
-          { role: 'user', content: proposalPrompt }
-        ],
-      }),
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are an expert strategic security investment advisor specializing in security capital planning and ROI optimization.' },
+        { role: 'user', content: proposalPrompt }
+      ],
+      functionName: 'propose-security-investments',
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('AI Gateway error:', response.status, errorText);
+    if (aiResult.error) {
+      console.error('AI Gateway error:', aiResult.error);
       throw new Error('AI Gateway error');
     }
 
-    const data = await response.json();
-    const proposal = data.choices?.[0]?.message?.content;
+    const proposal = aiResult.content;
 
     if (!proposal) {
       throw new Error('No proposal generated');

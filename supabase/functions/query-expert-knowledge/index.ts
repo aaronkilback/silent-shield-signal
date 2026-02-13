@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 /**
  * On-Demand Expert Knowledge Query
@@ -216,28 +217,21 @@ Provide a unified, authoritative answer that:
 Write in a direct, authoritative tone suitable for senior security leadership.`;
 
   try {
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are AEGIS, a senior security intelligence advisor. Synthesize multiple knowledge sources into unified, authoritative expert briefings.' },
-          { role: 'user', content: prompt }
-        ],
-      }),
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are AEGIS, a senior security intelligence advisor. Synthesize multiple knowledge sources into unified, authoritative expert briefings.' },
+        { role: 'user', content: prompt }
+      ],
+      functionName: 'query-expert-knowledge',
     });
 
-    if (!response.ok) {
-      console.error('[query-expert-knowledge] Synthesis error:', response.status);
+    if (aiResult.error) {
+      console.error('[query-expert-knowledge] Synthesis error:', aiResult.error);
       return '';
     }
 
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || '';
+    return aiResult.content || '';
   } catch (err) {
     console.error('[query-expert-knowledge] Synthesis failed:', err);
     return '';

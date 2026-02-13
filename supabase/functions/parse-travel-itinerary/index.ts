@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -50,18 +51,12 @@ Deno.serve(async (req) => {
 
     console.log("Calling AI to parse itinerary with structured segments");
 
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          {
-            role: "system",
-            content: `You are an itinerary parsing engine. Extract travel information from documents and return ONLY valid JSON.
+    const aiResult = await callAiGateway({
+      model: "google/gemini-2.5-flash",
+      messages: [
+        {
+          role: "system",
+          content: `You are an itinerary parsing engine. Extract travel information from documents and return ONLY valid JSON.
 
 Output a single, valid JSON object in this EXACT schema:
 
@@ -98,20 +93,24 @@ Rules:
 - If multiple flights, include each as a separate segment with "type": "flight".
 - If multiple hotels, include each as a separate segment with "type": "hotel".
 - Derive a useful trip_title using main origin/destination and dates.`
+        },
+        {
+          role: "user",
+          content: "Parse this travel itinerary and return ONLY the JSON object with no additional text or explanation."
+        }
+      ],
+      functionName: "parse-travel-itinerary",
+      extraBody: {
+        messages: [
+          {
+            role: "system",
+            content: `You are an itinerary parsing engine. Extract travel information from documents and return ONLY valid JSON.`
           },
           {
             role: "user",
             content: [
-              {
-                type: "text",
-                text: "Parse this travel itinerary and return ONLY the JSON object with no additional text or explanation."
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:application/pdf;base64,${base64Pdf}`
-                }
-              }
+              { type: "text", text: "Parse this travel itinerary and return ONLY the JSON object with no additional text or explanation." },
+              { type: "image_url", image_url: { url: `data:application/pdf;base64,${base64Pdf}` } }
             ]
           },
         ],
@@ -124,43 +123,19 @@ Rules:
               parameters: {
                 type: "object",
                 properties: {
-                  traveler_name: {
-                    type: "string",
-                    description: "Full name of the traveler/passenger from the document"
-                  },
-                  trip_title: { 
-                    type: "string", 
-                    description: "Descriptive title with origin/destination and dates" 
-                  },
-                  start_date: { 
-                    type: "string", 
-                    pattern: "^\\d{4}-\\d{2}-\\d{2}$",
-                    description: "Trip start date in YYYY-MM-DD format"
-                  },
-                  end_date: { 
-                    type: "string", 
-                    pattern: "^\\d{4}-\\d{2}-\\d{2}$",
-                    description: "Trip end date in YYYY-MM-DD format"
-                  },
+                  traveler_name: { type: "string", description: "Full name of the traveler/passenger from the document" },
+                  trip_title: { type: "string", description: "Descriptive title with origin/destination and dates" },
+                  start_date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "Trip start date in YYYY-MM-DD format" },
+                  end_date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "Trip end date in YYYY-MM-DD format" },
                   segments: {
                     type: "array",
                     description: "Array of flight and hotel segments",
                     items: {
                       type: "object",
                       properties: {
-                        type: { 
-                          type: "string", 
-                          enum: ["flight", "hotel"],
-                          description: "Segment type"
-                        },
-                        start_datetime: { 
-                          type: "string",
-                          description: "Start date/time in YYYY-MM-DD HH:MM format"
-                        },
-                        end_datetime: { 
-                          type: "string",
-                          description: "End date/time in YYYY-MM-DD HH:MM format"
-                        },
+                        type: { type: "string", enum: ["flight", "hotel"], description: "Segment type" },
+                        start_datetime: { type: "string", description: "Start date/time in YYYY-MM-DD HH:MM format" },
+                        end_datetime: { type: "string", description: "End date/time in YYYY-MM-DD HH:MM format" },
                         origin_city: { type: "string" },
                         origin_airport_code: { type: "string" },
                         destination_city: { type: "string" },
@@ -180,24 +155,19 @@ Rules:
             }
           }
         ],
-        tool_choice: {
-          type: "function",
-          function: { name: "parse_itinerary" }
-        }
-      }),
+        tool_choice: { type: "function", function: { name: "parse_itinerary" } }
+      },
     });
 
-    if (!aiResponse.ok) {
-      const errorText = await aiResponse.text();
-      console.error("AI error:", aiResponse.status, errorText);
-      throw new Error(`AI failed: ${errorText}`);
+    if (aiResult.error) {
+      console.error("AI error:", aiResult.error);
+      throw new Error(`AI failed: ${aiResult.error}`);
     }
 
-    const aiData = await aiResponse.json();
-    const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+    const toolCall = aiResult.raw?.choices?.[0]?.message?.tool_calls?.[0];
 
     if (!toolCall) {
-      console.log("AI response:", JSON.stringify(aiData, null, 2));
+      console.log("AI response:", JSON.stringify(aiResult.raw, null, 2));
       throw new Error("Could not extract travel data from PDF. The document may not contain a valid travel itinerary.");
     }
 

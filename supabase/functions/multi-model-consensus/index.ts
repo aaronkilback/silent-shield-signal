@@ -7,6 +7,7 @@
  */
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 interface ConsensusResult {
   model: string;
@@ -128,39 +129,33 @@ ${context ? `Additional Context: ${JSON.stringify(context).substring(0, 500)}` :
 });
 
 async function fetchModelAssessment(
-  apiKey: string,
+  _apiKey: string,
   model: string,
   systemPrompt: string,
   userPrompt: string
 ): Promise<string> {
   try {
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
+    const aiResult = await callAiGateway({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      functionName: 'multi-model-consensus',
+      extraBody: {
         max_tokens: 300,
         temperature: 0.1,
-      }),
+      },
     });
 
-    if (!response.ok) {
-      const text = await response.text();
-      console.error(`[Consensus] ${model} error ${response.status}: ${text}`);
+    if (aiResult.error) {
+      console.error(`[Consensus] ${model} error: ${aiResult.error}`);
       return '{}';
     }
 
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || '{}';
+    return aiResult.content || '{}';
   } catch (e) {
-    console.error(`[Consensus] ${model} fetch error:`, e);
+    console.error(`[Consensus] ${model} error:`, e);
     return '{}';
   }
 }

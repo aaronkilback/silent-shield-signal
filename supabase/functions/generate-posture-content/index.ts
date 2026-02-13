@@ -63,42 +63,22 @@ CRITICAL: Content must be fresh and unique every day. Never produce the same out
 
 Respond ONLY with valid JSON. No markdown. No explanation.`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: "Generate today's doctrine anchor and exposure question." },
-        ],
-      }),
+    const { callAiGateway } = await import("../_shared/ai-gateway.ts");
+    const aiResult = await callAiGateway({
+      model: "google/gemini-2.5-flash",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: "Generate today's doctrine anchor and exposure question." },
+      ],
+      functionName: "generate-posture-content",
     });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("AI gateway error:", response.status, errText);
-      
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "rate_limited" }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "payment_required" }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      throw new Error(`AI gateway returned ${response.status}`);
+    if (aiResult.error) {
+      console.error("AI gateway error:", aiResult.error);
+      throw new Error(aiResult.error);
     }
 
-    const aiData = await response.json();
-    const content = aiData.choices?.[0]?.message?.content || "";
+    const content = aiResult.content || "";
     
     let cleaned = content.trim();
     if (cleaned.startsWith("```")) {
