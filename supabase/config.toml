@@ -531,3 +531,6 @@ verify_jwt = false
 
 [functions.visibility-gap-scanner]
 verify_jwt = false
+
+[functions.ingest-communication]
+verify_jwt = false
