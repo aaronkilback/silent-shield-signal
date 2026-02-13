@@ -440,14 +440,23 @@ async function updateEntitySuggestionLearning(supabase: ReturnType<typeof create
 // ═══════════════════════════════════════════════════════════
 
 const RELATED_CATEGORIES: Record<string, string[]> = {
-  'protest': ['civil_unrest', 'demonstration', 'strike'],
-  'civil_unrest': ['protest', 'riot', 'demonstration'],
-  'cyber_attack': ['data_breach', 'ransomware', 'cyber_threat'],
-  'data_breach': ['cyber_attack', 'insider_threat'],
-  'terrorism': ['extremism', 'bomb_threat', 'active_shooter'],
-  'natural_disaster': ['earthquake', 'wildfire', 'flood', 'severe_weather'],
-  'insider_threat': ['data_breach', 'sabotage', 'unauthorized_access'],
-  'supply_chain': ['logistics_disruption', 'vendor_risk'],
+  'protest': ['civil_unrest', 'demonstration', 'strike', 'blockade', 'occupation'],
+  'civil_unrest': ['protest', 'riot', 'demonstration', 'coup', 'revolution'],
+  'cyber_attack': ['data_breach', 'ransomware', 'cyber_threat', 'ddos', 'malware'],
+  'data_breach': ['cyber_attack', 'insider_threat', 'credential_leak', 'exfiltration'],
+  'terrorism': ['extremism', 'bomb_threat', 'active_shooter', 'radicalization', 'lone_wolf'],
+  'natural_disaster': ['earthquake', 'wildfire', 'flood', 'severe_weather', 'tsunami', 'hurricane'],
+  'insider_threat': ['data_breach', 'sabotage', 'unauthorized_access', 'espionage', 'fraud'],
+  'supply_chain': ['logistics_disruption', 'vendor_risk', 'third_party_breach', 'counterfeit'],
+  'ransomware': ['cyber_attack', 'data_breach', 'extortion', 'malware'],
+  'phishing': ['social_engineering', 'credential_theft', 'spear_phishing', 'business_email_compromise'],
+  'espionage': ['insider_threat', 'state_actor', 'intellectual_property_theft', 'surveillance'],
+  'financial_crime': ['fraud', 'money_laundering', 'sanctions_evasion', 'embezzlement'],
+  'disinformation': ['influence_operation', 'deepfake', 'propaganda', 'reputation_attack'],
+  'physical_security': ['sabotage', 'trespass', 'vandalism', 'assault', 'stalking'],
+  'geopolitical': ['sanctions', 'trade_war', 'diplomatic_crisis', 'armed_conflict'],
+  'reputational_risk': ['boycott', 'scandal', 'litigation', 'regulatory_action', 'media_crisis'],
+  'environmental': ['oil_spill', 'contamination', 'regulatory_violation', 'climate_activism'],
 };
 
 async function propagateCrossDomainLearning(

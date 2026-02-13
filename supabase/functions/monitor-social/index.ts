@@ -414,170 +414,161 @@ Deno.serve(async (req) => {
       console.error('Error monitoring Hacker News:', error);
     }
 
-    // === TWITTER/X MONITORING (via scraping) ===
-    // Using multiple nitter instances with robust fallback
-    const nitterInstances = [
-      'https://nitter.poast.org',
-      'https://nitter.privacydev.net',
-      'https://nitter.net',
-      'https://nitter.1d4.us',
-      'https://nitter.kavin.rocks'
-    ];
-    
-    const twitterKeywords = [
-      ...SECURITY_KEYWORDS.slice(0, 5), // More security keywords
-      ...ACTIVIST_KEYWORDS.slice(0, 3),  // More activist keywords
+    // === TWITTER/X & SOCIAL MEDIA MONITORING (via Google Custom Search + Perplexity) ===
+    // Nitter instances are all dead — replaced with Google CSE + Perplexity Sonar
+    const GOOGLE_API_KEY = Deno.env.get('GOOGLE_SEARCH_API_KEY');
+    const GOOGLE_CSE_ID = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
+    const PERPLEXITY_API_KEY = Deno.env.get('PERPLEXITY_API_KEY');
+
+    const socialSearchKeywords = [
+      ...SECURITY_KEYWORDS.slice(0, 5),
+      ...ACTIVIST_KEYWORDS.slice(0, 3),
       'data breach',
       'scandal'
     ];
 
-    let twitterSuccessCount = 0;
-    let twitterFailCount = 0;
+    let socialSuccessCount = 0;
+    let socialFailCount = 0;
 
-    for (const keyword of twitterKeywords) {
-      // Add delay between keyword searches
-      await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 1000));
-      
-      const searchQuery = encodeURIComponent(keyword);
-      let response = null;
-      let successfulInstance = null;
-      let html = null;
-      
-      // Try each nitter instance until one works
-      for (const nitterUrl of nitterInstances) {
+    // --- Google Custom Search for Twitter/X content ---
+    if (GOOGLE_API_KEY && GOOGLE_CSE_ID) {
+      for (const keyword of socialSearchKeywords.slice(0, 6)) {
         try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 12000);
-          
-          response = await fetch(
-            `${nitterUrl}/search?f=tweets&q=${searchQuery}&since=&until=&near=`,
-            {
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
-              },
-              signal: controller.signal
-            }
-          ).finally(() => clearTimeout(timeout));
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          const query = encodeURIComponent(`site:x.com OR site:twitter.com ${keyword}`);
+          const gResponse = await fetch(
+            `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_API_KEY}&cx=${GOOGLE_CSE_ID}&q=${query}&num=5&dateRestrict=d1`,
+            { headers: { 'Accept': 'application/json' } }
+          );
 
-          if (response.ok) {
-            html = await response.text();
-            successfulInstance = nitterUrl;
-            console.log(`Twitter search successful via ${nitterUrl} for "${keyword}"`);
-            twitterSuccessCount++;
-            break;
+          if (!gResponse.ok) {
+            console.log(`Google CSE failed for "${keyword}": ${gResponse.status}`);
+            socialFailCount++;
+            continue;
           }
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          console.log(`Failed to reach ${nitterUrl}: ${errorMessage}`);
-          continue;
-        }
-      }
-      
-      if (!html || !successfulInstance) {
-        console.log(`Twitter scrape failed for "${keyword}": all ${nitterInstances.length} instances failed`);
-        twitterFailCount++;
-        continue;
-      }
-      
-      try {
-        // Parse tweets from HTML (nitter has clean structure)
-        const tweetMatches = html.matchAll(/<div class="tweet-content[^"]*"[^>]*>(.*?)<\/div>/gs);
-        const tweets: { content: string; link: string }[] = [];
-        
-        for (const match of Array.from(tweetMatches).slice(0, 8)) { // Get more tweets
-          const content = match[1]
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/&[^;]+;/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-          
-          if (content.length > 15) { // Lower minimum content length
-            tweets.push({
-              content,
-              link: `https://twitter.com/search?q=${searchQuery}`
-            });
-          }
-        }
 
-        console.log(`Found ${tweets.length} tweets for "${keyword}"`);
+          const gData = await gResponse.json();
+          const items = gData.items || [];
+          socialSuccessCount++;
 
-        // Match tweets against clients with more lenient matching
-        for (const tweet of tweets) {
-          for (const client of clients || []) {
-            const clientName = client.name.toLowerCase();
-            const clientWords = clientName.split(' ');
-            const tweetLower = tweet.content.toLowerCase();
-            
-            // More flexible name matching
-            const mentionsClient = tweetLower.includes(clientName) || 
-              clientWords.some((word: string) => word.length > 3 && tweetLower.includes(word));
-            
-            const industryMatch = client.industry && 
-              INDUSTRY_THREATS[client.industry.toLowerCase()]?.some(term => 
-                tweetLower.includes(term.toLowerCase())
+          for (const item of items.slice(0, 3)) {
+            const title = (item.title || '').toLowerCase();
+            const snippet = (item.snippet || '').toLowerCase();
+            const combinedText = `${title} ${snippet}`;
+
+            for (const client of clients || []) {
+              const clientNameLower = client.name?.toLowerCase() || '';
+              const clientNameWords = clientNameLower.split(' ').filter((w: string) => w.length > 3);
+              const hasNameMatch = clientNameWords.some((word: string) => combinedText.includes(word)) || combinedText.includes(clientNameLower);
+              const hasIndustryMatch = client.industry && INDUSTRY_THREATS[client.industry.toLowerCase()]?.some(
+                (term: string) => includesKeyword(combinedText, term)
               );
 
-            // Lower threshold: create signal if client mentioned OR industry match with keyword
-            if (mentionsClient || industryMatch) {
-              let category = 'social_media';
-              let severity = 'low';
-              
-              if (SECURITY_KEYWORDS.some(kw => tweetLower.includes(kw.toLowerCase()))) {
-                category = 'cybersecurity';
-                severity = mentionsClient ? 'medium' : 'low'; // Adjust based on direct mention
-              } else if (ACTIVIST_KEYWORDS.some(kw => tweetLower.includes(kw.toLowerCase()))) {
-                category = 'reputation';
-                severity = mentionsClient ? 'medium' : 'low';
-              } else if (PHYSICAL_THREAT_KEYWORDS.some(kw => tweetLower.includes(kw.toLowerCase()))) {
-                category = 'physical';
-                severity = mentionsClient ? 'high' : 'medium';
-              }
+              if (hasNameMatch || hasIndustryMatch) {
+                let category = 'social_media';
+                let severity = 'low';
+                if (SECURITY_KEYWORDS.some(kw => includesKeyword(combinedText, kw))) { category = 'cybersecurity'; severity = hasNameMatch ? 'medium' : 'low'; }
+                else if (ACTIVIST_KEYWORDS.some(kw => includesKeyword(combinedText, kw))) { category = 'reputation'; severity = hasNameMatch ? 'medium' : 'low'; }
+                else if (PHYSICAL_THREAT_KEYWORDS.some(kw => includesKeyword(combinedText, kw))) { category = 'physical'; severity = hasNameMatch ? 'high' : 'medium'; }
 
-              const signalText = `Twitter: ${tweet.content.substring(0, 250)}`;
-              
-              const { error: signalError } = await supabase
-                .from('signals')
-                .insert({
-                  client_id: client.id,
-                  normalized_text: signalText,
-                  category,
-                  severity,
-                  location: 'Twitter/X',
-                  raw_json: {
-                    platform: 'twitter',
-                    keyword,
-                    link: tweet.link,
-                    content: tweet.content,
-                    nitter_instance: successfulInstance
-                  },
-                  status: 'new',
-                  confidence: mentionsClient ? 0.75 : 0.45 // Adjust confidence based on match type
-                });
-
-              if (!signalError) {
-                signalsCreated++;
-                console.log(`Created Twitter signal for ${client.name}: ${category} (${severity})`);
+                const { error: signalError } = await supabase
+                  .from('signals')
+                  .insert({
+                    client_id: client.id,
+                    normalized_text: `Twitter/X: ${item.title?.substring(0, 250) || snippet.substring(0, 250)}`,
+                    category,
+                    severity,
+                    location: 'Twitter/X',
+                    raw_json: { platform: 'twitter', source: 'google_cse', keyword, url: item.link, snippet: item.snippet },
+                    status: 'new',
+                    confidence: hasNameMatch ? 0.80 : 0.55
+                  });
+                if (!signalError) { signalsCreated++; console.log(`Created Google CSE Twitter signal for ${client.name}`); }
+                break;
               }
             }
           }
+        } catch (error) {
+          console.error(`Google CSE error for "${keyword}":`, error);
+          socialFailCount++;
         }
-
-        // Rate limiting between searches
-        await new Promise(resolve => setTimeout(resolve, 1500));
-
-      } catch (error) {
-        if (error instanceof Error && error.name === 'AbortError') {
-          console.log(`Twitter scrape timeout for: ${keyword}`);
-        } else {
-          console.error(`Error scraping Twitter for "${keyword}":`, error);
-        }
-        twitterFailCount++;
       }
+    } else {
+      console.log('Google CSE not configured — skipping Twitter/X search via Google');
     }
 
-    console.log(`Twitter monitoring: ${twitterSuccessCount} successful, ${twitterFailCount} failed searches`);
+    // --- Perplexity Sonar for broader social media intelligence ---
+    if (PERPLEXITY_API_KEY) {
+      for (const client of (clients || []).slice(0, 5)) {
+        try {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          const pQuery = `Recent social media posts, news, or public discussions about "${client.name}" related to security threats, protests, boycotts, data breaches, or incidents in the last 24 hours.`;
+          
+          const pResponse = await fetch('https://api.perplexity.ai/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'sonar',
+              messages: [{ role: 'user', content: pQuery }],
+              max_tokens: 500,
+            }),
+          });
+
+          if (!pResponse.ok) {
+            console.log(`Perplexity search failed for ${client.name}: ${pResponse.status}`);
+            socialFailCount++;
+            continue;
+          }
+
+          const pData = await pResponse.json();
+          const content = pData.choices?.[0]?.message?.content || '';
+          socialSuccessCount++;
+
+          // Only create signal if content indicates actual threats/mentions
+          const contentLower = content.toLowerCase();
+          const hasThreatContent = [
+            ...SECURITY_KEYWORDS, ...ACTIVIST_KEYWORDS, ...PHYSICAL_THREAT_KEYWORDS
+          ].some(kw => includesKeyword(contentLower, kw));
+
+          if (hasThreatContent && content.length > 100 && !contentLower.includes('no recent') && !contentLower.includes('no specific')) {
+            let category = 'social_media';
+            let severity = 'low';
+            if (SECURITY_KEYWORDS.some(kw => includesKeyword(contentLower, kw))) { category = 'cybersecurity'; severity = 'medium'; }
+            else if (PHYSICAL_THREAT_KEYWORDS.some(kw => includesKeyword(contentLower, kw))) { category = 'physical'; severity = 'high'; }
+            else if (ACTIVIST_KEYWORDS.some(kw => includesKeyword(contentLower, kw))) { category = 'reputation'; severity = 'medium'; }
+
+            const { error: signalError } = await supabase
+              .from('signals')
+              .insert({
+                client_id: client.id,
+                normalized_text: `Social Intelligence: ${content.substring(0, 300)}`,
+                category,
+                severity,
+                location: 'Social Media (Multi-Platform)',
+                raw_json: {
+                  platform: 'perplexity_sonar',
+                  source: 'multi_platform_search',
+                  citations: pData.citations || [],
+                  full_content: content.substring(0, 2000),
+                },
+                status: 'new',
+                confidence: 0.70
+              });
+            if (!signalError) { signalsCreated++; console.log(`Created Perplexity social signal for ${client.name}`); }
+          }
+        } catch (error) {
+          console.error(`Perplexity error for ${client.name}:`, error);
+          socialFailCount++;
+        }
+      }
+    } else {
+      console.log('Perplexity API key not configured — skipping AI-powered social search');
+    }
+
+    console.log(`Social media monitoring: ${socialSuccessCount} successful, ${socialFailCount} failed searches`);
     console.log(`Social media monitoring complete. Created ${signalsCreated} signals.`);
 
     if (historyEntry) {
@@ -589,9 +580,10 @@ Deno.serve(async (req) => {
           items_scanned: clients?.length || 0,
           signals_created: signalsCreated,
           scan_metadata: {
-            sources: ['Reddit', 'Twitter/X', 'Hacktivist Forums'],
-            platforms: ['Reddit (10 subreddits)', 'Twitter/X (via Nitter)', 'Anonymous Forums'],
-            clients_monitored: clients?.map(c => c.name) || []
+            sources: ['Reddit', 'Google CSE (Twitter/X)', 'Perplexity Sonar', 'Hacker News'],
+            platforms: ['Reddit (14 subreddits)', 'Twitter/X (via Google CSE)', 'Multi-platform (via Perplexity)', 'Hacker News'],
+            clients_monitored: clients?.map(c => c.name) || [],
+            social_search_stats: { success: socialSuccessCount, failed: socialFailCount }
           }
         })
         .eq('id', historyEntry.id);

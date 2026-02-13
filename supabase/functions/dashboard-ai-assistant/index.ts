@@ -957,8 +957,8 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
           ai: {
             provider: 'Lovable AI Gateway',
             models: [
-              'google/gemini-2.5-flash (primary - fast, cost-effective)',
-              'google/gemini-2.5-pro (complex reasoning)',
+              'google/gemini-3-pro-preview (primary - advanced reasoning)',
+              'google/gemini-2.5-flash (utility/summarization)',
               'google/gemini-2.5-flash-lite (classification)',
               'openai/gpt-5-mini (alternative)'
             ],
@@ -7801,7 +7801,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "google/gemini-3-pro-preview",
         messages: [
           {
             role: "system",
