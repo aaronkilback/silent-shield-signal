@@ -1,16 +1,11 @@
 /**
  * Send Daily Briefing Email
- * 
- * Generates an AI-powered daily threat summary and emails it via Resend.
- * Designed to be triggered by pg_cron daily.
- * 
- * Recipients are configured in the `scheduled_briefings` table
- * with briefing_type = 'daily_email'.
  */
 
 import { Resend } from "npm:resend@2.0.0";
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { getCriticalDateContext } from "../_shared/anti-hallucination.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -19,18 +14,15 @@ Deno.serve(async (req) => {
   try {
     const supabase = createServiceClient();
     const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Fortress AI <notifications@updates.lovableproject.com>';
 
     if (!RESEND_API_KEY) throw new Error('RESEND_API_KEY not configured');
-    if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY not configured');
 
     const resend = new Resend(RESEND_API_KEY);
     const dateContext = getCriticalDateContext();
 
     console.log(`[DailyBriefing] Generating for ${dateContext.currentDateISO}`);
 
-    // Get recipients from scheduled_briefings where briefing_type is daily_email
     const { data: briefingConfigs } = await supabase
       .from('scheduled_briefings')
       .select('*')
@@ -38,11 +30,9 @@ Deno.serve(async (req) => {
       .eq('briefing_type', 'daily_email');
 
     if (!briefingConfigs || briefingConfigs.length === 0) {
-      console.log('[DailyBriefing] No active daily_email briefings configured');
       return successResponse({ success: true, message: 'No active daily email briefings configured', sent: 0 });
     }
 
-    // Gather 24-hour intelligence snapshot
     const cutoff24h = new Date(Date.now() - 24 * 3600000).toISOString();
 
     const [
@@ -73,7 +63,7 @@ Deno.serve(async (req) => {
       autonomous_actions: (recentActions || []).length,
     };
 
-    // DEDUP GUARD: Check if we already sent a briefing today (prevents duplicate sends from watchdog/manual triggers)
+    // DEDUP GUARD
     const todayStart = dateContext.currentDateISO + 'T00:00:00Z';
     const { data: alreadySent } = await supabase
       .from('autonomous_actions_log')
@@ -85,74 +75,44 @@ Deno.serve(async (req) => {
       .limit(1);
 
     if (alreadySent && alreadySent.length > 0) {
-      console.log('[DailyBriefing] Already sent today — dedup guard blocking duplicate');
       return successResponse({ success: true, message: 'Briefing already sent today', sent: 0, deduplicated: true });
     }
 
-    // Skip briefing if there's nothing new to report
     const hasNewActivity = metrics.signals_24h > 0 || metrics.open_incidents > 0 || metrics.autonomous_actions > 0;
     
     if (!hasNewActivity) {
-      console.log('[DailyBriefing] No new activity in last 24h — skipping send to avoid noise');
-      
-      // Log the skip
       await supabase.from('autonomous_actions_log').insert({
-        action_type: 'daily_email_briefing',
-        trigger_source: 'cron',
-        action_details: { skipped: true, reason: 'no_new_activity', date: dateContext.currentDateISO },
-        status: 'skipped',
+        action_type: 'daily_email_briefing', trigger_source: 'cron',
+        action_details: { skipped: true, reason: 'no_new_activity', date: dateContext.currentDateISO }, status: 'skipped',
       });
 
-      // Still update last_run_at so we know the cron fired
       for (const config of briefingConfigs) {
-        await supabase.from('scheduled_briefings').update({
-          last_run_at: new Date().toISOString(),
-        }).eq('id', config.id);
+        await supabase.from('scheduled_briefings').update({ last_run_at: new Date().toISOString() }).eq('id', config.id);
       }
 
-      return successResponse({ success: true, message: 'No new activity — briefing skipped to reduce noise', sent: 0, skipped: true });
+      return successResponse({ success: true, message: 'No new activity — briefing skipped', sent: 0, skipped: true });
     }
 
-    // Generate single doctrine line via AI
+    // Generate doctrine line
     let doctrineLine = '';
     try {
-      // Prioritize core Silent Shield book principles
       const coreEntries = (doctrineEntries || []).filter((d: any) => d.tags?.includes('core-10') && d.content_text);
       const otherEntries = (doctrineEntries || []).filter((d: any) => !d.tags?.includes('core-10') && d.content_text);
       const prioritized = coreEntries.length > 0 ? coreEntries : otherEntries;
-      const doctrineContext = prioritized
-        .map((d: any) => `- ${d.title}: ${d.content_text}`)
-        .join('\n');
+      const doctrineContext = prioritized.map((d: any) => `- ${d.title}: ${d.content_text}`).join('\n');
 
-      const postureResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-2.5-flash',
-          messages: [
-            {
-              role: 'system',
-              content: `You are the Silent Shield doctrine advisor. Your ONLY source material is the Silent Shield Doctrine Library below. Do NOT invent your own principles. Do NOT use generic security advice.
-
-Pick ONE entry from the library and rephrase it as a sharp, memorable one-liner (max 20 words). Keep the original meaning intact — just make it punchy and quotable.
-
-SILENT SHIELD DOCTRINE LIBRARY (YOU MUST USE THESE — NOTHING ELSE):
-${doctrineContext}
-
-OUTPUT: JSON with one field "doctrine_line". Respond ONLY with valid JSON.`,
-            },
-            { role: 'user', content: 'Generate today\'s doctrine line.' },
-          ],
-          temperature: 0.5,
-        }),
+      const doctrineResult = await callAiGateway({
+        model: 'google/gemini-2.5-flash',
+        messages: [
+          { role: 'system', content: `You are the Silent Shield doctrine advisor. Pick ONE entry from the library and rephrase it as a sharp, memorable one-liner (max 20 words).\n\nSILENT SHIELD DOCTRINE LIBRARY:\n${doctrineContext}\n\nOUTPUT: JSON with one field "doctrine_line". Respond ONLY with valid JSON.` },
+          { role: 'user', content: 'Generate today\'s doctrine line.' },
+        ],
+        functionName: 'send-daily-briefing/doctrine',
+        extraBody: { temperature: 0.5 },
       });
 
-      if (postureResponse.ok) {
-        const postureData = await postureResponse.json();
-        let content = (postureData.choices?.[0]?.message?.content || '').trim();
+      if (doctrineResult.content) {
+        let content = doctrineResult.content.trim();
         if (content.startsWith('```')) content = content.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
         const parsed = JSON.parse(content);
         doctrineLine = parsed.doctrine_line || '';
@@ -161,19 +121,13 @@ OUTPUT: JSON with one field "doctrine_line". Respond ONLY with valid JSON.`,
       console.error('[DailyBriefing] Doctrine line generation failed:', err);
     }
 
-    // Generate briefing content via AI
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          {
-            role: 'system',
-            content: `You are Fortress AI, generating a concise daily security briefing email. Write in measured, professional prose suitable for a non-technical executive. No markdown formatting — use plain text with clear section headers. Keep it under 250 words. Current date: ${dateContext.currentDateFormatted}, ${dateContext.currentTime24h} ${dateContext.currentTimezone}.
+    // Generate briefing content
+    const briefingResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        {
+          role: 'system',
+          content: `You are Fortress AI, generating a concise daily security briefing email. Write in measured, professional prose suitable for a non-technical executive. No markdown formatting — use plain text with clear section headers. Keep it under 250 words. Current date: ${dateContext.currentDateFormatted}, ${dateContext.currentTime24h} ${dateContext.currentTimezone}.
 
 Structure:
 1. SITUATION OVERVIEW (2-3 sentences)
@@ -181,33 +135,30 @@ Structure:
 3. NOTABLE SIGNALS (top 3 if any, one line each)
 4. RECOMMENDED POSTURE (1-2 sentences)
 
-Tone: Calm, authoritative, zero jargon. If metrics are all low/zero, state "No elevated activity detected" confidently.`,
-          },
-          {
-            role: 'user',
-            content: `Generate today's daily briefing.\n\nMETRICS:\n${JSON.stringify(metrics, null, 2)}\n\nTOP SIGNALS (last 24h):\n${JSON.stringify((recentSignals || []).slice(0, 5).map(s => ({ severity: s.severity, category: s.category, title: s.title })), null, 2)}\n\nAUTONOMOUS ACTIONS:\n${JSON.stringify((recentActions || []).map(a => a.action_type), null, 2)}`,
-          },
-        ],
-        max_tokens: 800,
-        temperature: 0.2,
-      }),
+Tone: Calm, authoritative, zero jargon.`,
+        },
+        {
+          role: 'user',
+          content: `Generate today's daily briefing.\n\nMETRICS:\n${JSON.stringify(metrics, null, 2)}\n\nTOP SIGNALS (last 24h):\n${JSON.stringify((recentSignals || []).slice(0, 5).map(s => ({ severity: s.severity, category: s.category, title: s.title })), null, 2)}\n\nAUTONOMOUS ACTIONS:\n${JSON.stringify((recentActions || []).map(a => a.action_type), null, 2)}`,
+        },
+      ],
+      functionName: 'send-daily-briefing',
+      extraBody: { max_tokens: 800, temperature: 0.2 },
+      dlqOnFailure: true,
+      dlqPayload: { date: dateContext.currentDateISO, metrics },
     });
 
-    if (!aiResponse.ok) {
-      throw new Error(`AI generation failed: ${aiResponse.status}`);
+    if (briefingResult.error) {
+      throw new Error(`AI generation failed: ${briefingResult.error}`);
     }
 
-    const aiData = await aiResponse.json();
-    const briefingText = aiData.choices?.[0]?.message?.content || 'Unable to generate briefing content.';
+    const briefingText = briefingResult.content || 'Unable to generate briefing content.';
 
-    // Build feedback URL base — link to in-app feedback page instead of raw edge function
     const appUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || 'https://silent-shield-signal.lovable.app';
     const feedbackBaseUrl = `${appUrl}/briefing-feedback`;
 
-    // Build HTML email
     const emailHtml = buildBriefingEmail(briefingText, metrics, dateContext, doctrineLine, feedbackBaseUrl);
 
-    // Send to all configured recipients
     let sentCount = 0;
     const errors: string[] = [];
 
@@ -217,41 +168,27 @@ Tone: Calm, authoritative, zero jargon. If metrics are all low/zero, state "No e
       for (const email of recipients) {
         try {
           await resend.emails.send({
-            from: fromEmail,
-            to: [email],
+            from: fromEmail, to: [email],
             subject: `🛡️ Fortress Daily Briefing — ${dateContext.currentDateFormatted}`,
             html: emailHtml,
           });
           sentCount++;
-          console.log(`[DailyBriefing] Sent to ${email}`);
         } catch (err) {
           console.error(`[DailyBriefing] Failed to send to ${email}:`, err);
           errors.push(`${email}: ${err instanceof Error ? err.message : 'Unknown error'}`);
         }
       }
 
-      // Update last_run_at
-      await supabase.from('scheduled_briefings').update({
-        last_run_at: new Date().toISOString(),
-      }).eq('id', config.id);
+      await supabase.from('scheduled_briefings').update({ last_run_at: new Date().toISOString() }).eq('id', config.id);
     }
 
-    // Log the action
     await supabase.from('autonomous_actions_log').insert({
-      action_type: 'daily_email_briefing',
-      trigger_source: 'cron',
+      action_type: 'daily_email_briefing', trigger_source: 'cron',
       action_details: { sent_count: sentCount, errors, date: dateContext.currentDateISO },
       status: errors.length === 0 ? 'completed' : 'partial',
     });
 
-    console.log(`[DailyBriefing] Complete. Sent: ${sentCount}, Errors: ${errors.length}`);
-
-    return successResponse({
-      success: true,
-      sent: sentCount,
-      errors: errors.length > 0 ? errors : undefined,
-      date: dateContext.currentDateISO,
-    });
+    return successResponse({ success: true, sent: sentCount, errors: errors.length > 0 ? errors : undefined, date: dateContext.currentDateISO });
   } catch (error) {
     console.error('[DailyBriefing] Error:', error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
@@ -272,11 +209,9 @@ function formatBriefingLines(text: string): string {
 }
 
 function buildBriefingEmail(
-  briefingText: string,
-  metrics: Record<string, number>,
+  briefingText: string, metrics: Record<string, number>,
   dateContext: { currentDateFormatted: string; currentTime24h: string; currentTimezone: string; currentDateISO: string },
-  doctrineLine: string,
-  feedbackBaseUrl: string
+  doctrineLine: string, feedbackBaseUrl: string
 ): string {
   const riskColor = metrics.risk_score >= 70 ? '#dc2626' : metrics.risk_score >= 40 ? '#f59e0b' : '#059669';
   const riskLabel = metrics.risk_score >= 70 ? 'ELEVATED' : metrics.risk_score >= 40 ? 'MODERATE' : 'NORMAL';
@@ -285,7 +220,6 @@ function buildBriefingEmail(
   const thumbsDownUrl = `${feedbackBaseUrl}?f=negative&d=${dateContext.currentDateISO}`;
 
   const doctrineSection = doctrineLine ? `
-    <!-- Doctrine Line -->
     <div style="padding:16px 30px; border-top:1px solid #334155; text-align:center;">
       <p style="color:#94a3b8; font-size:13px; margin:0; line-height:1.6; font-style:italic;">"${doctrineLine}"</p>
     </div>` : '';
@@ -296,8 +230,6 @@ function buildBriefingEmail(
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
 <body style="margin:0; padding:0; background:#0f172a; font-family: 'Segoe UI', Arial, sans-serif;">
   <div style="max-width:600px; margin:0 auto; background:#1e293b; border-radius:12px; overflow:hidden; margin-top:20px; margin-bottom:20px;">
-    
-    <!-- Header -->
     <div style="background:linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding:30px 30px 20px; border-bottom:1px solid #334155;">
       <div style="display:flex; align-items:center; gap:12px;">
         <div style="width:40px; height:40px; background:linear-gradient(135deg, #3b82f6, #06b6d4); border-radius:8px; display:flex; align-items:center; justify-content:center;">
@@ -309,8 +241,6 @@ function buildBriefingEmail(
         </div>
       </div>
     </div>
-
-    <!-- Risk Score Banner -->
     <div style="padding:16px 30px; background:${riskColor}15; border-bottom:1px solid #334155;">
       <div style="display:flex; align-items:center; gap:10px;">
         <div style="width:10px; height:10px; background:${riskColor}; border-radius:50%;"></div>
@@ -318,8 +248,6 @@ function buildBriefingEmail(
         <span style="color:#64748b; font-size:13px; margin-left:auto;">Score: ${metrics.risk_score}/100</span>
       </div>
     </div>
-
-    <!-- Metrics Row -->
     <div style="padding:20px 30px; display:flex; gap:12px; border-bottom:1px solid #334155;">
       <div style="flex:1; background:#0f172a; border-radius:8px; padding:12px; text-align:center;">
         <div style="color:#94a3b8; font-size:11px; text-transform:uppercase; letter-spacing:0.5px;">Signals</div>
@@ -334,15 +262,10 @@ function buildBriefingEmail(
         <div style="color:#dc2626; font-size:24px; font-weight:700; margin-top:4px;">${metrics.critical_signals}</div>
       </div>
     </div>
-
-    <!-- Briefing Content -->
     <div style="padding:24px 30px; color:#cbd5e1; font-size:14px; line-height:1.7;">
       ${formatBriefingLines(briefingText)}
     </div>
-
     ${doctrineSection}
-
-    <!-- Feedback Section -->
     <div style="padding:20px 30px; border-top:1px solid #334155; text-align:center;">
       <p style="color:#64748b; font-size:12px; margin:0 0 12px; text-transform:uppercase; letter-spacing:0.5px;">Was this briefing useful?</p>
       <div style="display:inline-flex; gap:16px;">
@@ -351,15 +274,9 @@ function buildBriefingEmail(
       </div>
       <p style="color:#475569; font-size:11px; margin:10px 0 0;">Your feedback trains Fortress to deliver better intelligence.</p>
     </div>
-
-    <!-- Footer -->
     <div style="padding:20px 30px; background:#0f172a; border-top:1px solid #334155; text-align:center;">
-      <p style="color:#475569; font-size:11px; margin:0;">
-        Automated intelligence briefing from Fortress AI · Delivered ${dateContext.currentDateFormatted}
-      </p>
-      <p style="color:#334155; font-size:10px; margin:8px 0 0;">
-        To adjust delivery preferences, update your scheduled briefings in Fortress.
-      </p>
+      <p style="color:#475569; font-size:11px; margin:0;">Automated intelligence briefing from Fortress AI · Delivered ${dateContext.currentDateFormatted}</p>
+      <p style="color:#334155; font-size:10px; margin:8px 0 0;">To adjust delivery preferences, update your scheduled briefings in Fortress.</p>
     </div>
   </div>
 </body>

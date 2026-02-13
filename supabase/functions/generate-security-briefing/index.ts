@@ -1,5 +1,6 @@
 import { corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -15,23 +16,13 @@ Deno.serve(async (req) => {
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_ANON_KEY") ?? "",
-      {
-        global: {
-          headers: { Authorization: req.headers.get("Authorization")! },
-        },
-      }
+      { global: { headers: { Authorization: req.headers.get("Authorization")! } } }
     );
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const PERPLEXITY_API_KEY = Deno.env.get("PERPLEXITY_API_KEY");
-
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY not configured");
-    }
 
     console.log(`Generating security briefing for: ${city}, ${country}`);
 
-    // Query Fortress signals for this location
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -65,33 +56,12 @@ Deno.serve(async (req) => {
       try {
         const perplexityResponse = await fetch("https://api.perplexity.ai/chat/completions", {
           method: "POST",
-          headers: {
-            "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
-            "Content-Type": "application/json",
-          },
+          headers: { "Authorization": `Bearer ${PERPLEXITY_API_KEY}`, "Content-Type": "application/json" },
           body: JSON.stringify({
             model: "sonar",
             messages: [
-              {
-                role: "system",
-                content: "You are a security analyst providing travel risk intelligence. Provide factual, current information."
-              },
-              {
-                role: "user",
-                content: `Provide current security and travel risk information for ${city}, ${country}${travel_dates ? ` for travel around ${travel_dates}` : ''}:
-
-1. Current travel advisory level
-2. Recent security incidents (last 30 days)
-3. Crime situation and safety concerns
-4. Political stability and civil unrest
-5. Health and disease risks
-6. Natural hazard risks
-7. Transportation safety
-8. Terrorism threat level
-9. Emergency contact numbers (police, ambulance, embassy)
-
-Focus on actionable intelligence for business travelers.`
-              }
+              { role: "system", content: "You are a security analyst providing travel risk intelligence. Provide factual, current information." },
+              { role: "user", content: `Provide current security and travel risk information for ${city}, ${country}${travel_dates ? ` for travel around ${travel_dates}` : ''}: travel advisory level, recent security incidents, crime situation, political stability, health risks, natural hazards, transportation safety, terrorism threat, emergency contacts.` }
             ],
             search_recency_filter: "month",
           }),
@@ -99,204 +69,94 @@ Focus on actionable intelligence for business travelers.`
 
         if (perplexityResponse.ok) {
           const perplexityData = await perplexityResponse.json();
-          perplexityIntel = {
-            content: perplexityData.choices?.[0]?.message?.content,
-            citations: perplexityData.citations || []
-          };
+          perplexityIntel = { content: perplexityData.choices?.[0]?.message?.content, citations: perplexityData.citations || [] };
         }
       } catch (e) {
         console.error("Perplexity error:", e);
       }
     }
 
-    // Format Fortress data
     const formatSignals = (sigs: any[]) => {
       if (!sigs || sigs.length === 0) return "No recent signals.";
-      return sigs.map(s => 
-        `- [${s.severity?.toUpperCase() || 'INFO'}] ${s.title} (${new Date(s.created_at).toLocaleDateString()}): ${s.content?.substring(0, 200) || ''}`
-      ).join('\n');
+      return sigs.map(s => `- [${s.severity?.toUpperCase() || 'INFO'}] ${s.title} (${new Date(s.created_at).toLocaleDateString()}): ${s.content?.substring(0, 200) || ''}`).join('\n');
     };
 
     const formatExistingReports = (reports: any[]) => {
       if (!reports || reports.length === 0) return "No existing third-party reports.";
-      return reports.map(r => {
-        const data = r.parsed_data;
-        return `- ${r.provider}: ${data?.risk_rating} risk (${r.valid_date})\n  Key risks: ${data?.key_risks?.join(', ') || 'N/A'}`;
-      }).join('\n');
+      return reports.map(r => { const data = r.parsed_data; return `- ${r.provider}: ${data?.risk_rating} risk (${r.valid_date})\n  Key risks: ${data?.key_risks?.join(', ') || 'N/A'}`; }).join('\n');
     };
 
-    // Generate comprehensive briefing
-    const prompt = `Generate a comprehensive security briefing for ${city}, ${country} in the style of International SOS or Control Risks.
+    const prompt = `Generate a comprehensive security briefing for ${city}, ${country}.
 ${travel_dates ? `Travel dates: ${travel_dates}` : ''}
 
 === FORTRESS INTELLIGENCE DATA ===
-
 Recent Signals (${signals?.length || 0}):
 ${formatSignals(signals || [])}
 
 Recent Incidents (${incidents?.length || 0}):
 ${incidents?.map(i => `- [${i.severity}] ${i.title}: ${i.description?.substring(0, 150)}`).join('\n') || 'None'}
 
-Third-Party Reports on File:
+Third-Party Reports:
 ${formatExistingReports(existingReports || [])}
 
 === REAL-TIME INTELLIGENCE (Perplexity) ===
 ${perplexityIntel?.content || 'Real-time intelligence not available.'}
-
 ${perplexityIntel?.citations?.length ? `Sources: ${perplexityIntel.citations.slice(0, 5).join(', ')}` : ''}
 
-=== BRIEFING REQUIREMENTS ===
+Create a professional security briefing with location overview, risk rating, key risks, latest developments, security advice, transportation, emergency contacts, and travel advisory.`;
 
-Create a professional security briefing with:
-
-1. LOCATION OVERVIEW - Brief description of the location and its security context
-2. RISK RATING - Overall risk level (INSIGNIFICANT/LOW/MEDIUM/HIGH/EXTREME)
-3. KEY RISKS - Each major risk category with level and description
-4. LATEST DEVELOPMENTS - Recent security-relevant events
-5. SECURITY ADVICE - Category-specific recommendations
-6. TRANSPORTATION - Airport info, ground transport, safety tips
-7. EMERGENCY CONTACTS - Local emergency numbers
-8. TRAVEL ADVISORY - Summary recommendation for travelers`;
-
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          {
-            role: "system",
-            content: "You are an expert security analyst who produces professional security briefings in the style of International SOS and Control Risks. Your briefings are accurate, actionable, and based on verified intelligence."
+    const tools = [{
+      type: "function",
+      function: {
+        name: "generate_security_briefing",
+        description: "Generate a structured security briefing",
+        parameters: {
+          type: "object",
+          properties: {
+            location: { type: "object", properties: { city: { type: "string" }, country: { type: "string" } }, required: ["city", "country"] },
+            risk_rating: { type: "string", enum: ["INSIGNIFICANT", "LOW", "MEDIUM", "HIGH", "EXTREME"] },
+            overview: { type: "string" },
+            key_risks: { type: "array", items: { type: "object", properties: { category: { type: "string" }, level: { type: "string", enum: ["LOW", "MEDIUM", "HIGH", "EXTREME"] }, description: { type: "string" } }, required: ["category", "level", "description"] } },
+            latest_developments: { type: "array", items: { type: "object", properties: { date: { type: "string" }, title: { type: "string" }, description: { type: "string" } } } },
+            security_advice: { type: "array", items: { type: "object", properties: { category: { type: "string" }, recommendations: { type: "array", items: { type: "string" } } } } },
+            transportation: { type: "object", properties: { airport: { type: "string" }, ground_transport: { type: "string" }, recommendations: { type: "array", items: { type: "string" } } } },
+            emergency_contacts: { type: "array", items: { type: "object", properties: { name: { type: "string" }, number: { type: "string" } } } },
+            travel_advisory: { type: "string" },
+            sources: { type: "array", items: { type: "string" } }
           },
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-        tools: [
-          {
-            type: "function",
-            function: {
-              name: "generate_security_briefing",
-              description: "Generate a structured security briefing",
-              parameters: {
-                type: "object",
-                properties: {
-                  location: {
-                    type: "object",
-                    properties: {
-                      city: { type: "string" },
-                      country: { type: "string" }
-                    },
-                    required: ["city", "country"]
-                  },
-                  risk_rating: { 
-                    type: "string",
-                    enum: ["INSIGNIFICANT", "LOW", "MEDIUM", "HIGH", "EXTREME"]
-                  },
-                  overview: { type: "string" },
-                  key_risks: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        category: { type: "string" },
-                        level: { type: "string", enum: ["LOW", "MEDIUM", "HIGH", "EXTREME"] },
-                        description: { type: "string" }
-                      },
-                      required: ["category", "level", "description"]
-                    }
-                  },
-                  latest_developments: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        date: { type: "string" },
-                        title: { type: "string" },
-                        description: { type: "string" }
-                      }
-                    }
-                  },
-                  security_advice: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        category: { type: "string" },
-                        recommendations: {
-                          type: "array",
-                          items: { type: "string" }
-                        }
-                      }
-                    }
-                  },
-                  transportation: {
-                    type: "object",
-                    properties: {
-                      airport: { type: "string" },
-                      ground_transport: { type: "string" },
-                      recommendations: {
-                        type: "array",
-                        items: { type: "string" }
-                      }
-                    }
-                  },
-                  emergency_contacts: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        name: { type: "string" },
-                        number: { type: "string" }
-                      }
-                    }
-                  },
-                  travel_advisory: { type: "string" },
-                  sources: {
-                    type: "array",
-                    items: { type: "string" }
-                  }
-                },
-                required: ["location", "risk_rating", "overview", "key_risks", "travel_advisory"]
-              }
-            }
-          }
-        ],
-        tool_choice: {
-          type: "function",
-          function: { name: "generate_security_briefing" }
+          required: ["location", "risk_rating", "overview", "key_risks", "travel_advisory"]
         }
-      }),
+      }
+    }];
+
+    const aiResult = await callAiGateway({
+      model: "google/gemini-2.5-flash",
+      messages: [
+        { role: "system", content: "You are an expert security analyst who produces professional security briefings in the style of International SOS and Control Risks." },
+        { role: "user", content: prompt }
+      ],
+      functionName: 'generate-security-briefing',
+      extraBody: { tools, tool_choice: { type: "function", function: { name: "generate_security_briefing" } } },
+      dlqOnFailure: true,
+      dlqPayload: { city, country, travel_dates },
     });
 
-    if (!aiResponse.ok) {
+    if (aiResult.error) {
       throw new Error("Failed to generate security briefing");
     }
 
-    const aiData = await aiResponse.json();
-    const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
-
+    const toolCall = aiResult.raw?.choices?.[0]?.message?.tool_calls?.[0];
     if (!toolCall) {
       throw new Error("No briefing generated");
     }
 
     const briefing = JSON.parse(toolCall.function.arguments);
     
-    // Add Perplexity sources if available
     if (perplexityIntel?.citations) {
       briefing.sources = [...(briefing.sources || []), ...perplexityIntel.citations.slice(0, 5)];
     }
 
-    console.log("Generated briefing for:", briefing.location);
-
-    return successResponse({
-      success: true,
-      briefing,
-    });
+    return successResponse({ success: true, briefing });
   } catch (error) {
     console.error("Error generating security briefing:", error);
     return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);

@@ -1,5 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { getAntiHallucinationPrompt, getCriticalDateContext, categorizeIncidentsByAge } from "../_shared/anti-hallucination.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 interface ThreatRadarRequest {
   client_id?: string;
@@ -37,10 +38,7 @@ Deno.serve(async (req) => {
 
     const supabase = createServiceClient();
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      return errorResponse('LOVABLE_API_KEY not configured', 500);
-    }
+    // LOVABLE_API_KEY handled by callAiGateway
 
     const timeframeCutoff = new Date(Date.now() - timeframe_hours * 60 * 60 * 1000).toISOString();
 
@@ -320,39 +318,33 @@ Provide:
 Be specific, actionable, and ALWAYS cite the data source for each claim.`;
 
       try {
-        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-3-pro-preview',
-            messages: [
-              { 
-                role: 'system', 
-                content: `You are an elite threat intelligence analyst specializing in predictive threat analysis for critical infrastructure protection. 
+        const aiResult = await callAiGateway({
+          model: 'google/gemini-3-pro-preview',
+          messages: [
+            { 
+              role: 'system', 
+              content: `You are an elite threat intelligence analyst specializing in predictive threat analysis for critical infrastructure protection. 
 
 CRITICAL ACCURACY RULES:
 1. ONLY use exact numbers provided in the data - NEVER approximate or round
 2. ONLY reference dates that appear in the data - NEVER fabricate dates
 3. Distinguish between NEW incidents (last 24h) and STALE incidents (>7 days old)
-4. Cite your data source for every claim (e.g., "Based on the 4 active precursor indicators...")
+4. Cite your data source for every claim
 5. If information is missing, explicitly state "Data not available" rather than guessing
-6. Use hedged language for predictions: "Based on current indicators, there is a [X]% probability..."
+6. Use hedged language for predictions
 
 Provide concise, actionable intelligence assessments focused on proactive threat neutralization.` 
-              },
-              { role: 'user', content: analysisPrompt }
-            ],
-          }),
+            },
+            { role: 'user', content: analysisPrompt }
+          ],
+          functionName: 'threat-radar-analysis',
+          dlqOnFailure: true,
+          dlqPayload: { client_id, timeframe_hours },
         });
 
-        if (aiResponse.ok) {
-          const aiData = await aiResponse.json();
-          aiAnalysis = aiData.choices?.[0]?.message?.content || '';
+        if (aiResult.content) {
+          aiAnalysis = aiResult.content;
 
-          // Extract escalation probability from AI response
           const probMatch = aiAnalysis.match(/(\d{1,3})%?\s*(?:chance|probability)/i);
           const escalationProbability = probMatch ? parseInt(probMatch[1]) : overallThreatScore;
 
