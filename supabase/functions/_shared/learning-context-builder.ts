@@ -59,6 +59,10 @@ export async function getLearningSnapshot(
       'quality:incident',
       'quality:signal',
       'briefing_quality',
+      // Implicit behavioral learning
+      'implicit_engaged_patterns',
+      'implicit_dismissed_patterns',
+      'implicit_behavioral_metrics',
     ]);
 
   // Fetch top source reliability scores
@@ -90,8 +94,22 @@ export async function getLearningSnapshot(
 
   const approvedFeatures = profileMap.get('approved_signal_patterns') || {};
   const rejectedFeatures = profileMap.get('rejected_signal_patterns') || {};
-  const topApproved = extractTopKeys(approvedFeatures, maxTokenBudget === 'compact' ? 10 : 20);
-  const topRejected = extractTopKeys(rejectedFeatures, maxTokenBudget === 'compact' ? 10 : 20);
+  const implicitEngaged = profileMap.get('implicit_engaged_patterns') || {};
+  const implicitDismissed = profileMap.get('implicit_dismissed_patterns') || {};
+  const implicitMetrics = profileMap.get('implicit_behavioral_metrics') || {};
+
+  // Merge explicit + implicit signals (implicit weighted at 0.5x)
+  const mergedApproved: Record<string, number> = { ...approvedFeatures };
+  for (const [k, v] of Object.entries(implicitEngaged)) {
+    mergedApproved[k] = (mergedApproved[k] || 0) + Math.round((v as number) * 0.5);
+  }
+  const mergedRejected: Record<string, number> = { ...rejectedFeatures };
+  for (const [k, v] of Object.entries(implicitDismissed)) {
+    mergedRejected[k] = (mergedRejected[k] || 0) + Math.round((v as number) * 0.5);
+  }
+
+  const topApproved = extractTopKeys(mergedApproved, maxTokenBudget === 'compact' ? 10 : 20);
+  const topRejected = extractTopKeys(mergedRejected, maxTokenBudget === 'compact' ? 10 : 20);
 
   // Quality scores for different output types
   const qualityScores: Record<string, number> = {};
@@ -163,6 +181,18 @@ export async function getLearningSnapshot(
   // Rejected patterns
   if (topRejected.length > 0) {
     promptParts.push(`\n❌ ANALYST-REJECTED PATTERNS (deprioritize signals containing these): ${topRejected.join(', ')}`);
+  }
+
+  // Implicit behavioral intelligence
+  if (implicitMetrics.total_implicit_events > 0 && maxTokenBudget !== 'compact') {
+    const parts: string[] = [];
+    if (implicitMetrics.total_escalations) parts.push(`${implicitMetrics.total_escalations} escalations`);
+    if (implicitMetrics.total_report_inclusions) parts.push(`${implicitMetrics.total_report_inclusions} report inclusions`);
+    if (implicitMetrics.total_investigations) parts.push(`${implicitMetrics.total_investigations} investigations`);
+    if (implicitMetrics.total_quick_dismissals) parts.push(`${implicitMetrics.total_quick_dismissals} quick dismissals`);
+    if (parts.length > 0) {
+      promptParts.push(`\n🧠 IMPLICIT ANALYST BEHAVIOR (last 24h): ${parts.join(', ')}. Signals that analysts investigate or escalate are high-value; quickly dismissed signals are low-value.`);
+    }
   }
 
   // Source reliability
