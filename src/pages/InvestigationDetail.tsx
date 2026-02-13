@@ -593,10 +593,15 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
         .from('entities')
         .insert({
           name: newLocationName,
-          type: 'location',
-          description: newLocationDescription,
-          current_location: newLocationAddress,
+          type: 'location' as const,
+          description: newLocationDescription || null,
+          current_location: newLocationAddress || null,
           created_by: user?.id,
+          client_id: investigation?.client_id || null,
+          risk_level: 'low',
+          entity_status: 'active',
+          is_active: true,
+          confidence_score: 0.7,
           attributes: {
             source_investigation: investigation?.file_number
           }
