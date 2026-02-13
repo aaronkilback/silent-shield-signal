@@ -15,73 +15,89 @@ Deno.serve(async (req) => {
 
     const supabase = createServiceClient();
 
-    // Fetch archival documents for reference context
-    let documentContext = '';
-    const { data: archivalDocs } = await supabase
-      .from('archival_documents')
-      .select('filename, summary, content_text, keywords, entity_mentions, date_of_document')
-      .not('content_text', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(15);
-    
-    if (archivalDocs?.length) {
-      documentContext = '\n\n=== REFERENCE DOCUMENTS ===\n';
-      archivalDocs.forEach(doc => {
-        documentContext += `\n--- ${doc.filename} ---\n`;
-        if (doc.date_of_document) documentContext += `Date: ${doc.date_of_document}\n`;
-        if (doc.summary) documentContext += `Summary: ${doc.summary}\n`;
-        if (doc.keywords?.length) documentContext += `Keywords: ${doc.keywords.join(', ')}\n`;
-        if (doc.entity_mentions?.length) documentContext += `Entities: ${doc.entity_mentions.join(', ')}\n`;
-        if (doc.content_text) {
-          const preview = doc.content_text.substring(0, 1500);
-          documentContext += `Content: ${preview}${doc.content_text.length > 1500 ? '...[truncated]' : ''}\n`;
-        }
-      });
+    // Only fetch reference context if the investigation already has substantive content
+    // This prevents the AI from fabricating data from unrelated signals/entities/documents
+    const hasSubstantiveContext = context && context.length > 80 && 
+      !context.includes('Not yet written') || (existingText && existingText.length > 50);
+
+    let referenceContext = '';
+
+    if (hasSubstantiveContext) {
+      // Fetch archival documents for reference context
+      let documentContext = '';
+      const { data: archivalDocs } = await supabase
+        .from('archival_documents')
+        .select('filename, summary, content_text, keywords, entity_mentions, date_of_document')
+        .not('content_text', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(15);
+      
+      if (archivalDocs?.length) {
+        documentContext = '\n\n=== REFERENCE DOCUMENTS (use ONLY if directly relevant) ===\n';
+        archivalDocs.forEach(doc => {
+          documentContext += `\n--- ${doc.filename} ---\n`;
+          if (doc.date_of_document) documentContext += `Date: ${doc.date_of_document}\n`;
+          if (doc.summary) documentContext += `Summary: ${doc.summary}\n`;
+          if (doc.keywords?.length) documentContext += `Keywords: ${doc.keywords.join(', ')}\n`;
+          if (doc.entity_mentions?.length) documentContext += `Entities: ${doc.entity_mentions.join(', ')}\n`;
+          if (doc.content_text) {
+            const preview = doc.content_text.substring(0, 1500);
+            documentContext += `Content: ${preview}${doc.content_text.length > 1500 ? '...[truncated]' : ''}\n`;
+          }
+        });
+      }
+
+      // Fetch entities for context
+      let entityContext = '';
+      const { data: entities } = await supabase
+        .from('entities')
+        .select('name, type, description, risk_level')
+        .eq('is_active', true)
+        .limit(30);
+      
+      if (entities?.length) {
+        entityContext = '\n\n=== KNOWN ENTITIES (reference only, do NOT insert into investigation unless directly relevant) ===\n';
+        entities.forEach(e => {
+          entityContext += `- ${e.name} (${e.type})${e.risk_level ? ` - Risk: ${e.risk_level}` : ''}\n`;
+        });
+      }
+
+      referenceContext = documentContext + entityContext;
+    } else {
+      console.log('[investigation-ai-assist] Skipping reference context — investigation has no substantive content yet');
     }
 
-    // Fetch entities for context
-    let entityContext = '';
-    const { data: entities } = await supabase
-      .from('entities')
-      .select('name, type, description, risk_level')
-      .eq('is_active', true)
-      .limit(30);
-    
-    if (entities?.length) {
-      entityContext = '\n\n=== KNOWN ENTITIES ===\n';
-      entities.forEach(e => {
-        entityContext += `- ${e.name} (${e.type})${e.risk_level ? ` - Risk: ${e.risk_level}` : ''}\n`;
-      });
-    }
-
-    const referenceContext = documentContext + entityContext;
+    const antiHallucination = `\n\nCRITICAL RULES:
+- ONLY use facts explicitly provided in the investigation context below. Do NOT invent incident details, dates, threat actors, locations, or statistics.
+- If the investigation context is sparse or empty, produce a brief template or ask what information to include. Do NOT fill gaps with fabricated data.
+- Reference documents and entities are for cross-referencing ONLY — do not insert their content into the investigation unless the analyst's notes explicitly mention them.`;
 
     let systemPrompt = '';
     let userPrompt = '';
 
     switch (action) {
       case 'expand':
-        systemPrompt = `You are an expert security analyst helping to write detailed investigation entries. Expand brief notes into comprehensive, professional investigation reports. You have access to uploaded intelligence documents and entity data for reference.${referenceContext}`;
-        userPrompt = `Expand this investigation note into a detailed professional entry:\n\n${existingText}\n\nContext: ${context || 'Security investigation'}`;
+        systemPrompt = `You are an expert security analyst helping to write detailed investigation entries. Expand brief notes into comprehensive, professional investigation reports.${antiHallucination}${referenceContext}`;
+        userPrompt = `Expand this investigation note into a detailed professional entry. Use ONLY the facts provided:\n\n${existingText}\n\nContext: ${context || 'Security investigation'}`;
         break;
       
       case 'summarize':
-        systemPrompt = `You are an expert security analyst. Create concise summaries of investigation information. You have access to uploaded intelligence documents for cross-reference.${referenceContext}`;
+        systemPrompt = `You are an expert security analyst. Create concise summaries of investigation information.${antiHallucination}${referenceContext}`;
         userPrompt = `Summarize this investigation information:\n\n${existingText}`;
         break;
       
       case 'suggest':
-        systemPrompt = `You are an expert security analyst. Suggest next investigative steps based on the information provided. Reference uploaded documents and known entities when relevant.${referenceContext}`;
+        systemPrompt = `You are an expert security analyst. Suggest next investigative steps based on the information provided.${antiHallucination}${referenceContext}`;
         userPrompt = `Based on this investigation information, suggest 3-5 next investigative steps:\n\n${context}`;
         break;
       
       case 'write_synopsis':
-        systemPrompt = `You are an expert security analyst. Write clear, concise synopsis sections for investigation reports. Cross-reference with uploaded intelligence documents when relevant.${referenceContext}`;
-        userPrompt = `Write a synopsis for this investigation based on the following information:\n\n${context}`;
+        systemPrompt = `You are an expert security analyst. Write clear, concise synopsis sections for investigation reports. If the investigation has no entries yet, produce a placeholder synopsis stating the investigation has been opened and is pending initial information gathering.${antiHallucination}${referenceContext}`;
+        userPrompt = `Write a synopsis for this investigation based on the following information. If no substantive information is provided, state that the investigation is newly opened:\n\n${context}`;
         break;
       
       case 'write_recommendations':
-        systemPrompt = `You are an expert security analyst. Provide actionable recommendations based on investigation findings. Reference uploaded intelligence documents and known entities when making recommendations.${referenceContext}`;
+        systemPrompt = `You are an expert security analyst. Provide actionable recommendations based on investigation findings.${antiHallucination}${referenceContext}`;
         userPrompt = `Provide recommendations based on this investigation:\n\n${context}`;
         break;
       
