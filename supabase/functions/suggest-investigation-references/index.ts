@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -7,11 +8,6 @@ Deno.serve(async (req) => {
   try {
     const { investigationId } = await req.json();
     console.log('Suggesting cross-references for investigation:', investigationId);
-
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      return errorResponse('LOVABLE_API_KEY not configured', 500);
-    }
 
     const supabase = createServiceClient();
 
@@ -72,35 +68,18 @@ Return ONLY a JSON array of investigation IDs that should be cross-referenced, o
 Format: ["id1", "id2", "id3"]
 Maximum 5 suggestions.`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: 'You are an expert investigation analyst. Return ONLY valid JSON arrays.' },
-          { role: 'user', content: prompt }
-        ],
-      }),
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        { role: 'system', content: 'You are an expert investigation analyst. Return ONLY valid JSON arrays.' },
+        { role: 'user', content: prompt }
+      ],
+      functionName: 'suggest-investigation-references',
+      dlqOnFailure: true,
+      dlqPayload: { investigationId },
     });
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        return errorResponse('Rate limit exceeded. Please try again later.', 429);
-      }
-      if (response.status === 402) {
-        return errorResponse('Payment required. Please add credits to your workspace.', 402);
-      }
-      const errorText = await response.text();
-      console.error('AI Gateway error:', response.status, errorText);
-      return errorResponse('AI Gateway error', 500);
-    }
-
-    const data = await response.json();
-    const aiResponse = data.choices?.[0]?.message?.content;
+    const aiResponse = aiResult.content;
 
     if (!aiResponse) {
       return errorResponse('No response from AI', 500);

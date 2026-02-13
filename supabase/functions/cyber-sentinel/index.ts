@@ -9,6 +9,7 @@
  */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -571,39 +572,28 @@ async function generateThreatAssessment(
   criticalEvents: ThreatEvent[], 
   totalEvents: number
 ): Promise<string> {
-  const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-  if (!LOVABLE_API_KEY) return 'AI assessment unavailable — API key not configured';
-
   const eventSummary = criticalEvents.map(e => 
     `- ${e.event_type} (${e.severity}, ${(e.confidence_score * 100).toFixed(0)}% confidence): ${JSON.stringify(e.threat_details).substring(0, 300)}`
   ).join('\n');
 
   try {
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          {
-            role: 'system',
-            content: `You are the Cyber Sentinel — Fortress platform's cyber defense analyst. Produce a concise threat assessment in 3-5 sentences. Focus on: attack vector, risk level, recommended immediate actions. Use plain language, no markdown. Write like a senior SOC analyst briefing the CISO.`
-          },
-          {
-            role: 'user',
-            content: `Sweep detected ${totalEvents} total events, ${criticalEvents.length} critical:\n${eventSummary}\n\nProvide threat assessment.`
-          }
-        ],
-      }),
+    const aiResult = await callAiGateway({
+      model: 'google/gemini-2.5-flash',
+      messages: [
+        {
+          role: 'system',
+          content: `You are the Cyber Sentinel — Fortress platform's cyber defense analyst. Produce a concise threat assessment in 3-5 sentences. Focus on: attack vector, risk level, recommended immediate actions. Use plain language, no markdown. Write like a senior SOC analyst briefing the CISO.`
+        },
+        {
+          role: 'user',
+          content: `Sweep detected ${totalEvents} total events, ${criticalEvents.length} critical:\n${eventSummary}\n\nProvide threat assessment.`
+        }
+      ],
+      functionName: 'cyber-sentinel',
+      dlqOnFailure: false,
     });
 
-    if (!response.ok) return `Sweep complete: ${criticalEvents.length} critical events detected. Manual review recommended.`;
-    
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || `${criticalEvents.length} critical cyber threats detected. Review immediately.`;
+    return aiResult.content || `${criticalEvents.length} critical cyber threats detected. Review immediately.`;
   } catch {
     return `${criticalEvents.length} critical cyber threats detected. AI assessment failed — manual review required.`;
   }
