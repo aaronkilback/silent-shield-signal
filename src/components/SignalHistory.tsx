@@ -16,6 +16,7 @@ import { SignalFeedback } from "./SignalFeedback";
 import { SignalScoreExplainer } from "./SignalScoreExplainer";
 import { toast } from "sonner";
 import { extractHttpUrl } from "@/lib/extractHttpUrl";
+import { useImplicitFeedback } from "@/hooks/useImplicitFeedback";
 
 
 // Helper to decode HTML entities and clean text
@@ -96,6 +97,7 @@ export const SignalHistory = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [updateCounts, setUpdateCounts] = useState<Record<string, number>>({});
   const { selectedClientId } = useClientSelection();
+  const { startViewing, stopViewing, trackEvent } = useImplicitFeedback();
   
   // Filter states
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -255,6 +257,7 @@ export const SignalHistory = () => {
     
     setSelectedSignal(signal);
     setDialogOpen(true);
+    startViewing(signal.id); // Track implicit view start
     
     if (!signal.is_read) {
       await markAsRead(signal.id);
@@ -580,7 +583,10 @@ export const SignalHistory = () => {
         key={selectedSignal?.id}
         signal={selectedSignal}
         open={dialogOpen}
-        onOpenChange={setDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && selectedSignal) stopViewing(selectedSignal.id);
+          setDialogOpen(open);
+        }}
         onSignalUpdated={loadSignals}
       />
     </Card>

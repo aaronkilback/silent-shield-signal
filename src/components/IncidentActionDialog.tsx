@@ -20,6 +20,7 @@ import { AIAnalysisTimeline } from "./incidents/AIAnalysisTimeline";
 import { WorkspaceButton } from "./workspace";
 import { useNavigate } from "react-router-dom";
 import { useActivityTracking } from "@/hooks/useActivityTracking";
+import { useImplicitFeedback } from "@/hooks/useImplicitFeedback";
 
 interface Incident {
   id: string;
@@ -60,6 +61,7 @@ export const IncidentActionDialog = ({
   const { toast } = useToast();
   const navigate = useNavigate();
   const { trackIncidentAction } = useActivityTracking();
+  const { startViewing, stopViewing, trackEvent } = useImplicitFeedback();
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState("");
   const [signalLocation, setSignalLocation] = useState<string | null>(null);
@@ -110,8 +112,13 @@ export const IncidentActionDialog = ({
     if (open) {
       fetchSignalData();
       fetchFullIncident();
+      // Track implicit view of incident
+      if (incident.signal_id) startViewing(incident.signal_id);
+    } else {
+      // Stop tracking when dialog closes
+      if (incident.signal_id) stopViewing(incident.signal_id);
     }
-  }, [incident.signal_id, open, fetchFullIncident]);
+  }, [incident.signal_id, open, fetchFullIncident, startViewing, stopViewing]);
 
   const handleAction = async (action: "acknowledge" | "contain" | "resolve") => {
     try {
