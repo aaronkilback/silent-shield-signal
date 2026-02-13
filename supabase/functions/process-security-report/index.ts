@@ -569,7 +569,7 @@ Deno.serve(async (req) => {
     console.log('Calling AI to extract security intelligence...');
 
     // Limit content for AI processing
-    const sampleText = content.slice(0, 30000);
+    const sampleText = content.slice(0, 100000);
 
     const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
@@ -753,8 +753,12 @@ Extract entities, threat signals, risk assessments, and any incidents requiring 
           continue;
         }
 
-        // Check if entity already exists
-        let matchedEntityId = entity.matched_entity_id;
+        // Check if entity already exists - validate matched_entity_id is a real UUID
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        let matchedEntityId = entity.matched_entity_id && uuidRegex.test(entity.matched_entity_id) 
+          ? entity.matched_entity_id 
+          : null;
+        
         if (!matchedEntityId) {
           const { data: existingEntity } = await supabase
             .from('entities')
@@ -782,7 +786,7 @@ Extract entities, threat signals, risk assessments, and any incidents requiring 
             threat_score: entity.threat_score,
             description: entity.description
           },
-          matched_entity_id: matchedEntityId,
+          matched_entity_id: matchedEntityId || null,
           status: 'pending'
         };
 
