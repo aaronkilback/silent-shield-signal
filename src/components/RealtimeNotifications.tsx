@@ -1,9 +1,14 @@
 import { Component, type ReactNode } from 'react';
 import { useRealtimeNotifications } from '@/hooks/useRealtimeNotifications';
+import { useErrorNotifications } from '@/hooks/useErrorNotifications';
+import { useUserRole } from '@/hooks/useUserRole';
 
-// Inner component that calls the hook
+// Inner component that calls the hooks
 const RealtimeNotificationsInner = () => {
   useRealtimeNotifications();
+  const { roles } = useUserRole();
+  const topRole = roles?.includes('super_admin') ? 'super_admin' : roles?.includes('admin') ? 'admin' : undefined;
+  useErrorNotifications(topRole);
   return null;
 };
 

@@ -1878,6 +1878,54 @@ export type Database = {
           },
         ]
       }
+      circuit_breaker_state: {
+        Row: {
+          failure_count: number
+          failure_threshold: number
+          half_open_at: string | null
+          id: string
+          last_failure_at: string | null
+          last_success_at: string | null
+          metadata: Json | null
+          opened_at: string | null
+          recovery_timeout_ms: number
+          service_name: string
+          state: string
+          success_count: number
+          updated_at: string
+        }
+        Insert: {
+          failure_count?: number
+          failure_threshold?: number
+          half_open_at?: string | null
+          id?: string
+          last_failure_at?: string | null
+          last_success_at?: string | null
+          metadata?: Json | null
+          opened_at?: string | null
+          recovery_timeout_ms?: number
+          service_name: string
+          state?: string
+          success_count?: number
+          updated_at?: string
+        }
+        Update: {
+          failure_count?: number
+          failure_threshold?: number
+          half_open_at?: string | null
+          id?: string
+          last_failure_at?: string | null
+          last_success_at?: string | null
+          metadata?: Json | null
+          opened_at?: string | null
+          recovery_timeout_ms?: number
+          service_name?: string
+          state?: string
+          success_count?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       claim_sources: {
         Row: {
           claim_id: string
@@ -2963,6 +3011,59 @@ export type Database = {
           },
         ]
       }
+      dead_letter_queue: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          error_id: string | null
+          error_message: string | null
+          function_name: string
+          id: string
+          max_retries: number
+          next_retry_at: string | null
+          payload: Json
+          retry_count: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          error_id?: string | null
+          error_message?: string | null
+          function_name: string
+          id?: string
+          max_retries?: number
+          next_retry_at?: string | null
+          payload?: Json
+          retry_count?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          error_id?: string | null
+          error_message?: string | null
+          function_name?: string
+          id?: string
+          max_retries?: number
+          next_retry_at?: string | null
+          payload?: Json
+          retry_count?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dead_letter_queue_error_id_fkey"
+            columns: ["error_id"]
+            isOneToOne: false
+            referencedRelation: "edge_function_errors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       doctrine_library: {
         Row: {
           content_text: string | null
@@ -3155,6 +3256,57 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      edge_function_errors: {
+        Row: {
+          client_id: string | null
+          created_at: string
+          duration_ms: number | null
+          error_code: string | null
+          error_message: string
+          error_stack: string | null
+          function_name: string
+          id: string
+          request_context: Json | null
+          resolved_at: string | null
+          retry_count: number | null
+          severity: string
+          tenant_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error_code?: string | null
+          error_message: string
+          error_stack?: string | null
+          function_name: string
+          id?: string
+          request_context?: Json | null
+          resolved_at?: string | null
+          retry_count?: number | null
+          severity?: string
+          tenant_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error_code?: string | null
+          error_message?: string
+          error_stack?: string | null
+          function_name?: string
+          id?: string
+          request_context?: Json | null
+          resolved_at?: string | null
+          retry_count?: number | null
+          severity?: string
+          tenant_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
       }
       entities: {
         Row: {
@@ -10232,6 +10384,7 @@ export type Database = {
         Args: { p_tenant_id: string; p_user_id: string }
         Returns: boolean
       }
+      cleanup_old_errors: { Args: never; Returns: number }
       cleanup_processing_queue: { Args: never; Returns: number }
       enqueue_signal_processing: {
         Args: { priority_level?: number; signal_id: string }
