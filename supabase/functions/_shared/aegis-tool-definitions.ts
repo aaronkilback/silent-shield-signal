@@ -246,22 +246,7 @@ Inform user of successful creation and instruct to refresh if needed
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "get_system_health",
-      description: "Get overall system health metrics including automation performance, error rates, and throughput. Use when troubleshooting system issues.",
-      parameters: {
-        type: "object",
-        properties: {
-          days: {
-            type: "number",
-            description: "Number of days to analyze (default 7)",
-          },
-        },
-      },
-    },
-  },
+  // get_system_health moved to end of file with expanded description
   {
     type: "function",
     function: {
