@@ -515,13 +515,41 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
     if (!user) return;
 
     try {
-      // Create entity from person
+      // Check if entity already exists
+      const { data: existing } = await supabase
+        .from('entities')
+        .select('id, name')
+        .ilike('name', person.name)
+        .limit(1)
+        .maybeSingle();
+
+      if (existing) {
+        // Link existing entity to investigation instead of duplicating
+        const currentEntityIds = investigation?.correlated_entity_ids || [];
+        if (!currentEntityIds.includes(existing.id)) {
+          await supabase
+            .from('investigations')
+            .update({ correlated_entity_ids: [...currentEntityIds, existing.id] })
+            .eq('id', id);
+          queryClient.invalidateQueries({ queryKey: ['investigation', id] });
+        }
+        toast.success(`${existing.name} already exists — linked to investigation`);
+        return;
+      }
+
+      // Create entity from person with client_id from investigation
       const { data: entity, error: entityError } = await supabase
         .from('entities')
         .insert({
           name: person.name,
-          type: 'person',
+          type: 'person' as const,
+          client_id: investigation?.client_id || null,
           created_by: user.id,
+          risk_level: 'medium',
+          confidence_score: 0.7,
+          entity_status: 'active',
+          is_active: true,
+          description: [person.position, person.company].filter(Boolean).join(' at ') || null,
           attributes: {
             phone: person.phone,
             position: person.position,
@@ -549,8 +577,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
       }
 
       queryClient.invalidateQueries({ queryKey: ['investigation', id] });
-      toast.success(`${person.name} converted to entity`);
-      navigate(`/entities?entity=${entity.id}`);
+      toast.success(`${person.name} created as entity and linked`);
     } catch (error: any) {
       toast.error(error.message || "Failed to convert person to entity");
     }
