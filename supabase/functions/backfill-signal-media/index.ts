@@ -325,12 +325,17 @@ async function captureAndUploadMedia(
       return null;
     }
 
-    // Get public URL
-    const { data: publicUrlData } = supabase.storage
+    // Get signed URL (bucket is private)
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
       .from('osint-media')
-      .getPublicUrl(fileName);
+      .createSignedUrl(fileName, 60 * 60 * 24 * 365); // 1 year signed URL
 
-    return publicUrlData?.publicUrl || null;
+    if (signedUrlError) {
+      console.error(`[captureAndUploadMedia] Signed URL error:`, signedUrlError);
+      return null;
+    }
+
+    return signedUrlData?.signedUrl || null;
 
   } catch (error) {
     console.error(`[captureAndUploadMedia] Error:`, error);
