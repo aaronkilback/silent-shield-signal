@@ -690,31 +690,58 @@ const AEGIS_ANTI_PATTERNS = [
 async function collectAegisBehaviorTelemetry(supabase: any): Promise<TelemetryData['aegisBehavior']> {
   const sixHoursAgo = new Date(Date.now() - 6 * 3600000).toISOString();
   
-  // Sample recent assistant responses (role = 'assistant')
+  // Sample recent messages — both assistant AND user messages for context awareness
   const { data: recentMessages } = await supabase
     .from('ai_assistant_messages')
-    .select('content, created_at')
-    .eq('role', 'assistant')
+    .select('content, created_at, role')
+    .in('role', ['assistant', 'user'])
     .gte('created_at', sixHoursAgo)
-    .order('created_at', { ascending: false })
-    .limit(20);
+    .order('created_at', { ascending: true })
+    .limit(60);
 
-  const messages = recentMessages || [];
-  if (messages.length === 0) {
-    return {
-      sampleSize: 0, avgResponseLength: 0, capabilityListingCount: 0,
-      preambleBloatCount: 0, toolAvoidanceCount: 0, identityDriftCount: 0,
-      complianceScore: 1.0, worstExamples: [],
-    };
+  const allMessages = recentMessages || [];
+  const messages = allMessages.filter((m: any) => m.role === 'assistant');
+  
+  // Build a map of user messages that preceded each assistant message
+  // to detect if the user requested detailed/long-form output
+  const DETAIL_REQUEST_PATTERNS = [
+    /\b(?:detail|elaborate|expand|in[- ]depth|comprehensive|full|thorough|complete)\b/i,
+    /\b(?:report|briefing|analysis|assessment|intelligence|summary|overview)\b/i,
+    /\b(?:add more|tell me more|go deeper|break.*down|walk.*through)\b/i,
+    /\b(?:include|incorporate|cover|address)\b.*\b(?:section|detail|info|data)\b/i,
+  ];
+  
+  function wasDetailRequested(assistantMsg: any): boolean {
+    const assistantTime = new Date(assistantMsg.created_at).getTime();
+    // Find user messages within 2 minutes before this assistant response
+    const precedingUserMsgs = allMessages.filter((m: any) => 
+      m.role === 'user' && 
+      new Date(m.created_at).getTime() < assistantTime &&
+      new Date(m.created_at).getTime() > assistantTime - 120000
+    );
+    return precedingUserMsgs.some((m: any) => 
+      DETAIL_REQUEST_PATTERNS.some(p => p.test(m.content || ''))
+    );
   }
-
-  let capabilityListingCount = 0;
-  let preambleBloatCount = 0;
-  let toolAvoidanceCount = 0;
-  let identityDriftCount = 0;
-  let totalWords = 0;
-  let verbosityViolations = 0;
-  const worstExamples: string[] = [];
+  
+  // Detect structured intelligence products (briefings, reports) that are naturally long
+  const STRUCTURED_CONTENT_PATTERNS = [
+    /INTELLIGENCE BRIEFING/i,
+    /EXECUTIVE SUMMARY/i,
+    /ANALYTICAL ASSESSMENT/i,
+    /RECOMMENDED ACTIONS/i,
+    /CORE SIGNAL/i,
+    /KEY OBSERVATIONS/i,
+    /THREAT ASSESSMENT/i,
+    /IMPACT ASSESSMENT/i,
+    /━{3,}/,  // Section dividers used in formatted reports
+    /#{1,3}\s+\d+\.\s+/,  // Numbered markdown headers (report sections)
+  ];
+  
+  function isStructuredIntelProduct(content: string): boolean {
+    const matchCount = STRUCTURED_CONTENT_PATTERNS.filter(p => p.test(content)).length;
+    return matchCount >= 3; // At least 3 structural markers = intelligence product
+  }
 
   for (const msg of messages) {
     const content = msg.content || '';
@@ -724,11 +751,19 @@ async function collectAegisBehaviorTelemetry(supabase: any): Promise<TelemetryDa
     // Check each anti-pattern
     for (const pattern of AEGIS_ANTI_PATTERNS) {
       if (pattern.name === 'verbosity') {
-        // Flag responses over 250 words (AEGIS should be concise)
+        // Context-aware verbosity check:
+        // 1. Skip if user explicitly requested detail/elaboration
+        // 2. Skip if the response is a structured intelligence product (briefing, report)
+        // 3. Only flag genuinely unprompted verbose conversational responses
         if (wordCount > 250) {
-          verbosityViolations++;
-          if (worstExamples.length < 3) {
-            worstExamples.push(`[VERBOSE ${wordCount}w] ${content.substring(0, 120)}...`);
+          const userRequestedDetail = wasDetailRequested(msg);
+          const isIntelProduct = isStructuredIntelProduct(content);
+          
+          if (!userRequestedDetail && !isIntelProduct) {
+            verbosityViolations++;
+            if (worstExamples.length < 3) {
+              worstExamples.push(`[VERBOSE ${wordCount}w] ${content.substring(0, 120)}...`);
+            }
           }
         }
         continue;
