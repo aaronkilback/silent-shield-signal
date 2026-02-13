@@ -522,3 +522,12 @@ verify_jwt = false
 
 [functions.scheduled-report-delivery]
 verify_jwt = false
+
+[functions.threat-cluster-detector]
+verify_jwt = false
+
+[functions.multi-model-consensus]
+verify_jwt = false
+
+[functions.visibility-gap-scanner]
+verify_jwt = false
