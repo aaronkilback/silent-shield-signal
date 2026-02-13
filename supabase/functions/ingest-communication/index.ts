@@ -87,15 +87,57 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Extract case reference
+    // Extract case reference from message text (if present)
     const caseRef = extractCaseReference(messageBody);
+    let investigation: any = null;
 
-    if (!caseRef) {
-      console.log(`[IngestComm] No case reference found in message from ${senderIdentifier}`);
+    if (caseRef) {
+      // Try exact match first, then ilike
+      const { data: exactMatch } = await supabase
+        .from("investigations")
+        .select("id, file_number, client_id")
+        .eq("file_number", caseRef)
+        .maybeSingle();
+      
+      if (exactMatch) {
+        investigation = exactMatch;
+      } else {
+        const { data: fuzzyMatch } = await supabase
+          .from("investigations")
+          .select("id, file_number, client_id")
+          .ilike("file_number", `%${caseRef}%`)
+          .limit(1)
+          .maybeSingle();
+        investigation = fuzzyMatch;
+      }
+    }
+
+    // If no case ref or no match, try routing by sender phone number
+    // (matches to the most recent outbound SMS conversation with this number)
+    if (!investigation && senderIdentifier) {
+      console.log(`[IngestComm] No case ref found, trying phone-based routing for ${senderIdentifier}`);
+      const { data: recentOutbound } = await supabase
+        .from("investigation_communications")
+        .select("investigation_id, investigations!inner(id, file_number, client_id)")
+        .eq("contact_identifier", senderIdentifier)
+        .eq("direction", "outbound")
+        .eq("channel", "sms")
+        .order("message_timestamp", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (recentOutbound?.investigations) {
+        investigation = recentOutbound.investigations;
+        console.log(`[IngestComm] Phone-routed to case ${investigation.file_number}`);
+      }
+    }
+
+    if (!investigation) {
+      console.log(`[IngestComm] Could not route message from ${senderIdentifier}`);
 
       if (source === "sms") {
         return new Response(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>No case reference found. Please include a file number (e.g. #INV-2024-001) in your message.</Message></Response>`,
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>We received your message but couldn't match it to an active case. Please contact your investigator directly.</Message></Response>`,
           { headers: { ...corsHeaders, "Content-Type": "text/xml" } }
         );
       }
@@ -103,50 +145,10 @@ Deno.serve(async (req: Request) => {
       return new Response(
         JSON.stringify({
           success: false,
-          error: "No case reference tag found in message",
-          hint: "Include a file number like #INV-2024-001 in your message"
+          error: "Could not route message to an investigation",
+          hint: "No case reference found and no recent outbound conversation with this number"
         }),
         { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Find the investigation by file_number
-    // Try exact match first, then ilike
-    let investigation: any = null;
-    let lookupError: any = null;
-    
-    const { data: exactMatch, error: exactError } = await supabase
-      .from("investigations")
-      .select("id, file_number, client_id")
-      .eq("file_number", caseRef)
-      .maybeSingle();
-    
-    if (exactMatch) {
-      investigation = exactMatch;
-    } else {
-      const { data: fuzzyMatch, error: fuzzyError } = await supabase
-        .from("investigations")
-        .select("id, file_number, client_id")
-        .ilike("file_number", `%${caseRef}%`)
-        .limit(1)
-        .maybeSingle();
-      investigation = fuzzyMatch;
-      lookupError = fuzzyError;
-    }
-
-    if (lookupError || !investigation) {
-      console.log(`[IngestComm] Investigation not found for ref: ${caseRef}`);
-
-      if (source === "sms") {
-        return new Response(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>Case ${caseRef} not found. Please verify the file number.</Message></Response>`,
-          { headers: { ...corsHeaders, "Content-Type": "text/xml" } }
-        );
-      }
-
-      return new Response(
-        JSON.stringify({ success: false, error: `Investigation not found for reference: ${caseRef}` }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
