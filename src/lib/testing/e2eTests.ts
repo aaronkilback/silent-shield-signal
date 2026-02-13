@@ -632,7 +632,7 @@ export const entityRelationshipsTests = {
           // Education
           'educated_at', 'graduated_from',
           // Legal & jurisdiction
-          'operates', 'operates_within_jurisdiction_of', 'treats', 'serves',
+          'operates', 'operates_within_jurisdiction_of', 'treats', 'serves', 'provides_service_to',
           // Media & entertainment
           'stars_in', 'produces', 'inspiration_for', 'focuses_on',
           // Family
@@ -5213,7 +5213,7 @@ export const travelSecurityExtendedTests = {
       fn: async () => {
         const { error } = await supabase
           .from('itineraries')
-          .select('id, destination')
+          .select('id, destination_city')
           .limit(5);
         // RLS may restrict access without proper auth context - this is expected
         if (error && !error.message?.includes('permission denied') && !error.message?.includes('row-level security')) {
