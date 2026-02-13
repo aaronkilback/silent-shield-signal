@@ -77,7 +77,9 @@ export const SignalFeedback = ({
     }
   };
 
-  const handleThumbClick = (feedback: 'relevant' | 'irrelevant') => {
+  const handleThumbClick = (e: React.MouseEvent, feedback: 'relevant' | 'irrelevant') => {
+    e.stopPropagation();
+    e.preventDefault();
     if (!session?.user?.id) {
       toast({ title: "Authentication Required", description: "Please sign in to provide feedback", variant: "destructive" });
       return;
@@ -186,12 +188,12 @@ export const SignalFeedback = ({
   const reasons = showReasons === 'relevant' ? RELEVANT_REASONS : IRRELEVANT_REASONS;
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative" ref={dropdownRef} onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center gap-1">
         <Button
           variant={currentFeedback === 'relevant' ? 'default' : 'ghost'}
           size="sm"
-          onClick={() => handleThumbClick('relevant')}
+          onClick={(e) => handleThumbClick(e, 'relevant')}
           disabled={loading}
           className="h-7 px-1.5"
           title={selectedReason && currentFeedback === 'relevant'
@@ -203,7 +205,7 @@ export const SignalFeedback = ({
         <Button
           variant={currentFeedback === 'irrelevant' ? 'destructive' : 'ghost'}
           size="sm"
-          onClick={() => handleThumbClick('irrelevant')}
+          onClick={(e) => handleThumbClick(e, 'irrelevant')}
           disabled={loading}
           className="h-7 px-1.5"
           title={selectedReason && currentFeedback === 'irrelevant'
