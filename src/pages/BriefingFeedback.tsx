@@ -135,7 +135,7 @@ const BriefingFeedback = () => {
                 <h2 className="text-lg font-semibold text-foreground">Thank You</h2>
                 <p className="text-sm text-muted-foreground max-w-xs mx-auto">
                   {isPositive
-                    ? "Your feedback helps us maintain briefing quality. We'll keep delivering actionable intelligence."
+                    ? "Useful general knowledge. We'll keep delivering actionable intelligence."
                     : "Your feedback is noted. We'll adjust future briefings to better meet your needs."}
                 </p>
                 <div className="w-10 h-0.5 bg-gradient-to-r from-primary to-accent mx-auto rounded-full" />
