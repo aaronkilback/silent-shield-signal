@@ -17,6 +17,7 @@ const IRRELEVANT_REASONS = [
 
 const RELEVANT_REASONS = [
   { value: "actionable", label: "Actionable intelligence" },
+  { value: "useful_general_knowledge", label: "Useful general knowledge" },
   { value: "high_priority", label: "High priority threat" },
   { value: "confirms_pattern", label: "Confirms known pattern" },
   { value: "new_development", label: "New development" },
