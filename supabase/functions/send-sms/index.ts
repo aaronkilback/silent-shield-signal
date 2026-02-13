@@ -60,11 +60,19 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Verify investigation exists and get file_number
+    // Resolve investigation_id: accept either UUID or file_number
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let invFilter: { column: string; value: string };
+    if (uuidRegex.test(investigation_id)) {
+      invFilter = { column: "id", value: investigation_id };
+    } else {
+      invFilter = { column: "file_number", value: investigation_id };
+    }
+
     const { data: investigation, error: invError } = await supabase
       .from("investigations")
       .select("id, file_number, client_id, tenant_id")
-      .eq("id", investigation_id)
+      .eq(invFilter.column, invFilter.value)
       .single();
 
     if (invError || !investigation) {
