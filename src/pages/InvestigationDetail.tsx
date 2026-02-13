@@ -407,7 +407,13 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
       `.trim();
 
       const { data, error } = await supabase.functions.invoke('investigation-ai-assist', {
-        body: { action, context, existingText }
+        body: { 
+          action, 
+          context, 
+          existingText,
+          investigation_id: id,
+          client_id: investigation?.client_id 
+        }
       });
 
       if (error) throw error;
