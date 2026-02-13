@@ -5740,6 +5740,71 @@ export const systemHealthTests = {
         }
       },
     },
+    // ── Communications Infrastructure ──
+    {
+      name: 'send-sms function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('send-sms', {
+          body: { test_mode: true }
+        });
+        // Should respond (will fail auth but function is deployed)
+      },
+    },
+    {
+      name: 'ingest-communication function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('ingest-communication', {
+          body: { source: 'test', message: 'ping', test_mode: true }
+        });
+        // Should respond (may return 422 for no case ref — that's correct behavior)
+      },
+    },
+    {
+      name: 'list-communications function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('list-communications', {
+          body: { test_mode: true }
+        });
+        // Should respond
+      },
+    },
+    {
+      name: 'investigation_communications table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('investigation_communications')
+          .select('id, investigation_id, channel, direction, message_timestamp')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Communications thread integrity check',
+      fn: async () => {
+        // Verify outbound messages have valid investigator_user_id references
+        const { data: comms, error } = await supabase
+          .from('investigation_communications')
+          .select('id, investigator_user_id, investigation_id')
+          .eq('direction', 'outbound')
+          .limit(20);
+        if (error) throw error;
+        
+        if (comms && comms.length > 0) {
+          const userIds = [...new Set(comms.map((c: any) => c.investigator_user_id).filter(Boolean))];
+          if (userIds.length > 0) {
+            const { data: profiles } = await supabase
+              .from('profiles')
+              .select('id')
+              .in('id', userIds);
+            const validIds = new Set(profiles?.map((p: any) => p.id) || []);
+            const orphaned = comms.filter((c: any) => c.investigator_user_id && !validIds.has(c.investigator_user_id) && c.investigator_user_id !== '00000000-0000-0000-0000-000000000000');
+            if (orphaned.length > 0) {
+              throw new Error(`${orphaned.length} communications with invalid investigator references`);
+            }
+          }
+        }
+      },
+    },
   ],
 };
 

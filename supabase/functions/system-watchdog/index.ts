@@ -98,6 +98,16 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - EXPECTED: Zero orphaned records, zero orphaned feedback
 - REMEDIATION: fix_orphaned_signals, fix_orphaned_entities, fix_orphaned_feedback, fix_stale_source_timestamps
 
+### Communications Infrastructure (HIGH)
+- Two-way SMS via Twilio: send-sms (outbound), ingest-communication (inbound webhook)
+- list-communications provides thread queries per case/contact/investigator
+- investigation_communications table tracks all messages with server timestamps
+- Multi-investigator support: each message tagged with investigator_user_id
+- Inbound messages auto-attributed to last outbound investigator for that contact
+- EXPECTED: All 3 edge functions deployed and responding. Zero orphaned comms (references to deleted investigations)
+- TELEMETRY: Check function deployment, orphaned communication records, message delivery failures
+- REMEDIATION: fix_orphaned_comms (clean comms referencing deleted investigations)
+
 ### Bug Scan Integration
 - The E2E test suite runs periodic scans covering 200+ tests
 - Bug reports created from scan failures contain recurring patterns
@@ -105,6 +115,7 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
   - "orphaned feedback" → fix_orphaned_feedback
   - "stale sources" → fix_stale_source_timestamps + stale_sources_rescan
   - "missing relationship type" → info only (requires code fix)
+  - "invalid investigator references" → fix_orphaned_comms
 - EXPECTED: Bug count trends downward as self-healing improves
 - REMEDIATION: Auto-fix data issues, log code-level issues for human review
 
@@ -135,13 +146,13 @@ Respond with ONLY valid JSON (no markdown):
   "severity": "healthy" | "monitoring" | "degraded" | "critical",
   "findings": [
     {
-      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan",
+      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan" | "Communications",
       "severity": "critical" | "warning" | "info",
       "title": "Short title",
       "analysis": "What you observed and WHY it matters (2-3 sentences). Reference learnings if relevant.",
       "recommendation": "What action to take. If past remediations failed, suggest alternatives.",
       "canAutoRemediate": true/false,
-      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "fix_orphaned_feedback" | "fix_stale_source_timestamps" | "none",
+      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "fix_orphaned_feedback" | "fix_stale_source_timestamps" | "fix_orphaned_comms" | "none",
       "isRecurring": true/false,
       "learningNote": "What you learned about this issue from history (or 'First occurrence')",
       "thresholdAdjustment": null | { "metric": "string", "currentValue": number, "suggestedValue": number, "reason": "string" }
@@ -234,6 +245,16 @@ interface TelemetryData {
     complianceScore: number;
     worstExamples: string[];
   };
+  communications: {
+    sendSmsDeployed: boolean;
+    ingestCommDeployed: boolean;
+    listCommsDeployed: boolean;
+    totalMessages: number;
+    recentMessages6h: number;
+    orphanedComms: number;
+    failedDeliveries: number;
+    activeInvestigatorThreads: number;
+  };
   historicalBaseline: { avgDailySignals: number; avgWeeklyBugs: number };
   adaptiveThresholds: AdaptiveThresholds;
 }
@@ -280,7 +301,7 @@ interface LearningHistory {
 }
 
 const CRITICAL_FUNCTIONS = ['get-user-tenants', 'agent-chat', 'dashboard-ai-assistant', 'system-health-check', 'ingest-signal'];
-const OPERATIONAL_FUNCTIONS = ['send-daily-briefing', 'support-chat', 'ai-decision-engine', 'autonomous-operations-loop', 'monitor-travel-risks'];
+const OPERATIONAL_FUNCTIONS = ['send-daily-briefing', 'support-chat', 'ai-decision-engine', 'autonomous-operations-loop', 'monitor-travel-risks', 'send-sms', 'ingest-communication', 'list-communications'];
 
 // ═══════════════════════════════════════════════════════════════
 //                 SELF-IMPROVEMENT: LEARNING HISTORY
@@ -596,6 +617,34 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
   // ═══ AEGIS BEHAVIORAL COMPLIANCE TELEMETRY ═══
   const aegisBehavior = await collectAegisBehaviorTelemetry(supabase);
 
+  // ═══ COMMUNICATIONS INFRASTRUCTURE TELEMETRY ═══
+  const commsFunctions = ['send-sms', 'ingest-communication', 'list-communications'];
+  const commsDeployment: Record<string, boolean> = {};
+  for (const fn of commsFunctions) {
+    const found = edgeFunctions.find(ef => ef.name === fn);
+    commsDeployment[fn] = found ? found.status !== 'not_deployed' : false;
+  }
+
+  const [totalCommsResult, recentCommsResult, failedCommsResult, activeThreadsResult, orphanedCommsResult] = await Promise.all([
+    supabase.from('investigation_communications').select('*', { count: 'exact', head: true }),
+    supabase.from('investigation_communications').select('*', { count: 'exact', head: true }).gte('created_at', sixHoursAgo),
+    supabase.from('investigation_communications').select('*', { count: 'exact', head: true }).eq('provider_status', 'failed'),
+    supabase.from('investigation_communications').select('investigator_user_id', { count: 'exact', head: true }).eq('direction', 'outbound').gte('created_at', twentyFourHoursAgo),
+    // Check for comms referencing deleted investigations
+    supabase.from('investigation_communications').select('id, investigation_id').limit(100),
+  ]);
+
+  // Verify orphaned comms (referencing deleted investigations)
+  let orphanedCommsCount = 0;
+  if (orphanedCommsResult.data && orphanedCommsResult.data.length > 0) {
+    const invIds = [...new Set(orphanedCommsResult.data.map((c: any) => c.investigation_id).filter(Boolean))];
+    if (invIds.length > 0) {
+      const { data: validInvs } = await supabase.from('investigations').select('id').in('id', invIds);
+      const validInvIds = new Set(validInvs?.map((i: any) => i.id) || []);
+      orphanedCommsCount = orphanedCommsResult.data.filter((c: any) => c.investigation_id && !validInvIds.has(c.investigation_id)).length;
+    }
+  }
+
   return {
     timestamp: now.toISOString(),
     edgeFunctions,
@@ -611,6 +660,16 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     autonomousOps: { recentActions: autonomousActionsResult.count || 0, lastActionAge },
     aiHealth: { systemHealthCheckStatus: aiHealthStatus },
     aegisBehavior,
+    communications: {
+      sendSmsDeployed: commsDeployment['send-sms'] || false,
+      ingestCommDeployed: commsDeployment['ingest-communication'] || false,
+      listCommsDeployed: commsDeployment['list-communications'] || false,
+      totalMessages: totalCommsResult.count || 0,
+      recentMessages6h: recentCommsResult.count || 0,
+      orphanedComms: orphanedCommsCount,
+      failedDeliveries: failedCommsResult.count || 0,
+      activeInvestigatorThreads: activeThreadsResult.count || 0,
+    },
     historicalBaseline: { avgDailySignals, avgWeeklyBugs },
     adaptiveThresholds,
   };
@@ -968,6 +1027,35 @@ This correction was triggered because compliance score dropped below threshold. 
             ? `Failed to reset timestamps: ${updateErr.message}`
             : `Reset last_ingested_at for ${staleSources.length} stale sources: ${staleSources.map((s: any) => s.name).join(', ')}`,
         };
+      }
+
+      case 'fix_orphaned_comms': {
+        // Clean communication records referencing deleted investigations
+        const { data: comms } = await supabase
+          .from('investigation_communications')
+          .select('id, investigation_id')
+          .limit(200);
+
+        if (!comms || comms.length === 0) {
+          return { action, finding, success: true, details: 'No communication records to check' };
+        }
+
+        const invIds = [...new Set(comms.map((c: any) => c.investigation_id).filter(Boolean))];
+        const { data: validInvs } = await supabase.from('investigations').select('id').in('id', invIds);
+        const validInvIds = new Set(validInvs?.map((i: any) => i.id) || []);
+        const orphaned = comms.filter((c: any) => c.investigation_id && !validInvIds.has(c.investigation_id));
+
+        if (orphaned.length === 0) {
+          return { action, finding, success: true, details: 'No orphaned communications — data integrity clean' };
+        }
+
+        let deleted = 0;
+        for (const c of orphaned) {
+          const { error: delErr } = await supabase.from('investigation_communications').delete().eq('id', c.id);
+          if (!delErr) deleted++;
+        }
+
+        return { action, finding, success: deleted > 0, details: `Cleaned ${deleted}/${orphaned.length} orphaned communication records` };
       }
 
       default:
