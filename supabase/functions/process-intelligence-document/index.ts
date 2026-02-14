@@ -440,37 +440,114 @@ Extract all entities, signals, and their relationships.`
       mentions_created: 0
     };
 
-    // Process entities
+    // ── Entity deduplication ──
+    // 1. Intra-batch dedup: collapse duplicate names within this extraction
+    const normalizeEntityName = (n: string) => n.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
+    const seenNormNames = new Map<string, number>(); // normName → index in deduped array
+    const dedupedEntities: typeof intelligence.entities = [];
+    
     for (const entity of intelligence.entities || []) {
-      if (entity.confidence < 0.6) continue;
-
+      if (entity.confidence < 0.3) continue; // low threshold per memory standard
+      const norm = normalizeEntityName(entity.name);
+      if (norm.length < 2) continue; // skip single-char names
+      
+      const existingIdx = seenNormNames.get(norm);
+      if (existingIdx !== undefined) {
+        // Merge: keep highest confidence
+        if (entity.confidence > dedupedEntities[existingIdx].confidence) {
+          dedupedEntities[existingIdx] = { ...entity, confidence: entity.confidence };
+        }
+        console.log(`[EntityDedup] Intra-batch duplicate collapsed: "${entity.name}" → "${dedupedEntities[existingIdx].name}"`);
+        continue;
+      }
+      
+      // Check if this is an alias/substring of an already-seen entity
+      let isAlias = false;
+      for (const [seenNorm, idx] of seenNormNames) {
+        // If one contains the other and they share the same type
+        if ((norm.includes(seenNorm) || seenNorm.includes(norm)) && 
+            entity.type === dedupedEntities[idx].type &&
+            Math.min(norm.length, seenNorm.length) / Math.max(norm.length, seenNorm.length) > 0.4) {
+          // Keep the longer (more descriptive) name
+          if (norm.length > seenNorm.length) {
+            dedupedEntities[idx] = { ...entity };
+            seenNormNames.delete(seenNorm);
+            seenNormNames.set(norm, idx);
+          }
+          console.log(`[EntityDedup] Alias collapsed: "${entity.name}" ↔ "${dedupedEntities[idx].name}"`);
+          isAlias = true;
+          break;
+        }
+      }
+      if (isAlias) continue;
+      
+      seenNormNames.set(norm, dedupedEntities.length);
+      dedupedEntities.push(entity);
+    }
+    
+    console.log(`[EntityDedup] ${(intelligence.entities || []).length} raw → ${dedupedEntities.length} after intra-batch dedup`);
+    
+    // 2. Process deduped entities against DB
+    for (const entity of dedupedEntities) {
       let entityId = entity.matched_entity_id;
       
-      // Try to find existing entity
+      // Validate matched_entity_id is a real UUID
+      if (entityId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entityId)) {
+        entityId = undefined;
+      }
+      
+      // Cross-DB dedup: try exact match, then normalized match
       if (!entityId) {
-        const { data: existing } = await supabase
+        const { data: exact } = await supabase
           .from('entities')
           .select('id, confidence_score')
           .ilike('name', entity.name)
           .eq('type', entity.type)
-          .single();
-
-        if (existing) {
-          entityId = existing.id;
-          // Update confidence
+          .limit(1)
+          .maybeSingle();
+        
+        if (exact) {
+          entityId = exact.id;
+        } else {
+          // Fuzzy: search broader and compare normalized names
+          const searchTerm = entity.name.split(/\s+/)[0]; // first word
+          if (searchTerm.length >= 3) {
+            const { data: candidates } = await supabase
+              .from('entities')
+              .select('id, name, confidence_score')
+              .eq('type', entity.type)
+              .ilike('name', `%${searchTerm}%`)
+              .limit(20);
+            
+            if (candidates) {
+              for (const c of candidates) {
+                const cNorm = normalizeEntityName(c.name);
+                const eNorm = normalizeEntityName(entity.name);
+                // Check containment or high word overlap
+                if (cNorm === eNorm || cNorm.includes(eNorm) || eNorm.includes(cNorm)) {
+                  entityId = c.id;
+                  console.log(`[EntityDedup] Cross-DB match: "${entity.name}" → existing "${c.name}"`);
+                  break;
+                }
+              }
+            }
+          }
+        }
+        
+        if (entityId) {
+          // Update confidence on match
           await supabase
             .from('entities')
             .update({ 
-              confidence_score: Math.min((existing.confidence_score + entity.confidence) / 2, 1),
+              confidence_score: Math.min(entity.confidence, 1),
               entity_status: 'confirmed'
             })
             .eq('id', entityId);
-          
           results.entities_confirmed++;
         }
       }
 
-      // Create new entity if not found
+      // Create new entity only if truly novel
       if (!entityId) {
         const { data: newEntity, error: entityError } = await supabase
           .from('entities')
@@ -490,18 +567,28 @@ Extract all entities, signals, and their relationships.`
         }
       }
 
-      // Create mention
+      // Create mention (with dedup check)
       if (entityId) {
-        await supabase
+        const { data: existingMention } = await supabase
           .from('document_entity_mentions')
-          .insert({
-            entity_id: entityId,
-            document_id: documentId,
-            mention_text: entity.mention_text || entity.name,
-            position_start: entity.position_start || 0,
-            confidence: entity.confidence
-          })
-          .then(() => results.mentions_created++);
+          .select('id')
+          .eq('entity_id', entityId)
+          .eq('document_id', documentId)
+          .limit(1)
+          .maybeSingle();
+        
+        if (!existingMention) {
+          await supabase
+            .from('document_entity_mentions')
+            .insert({
+              entity_id: entityId,
+              document_id: documentId,
+              mention_text: entity.mention_text || entity.name,
+              position_start: entity.position_start || 0,
+              confidence: entity.confidence
+            })
+            .then(() => results.mentions_created++);
+        }
       }
     }
 
