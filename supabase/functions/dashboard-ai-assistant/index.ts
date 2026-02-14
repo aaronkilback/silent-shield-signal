@@ -7871,7 +7871,26 @@ The user's message is just a conversational acknowledgment - respond in kind, do
       throw new Error(`AI gateway error: ${response.status}`);
     }
 
-    const firstResult = await response.json();
+    // Safe JSON parse — gateway may return non-JSON (e.g. SSE text or upstream error string)
+    let firstResult: any;
+    try {
+      const responseText = await response.text();
+      firstResult = JSON.parse(responseText);
+    } catch (parseErr) {
+      console.error("AI gateway returned non-JSON response (possible upstream error)");
+      return new Response(
+        JSON.stringify({ error: "AI service temporarily unavailable. Please try again." }),
+        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    if (!firstResult?.choices?.[0]?.message) {
+      console.error("AI gateway returned unexpected structure:", JSON.stringify(firstResult).substring(0, 500));
+      return new Response(
+        JSON.stringify({ error: "Unexpected AI response format. Please try again." }),
+        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
     const firstMessage = firstResult.choices[0].message;
     
     // CRITICAL DEBUG: Log whether AI chose to use tools or just respond with text
