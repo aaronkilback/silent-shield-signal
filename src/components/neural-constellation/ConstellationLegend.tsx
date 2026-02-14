@@ -1,10 +1,12 @@
-import { Brain, Eye, ToggleLeft, ToggleRight } from "lucide-react";
+import { Brain, Eye, ToggleLeft, ToggleRight, Network, Flame } from "lucide-react";
 
 interface ConstellationLegendProps {
   isExecutiveMode: boolean;
   onToggleMode: () => void;
   agentCount: number;
   connectionCount: number;
+  knowledgeEdgeCount?: number;
+  activeAgentCount?: number;
 }
 
 export function ConstellationLegend({
@@ -12,6 +14,8 @@ export function ConstellationLegend({
   onToggleMode,
   agentCount,
   connectionCount,
+  knowledgeEdgeCount = 0,
+  activeAgentCount = 0,
 }: ConstellationLegendProps) {
   return (
     <div className="absolute left-4 top-4 z-10 space-y-3">
@@ -33,7 +37,7 @@ export function ConstellationLegend({
             <span className="text-[10px] text-muted-foreground">
               {isExecutiveMode
                 ? "Simplified overview"
-                : "Full technical detail"}
+                : "Full technical detail + knowledge graph"}
             </span>
           </div>
         </button>
@@ -54,6 +58,7 @@ export function ConstellationLegend({
           <LegendItem color="hsl(215, 20%, 45%)" label="Support" desc="Auxiliary analysis" />
         </div>
 
+        {/* New: Heat trail legend */}
         <div className="border-t border-border pt-2 mt-2 space-y-1">
           <div className="flex items-center gap-2">
             <div className="w-6 h-[1px] bg-primary/40" />
@@ -62,6 +67,33 @@ export function ConstellationLegend({
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
             <span className="text-[10px] text-muted-foreground">Active signal</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Flame className="w-3 h-3 text-destructive" />
+            <span className="text-[10px] text-muted-foreground">Incident heat trail</span>
+          </div>
+          {!isExecutiveMode && (
+            <div className="flex items-center gap-2">
+              <Network className="w-3 h-3" style={{ color: "#a855f7" }} />
+              <span className="text-[10px] text-muted-foreground">Knowledge graph</span>
+            </div>
+          )}
+        </div>
+
+        {/* Performance halo legend */}
+        <div className="border-t border-border pt-2 mt-2 space-y-1">
+          <div className="text-[9px] text-muted-foreground uppercase tracking-widest mb-1">Performance Halos</div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full border-2" style={{ borderColor: "#10b981" }} />
+            <span className="text-[10px] text-muted-foreground">High activity</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full border-2" style={{ borderColor: "#22d3ee" }} />
+            <span className="text-[10px] text-muted-foreground">Medium activity</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full border-2" style={{ borderColor: "#475569" }} />
+            <span className="text-[10px] text-muted-foreground">Low activity</span>
           </div>
         </div>
 
@@ -74,6 +106,18 @@ export function ConstellationLegend({
             <span className="text-muted-foreground">Correlations</span>
             <span className="text-foreground font-medium">{connectionCount}</span>
           </div>
+          {knowledgeEdgeCount > 0 && (
+            <div className="flex justify-between text-[10px]">
+              <span className="text-muted-foreground">Knowledge Edges</span>
+              <span className="font-medium" style={{ color: "#a855f7" }}>{knowledgeEdgeCount}</span>
+            </div>
+          )}
+          {activeAgentCount > 0 && (
+            <div className="flex justify-between text-[10px]">
+              <span className="text-muted-foreground">Active Agents</span>
+              <span className="font-medium" style={{ color: "#10b981" }}>{activeAgentCount}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -82,7 +126,7 @@ export function ConstellationLegend({
         <div className="flex items-center gap-2">
           <Eye className="w-3 h-3 text-muted-foreground" />
           <span className="text-[10px] text-muted-foreground">
-            Click a node for details · Scroll to zoom · Drag to orbit
+            Hover for stats · Click for deep-dive · Scroll to zoom
           </span>
         </div>
       </div>

@@ -26,12 +26,34 @@ export interface ScanPulse {
   createdAt: string;
 }
 
+export interface AgentActivityMetrics {
+  callSign: string;
+  messageCount: number;
+  scanCount: number;
+  totalSignalsAnalyzed: number;
+  totalAlertsGenerated: number;
+  avgRiskScore: number;
+  lastActive: string | null;
+  /** 0-1 normalized activity score */
+  activityScore: number;
+}
+
+export interface KnowledgeGraphEdge {
+  id: string;
+  sourceIncidentId: string;
+  targetIncidentId: string;
+  relationshipType: string;
+  strength: number;
+  evidence: Record<string, any>;
+  discoveredBy: string;
+  createdAt: string;
+}
+
 /** Fetch real inter-agent communication links from conversation data */
 export function useAgentCommLinks(enabled: boolean) {
   return useQuery({
     queryKey: ["agent-comm-links"],
     queryFn: async () => {
-      // Get conversations with their agent and the agents mentioned/involved
       const { data: conversations, error } = await supabase
         .from("agent_conversations")
         .select("agent_id, created_at, updated_at")
@@ -40,7 +62,6 @@ export function useAgentCommLinks(enabled: boolean) {
 
       if (error) throw error;
 
-      // Get agent call signs for mapping
       const { data: agents } = await supabase
         .from("ai_agents")
         .select("id, call_sign")
@@ -48,14 +69,12 @@ export function useAgentCommLinks(enabled: boolean) {
 
       const agentMap = new Map(agents?.map((a) => [a.id, a.call_sign]) || []);
 
-      // Count messages per agent to build activity scores
       const { data: msgCounts } = await supabase
         .from("agent_messages")
         .select("conversation_id, role, created_at")
         .order("created_at", { ascending: false })
         .limit(500);
 
-      // Build links: agents that share conversations or are referenced together
       const agentActivity = new Map<string, { msgCount: number; lastActive: string }>();
       const convAgentMap = new Map<string, string>();
 
@@ -70,12 +89,10 @@ export function useAgentCommLinks(enabled: boolean) {
         }
       });
 
-      // Build links between agents that have been active (proxy for real comms)
       const activeAgents = Array.from(agentActivity.entries())
         .sort((a, b) => b[1].msgCount - a[1].msgCount);
 
       const links: AgentCommLink[] = [];
-      // Create links between agents based on activity proximity
       for (let i = 0; i < activeAgents.length; i++) {
         for (let j = i + 1; j < Math.min(activeAgents.length, i + 3); j++) {
           links.push({
@@ -92,7 +109,7 @@ export function useAgentCommLinks(enabled: boolean) {
       return links;
     },
     enabled,
-    refetchInterval: 30000, // Refresh every 30s
+    refetchInterval: 30000,
   });
 }
 
@@ -147,5 +164,144 @@ export function useScanPulses(enabled: boolean) {
     },
     enabled,
     refetchInterval: 30000,
+  });
+}
+
+/** Fetch per-agent activity metrics for performance halos and live pulses */
+export function useAgentActivityMetrics(enabled: boolean) {
+  return useQuery({
+    queryKey: ["agent-activity-metrics"],
+    queryFn: async () => {
+      // Fetch message counts per agent
+      const { data: agents } = await supabase
+        .from("ai_agents")
+        .select("id, call_sign")
+        .eq("is_active", true);
+
+      if (!agents) return [];
+
+      const agentMap = new Map(agents.map((a) => [a.id, a.call_sign]));
+
+      // Get conversation counts per agent
+      const { data: convCounts } = await supabase
+        .from("agent_conversations")
+        .select("agent_id, updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(500);
+
+      // Get scan metrics per agent
+      const { data: scans } = await supabase
+        .from("autonomous_scan_results")
+        .select("agent_call_sign, signals_analyzed, alerts_generated, risk_score, created_at")
+        .order("created_at", { ascending: false })
+        .limit(100);
+
+      // Get message counts by joining through conversations
+      const { data: messages } = await supabase
+        .from("agent_messages")
+        .select("conversation_id, created_at")
+        .order("created_at", { ascending: false })
+        .limit(500);
+
+      // Map conversation_id -> agent_id
+      const convToAgent = new Map<string, string>();
+      convCounts?.forEach((c) => {
+        convToAgent.set(c.agent_id, c.agent_id);
+      });
+
+      // Build per-agent metrics
+      const metricsMap = new Map<string, {
+        msgCount: number;
+        scanCount: number;
+        totalSignals: number;
+        totalAlerts: number;
+        riskScores: number[];
+        lastActive: string | null;
+      }>();
+
+      // Init all agents
+      agents.forEach((a) => {
+        metricsMap.set(a.call_sign, {
+          msgCount: 0, scanCount: 0, totalSignals: 0,
+          totalAlerts: 0, riskScores: [], lastActive: null,
+        });
+      });
+
+      // Count conversations per agent as proxy for messages
+      convCounts?.forEach((c) => {
+        const callSign = agentMap.get(c.agent_id);
+        if (callSign) {
+          const m = metricsMap.get(callSign)!;
+          m.msgCount += 1;
+          if (!m.lastActive || c.updated_at > m.lastActive) m.lastActive = c.updated_at;
+        }
+      });
+
+      // Aggregate scan metrics
+      scans?.forEach((s) => {
+        const m = metricsMap.get(s.agent_call_sign);
+        if (m) {
+          m.scanCount += 1;
+          m.totalSignals += s.signals_analyzed || 0;
+          m.totalAlerts += s.alerts_generated || 0;
+          if (s.risk_score != null) m.riskScores.push(s.risk_score);
+          if (s.created_at && (!m.lastActive || s.created_at > m.lastActive)) {
+            m.lastActive = s.created_at;
+          }
+        }
+      });
+
+      // Normalize to activity scores
+      let maxActivity = 1;
+      const entries = Array.from(metricsMap.entries()).map(([callSign, m]) => {
+        const raw = m.msgCount * 2 + m.scanCount * 5 + m.totalAlerts * 3;
+        if (raw > maxActivity) maxActivity = raw;
+        return { callSign, ...m, raw };
+      });
+
+      return entries.map((e) => ({
+        callSign: e.callSign,
+        messageCount: e.msgCount,
+        scanCount: e.scanCount,
+        totalSignalsAnalyzed: e.totalSignals,
+        totalAlertsGenerated: e.totalAlerts,
+        avgRiskScore: e.riskScores.length > 0
+          ? e.riskScores.reduce((a, b) => a + b, 0) / e.riskScores.length
+          : 0,
+        lastActive: e.lastActive,
+        activityScore: Math.min(1, e.raw / maxActivity),
+      })) as AgentActivityMetrics[];
+    },
+    enabled,
+    refetchInterval: 30000,
+  });
+}
+
+/** Fetch knowledge graph edges for overlay visualization */
+export function useKnowledgeGraphEdges(enabled: boolean) {
+  return useQuery({
+    queryKey: ["knowledge-graph-edges"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("incident_knowledge_graph")
+        .select("id, source_incident_id, target_incident_id, relationship_type, strength, evidence, discovered_by, created_at")
+        .order("strength", { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+
+      return (data || []).map((e) => ({
+        id: e.id,
+        sourceIncidentId: e.source_incident_id,
+        targetIncidentId: e.target_incident_id,
+        relationshipType: e.relationship_type,
+        strength: Number(e.strength),
+        evidence: e.evidence as Record<string, any>,
+        discoveredBy: e.discovered_by,
+        createdAt: e.created_at,
+      })) as KnowledgeGraphEdge[];
+    },
+    enabled,
+    refetchInterval: 60000,
   });
 }
