@@ -814,10 +814,6 @@ export function ConstellationScene({
 
       <DeepSpaceField neutralizedCount={neutralizedCount} />
 
-      <NebulaCloud position={[-15, 8, -20]} color="#1e40af" scale={8} />
-      <NebulaCloud position={[18, -5, -25]} color="#ea580c" scale={10} />
-      <NebulaCloud position={[5, 12, -30]} color="#7c3aed" scale={6} />
-      <NebulaCloud position={[-8, -10, -15]} color="#0ea5e9" scale={5} />
 
       <ConnectionLines agents={visibleAgents} commLinks={commLinks} />
       <SignalParticles agents={visibleAgents} commLinks={commLinks} />
