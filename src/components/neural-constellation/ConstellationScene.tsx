@@ -1341,11 +1341,6 @@ function EarthGlobe({ position, signalLocations = [] }: {
           depthWrite={false}
         />
       </mesh>
-      {/* Subtle atmospheric rim */}
-      <mesh>
-        <sphereGeometry args={[earthRadius * 1.03, 48, 48]} />
-        <meshBasicMaterial color="#4499ff" transparent opacity={0.04} side={THREE.BackSide} />
-      </mesh>
     </group>
   );
 }
