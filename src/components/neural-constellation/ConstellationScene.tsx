@@ -1,4 +1,4 @@
-import { useRef, useMemo, useCallback, useState } from "react";
+import { useRef, useMemo, useCallback, useState, useEffect, forwardRef, useImperativeHandle } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Line, Html, useTexture } from "@react-three/drei";
 import * as THREE from "three";
@@ -13,6 +13,8 @@ interface AgentNode {
   position: [number, number, number];
   tier: "primary" | "secondary" | "support";
 }
+
+type CameraView = "constellation" | "earth" | "cinematic";
 
 interface ConstellationSceneProps {
   agents: AgentNode[];
@@ -29,7 +31,225 @@ interface ConstellationSceneProps {
   signalLocations?: string[];
 }
 
-// Deep space starfield
+// Camera presets
+const CAMERA_PRESETS: Record<CameraView, { position: THREE.Vector3; target: THREE.Vector3 }> = {
+  constellation: { position: new THREE.Vector3(0, 2, 20), target: new THREE.Vector3(0, 0, 0) },
+  earth: { position: new THREE.Vector3(-25, -5, -20), target: new THREE.Vector3(-35, -15, -40) },
+  cinematic: { position: new THREE.Vector3(-15, 8, 10), target: new THREE.Vector3(-10, -5, -15) },
+};
+
+// Smooth cinematic camera controller
+function CameraController({ view, controlsRef }: { view: CameraView; controlsRef: React.RefObject<any> }) {
+  const { camera } = useThree();
+  const targetPos = useRef(new THREE.Vector3(0, 2, 20));
+  const targetLook = useRef(new THREE.Vector3(0, 0, 0));
+  const cinematicPhase = useRef(0);
+
+  useEffect(() => {
+    const preset = CAMERA_PRESETS[view];
+    targetPos.current.copy(preset.position);
+    targetLook.current.copy(preset.target);
+  }, [view]);
+
+  useFrame((_, delta) => {
+    if (view === "cinematic") {
+      cinematicPhase.current += delta * 0.06;
+      const t = cinematicPhase.current;
+      // Sweep between constellation and Earth in a figure-8
+      const px = Math.sin(t) * 25;
+      const py = Math.cos(t * 0.7) * 8 + 2;
+      const pz = Math.cos(t) * 20 + 5;
+      targetPos.current.set(px, py, pz);
+      const lx = Math.sin(t + 1) * -15;
+      const ly = Math.cos(t * 0.5) * -5;
+      const lz = Math.sin(t * 0.8) * -15;
+      targetLook.current.set(lx, ly, lz);
+    }
+
+    camera.position.lerp(targetPos.current, delta * 1.2);
+    if (controlsRef.current) {
+      controlsRef.current.target.lerp(targetLook.current, delta * 1.2);
+      controlsRef.current.update();
+    }
+  });
+
+  return null;
+}
+
+// Shooting stars — streaks across the scene
+function ShootingStars() {
+  const count = 8;
+  const ref = useRef<THREE.Group>(null);
+  const stars = useRef<{ pos: THREE.Vector3; vel: THREE.Vector3; life: number; maxLife: number; active: boolean }[]>([]);
+
+  useMemo(() => {
+    stars.current = Array.from({ length: count }, () => ({
+      pos: new THREE.Vector3(0, 0, 0),
+      vel: new THREE.Vector3(0, 0, 0),
+      life: 0,
+      maxLife: 0,
+      active: false,
+    }));
+  }, []);
+
+  useFrame((_, delta) => {
+    stars.current.forEach((star) => {
+      if (!star.active) {
+        if (Math.random() < 0.003) {
+          // Spawn
+          star.active = true;
+          star.life = 0;
+          star.maxLife = 0.8 + Math.random() * 1.2;
+          star.pos.set(
+            (Math.random() - 0.5) * 80,
+            20 + Math.random() * 30,
+            (Math.random() - 0.5) * 80
+          );
+          star.vel.set(
+            (Math.random() - 0.5) * 30,
+            -15 - Math.random() * 20,
+            (Math.random() - 0.5) * 30
+          );
+        }
+        return;
+      }
+      star.life += delta;
+      star.pos.addScaledVector(star.vel, delta);
+      if (star.life > star.maxLife) star.active = false;
+    });
+  });
+
+  return (
+    <group ref={ref}>
+      {stars.current.map((star, i) => (
+        <ShootingStarTrail key={i} star={star} />
+      ))}
+    </group>
+  );
+}
+
+function ShootingStarTrail({ star }: { star: { pos: THREE.Vector3; vel: THREE.Vector3; life: number; maxLife: number; active: boolean } }) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const trailRef = useRef<THREE.Mesh>(null);
+
+  useFrame(() => {
+    if (!star.active) {
+      if (meshRef.current) (meshRef.current.material as THREE.MeshBasicMaterial).opacity = 0;
+      if (trailRef.current) (trailRef.current.material as THREE.MeshBasicMaterial).opacity = 0;
+      return;
+    }
+    const fade = 1 - star.life / star.maxLife;
+    if (meshRef.current) {
+      meshRef.current.position.copy(star.pos);
+      (meshRef.current.material as THREE.MeshBasicMaterial).opacity = fade * 0.9;
+    }
+    if (trailRef.current) {
+      const trailDir = star.vel.clone().normalize();
+      trailRef.current.position.copy(star.pos).addScaledVector(trailDir, -1.5);
+      trailRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), trailDir.negate());
+      (trailRef.current.material as THREE.MeshBasicMaterial).opacity = fade * 0.4;
+    }
+  });
+
+  return (
+    <>
+      <mesh ref={meshRef}>
+        <sphereGeometry args={[0.08, 6, 6]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0} />
+      </mesh>
+      <mesh ref={trailRef}>
+        <cylinderGeometry args={[0.04, 0.0, 3, 4]} />
+        <meshBasicMaterial color="#aaddff" transparent opacity={0} />
+      </mesh>
+    </>
+  );
+}
+
+// Aurora effect around Earth
+function AuroraEffect({ earthPosition }: { earthPosition: [number, number, number] }) {
+  const ref = useRef<THREE.Mesh>(null);
+  const ref2 = useRef<THREE.Mesh>(null);
+
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime();
+    if (ref.current) {
+      ref.current.rotation.y = t * 0.03;
+      ref.current.rotation.x = Math.sin(t * 0.1) * 0.1 + 0.3;
+      (ref.current.material as THREE.MeshBasicMaterial).opacity = 0.04 + Math.sin(t * 0.5) * 0.02;
+    }
+    if (ref2.current) {
+      ref2.current.rotation.y = t * -0.02;
+      ref2.current.rotation.x = Math.cos(t * 0.08) * 0.15 - 0.3;
+      (ref2.current.material as THREE.MeshBasicMaterial).opacity = 0.03 + Math.sin(t * 0.7 + 1) * 0.015;
+    }
+  });
+
+  return (
+    <group position={earthPosition}>
+      {/* Northern aurora band */}
+      <mesh ref={ref} position={[0, 6, 0]}>
+        <torusGeometry args={[5.5, 1.5, 8, 48]} />
+        <meshBasicMaterial color="#22ff88" transparent opacity={0.04} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Southern aurora band */}
+      <mesh ref={ref2} position={[0, -6, 0]}>
+        <torusGeometry args={[5, 1.2, 8, 48]} />
+        <meshBasicMaterial color="#44aaff" transparent opacity={0.03} side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  );
+}
+
+// Lens flare sun — bright point light with glow layers
+function SunFlare({ position }: { position: [number, number, number] }) {
+  const glowRef = useRef<THREE.Mesh>(null);
+  const flare1 = useRef<THREE.Mesh>(null);
+  const flare2 = useRef<THREE.Mesh>(null);
+
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime();
+    const pulse = Math.sin(t * 0.3);
+    if (glowRef.current) {
+      glowRef.current.scale.setScalar(1 + pulse * 0.08);
+    }
+    if (flare1.current) {
+      flare1.current.scale.setScalar(1 + Math.sin(t * 0.7) * 0.15);
+      (flare1.current.material as THREE.MeshBasicMaterial).opacity = 0.04 + Math.sin(t * 0.5) * 0.015;
+    }
+    if (flare2.current) {
+      flare2.current.scale.setScalar(1 + Math.sin(t * 0.4 + 1) * 0.1);
+      (flare2.current.material as THREE.MeshBasicMaterial).opacity = 0.02 + Math.sin(t * 0.8) * 0.01;
+    }
+  });
+
+  return (
+    <group position={position}>
+      {/* Core sun */}
+      <mesh>
+        <sphereGeometry args={[1.5, 16, 16]} />
+        <meshBasicMaterial color="#fff8e0" />
+      </mesh>
+      {/* Inner glow */}
+      <mesh ref={glowRef}>
+        <sphereGeometry args={[3, 16, 16]} />
+        <meshBasicMaterial color="#ffee88" transparent opacity={0.15} />
+      </mesh>
+      {/* Flare ring 1 */}
+      <mesh ref={flare1} rotation={[0, 0, Math.PI / 4]}>
+        <ringGeometry args={[4, 8, 6]} />
+        <meshBasicMaterial color="#ffdd66" transparent opacity={0.04} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Flare ring 2 */}
+      <mesh ref={flare2} rotation={[Math.PI / 3, Math.PI / 6, 0]}>
+        <ringGeometry args={[6, 14, 6]} />
+        <meshBasicMaterial color="#ffcc44" transparent opacity={0.02} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Intense directional light */}
+      <directionalLight position={[0, 0, 0]} intensity={3} color="#fffaf0" />
+      <pointLight color="#ffee88" intensity={8} distance={100} />
+    </group>
+  );
+}
 function DeepSpaceField({ neutralizedCount = 0 }: { neutralizedCount: number }) {
   const ref = useRef<THREE.Points>(null);
   const totalStars = 4000;
@@ -1179,6 +1399,9 @@ export function ConstellationScene({
   operatorMessageActivity,
   signalLocations = [],
 }: ConstellationSceneProps) {
+  const [cameraView, setCameraView] = useState<CameraView>("constellation");
+  const controlsRef = useRef<any>(null);
+
   const handleClick = useCallback((agent: AgentNode) => { onNodeClick?.(agent); }, [onNodeClick]);
   const [hoveredAgent, setHoveredAgent] = useState<AgentNode | null>(null);
 
@@ -1199,122 +1422,151 @@ export function ConstellationScene({
     return map;
   }, [activityMetrics]);
 
+  const earthPosition: [number, number, number] = [-35, -15, -40];
+
   return (
-    <Canvas
-      camera={{ position: [0, 2, 20], fov: 55 }}
-      style={{ background: "#020408" }}
-      gl={{ antialias: true, alpha: false }}
-    >
-      <ambientLight intensity={0.12} />
-      <directionalLight position={[10, 10, 5]} intensity={0.25} color="#4488ff" />
-      <directionalLight position={[-10, -5, -5]} intensity={0.12} color="#ff6600" />
+    <div className="relative w-full h-full">
+      {/* Camera view buttons */}
+      <div className="absolute top-14 right-4 z-20 flex flex-col gap-2">
+        {([
+          { view: "constellation" as CameraView, label: "⬡ NETWORK", desc: "Agent constellation" },
+          { view: "earth" as CameraView, label: "🌍 EARTH", desc: "Globe view" },
+          { view: "cinematic" as CameraView, label: "🎬 CINEMATIC", desc: "Auto flythrough" },
+        ]).map(({ view, label, desc }) => (
+          <button
+            key={view}
+            onClick={() => setCameraView(view)}
+            className={`px-3 py-2 rounded border text-left transition-all duration-300 backdrop-blur-xl ${
+              cameraView === view
+                ? "bg-primary/20 border-primary/50 text-primary"
+                : "bg-card/50 border-border/50 text-muted-foreground hover:border-primary/30 hover:text-foreground"
+            }`}
+          >
+            <div className="text-[11px] font-bold tracking-widest">{label}</div>
+            <div className="text-[9px] opacity-60">{desc}</div>
+          </button>
+        ))}
+      </div>
 
-      <DeepSpaceField neutralizedCount={neutralizedCount} />
+      <Canvas
+        camera={{ position: [0, 2, 20], fov: 55 }}
+        style={{ background: "#020408" }}
+        gl={{ antialias: true, alpha: false }}
+      >
+        <CameraController view={cameraView} controlsRef={controlsRef} />
 
-      {/* Earth & Moon — background celestial bodies */}
-      <EarthGlobe position={[-35, -15, -40]} signalLocations={signalLocations} />
-      <MoonBody earthPosition={[-35, -15, -40]} />
+        <ambientLight intensity={0.15} />
 
+        {/* Sun with lens flare — far behind Earth */}
+        <SunFlare position={[-70, 20, -80]} />
 
-      <ConnectionLines agents={visibleAgents} commLinks={commLinks} />
-      <SignalParticles agents={visibleAgents} commLinks={commLinks} />
+        <DeepSpaceField neutralizedCount={neutralizedCount} />
+        <ShootingStars />
 
-      {/* Knowledge graph overlay — dashed colored arcs */}
-      {!isExecutiveMode && knowledgeGraphEdges.length > 0 && (
-        <KnowledgeGraphOverlay agents={visibleAgents} edges={knowledgeGraphEdges} />
-      )}
+        {/* Earth & Moon — background celestial bodies */}
+        <EarthGlobe position={earthPosition} signalLocations={signalLocations} />
+        <MoonBody earthPosition={earthPosition} />
+        <AuroraEffect earthPosition={earthPosition} />
 
-      {/* Incident heat trails — severity-colored particles */}
-      <IncidentHeatTrails agents={visibleAgents} activeDebates={activeDebates} scanPulses={scanPulses} />
+        <ConnectionLines agents={visibleAgents} commLinks={commLinks} />
+        <SignalParticles agents={visibleAgents} commLinks={commLinks} />
 
-      {/* Debate cluster rings */}
-      {activeDebates.map((debate) => (
-        <DebateClusterRing key={debate.id} agents={visibleAgents} debate={debate} />
-      ))}
+        {/* Knowledge graph overlay — dashed colored arcs */}
+        {!isExecutiveMode && knowledgeGraphEdges.length > 0 && (
+          <KnowledgeGraphOverlay agents={visibleAgents} edges={knowledgeGraphEdges} />
+        )}
 
-      {/* Performance halos */}
-      {visibleAgents.map((agent) => {
-        const score = activityMap.get(agent.callSign) || 0;
-        const size = agent.tier === "primary" ? 0.5 : agent.tier === "secondary" ? 0.35 : 0.22;
-        return (
-          <PerformanceHalo
-            key={`halo-${agent.id}`}
-            position={agent.position}
-            activityScore={score}
-            color={agent.color}
-            size={size}
+        {/* Incident heat trails — severity-colored particles */}
+        <IncidentHeatTrails agents={visibleAgents} activeDebates={activeDebates} scanPulses={scanPulses} />
+
+        {/* Debate cluster rings */}
+        {activeDebates.map((debate) => (
+          <DebateClusterRing key={debate.id} agents={visibleAgents} debate={debate} />
+        ))}
+
+        {/* Performance halos */}
+        {visibleAgents.map((agent) => {
+          const score = activityMap.get(agent.callSign) || 0;
+          const size = agent.tier === "primary" ? 0.5 : agent.tier === "secondary" ? 0.35 : 0.22;
+          return (
+            <PerformanceHalo
+              key={`halo-${agent.id}`}
+              position={agent.position}
+              activityScore={score}
+              color={agent.color}
+              size={size}
+            />
+          );
+        })}
+
+        {/* AEGIS Command Hub — unique central node */}
+        {visibleAgents.filter((a) => a.callSign === "AEGIS-CMD").map((agent) => (
+          <AegisCommandHub
+            key={agent.id}
+            agent={agent}
+            onClick={() => handleClick(agent)}
+            activityScore={activityMap.get(agent.callSign) || 0}
+            onHover={setHoveredAgent}
+            onUnhover={() => setHoveredAgent(null)}
           />
-        );
-      })}
+        ))}
 
-      {/* AEGIS Command Hub — unique central node */}
-      {visibleAgents.filter((a) => a.callSign === "AEGIS-CMD").map((agent) => (
-        <AegisCommandHub
-          key={agent.id}
-          agent={agent}
-          onClick={() => handleClick(agent)}
-          activityScore={activityMap.get(agent.callSign) || 0}
-          onHover={setHoveredAgent}
-          onUnhover={() => setHoveredAgent(null)}
+        {/* Connected Operator Device */}
+        {(() => {
+          const operatorPos: [number, number, number] = [14, -3, 5];
+          const aegisAgent = visibleAgents.find((a) => a.callSign === "AEGIS-CMD");
+          const aegisPos: [number, number, number] = (aegisAgent?.position || [0, 0, 0]) as [number, number, number];
+          const hasOnlineDevices = operatorDevices.length > 0;
+          const hasMessages = operatorMessageActivity?.hasRecentMessages || false;
+          const msgCount = operatorMessageActivity?.recentMessageCount || 0;
+          const isActive = hasOnlineDevices || hasMessages;
+          return (
+            <>
+              <OperatorDeviceNode position={operatorPos} isOnline={hasOnlineDevices} deviceCount={operatorDevices.length} hasMessageActivity={hasMessages} />
+              <Line
+                points={[new THREE.Vector3(...aegisPos), new THREE.Vector3(...operatorPos)]}
+                color={isActive ? (hasMessages ? "#22d3ee" : "#10b981") : "#334155"}
+                transparent
+                opacity={isActive ? 0.5 : 0.12}
+                lineWidth={isActive ? 1.5 : 0.5}
+              />
+              <OperatorDataFlow
+                operatorPos={operatorPos}
+                aegisPos={aegisPos}
+                isActive={isActive}
+                messageCount={msgCount}
+              />
+            </>
+          );
+        })()}
+
+        {/* Agent nodes (non-AEGIS) */}
+        {visibleAgents.filter((a) => a.callSign !== "AEGIS-CMD").map((agent) => (
+          <AgentSphere
+            key={agent.id}
+            agent={agent}
+            onClick={() => handleClick(agent)}
+            isInDebate={debatingAgents.has(agent.callSign)}
+            activityScore={activityMap.get(agent.callSign) || 0}
+            onHover={setHoveredAgent}
+            onUnhover={() => setHoveredAgent(null)}
+          />
+        ))}
+
+        <OrbitControls
+          ref={controlsRef}
+          enablePan
+          enableZoom
+          minDistance={3}
+          maxDistance={120}
+          autoRotate={cameraView === "constellation"}
+          autoRotateSpeed={0.2}
+          dampingFactor={0.05}
+          enableDamping
+          panSpeed={1.2}
         />
-      ))}
-
-      {/* Connected Operator Device */}
-      {(() => {
-        const operatorPos: [number, number, number] = [14, -3, 5];
-        const aegisAgent = visibleAgents.find((a) => a.callSign === "AEGIS-CMD");
-        const aegisPos: [number, number, number] = (aegisAgent?.position || [0, 0, 0]) as [number, number, number];
-        const hasOnlineDevices = operatorDevices.length > 0;
-        const hasMessages = operatorMessageActivity?.hasRecentMessages || false;
-        const msgCount = operatorMessageActivity?.recentMessageCount || 0;
-        const isActive = hasOnlineDevices || hasMessages;
-        return (
-          <>
-            <OperatorDeviceNode position={operatorPos} isOnline={hasOnlineDevices} deviceCount={operatorDevices.length} hasMessageActivity={hasMessages} />
-            {/* Main link line */}
-            <Line
-              points={[new THREE.Vector3(...aegisPos), new THREE.Vector3(...operatorPos)]}
-              color={isActive ? (hasMessages ? "#22d3ee" : "#10b981") : "#334155"}
-              transparent
-              opacity={isActive ? 0.5 : 0.12}
-              lineWidth={isActive ? 1.5 : 0.5}
-            />
-            {/* Data flow particles when active */}
-            <OperatorDataFlow
-              operatorPos={operatorPos}
-              aegisPos={aegisPos}
-              isActive={isActive}
-              messageCount={msgCount}
-            />
-          </>
-        );
-      })()}
-
-      {/* Agent nodes (non-AEGIS) */}
-      {visibleAgents.filter((a) => a.callSign !== "AEGIS-CMD").map((agent) => (
-        <AgentSphere
-          key={agent.id}
-          agent={agent}
-          onClick={() => handleClick(agent)}
-          isInDebate={debatingAgents.has(agent.callSign)}
-          activityScore={activityMap.get(agent.callSign) || 0}
-          onHover={setHoveredAgent}
-          onUnhover={() => setHoveredAgent(null)}
-        />
-      ))}
-
-      <OrbitControls
-        enablePan
-        enableZoom
-        minDistance={3}
-        maxDistance={120}
-        autoRotate
-        autoRotateSpeed={0.2}
-        dampingFactor={0.05}
-        enableDamping
-        panSpeed={1.2}
-      />
-    </Canvas>
+      </Canvas>
+    </div>
   );
 }
 
