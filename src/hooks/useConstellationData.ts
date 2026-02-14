@@ -288,13 +288,15 @@ export function useAgentActivityMetrics(enabled: boolean) {
         }
       });
 
-      // Normalize to activity scores
-      let maxActivity = 1;
+      // Normalize to activity scores with absolute baseline
+      // Use an absolute baseline so low-activity agents don't all show 100%
+      const BASELINE = 50; // agents need ~50 raw points for 100%
       const entries = Array.from(metricsMap.entries()).map(([callSign, m]) => {
         const raw = m.msgCount * 2 + m.scanCount * 5 + m.totalAlerts * 3;
-        if (raw > maxActivity) maxActivity = raw;
         return { callSign, ...m, raw };
       });
+
+      const maxActivity = Math.max(BASELINE, ...entries.map((e) => e.raw));
 
       return entries.map((e) => ({
         callSign: e.callSign,
