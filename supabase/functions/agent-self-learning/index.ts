@@ -18,12 +18,13 @@ import { createServiceClient, corsHeaders, handleCors, successResponse, errorRes
  */
 
 interface LearningRequest {
-  mode: 'reactive' | 'proactive' | 'deep_dive';
+  mode: 'reactive' | 'proactive' | 'deep_dive' | 'literature_review';
   agent_call_sign?: string;
   topic?: string;
   context?: string;
   incident_id?: string;
   max_queries?: number;
+  domain_focus?: string;
 }
 
 const AGENT_LEARNING_PROMPTS: Record<string, string> = {
@@ -46,7 +47,7 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json().catch(() => ({})) as LearningRequest;
-    const { mode = 'proactive', agent_call_sign, topic, context, incident_id, max_queries } = body;
+    const { mode = 'proactive', agent_call_sign, topic, context, incident_id, max_queries, domain_focus } = body;
 
     const PERPLEXITY_API_KEY = Deno.env.get('PERPLEXITY_API_KEY');
     if (!PERPLEXITY_API_KEY) {
@@ -54,7 +55,7 @@ Deno.serve(async (req) => {
     }
 
     const supabase = createServiceClient();
-    const queryLimit = max_queries || (mode === 'deep_dive' ? 5 : 3);
+    const queryLimit = max_queries || (mode === 'deep_dive' ? 5 : mode === 'literature_review' ? 6 : 3);
     const results: { topics_researched: string[]; entries_created: number; entries_updated: number } = {
       topics_researched: [],
       entries_created: 0,
@@ -81,6 +82,36 @@ Deno.serve(async (req) => {
           agentCallSign: agent_call_sign || 'AEGIS-CMD',
           incidentId: incident_id,
         }, results);
+      }
+
+    } else if (mode === 'literature_review') {
+      // ── Literature Review: Autonomously discover and ingest expert books/publications ──
+      console.log(`[agent-self-learning] Literature review mode — agent: ${agent_call_sign || 'auto'}, domain: ${domain_focus || 'auto'}`);
+      
+      if (topic) {
+        // Targeted literature review on a specific subject
+        const litQueries = generateLiteratureQueries(topic, agent_call_sign || 'AEGIS-CMD');
+        for (const query of litQueries.slice(0, queryLimit)) {
+          await new Promise(r => setTimeout(r, 2000)); // Slightly longer delay for deeper searches
+          await researchLiterature(supabase, PERPLEXITY_API_KEY, {
+            topic: query,
+            context: `Literature review: ${topic}`,
+            agentCallSign: agent_call_sign || 'AEGIS-CMD',
+          }, results);
+        }
+      } else {
+        // Autonomous: agents identify their own reading list based on gaps
+        const readingList = await identifyLiteratureGaps(supabase, agent_call_sign, domain_focus);
+        console.log(`[agent-self-learning] Generated ${readingList.length} literature targets`);
+        
+        for (const item of readingList.slice(0, queryLimit)) {
+          await new Promise(r => setTimeout(r, 2000));
+          await researchLiterature(supabase, PERPLEXITY_API_KEY, {
+            topic: item.query,
+            context: item.context,
+            agentCallSign: item.suggestedAgent,
+          }, results);
+        }
       }
 
     } else {
@@ -253,6 +284,268 @@ Return ONLY the JSON array.`;
   } catch (err) {
     console.error(`[agent-self-learning] Research error for "${topic}":`, err);
   }
+}
+
+function generateLiteratureQueries(topic: string, agent: string): string[] {
+  const agentFocus: Record<string, string> = {
+    'CERBERUS': 'financial crime, AML, sanctions, money laundering',
+    'NEO': 'cyber threat intelligence, APT groups, malware analysis',
+    'SPECTER': 'insider threat, behavioral analysis, counterintelligence',
+    'MERIDIAN': 'geopolitical risk, political violence, regional stability',
+    'ARGUS': 'physical security, executive protection, surveillance detection',
+    'VIPER': 'narcotics intelligence, cartel operations, drug trafficking',
+    'PRAETOR': 'criminal investigations, evidence management, case law',
+    'WARDEN': 'content moderation, online radicalization, digital safety',
+    'OUROBOROS': 'supply chain security, vendor risk, logistics threats',
+    'CRUCIBLE': 'intelligence analysis methodology, structured analytic techniques',
+  };
+
+  const focus = agentFocus[agent] || 'security and intelligence';
+
+  return [
+    `Most authoritative and widely-cited books written by experts on "${topic}" in the field of ${focus}. List the book titles, authors, key frameworks, and most important concepts from each.`,
+    `Academic publications, peer-reviewed research papers, and seminal works on "${topic}" relevant to ${focus}. Extract the core methodologies, statistical models, and analytical frameworks.`,
+    `Expert practitioner handbooks and professional reference guides on "${topic}" for ${focus}. What are the step-by-step procedures, decision matrices, and operational checklists these experts recommend?`,
+    `Key concepts and frameworks from leading textbooks on "${topic}" used in graduate-level security programs and intelligence training academies. Extract the theoretical models and their practical applications.`,
+    `Lessons learned and case studies documented in books and publications about "${topic}" in ${focus}. What recurring failure patterns do experts identify and what countermeasures do they prescribe?`,
+    `The most recent books and expert publications (2023-2026) on "${topic}" that introduce new thinking, revised frameworks, or challenge conventional wisdom in ${focus}.`,
+  ];
+}
+
+async function researchLiterature(
+  supabase: any,
+  apiKey: string,
+  params: { topic: string; context: string; agentCallSign: string },
+  results: { topics_researched: string[]; entries_created: number; entries_updated: number }
+) {
+  const { topic, context, agentCallSign } = params;
+  const agentPersona = AGENT_LEARNING_PROMPTS[agentCallSign] || AGENT_LEARNING_PROMPTS['AEGIS-CMD'];
+
+  const systemPrompt = `${agentPersona}
+
+You are conducting a LITERATURE REVIEW — extracting deep structured knowledge from expert books, academic publications, and authoritative references.
+
+Your goal is NOT surface-level summaries. Extract the OPERATIONAL KNOWLEDGE:
+- Specific frameworks with their steps/phases/stages
+- Decision matrices and threshold criteria
+- Checklists and standard operating procedures
+- Named methodologies and their originators
+- Quantitative benchmarks and metrics experts cite
+- Contrarian views and debates between schools of thought
+
+Return your findings as a JSON array of 3-5 knowledge entries. Each entry:
+- "title": concise title referencing the source (e.g., "Heuer's Analysis of Competing Hypotheses Framework") (max 120 chars)
+- "content": deep extracted knowledge (400-800 words). Write as a classified intelligence reference document. Include specific steps, criteria, thresholds, and decision points. Cite the book/author inline.
+- "domain": one of "cyber", "physical_security", "executive_protection", "crisis_management", "threat_intelligence", "travel_security", "compliance", "geopolitical", "investigations", "osint", "financial_crime", "counterintelligence"
+- "subdomain": specific sub-area
+- "knowledge_type": one of "framework", "methodology", "best_practice", "tactical_procedure", "standard", "case_study", "emerging_trend", "reference_model"
+- "tags": array of 4-8 applicability tags
+- "citation": "Author (Year). Book Title. Publisher." format
+- "source_authority": "textbook" | "academic_paper" | "practitioner_guide" | "government_publication" | "industry_standard"
+
+Return ONLY the JSON array.`;
+
+  try {
+    const response = await fetch('https://api.perplexity.ai/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'sonar-pro',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `${context}\n\n${topic}` }
+        ],
+        temperature: 0.1,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(`[agent-self-learning] Literature research Perplexity error ${response.status}`);
+      return;
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    const citations = data.citations || [];
+
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return;
+
+    const entries = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(entries)) return;
+
+    results.topics_researched.push(topic.substring(0, 100));
+
+    for (const entry of entries.slice(0, 5)) {
+      if (!entry.title || !entry.content || entry.content.length < 100) continue;
+
+      const normTitle = entry.title.toLowerCase().replace(/[^a-z0-9]/g, ' ').trim();
+      const searchKey = normTitle.substring(0, 40);
+
+      const { data: existing } = await supabase
+        .from('expert_knowledge')
+        .select('id, content')
+        .eq('domain', entry.domain || 'threat_intelligence')
+        .ilike('title', `%${searchKey}%`)
+        .limit(1);
+
+      if (existing && existing.length > 0) {
+        const oldWords = new Set(existing[0].content.toLowerCase().split(/\s+/));
+        const newWords = entry.content.toLowerCase().split(/\s+/);
+        const novelWords = newWords.filter((w: string) => !oldWords.has(w));
+        
+        if (novelWords.length / newWords.length > 0.25) { // Lower threshold for literature — richer content
+          await supabase
+            .from('expert_knowledge')
+            .update({
+              content: existing[0].content + '\n\n---\n\n' + entry.content, // Append rather than replace for books
+              source_type: entry.source_authority || 'textbook',
+              citation: entry.citation || citations.join(', '),
+              last_validated_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', existing[0].id);
+          results.entries_updated++;
+        }
+      } else {
+        await supabase
+          .from('expert_knowledge')
+          .insert({
+            domain: entry.domain || 'threat_intelligence',
+            subdomain: entry.subdomain || 'general',
+            knowledge_type: entry.knowledge_type || 'framework',
+            title: entry.title,
+            content: entry.content,
+            applicability_tags: entry.tags || [],
+            citation: entry.citation || citations.join(', '),
+            source_type: entry.source_authority || 'textbook',
+            confidence_score: 0.92, // Higher confidence for published expert sources
+          });
+        results.entries_created++;
+      }
+    }
+
+    // Store consolidated memory for the agent
+    if (entries.length > 0) {
+      const memoryContent = entries.map((e: any) => `[${e.source_authority || 'book'}] ${e.title}: ${e.content?.substring(0, 300)}`).join('\n\n');
+      await supabase.from('agent_investigation_memory').insert({
+        agent_call_sign: agentCallSign,
+        content: `Literature review — "${topic.substring(0, 80)}": ${memoryContent}`,
+        memory_type: 'learned_expertise',
+        confidence: 0.92,
+        tags: ['literature_review', 'expert_books', entry.domain || 'general'],
+        entities: [],
+      }).catch(() => { /* non-critical */ });
+    }
+  } catch (err) {
+    console.error(`[agent-self-learning] Literature research error for "${topic}":`, err);
+  }
+}
+
+async function identifyLiteratureGaps(
+  supabase: any, 
+  agentCallSign?: string, 
+  domainFocus?: string
+): Promise<Array<{ query: string; context: string; suggestedAgent: string }>> {
+  const targets: Array<{ query: string; context: string; suggestedAgent: string }> = [];
+
+  // 1. Find domains with low knowledge density
+  const domains = ['cyber', 'physical_security', 'financial_crime', 'geopolitical', 'counterintelligence', 
+                   'executive_protection', 'investigations', 'crisis_management', 'compliance', 'osint'];
+  
+  const targetDomains = domainFocus ? [domainFocus] : domains;
+
+  for (const domain of targetDomains) {
+    const { count } = await supabase
+      .from('expert_knowledge')
+      .select('id', { count: 'exact', head: true })
+      .eq('domain', domain)
+      .eq('is_active', true);
+
+    if ((count || 0) < 5) {
+      const agent = agentCallSign || mapDomainToAgent(domain);
+      targets.push({
+        query: `Most authoritative expert books and definitive publications on ${domain.replace(/_/g, ' ')} for security professionals. Extract key frameworks, methodologies, and operational procedures.`,
+        context: `Domain "${domain}" has only ${count || 0} knowledge entries — needs foundational literature`,
+        suggestedAgent: agent,
+      });
+    }
+  }
+
+  // 2. Find recently active signal types lacking textbook-level knowledge
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+  const { data: recentSignalTypes } = await supabase
+    .from('signals')
+    .select('signal_type')
+    .gte('severity_score', 70)
+    .gte('created_at', sevenDaysAgo.toISOString())
+    .limit(50);
+
+  if (recentSignalTypes) {
+    const typeCounts: Record<string, number> = {};
+    for (const s of recentSignalTypes) {
+      typeCounts[s.signal_type] = (typeCounts[s.signal_type] || 0) + 1;
+    }
+
+    for (const [type, count] of Object.entries(typeCounts)) {
+      if (count >= 3) {
+        const { count: bookCount } = await supabase
+          .from('expert_knowledge')
+          .select('id', { count: 'exact', head: true })
+          .eq('is_active', true)
+          .or(`source_type.eq.textbook,source_type.eq.academic_paper`)
+          .ilike('applicability_tags', `%${type}%`);
+
+        if ((bookCount || 0) < 2) {
+          targets.push({
+            query: `Expert books and academic publications on ${type.replace(/_/g, ' ')} threats — detection frameworks, response procedures, and case studies from leading practitioners.`,
+            context: `${count} high-severity ${type} signals this week but only ${bookCount || 0} textbook-level entries`,
+            suggestedAgent: agentCallSign || mapTypeToAgent(type),
+          });
+        }
+      }
+    }
+  }
+
+  // 3. If a specific agent is requested, generate reading list for their specialty
+  if (agentCallSign && targets.length === 0) {
+    const specialtyReadingLists: Record<string, string[]> = {
+      'CERBERUS': ['anti-money laundering compliance and financial crime investigation', 'sanctions evasion and trade-based money laundering', 'cryptocurrency tracing and blockchain forensics'],
+      'NEO': ['advanced persistent threat analysis and cyber kill chain', 'malware reverse engineering and threat hunting', 'network forensics and intrusion detection'],
+      'SPECTER': ['insider threat program development and behavioral indicators', 'counterintelligence tradecraft and operational security', 'social engineering and deception detection'],
+      'MERIDIAN': ['geopolitical risk assessment and political instability forecasting', 'conflict zone security management', 'sanctions and export control compliance'],
+      'ARGUS': ['surveillance detection routes and counter-surveillance', 'executive protection advance operations', 'security operations center management'],
+      'VIPER': ['narcotics trafficking intelligence and interdiction', 'transnational organized crime networks', 'dark web marketplace operations'],
+      'PRAETOR': ['criminal investigation case management', 'digital forensics and evidence preservation', 'complex fraud investigation methodology'],
+      'CRUCIBLE': ['structured analytic techniques for intelligence analysis', 'intelligence collection management', 'critical thinking and cognitive bias in analysis'],
+    };
+
+    const readingList = specialtyReadingLists[agentCallSign] || ['security risk management and threat assessment'];
+    for (const subject of readingList) {
+      targets.push({
+        query: `Most important expert books and definitive publications on ${subject}. Extract the core frameworks, step-by-step methodologies, and key decision criteria.`,
+        context: `Agent ${agentCallSign} autonomous literature acquisition`,
+        suggestedAgent: agentCallSign,
+      });
+    }
+  }
+
+  return targets;
+}
+
+function mapDomainToAgent(domain: string): string {
+  const mapping: Record<string, string> = {
+    cyber: 'NEO', financial_crime: 'CERBERUS', geopolitical: 'MERIDIAN',
+    physical_security: 'ARGUS', counterintelligence: 'SPECTER', investigations: 'PRAETOR',
+    executive_protection: 'ARGUS', crisis_management: 'AEGIS-CMD', compliance: 'CRUCIBLE',
+    osint: 'NEO',
+  };
+  return mapping[domain] || 'AEGIS-CMD';
 }
 
 function generateDeepDiveQueries(topic: string, agent: string): string[] {
