@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
             const { data: signalData } = await supabase.from('signals').insert({
               title: `Security Intelligence: ${entity.name}`, description: analysis.summary,
               normalized_text: analysis.summary, signal_type: 'osint', severity_score: severityInt,
-              severity: severityLabel, category: 'cybersecurity', source_id: 'osint-web-search',
+              severity: severityLabel, category: 'cybersecurity',
               status: 'new', relevance_score: analysis.relevance_score,
               raw_json: { source_url: item.link, link: item.link, snippet: item.snippet },
             }).select('id').single();

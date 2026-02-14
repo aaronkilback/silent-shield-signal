@@ -3,15 +3,16 @@ import { createHistoryEntry, completeHistoryEntry, failHistoryEntry } from "../_
 import { scoreSignalRelevance, isTestContent } from "../_shared/signal-relevance-scorer.ts";
 
 // Emergency keywords that MUST appear in the content for it to be a real emergency signal
+// STRICT: Each pattern must indicate a genuine, actionable emergency — not just news
 const EMERGENCY_CONTENT_VALIDATORS = [
   /\bactive\s+shooter\b/i,
   /\bshots?\s+fired\b/i,
   /\barmed\s+(person|suspect|individual)\b/i,
   /\bbomb\s+threat\b/i,
   /\bsuspicious\s+package\b/i,
-  /\bhostage\b/i,
-  /\bbarricade[d]?\b/i,
-  /\bstandoff\b/i,
+  /\bhostage\s+(situation|crisis|taking|taker)\b/i,
+  /\bbarricade[d]?\s+(suspect|situation|person)\b/i,
+  /\bstandoff\b.*\b(police|RCMP|officer|armed)\b/i,
   /\bmass\s+casualt(y|ies)\b/i,
   /\bmultiple\s+victims?\b/i,
   /\bmass\s+stabbing\b/i,
@@ -19,16 +20,15 @@ const EMERGENCY_CONTENT_VALIDATORS = [
   /\bchild\s+abduction\b/i,
   /\bevacuation\s+order\b/i,
   /\bcivil\s+emergency\b/i,
-  /\bterrorist\s+(attack|plot|threat|suspect)\b/i,  // Require "terrorist" + action context
-  /\bradicalized\b/i,
+  /\bterrorist\s+(attack|plot|threat|suspect)\b/i,
   /\bschool\s+shoot/i,
   /\bmass\s+shooting\b/i,
-  /\blockdown\b/i,
-  /\bRCMP\b/,
-  /\bpolice\s+(respond|investigating|confirm)/i,
   /\bkilled\b.*\b(shoot|attack|stab)/i,
   /\bdead\b.*\b(shoot|attack|incident)/i,
 ];
+
+// Broad patterns that match too much noise — excluded from validators
+// Previously included: /\blockdown\b/, /\bRCMP\b/, /\bpolice\s+(respond|investigating|confirm)/i, /\bradicalized\b/
 
 // Commercial/product patterns that should NEVER be ingested as emergencies
 const COMMERCIAL_EXCLUSION_PATTERNS = [
@@ -235,6 +235,7 @@ Deno.serve(async (req) => {
             .insert({
               client_id: matchedClientId,
               normalized_text: `[Emergency Alert] ${item.title}`,
+              signal_type: 'emergency',
               category,
               severity,
               location: item.displayLink || 'Canada',
@@ -242,7 +243,9 @@ Deno.serve(async (req) => {
               relevance_score: relevanceResult.score,
               raw_json: {
                 source: 'google_emergency_keywords',
+                source_url: item.link,
                 url: item.link,
+                link: item.link,
                 snippet: item.snippet,
                 display_link: item.displayLink,
                 search_query: query,

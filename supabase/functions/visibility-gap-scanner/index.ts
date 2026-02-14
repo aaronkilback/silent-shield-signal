@@ -116,7 +116,6 @@ Deno.serve(async (req) => {
               normalized_text: `Known Exploited Vulnerability ${vuln.cveID}. ${vuln.vulnerabilityName || ''}. Vendor: ${vuln.vendorProject || 'Unknown'}. Product: ${vuln.product || 'Unknown'}. ${vuln.shortDescription || ''}. Required action: ${vuln.requiredAction || 'Patch immediately'}. Due date: ${vuln.dueDate || 'ASAP'}.`,
               signal_type: 'cyber',
               category: 'cybersecurity',
-              source_id: 'cisa-kev',
               severity: 'high',
               confidence: 1.0,
               relevance_score: 0.9,

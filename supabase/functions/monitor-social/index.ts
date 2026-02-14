@@ -544,15 +544,26 @@ Deno.serve(async (req) => {
             'based on the search results provided, there is **no',
             'based on the provided search results, there is **no',
             'do not contain information about',
-            // Additional patterns that were leaking through
             'i cannot identify', 'cannot identify any',
             'i could not find', 'i did not find',
             'there are no specific', 'there is no specific',
             'no direct', 'no particular', 'not aware of any',
-            'search results contain information about', // echoed query context
+            'search results contain information about',
             'based on the available search results, i cannot',
             'based on the provided search results, i cannot',
             'no matching', 'no actionable',
+            // Additional leak patterns
+            'i cannot find any information',
+            'i was unable to find',
+            'the search results do not',
+            'no relevant information',
+            'no specific information',
+            'there doesn\'t appear to be',
+            'there does not appear to be',
+            'i found no evidence',
+            'no evidence of',
+            'no indication of',
+            'no mention of',
           ];
           const isNegativeResult = negativeIndicators.some(phrase => contentLower.includes(phrase));
           
@@ -572,18 +583,23 @@ Deno.serve(async (req) => {
               else if (PHYSICAL_THREAT_KEYWORDS.some(kw => includesKeyword(contentLower, kw))) { category = 'physical'; severity = 'high'; }
               else if (ACTIVIST_KEYWORDS.some(kw => includesKeyword(contentLower, kw))) { category = 'reputation'; severity = 'medium'; }
 
+              const citations = pData.citations || [];
+              const primaryUrl = citations.length > 0 ? citations[0] : null;
               const { error: signalError } = await supabase
                 .from('signals')
                 .insert({
                   client_id: client.id,
                   normalized_text: `Social Intelligence: ${content.substring(0, 300)}`,
+                  signal_type: 'social',
                   category,
                   severity,
                   location: 'Social Media (Multi-Platform)',
                   raw_json: {
                     platform: 'perplexity_sonar',
                     source: 'multi_platform_search',
-                    citations: pData.citations || [],
+                    source_url: primaryUrl,
+                    link: primaryUrl,
+                    citations,
                     full_content: content.substring(0, 2000),
                   },
                   status: 'new',
