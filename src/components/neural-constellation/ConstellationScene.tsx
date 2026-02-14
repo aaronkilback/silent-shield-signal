@@ -804,6 +804,72 @@ function SignalParticles({ agents, commLinks = [] }: { agents: AgentNode[]; comm
   );
 }
 
+// Operator data flow particles — animated particles flowing between operator node and AEGIS
+function OperatorDataFlow({ operatorPos, aegisPos, isActive, messageCount = 0 }: {
+  operatorPos: [number, number, number];
+  aegisPos: [number, number, number];
+  isActive: boolean;
+  messageCount: number;
+}) {
+  const particleCount = 15;
+  const ref = useRef<THREE.Points>(null);
+  const progressRef = useRef(new Float32Array(particleCount));
+  const directionsRef = useRef(new Float32Array(particleCount));
+
+  const { positions, colors } = useMemo(() => {
+    const pos = new Float32Array(particleCount * 3);
+    const col = new Float32Array(particleCount * 3);
+    for (let i = 0; i < particleCount; i++) {
+      progressRef.current[i] = Math.random();
+      directionsRef.current[i] = i % 3 === 0 ? 1 : 0;
+      const t = progressRef.current[i];
+      const from = directionsRef.current[i] === 0 ? operatorPos : aegisPos;
+      const to = directionsRef.current[i] === 0 ? aegisPos : operatorPos;
+      pos[i * 3] = from[0] + (to[0] - from[0]) * t;
+      pos[i * 3 + 1] = from[1] + (to[1] - from[1]) * t + Math.sin(t * Math.PI) * 0.8;
+      pos[i * 3 + 2] = from[2] + (to[2] - from[2]) * t;
+      if (directionsRef.current[i] === 0) {
+        col[i * 3] = 0.13; col[i * 3 + 1] = 0.83; col[i * 3 + 2] = 0.93;
+      } else {
+        col[i * 3] = 0.96; col[i * 3 + 1] = 0.62; col[i * 3 + 2] = 0.04;
+      }
+    }
+    return { positions: pos, colors: col };
+  }, [operatorPos, aegisPos]);
+
+  useFrame((_, delta) => {
+    if (!ref.current || !isActive) return;
+    const posArr = ref.current.geometry.attributes.position.array as Float32Array;
+    const speed = 0.15 + Math.min(messageCount / 20, 0.3);
+    for (let i = 0; i < particleCount; i++) {
+      progressRef.current[i] += delta * (speed + Math.random() * 0.05);
+      if (progressRef.current[i] >= 1) {
+        progressRef.current[i] = 0;
+        directionsRef.current[i] = Math.random() < 0.65 ? 0 : 1;
+      }
+      const t = progressRef.current[i];
+      const from = directionsRef.current[i] === 0 ? operatorPos : aegisPos;
+      const to = directionsRef.current[i] === 0 ? aegisPos : operatorPos;
+      posArr[i * 3] = from[0] + (to[0] - from[0]) * t;
+      posArr[i * 3 + 1] = from[1] + (to[1] - from[1]) * t + Math.sin(t * Math.PI) * 0.8;
+      posArr[i * 3 + 2] = from[2] + (to[2] - from[2]) * t;
+    }
+    ref.current.geometry.attributes.position.needsUpdate = true;
+  });
+
+  if (!isActive) return null;
+
+  return (
+    <points ref={ref}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" count={particleCount} array={positions} itemSize={3} />
+        <bufferAttribute attach="attributes-color" count={particleCount} array={colors} itemSize={3} />
+      </bufferGeometry>
+      <pointsMaterial size={0.18} vertexColors transparent opacity={0.9} sizeAttenuation />
+    </points>
+  );
+}
+
 // Debate cluster ring
 function DebateClusterRing({ agents, debate }: { agents: AgentNode[]; debate: ActiveDebate }) {
   const ringRef = useRef<THREE.Mesh>(null);
@@ -948,19 +1014,28 @@ export function ConstellationScene({
       {(() => {
         const operatorPos: [number, number, number] = [14, -3, 5];
         const aegisAgent = visibleAgents.find((a) => a.callSign === "AEGIS-CMD");
-        const aegisPos = aegisAgent?.position || [0, 0, 0];
+        const aegisPos: [number, number, number] = (aegisAgent?.position || [0, 0, 0]) as [number, number, number];
         const hasOnlineDevices = operatorDevices.length > 0;
         const hasMessages = operatorMessageActivity?.hasRecentMessages || false;
+        const msgCount = operatorMessageActivity?.recentMessageCount || 0;
         const isActive = hasOnlineDevices || hasMessages;
         return (
           <>
             <OperatorDeviceNode position={operatorPos} isOnline={hasOnlineDevices} deviceCount={operatorDevices.length} hasMessageActivity={hasMessages} />
+            {/* Main link line */}
             <Line
               points={[new THREE.Vector3(...aegisPos), new THREE.Vector3(...operatorPos)]}
               color={isActive ? (hasMessages ? "#22d3ee" : "#10b981") : "#334155"}
               transparent
               opacity={isActive ? 0.5 : 0.12}
               lineWidth={isActive ? 1.5 : 0.5}
+            />
+            {/* Data flow particles when active */}
+            <OperatorDataFlow
+              operatorPos={operatorPos}
+              aegisPos={aegisPos}
+              isActive={isActive}
+              messageCount={msgCount}
             />
           </>
         );
