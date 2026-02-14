@@ -385,7 +385,7 @@ export interface OperatorMessageActivity {
   lastMessageAt: string | null;
 }
 
-/** Detect recent operator message activity with AEGIS agents (last 5 min) */
+/** Detect recent operator message activity with AEGIS agents (last 30 min for constellation visibility) */
 export function useOperatorMessageActivity(enabled: boolean) {
   return useQuery({
     queryKey: ["operator-message-activity"],
@@ -393,14 +393,14 @@ export function useOperatorMessageActivity(enabled: boolean) {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return { hasRecentMessages: false, recentMessageCount: 0, lastMessageAt: null } as OperatorMessageActivity;
 
-      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
 
       // Check for recent conversations the user has with any agent
       const { data: conversations } = await supabase
         .from("agent_conversations")
         .select("id, updated_at")
         .eq("user_id", user.id)
-        .gte("updated_at", fiveMinAgo)
+        .gte("updated_at", thirtyMinAgo)
         .order("updated_at", { ascending: false })
         .limit(5);
 
@@ -410,9 +410,9 @@ export function useOperatorMessageActivity(enabled: boolean) {
           .from("ai_assistant_messages")
           .select("id, created_at")
           .eq("user_id", user.id)
-          .gte("created_at", fiveMinAgo)
+          .gte("created_at", thirtyMinAgo)
           .order("created_at", { ascending: false })
-          .limit(5);
+          .limit(10);
 
         const count = assistantMsgs?.length || 0;
         return {
@@ -428,7 +428,7 @@ export function useOperatorMessageActivity(enabled: boolean) {
         .from("agent_messages")
         .select("id", { count: "exact", head: true })
         .in("conversation_id", convIds)
-        .gte("created_at", fiveMinAgo);
+        .gte("created_at", thirtyMinAgo);
 
       return {
         hasRecentMessages: true,
