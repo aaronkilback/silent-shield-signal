@@ -38,24 +38,31 @@ const CAMERA_PRESETS: Record<CameraView, { position: THREE.Vector3; target: THRE
   cinematic: { position: new THREE.Vector3(-15, 8, 10), target: new THREE.Vector3(-10, -5, -15) },
 };
 
-// Smooth cinematic camera controller
+// Smooth cinematic camera controller — only animates during transitions and cinematic mode
 function CameraController({ view, controlsRef }: { view: CameraView; controlsRef: React.RefObject<any> }) {
   const { camera } = useThree();
   const targetPos = useRef(new THREE.Vector3(0, 2, 20));
   const targetLook = useRef(new THREE.Vector3(0, 0, 0));
   const cinematicPhase = useRef(0);
+  const isTransitioning = useRef(false);
+  const transitionProgress = useRef(0);
+  const prevView = useRef<CameraView>(view);
 
   useEffect(() => {
     const preset = CAMERA_PRESETS[view];
     targetPos.current.copy(preset.position);
     targetLook.current.copy(preset.target);
+    if (view !== prevView.current) {
+      isTransitioning.current = true;
+      transitionProgress.current = 0;
+      prevView.current = view;
+    }
   }, [view]);
 
   useFrame((_, delta) => {
     if (view === "cinematic") {
       cinematicPhase.current += delta * 0.06;
       const t = cinematicPhase.current;
-      // Sweep between constellation and Earth in a figure-8
       const px = Math.sin(t) * 25;
       const py = Math.cos(t * 0.7) * 8 + 2;
       const pz = Math.cos(t) * 20 + 5;
@@ -64,13 +71,25 @@ function CameraController({ view, controlsRef }: { view: CameraView; controlsRef
       const ly = Math.cos(t * 0.5) * -5;
       const lz = Math.sin(t * 0.8) * -15;
       targetLook.current.set(lx, ly, lz);
-    }
 
-    camera.position.lerp(targetPos.current, delta * 1.2);
-    if (controlsRef.current) {
-      controlsRef.current.target.lerp(targetLook.current, delta * 1.2);
-      controlsRef.current.update();
+      camera.position.lerp(targetPos.current, delta * 1.2);
+      if (controlsRef.current) {
+        controlsRef.current.target.lerp(targetLook.current, delta * 1.2);
+        controlsRef.current.update();
+      }
+    } else if (isTransitioning.current) {
+      transitionProgress.current += delta * 1.5;
+      const t = Math.min(transitionProgress.current, 1);
+      camera.position.lerp(targetPos.current, t * 0.08);
+      if (controlsRef.current) {
+        controlsRef.current.target.lerp(targetLook.current, t * 0.08);
+        controlsRef.current.update();
+      }
+      if (t >= 1) {
+        isTransitioning.current = false;
+      }
     }
+    // When not transitioning and not cinematic, user has full manual control
   });
 
   return null;
@@ -200,56 +219,6 @@ function AuroraEffect({ earthPosition }: { earthPosition: [number, number, numbe
   );
 }
 
-// Lens flare sun — bright point light with glow layers
-function SunFlare({ position }: { position: [number, number, number] }) {
-  const glowRef = useRef<THREE.Mesh>(null);
-  const flare1 = useRef<THREE.Mesh>(null);
-  const flare2 = useRef<THREE.Mesh>(null);
-
-  useFrame(({ clock }) => {
-    const t = clock.getElapsedTime();
-    const pulse = Math.sin(t * 0.3);
-    if (glowRef.current) {
-      glowRef.current.scale.setScalar(1 + pulse * 0.08);
-    }
-    if (flare1.current) {
-      flare1.current.scale.setScalar(1 + Math.sin(t * 0.7) * 0.15);
-      (flare1.current.material as THREE.MeshBasicMaterial).opacity = 0.04 + Math.sin(t * 0.5) * 0.015;
-    }
-    if (flare2.current) {
-      flare2.current.scale.setScalar(1 + Math.sin(t * 0.4 + 1) * 0.1);
-      (flare2.current.material as THREE.MeshBasicMaterial).opacity = 0.02 + Math.sin(t * 0.8) * 0.01;
-    }
-  });
-
-  return (
-    <group position={position}>
-      {/* Core sun */}
-      <mesh>
-        <sphereGeometry args={[1.5, 16, 16]} />
-        <meshBasicMaterial color="#fff8e0" />
-      </mesh>
-      {/* Inner glow */}
-      <mesh ref={glowRef}>
-        <sphereGeometry args={[3, 16, 16]} />
-        <meshBasicMaterial color="#ffee88" transparent opacity={0.15} />
-      </mesh>
-      {/* Flare ring 1 */}
-      <mesh ref={flare1} rotation={[0, 0, Math.PI / 4]}>
-        <ringGeometry args={[4, 8, 6]} />
-        <meshBasicMaterial color="#ffdd66" transparent opacity={0.04} side={THREE.DoubleSide} />
-      </mesh>
-      {/* Flare ring 2 */}
-      <mesh ref={flare2} rotation={[Math.PI / 3, Math.PI / 6, 0]}>
-        <ringGeometry args={[6, 14, 6]} />
-        <meshBasicMaterial color="#ffcc44" transparent opacity={0.02} side={THREE.DoubleSide} />
-      </mesh>
-      {/* Intense directional light */}
-      <directionalLight position={[0, 0, 0]} intensity={3} color="#fffaf0" />
-      <pointLight color="#ffee88" intensity={8} distance={100} />
-    </group>
-  );
-}
 function DeepSpaceField({ neutralizedCount = 0 }: { neutralizedCount: number }) {
   const ref = useRef<THREE.Points>(null);
   const totalStars = 4000;
@@ -1457,9 +1426,7 @@ export function ConstellationScene({
 
         <ambientLight intensity={0.15} />
 
-        {/* Sun with lens flare — far behind Earth */}
-        <SunFlare position={[-70, 20, -80]} />
-
+        <directionalLight position={[-70, 20, -80]} intensity={1.5} color="#fffaf0" />
         <DeepSpaceField neutralizedCount={neutralizedCount} />
         <ShootingStars />
 
