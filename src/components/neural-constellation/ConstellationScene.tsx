@@ -1192,7 +1192,28 @@ function SignalPin({ position, color, intensity = 1 }: {
   );
 }
 
-// Earth with realistic textures — bright, vivid, Google Earth VR inspired
+// Calculate real-time sun direction based on current UTC time
+function getSunDirection(): THREE.Vector3 {
+  const now = new Date();
+  const dayOfYear = Math.floor((now.getTime() - new Date(now.getFullYear(), 0, 0).getTime()) / 86400000);
+  const hourUTC = now.getUTCHours() + now.getUTCMinutes() / 60;
+
+  // Solar declination (axial tilt effect)
+  const declination = -23.44 * Math.cos((2 * Math.PI / 365) * (dayOfYear + 10));
+  const decRad = declination * (Math.PI / 180);
+
+  // Hour angle: sun is at longitude 0 at 12:00 UTC, rotates 15°/hr
+  const hourAngle = (hourUTC - 12) * 15 * (Math.PI / 180);
+
+  // Convert to 3D direction (sun position in Earth-centered frame)
+  const x = Math.cos(decRad) * Math.sin(hourAngle);
+  const y = Math.sin(decRad);
+  const z = Math.cos(decRad) * Math.cos(hourAngle);
+
+  return new THREE.Vector3(x, y, z).normalize();
+}
+
+// Earth with realistic real-time day/night cycle
 function EarthGlobe({ position, signalLocations = [] }: {
   position: [number, number, number];
   signalLocations?: string[];
@@ -1200,6 +1221,7 @@ function EarthGlobe({ position, signalLocations = [] }: {
   const earthRef = useRef<THREE.Mesh>(null);
   const cloudsRef = useRef<THREE.Mesh>(null);
   const nightRef = useRef<THREE.Mesh>(null);
+  const sunLightRef = useRef<THREE.DirectionalLight>(null);
 
   const [earthMap, bumpMap, nightMap, specularMap] = useTexture([
     '/textures/earth.jpg',
@@ -1208,10 +1230,26 @@ function EarthGlobe({ position, signalLocations = [] }: {
     '/textures/earth-specular.png',
   ]);
 
+  // Earth's axial tilt ~23.44°
+  const axialTilt = 0.4091; // radians
+
   useFrame((_, delta) => {
-    if (earthRef.current) earthRef.current.rotation.y += delta * 0.015;
-    if (cloudsRef.current) cloudsRef.current.rotation.y += delta * 0.025;
-    if (nightRef.current) nightRef.current.rotation.y += delta * 0.015;
+    // Rotate Earth at realistic-feeling speed (1 rotation ~= 4 minutes for visual interest)
+    const rotSpeed = delta * 0.025;
+    if (earthRef.current) earthRef.current.rotation.y += rotSpeed;
+    if (cloudsRef.current) cloudsRef.current.rotation.y += rotSpeed * 1.15;
+    if (nightRef.current) nightRef.current.rotation.y += rotSpeed;
+
+    // Update sun position in real-time
+    if (sunLightRef.current) {
+      const sunDir = getSunDirection();
+      const sunDist = 30;
+      sunLightRef.current.position.set(
+        sunDir.x * sunDist,
+        sunDir.y * sunDist,
+        sunDir.z * sunDist
+      );
+    }
   });
 
   const earthRadius = 8;
@@ -1222,7 +1260,6 @@ function EarthGlobe({ position, signalLocations = [] }: {
     const result: { pos: [number, number, number]; color: string }[] = [];
     signalLocations.forEach((loc) => {
       const key = loc.toLowerCase().trim();
-      // Try exact match, then partial
       let coords = LOCATION_COORDS[key];
       if (!coords) {
         for (const [k, v] of Object.entries(LOCATION_COORDS)) {
@@ -1240,73 +1277,75 @@ function EarthGlobe({ position, signalLocations = [] }: {
     return result;
   }, [signalLocations, earthRadius]);
 
+  // Initial sun direction for light placement
+  const initialSunDir = useMemo(() => getSunDirection(), []);
+
   return (
     <group position={position}>
-      {/* Earth — bright vivid surface */}
-      <mesh ref={earthRef} rotation={[0.41, 0, 0]}>
+      {/* Real-time sunlight — tracks actual sun position */}
+      <directionalLight
+        ref={sunLightRef}
+        position={[initialSunDir.x * 30, initialSunDir.y * 30, initialSunDir.z * 30]}
+        intensity={3.0}
+        color="#fffaf0"
+        castShadow
+      />
+      {/* Very dim fill on the dark side — simulates earthshine/ambient space light */}
+      <pointLight color="#112233" intensity={0.3} distance={40} position={[-initialSunDir.x * 20, -initialSunDir.y * 20, -initialSunDir.z * 20]} />
+
+      {/* Earth — day side with specular oceans */}
+      <mesh ref={earthRef} rotation={[axialTilt, 0, 0]}>
         <sphereGeometry args={[earthRadius, 64, 64]} />
         <meshPhongMaterial
           map={earthMap}
           bumpMap={bumpMap}
           bumpScale={0.5}
           specularMap={specularMap}
-          specular={new THREE.Color('#334466')}
-          shininess={15}
+          specular={new THREE.Color('#556677')}
+          shininess={25}
         />
       </mesh>
-      {/* Night side city lights */}
-      <mesh ref={nightRef} rotation={[0.41, 0, 0]}>
+      {/* Night side city lights — additive blending makes them glow only in shadow */}
+      <mesh ref={nightRef} rotation={[axialTilt, 0, 0]}>
         <sphereGeometry args={[earthRadius * 1.001, 64, 64]} />
         <meshBasicMaterial
           map={nightMap}
           transparent
-          opacity={0.6}
+          opacity={0.7}
           blending={THREE.AdditiveBlending}
           depthWrite={false}
         />
       </mesh>
-      {/* Cloud layer */}
-      <mesh ref={cloudsRef} rotation={[0.41, 0, 0]}>
+      {/* Cloud layer — lit by sun, casts subtle shadow feeling */}
+      <mesh ref={cloudsRef} rotation={[axialTilt, 0, 0]}>
         <sphereGeometry args={[earthRadius * 1.008, 48, 48]} />
         <meshPhongMaterial
           color="#ffffff"
           transparent
-          opacity={0.12}
+          opacity={0.15}
           depthWrite={false}
         />
       </mesh>
-      {/* Inner atmosphere — vivid blue rim */}
+      {/* Atmospheric rim — blue glow visible on sunlit edge */}
       <mesh>
         <sphereGeometry args={[earthRadius * 1.04, 48, 48]} />
-        <meshBasicMaterial color="#4499ff" transparent opacity={0.12} side={THREE.BackSide} />
+        <meshBasicMaterial color="#4499ff" transparent opacity={0.10} side={THREE.BackSide} />
       </mesh>
-      {/* Mid atmosphere glow */}
       <mesh>
         <sphereGeometry args={[earthRadius * 1.10, 48, 48]} />
-        <meshBasicMaterial color="#66bbff" transparent opacity={0.06} side={THREE.BackSide} />
+        <meshBasicMaterial color="#66bbff" transparent opacity={0.05} side={THREE.BackSide} />
       </mesh>
-      {/* Outer atmosphere haze */}
       <mesh>
         <sphereGeometry args={[earthRadius * 1.20, 32, 32]} />
-        <meshBasicMaterial color="#88ccff" transparent opacity={0.025} side={THREE.BackSide} />
+        <meshBasicMaterial color="#88ccff" transparent opacity={0.02} side={THREE.BackSide} />
       </mesh>
 
       {/* Signal origin pins */}
-      <group rotation={[0.41, 0, 0]}>
+      <group rotation={[axialTilt, 0, 0]}>
         {pins.map((pin, i) => (
           <SignalPin key={i} position={pin.pos} color={pin.color} />
         ))}
       </group>
-
-      {/* Bright sunlight hitting Earth */}
-      <directionalLight
-        position={[20, 10, 15]}
-        intensity={2.5}
-        color="#fffaf0"
-      />
-      <pointLight color="#6699cc" intensity={1.5} distance={50} />
-      {/* Subtle fill light from opposite side */}
-      <pointLight color="#223344" intensity={0.5} distance={30} position={[-10, -5, -10]} />
     </group>
   );
 }
