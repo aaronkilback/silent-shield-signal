@@ -234,7 +234,7 @@ Deno.serve(async (req) => {
             .from('signals')
             .insert({
               client_id: matchedClientId,
-              normalized_text: `[Emergency Alert] ${item.title}`,
+              normalized_text: item.title,
               signal_type: 'emergency',
               category,
               severity,
