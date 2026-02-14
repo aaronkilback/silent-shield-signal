@@ -687,7 +687,7 @@ REJECT signals that are:
 1. GEOGRAPHICALLY IRRELEVANT: About events/protests/incidents in regions unrelated to the client's operations (e.g., Paris attacks, Australian protests, Standing Rock when client operates in BC/Alberta)
 2. CORPORATE PR / POSITIVE CONTENT: The client's own press releases, social media promotions, sponsorship announcements, community goodwill posts
 3. HISTORICAL: Events from more than 6 months ago (old protests, historical incidents) with no current relevance
-4. TANGENTIALLY RELATED: Mentions a keyword (e.g., "pipeline", "LNG") but is about a completely different project, company, or context (e.g., Keystone XL when monitoring Coastal GasLink)
+4. TANGENTIALLY RELATED: Mentions a keyword (e.g., "pipeline", "LNG") but is about a completely unrelated industry or context (e.g., software data pipelines, plumbing). Note: Other major pipeline projects (Keystone XL, Trans Mountain, DAPL, etc.) ARE relevant if they involve protests, regulatory precedents, or activist tactics that could affect the client's operations or set industry precedent
 5. LOW-VALUE NOISE: Generic environmental org "about us" pages, merch listings, unrelated entertainment, sports content
 6. NO THREAT/RISK VALUE: Content that describes no threat, risk, legal action, protest, sabotage, or operational concern
 
