@@ -9,7 +9,7 @@ import { NodeDetailPanel } from "@/components/neural-constellation/NodeDetailPan
 import { ConstellationLegend } from "@/components/neural-constellation/ConstellationLegend";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMetrics, useKnowledgeGraphEdges, useOperatorDevices, useOperatorMessageActivity } from "@/hooks/useConstellationData";
+import { useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMetrics, useKnowledgeGraphEdges, useOperatorDevices, useOperatorMessageActivity, useKnowledgeGrowthData } from "@/hooks/useConstellationData";
 
 // Map agents to 3D positions in a constellation layout
 function assignPositions(agents: any[]): AgentNode[] {
@@ -133,6 +133,7 @@ const NeuralConstellation = () => {
   const { data: knowledgeGraphEdges = [] } = useKnowledgeGraphEdges(!!user);
   const { data: operatorDevices = [] } = useOperatorDevices(!!user);
   const { data: operatorMessageActivity } = useOperatorMessageActivity(!!user);
+  const { data: knowledgeGrowth } = useKnowledgeGrowthData(!!user);
 
   const agentNodes = useMemo(() => {
     if (!agents) return [];
@@ -183,6 +184,7 @@ const NeuralConstellation = () => {
             operatorDevices={operatorDevices}
             operatorMessageActivity={operatorMessageActivity}
             signalLocations={signalLocations}
+            knowledgeGrowth={knowledgeGrowth}
           />
         </div>
 
@@ -207,6 +209,14 @@ const NeuralConstellation = () => {
             <div className="text-[10px] tracking-widest uppercase">
               <span className="text-muted-foreground">Scans: </span>
               <span className="text-primary font-bold">{scanPulses.length}</span>
+            </div>
+            <div className="w-px h-4 bg-border" />
+            <div className="text-[10px] tracking-widest uppercase">
+              <span className="text-muted-foreground">Knowledge: </span>
+              <span className="font-bold" style={{ color: "#a855f7" }}>{knowledgeGrowth?.totalEntries || 0}</span>
+              {(knowledgeGrowth?.todayEntries || 0) > 0 && (
+                <span className="text-[9px] ml-1" style={{ color: "#c084fc" }}>+{knowledgeGrowth?.todayEntries}</span>
+              )}
             </div>
           </div>
         </div>

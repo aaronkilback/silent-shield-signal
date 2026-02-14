@@ -1,4 +1,4 @@
-import { Brain, Eye, ToggleLeft, ToggleRight, Network, Flame } from "lucide-react";
+import { Brain, Eye, ToggleLeft, ToggleRight, Network, Flame, Sparkles } from "lucide-react";
 
 interface ConstellationLegendProps {
   isExecutiveMode: boolean;
@@ -78,6 +78,14 @@ export function ConstellationLegend({
               <span className="text-[10px] text-muted-foreground">Knowledge graph</span>
             </div>
           )}
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-3 h-3" style={{ color: "#a855f7" }} />
+            <span className="text-[10px] text-muted-foreground">Knowledge stream</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#e0e7ff" }} />
+            <span className="text-[10px] text-muted-foreground">Synapse flash</span>
+          </div>
         </div>
 
         {/* Performance halo legend */}
