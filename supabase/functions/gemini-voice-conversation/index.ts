@@ -1,4 +1,5 @@
 import { handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { validateString, validateEnum, validateAll } from "../_shared/input-validation.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -11,6 +12,14 @@ Deno.serve(async (req) => {
     }
 
     const { action, audioData, conversationHistory } = await req.json();
+
+    // Input validation
+    const validation = validateAll(
+      validateEnum(action, 'action', ['initialize', 'process_audio'], true),
+    );
+    if (!validation.valid) {
+      return errorResponse(validation.error || 'Invalid input', 400);
+    }
 
     console.log(`[GeminiVoice] Action: ${action}`);
 

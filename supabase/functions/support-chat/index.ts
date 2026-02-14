@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway, callAiGatewayStream } from "../_shared/ai-gateway.ts";
+import { validateMessages, validateString, validateEnum, validateAll } from "../_shared/input-validation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -83,7 +84,35 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { messages, action, bugData } = await req.json();
+    const body = await req.json();
+    const { messages, action, bugData } = body;
+
+    // Input validation
+    const validation = validateAll(
+      validateMessages(messages, 'messages', { required: !action, maxMessages: 50 }),
+      validateString(action, 'action', { maxLength: 50 }),
+    );
+    if (!validation.valid) {
+      return new Response(
+        JSON.stringify({ error: validation.error }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Validate bug data if submitting
+    if (action === 'submit_bug' && bugData) {
+      const bugValidation = validateAll(
+        validateString(bugData.title, 'bugData.title', { required: true, maxLength: 200 }),
+        validateString(bugData.description, 'bugData.description', { required: true, maxLength: 5000 }),
+        validateEnum(bugData.severity, 'bugData.severity', ['low', 'medium', 'high', 'critical']),
+      );
+      if (!bugValidation.valid) {
+        return new Response(
+          JSON.stringify({ error: bugValidation.error }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;

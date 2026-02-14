@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { validateString, validateUUID, validateAll } from "../_shared/input-validation.ts";
 import {
   getAntiHallucinationPrompt,
   getCriticalDateContext,
@@ -22,6 +23,21 @@ serve(async (req) => {
 
   try {
     const { briefing_id, agent_id, user_message, parent_message_id, is_group_question, scope } = await req.json();
+
+    // Input validation
+    const inputValidation = validateAll(
+      validateUUID(briefing_id, 'briefing_id', true),
+      validateUUID(agent_id, 'agent_id', true),
+      validateString(user_message, 'user_message', { required: true, maxLength: 20000 }),
+      validateUUID(parent_message_id, 'parent_message_id'),
+    );
+    if (!inputValidation.valid) {
+      return new Response(
+        JSON.stringify({ error: inputValidation.error }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+      );
+    }
+
     console.log('Briefing chat response request:', { briefing_id, agent_id, is_group_question, scope });
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');

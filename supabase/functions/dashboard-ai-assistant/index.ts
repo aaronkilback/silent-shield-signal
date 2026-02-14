@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGatewayStream } from "../_shared/ai-gateway.ts";
+import { validateMessages } from "../_shared/input-validation.ts";
 import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, upsertProject, touchProject } from "../_shared/user-memory.ts";
 import { logError } from "../_shared/error-logger.ts";
 // fortress-infrastructure.ts removed from system prompt to reduce token count (~5000 tokens saved)
@@ -7494,6 +7495,16 @@ Deno.serve(async (req) => {
 
   try {
     const { messages } = await req.json();
+
+    // Input validation
+    const msgValidation = validateMessages(messages, 'messages', { required: true, maxMessages: 100 });
+    if (!msgValidation.valid) {
+      return new Response(
+        JSON.stringify({ error: msgValidation.error }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 400 }
+      );
+    }
+
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");

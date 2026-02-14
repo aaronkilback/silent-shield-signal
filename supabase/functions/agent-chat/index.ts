@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { validateString, validateUUID, validateMessages, validateAll } from "../_shared/input-validation.ts";
 import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
 import { getAntiHallucinationPrompt } from "../_shared/anti-hallucination.ts";
 import { 
@@ -359,6 +360,21 @@ Deno.serve(async (req) => {
     }
     
     const { agent_id, message, conversation_history = [], client_id } = body;
+
+    // Input validation
+    const inputValidation = validateAll(
+      validateUUID(agent_id, 'agent_id', true),
+      validateString(message, 'message', { required: true, maxLength: 20000 }),
+      validateMessages(conversation_history, 'conversation_history', { maxMessages: 100 }),
+      validateUUID(client_id, 'client_id'),
+    );
+    if (!inputValidation.valid) {
+      return new Response(
+        JSON.stringify({ error: inputValidation.error }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+      );
+    }
+
     console.log('Agent chat request:', { agent_id, message_length: message?.length, client_id });
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
