@@ -484,28 +484,31 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 86400000).toISOString();
   const today = now.toISOString().split('T')[0];
 
-  // Edge function probes
+  // Edge function probes — run ALL in parallel with short timeouts
   const allFunctions = [...CRITICAL_FUNCTIONS, ...OPERATIONAL_FUNCTIONS];
-  const edgeFunctions: TelemetryData['edgeFunctions'] = [];
-  for (const fn of allFunctions) {
-    const start = Date.now();
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000);
-      const response = await fetch(`${supabaseUrl}/functions/v1/${fn}`, {
-        method: 'OPTIONS', headers: { 'apikey': anonKey }, signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      edgeFunctions.push({ name: fn, status: response.status === 404 ? 'not_deployed' : 'ok', responseTime: Date.now() - start });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown';
-      if (msg.includes('CORS') || msg.includes('NetworkError')) {
-        edgeFunctions.push({ name: fn, status: 'ok', responseTime: Date.now() - start });
-      } else {
-        edgeFunctions.push({ name: fn, status: 'error', error: msg, responseTime: Date.now() - start });
+  const probeResults = await Promise.allSettled(
+    allFunctions.map(async (fn) => {
+      const start = Date.now();
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const response = await fetch(`${supabaseUrl}/functions/v1/${fn}`, {
+          method: 'OPTIONS', headers: { 'apikey': anonKey }, signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        return { name: fn, status: response.status === 404 ? 'not_deployed' : 'ok', responseTime: Date.now() - start };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown';
+        if (msg.includes('CORS') || msg.includes('NetworkError')) {
+          return { name: fn, status: 'ok', responseTime: Date.now() - start };
+        }
+        return { name: fn, status: 'error', error: msg, responseTime: Date.now() - start };
       }
-    }
-  }
+    })
+  );
+  const edgeFunctions: TelemetryData['edgeFunctions'] = probeResults.map((r, i) =>
+    r.status === 'fulfilled' ? r.value : { name: allFunctions[i], status: 'error', error: 'probe_failed', responseTime: 5000 }
+  );
 
   const [
     recentSignalsResult, staleSourcesResult, signalCategoriesResult,
@@ -701,6 +704,13 @@ async function collectAegisBehaviorTelemetry(supabase: any): Promise<TelemetryDa
 
   const allMessages = recentMessages || [];
   const messages = allMessages.filter((m: any) => m.role === 'assistant');
+  let totalWords = 0;
+  let capabilityListingCount = 0;
+  let preambleBloatCount = 0;
+  let toolAvoidanceCount = 0;
+  let identityDriftCount = 0;
+  let verbosityViolations = 0;
+  const worstExamples: string[] = [];
   
   // Build a map of user messages that preceded each assistant message
   // to detect if the user requested detailed/long-form output

@@ -59,7 +59,7 @@ Deno.serve(async (req) => {
         .gte('created_at', cutoff1h).eq('is_test', false).order('created_at', { ascending: false }),
       supabase.from('signals').select('id, category, severity, client_id, created_at')
         .gte('created_at', cutoff24h).eq('is_test', false),
-      supabase.from('incidents').select('id, priority, status, opened_at, signal_id, client_id, assigned_to')
+      supabase.from('incidents').select('id, priority, status, opened_at, signal_id, client_id, owner_user_id')
         .eq('status', 'open'),
       supabase.from('predictive_incident_scores').select('signal_id, escalation_probability, predicted_severity')
         .gte('escalation_probability', 0.65).gte('scored_at', cutoff4h),
@@ -110,8 +110,8 @@ Deno.serve(async (req) => {
     // ═══════════════════════════════════════════════════════════════════
     const unattendedCritical = (openIncidents || []).filter(i => {
       const age = now.getTime() - new Date(i.opened_at).getTime();
-      return (i.priority === 'p1' && age > 30 * 60000 && !i.assigned_to)
-        || (i.priority === 'p2' && age > 2 * 3600000 && !i.assigned_to);
+      return (i.priority === 'p1' && age > 30 * 60000 && !i.owner_user_id)
+        || (i.priority === 'p2' && age > 2 * 3600000 && !i.owner_user_id);
     });
 
     if (unattendedCritical.length > 0) {
