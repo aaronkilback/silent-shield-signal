@@ -1,6 +1,6 @@
 import { useRef, useMemo, useCallback, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls, Line, Html } from "@react-three/drei";
+import { OrbitControls, Line, Html, useTexture } from "@react-three/drei";
 import * as THREE from "three";
 import type { AgentCommLink, ActiveDebate, ScanPulse, AgentActivityMetrics, KnowledgeGraphEdge, OperatorDevice, OperatorMessageActivity } from "@/hooks/useConstellationData";
 
@@ -921,6 +921,102 @@ function DebateClusterRing({ agents, debate }: { agents: AgentNode[]; debate: Ac
   );
 }
 
+// Earth with realistic textures — positioned as a background celestial body
+function EarthGlobe({ position }: { position: [number, number, number] }) {
+  const earthRef = useRef<THREE.Mesh>(null);
+  const cloudsRef = useRef<THREE.Mesh>(null);
+  const atmosphereRef = useRef<THREE.Mesh>(null);
+
+  const [earthMap, bumpMap, cloudMap] = useTexture([
+    '/textures/earth.jpg',
+    '/textures/earth-bump.png',
+    '/textures/earth-clouds.png',
+  ]);
+
+  useFrame((_, delta) => {
+    if (earthRef.current) earthRef.current.rotation.y += delta * 0.02;
+    if (cloudsRef.current) cloudsRef.current.rotation.y += delta * 0.03;
+  });
+
+  const earthRadius = 8;
+
+  return (
+    <group position={position}>
+      {/* Earth core */}
+      <mesh ref={earthRef} rotation={[0.4, 0, 0]}>
+        <sphereGeometry args={[earthRadius, 64, 64]} />
+        <meshStandardMaterial
+          map={earthMap}
+          bumpMap={bumpMap}
+          bumpScale={0.3}
+          roughness={0.7}
+          metalness={0.1}
+        />
+      </mesh>
+      {/* Cloud layer */}
+      <mesh ref={cloudsRef} rotation={[0.4, 0, 0]}>
+        <sphereGeometry args={[earthRadius * 1.005, 48, 48]} />
+        <meshStandardMaterial
+          map={cloudMap}
+          transparent
+          opacity={0.15}
+          depthWrite={false}
+        />
+      </mesh>
+      {/* Atmosphere glow */}
+      <mesh ref={atmosphereRef}>
+        <sphereGeometry args={[earthRadius * 1.08, 48, 48]} />
+        <meshBasicMaterial color="#4488ff" transparent opacity={0.06} side={THREE.BackSide} />
+      </mesh>
+      <mesh>
+        <sphereGeometry args={[earthRadius * 1.15, 32, 32]} />
+        <meshBasicMaterial color="#66aaff" transparent opacity={0.025} side={THREE.BackSide} />
+      </mesh>
+      {/* Subtle earth light on the constellation */}
+      <pointLight color="#4488cc" intensity={0.4} distance={40} />
+    </group>
+  );
+}
+
+// Moon orbiting the Earth
+function MoonBody({ earthPosition }: { earthPosition: [number, number, number] }) {
+  const moonRef = useRef<THREE.Group>(null);
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  const moonMap = useTexture('/textures/moon.jpg');
+  const moonRadius = 2.2;
+  const orbitRadius = 14;
+
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime() * 0.08;
+    if (moonRef.current) {
+      moonRef.current.position.x = earthPosition[0] + Math.cos(t) * orbitRadius;
+      moonRef.current.position.y = earthPosition[1] + Math.sin(t) * orbitRadius * 0.3;
+      moonRef.current.position.z = earthPosition[2] + Math.sin(t) * orbitRadius * 0.8;
+    }
+    if (meshRef.current) meshRef.current.rotation.y += 0.002;
+  });
+
+  return (
+    <group ref={moonRef}>
+      <mesh ref={meshRef}>
+        <sphereGeometry args={[moonRadius, 48, 48]} />
+        <meshStandardMaterial
+          map={moonMap}
+          roughness={0.9}
+          metalness={0.05}
+        />
+      </mesh>
+      {/* Subtle moon glow */}
+      <mesh>
+        <sphereGeometry args={[moonRadius * 1.05, 24, 24]} />
+        <meshBasicMaterial color="#aaaacc" transparent opacity={0.03} side={THREE.BackSide} />
+      </mesh>
+      <pointLight color="#8899aa" intensity={0.2} distance={15} />
+    </group>
+  );
+}
+
 export function ConstellationScene({
   agents,
   onNodeClick,
@@ -965,6 +1061,10 @@ export function ConstellationScene({
       <directionalLight position={[-10, -5, -5]} intensity={0.08} color="#ff6600" />
 
       <DeepSpaceField neutralizedCount={neutralizedCount} />
+
+      {/* Earth & Moon — background celestial bodies */}
+      <EarthGlobe position={[-35, -15, -40]} />
+      <MoonBody earthPosition={[-35, -15, -40]} />
 
 
       <ConnectionLines agents={visibleAgents} commLinks={commLinks} />
