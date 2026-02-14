@@ -2,6 +2,7 @@ import { useRef, useMemo, useCallback, useState, useEffect, forwardRef, useImper
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Line, Html, useTexture } from "@react-three/drei";
 import * as THREE from "three";
+import { MilkyWayBand, PlanetParade, AsteroidBelt, Comets } from "./SolarSystemElements";
 import type { AgentCommLink, ActiveDebate, ScanPulse, AgentActivityMetrics, KnowledgeGraphEdge, OperatorDevice, OperatorMessageActivity } from "@/hooks/useConstellationData";
 
 interface AgentNode {
@@ -1463,6 +1464,10 @@ export function ConstellationScene({
         <directionalLight position={[-70, 20, -80]} intensity={1.5} color="#fffaf0" />
         <DeepSpaceField neutralizedCount={neutralizedCount} />
         <ShootingStars />
+        <MilkyWayBand />
+        <PlanetParade />
+        <AsteroidBelt />
+        <Comets />
 
         {/* Earth & Moon — background celestial bodies */}
         <EarthGlobe position={earthPosition} signalLocations={signalLocations} />
