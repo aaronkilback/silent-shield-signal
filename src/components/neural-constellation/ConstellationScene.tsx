@@ -250,6 +250,80 @@ function AegisCommandHub({ agent, onClick, activityScore = 0, onHover, onUnhover
   );
 }
 
+// Operator device node — represents a connected mobile/desktop client
+function OperatorDeviceNode({ position, onHover, onUnhover }: {
+  position: [number, number, number];
+  onHover?: () => void;
+  onUnhover?: () => void;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const coreRef = useRef<THREE.Mesh>(null);
+  const ringRef = useRef<THREE.Mesh>(null);
+  const pulseRef = useRef(0);
+  const [hovered, setHovered] = useState(false);
+
+  const color = new THREE.Color("#10b981");
+
+  useFrame((_, delta) => {
+    pulseRef.current += delta * 1.5;
+    const pulse = Math.sin(pulseRef.current);
+    if (groupRef.current) {
+      groupRef.current.rotation.y += delta * 0.4;
+    }
+    if (coreRef.current) {
+      coreRef.current.scale.setScalar(1 + pulse * 0.05);
+    }
+    if (ringRef.current) {
+      ringRef.current.rotation.z += delta * 0.8;
+      (ringRef.current.material as THREE.MeshBasicMaterial).opacity = 0.3 + pulse * 0.1;
+    }
+  });
+
+  const handleOver = useCallback(() => { setHovered(true); onHover?.(); document.body.style.cursor = "pointer"; }, [onHover]);
+  const handleOut = useCallback(() => { setHovered(false); onUnhover?.(); document.body.style.cursor = "auto"; }, [onUnhover]);
+
+  return (
+    <group position={position}>
+      <mesh onPointerOver={handleOver} onPointerOut={handleOut}>
+        <sphereGeometry args={[1.2, 8, 8]} />
+        <meshBasicMaterial transparent opacity={0} />
+      </mesh>
+      {/* Diamond-shaped core (rotated box) */}
+      <group ref={groupRef} rotation={[Math.PI / 4, 0, Math.PI / 4]}>
+        <mesh ref={coreRef}>
+          <boxGeometry args={[0.4, 0.4, 0.4]} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.2} roughness={0.15} metalness={0.9} />
+        </mesh>
+      </group>
+      {/* Signal ring */}
+      <mesh ref={ringRef}>
+        <torusGeometry args={[0.8, 0.015, 8, 32]} />
+        <meshBasicMaterial color="#10b981" transparent opacity={0.35} />
+      </mesh>
+      {/* Glow */}
+      <mesh>
+        <sphereGeometry args={[0.6, 12, 12]} />
+        <meshBasicMaterial color="#10b981" transparent opacity={0.06} />
+      </mesh>
+      <pointLight color="#10b981" intensity={1.0} distance={8} />
+      {hovered && (
+        <Html center distanceFactor={18} style={{ pointerEvents: "none" }}>
+          <div className="bg-card/95 backdrop-blur-xl border border-emerald-500/40 rounded-lg px-4 py-3 min-w-[180px] shadow-2xl" style={{ transform: "translateY(-45px)" }}>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <div className="text-xs font-bold text-emerald-400 tracking-widest">OPERATOR</div>
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">Mobile Device · Connected</div>
+            <div className="text-[9px] text-emerald-400/70 mt-1.5 border-t border-emerald-500/20 pt-1.5">
+              Live operator link via Fortress Mobile
+            </div>
+          </div>
+        </Html>
+      )}
+    </group>
+  );
+}
+
 // Agent node with activity-driven pulse speed + hover tooltip
 function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, onUnhover }: {
   agent: AgentNode;
@@ -857,6 +931,25 @@ export function ConstellationScene({
           onUnhover={() => setHoveredAgent(null)}
         />
       ))}
+
+      {/* Connected Operator Device */}
+      {(() => {
+        const operatorPos: [number, number, number] = [14, -3, 5];
+        const aegisAgent = visibleAgents.find((a) => a.callSign === "AEGIS-CMD");
+        const aegisPos = aegisAgent?.position || [0, 0, 0];
+        return (
+          <>
+            <OperatorDeviceNode position={operatorPos} />
+            <Line
+              points={[new THREE.Vector3(...aegisPos), new THREE.Vector3(...operatorPos)]}
+              color="#10b981"
+              transparent
+              opacity={0.5}
+              lineWidth={1.5}
+            />
+          </>
+        );
+      })()}
 
       {/* Agent nodes (non-AEGIS) */}
       {visibleAgents.filter((a) => a.callSign !== "AEGIS-CMD").map((agent) => (
