@@ -430,15 +430,18 @@ Return ONLY the JSON array.`;
 
     // Store consolidated memory for the agent
     if (entries.length > 0) {
-      const memoryContent = entries.map((e: any) => `[${e.source_authority || 'book'}] ${e.title}: ${e.content?.substring(0, 300)}`).join('\n\n');
-      await supabase.from('agent_investigation_memory').insert({
-        agent_call_sign: agentCallSign,
-        content: `Literature review — "${topic.substring(0, 80)}": ${memoryContent}`,
-        memory_type: 'learned_expertise',
-        confidence: 0.92,
-        tags: ['literature_review', 'expert_books', entry.domain || 'general'],
-        entities: [],
-      }).catch(() => { /* non-critical */ });
+      try {
+        const memoryContent = entries.map((e: any) => `[${e.source_authority || 'book'}] ${e.title}: ${e.content?.substring(0, 300)}`).join('\n\n');
+        const primaryDomain = entries[0]?.domain || 'general';
+        await supabase.from('agent_investigation_memory').insert({
+          agent_call_sign: agentCallSign,
+          content: `Literature review — "${topic.substring(0, 80)}": ${memoryContent}`,
+          memory_type: 'learned_expertise',
+          confidence: 0.92,
+          tags: ['literature_review', 'expert_books', primaryDomain],
+          entities: [],
+        });
+      } catch (_) { /* non-critical */ }
     }
   } catch (err) {
     console.error(`[agent-self-learning] Literature research error for "${topic}":`, err);
