@@ -253,9 +253,25 @@ async function processTwitterSearch(
 
       // Check for relevance
       const lowerText = text.toLowerCase();
+      const sourceNameLower = sourceName.toLowerCase();
+      
+      // ═══ DISAMBIGUATION GATE ═══
+      // For short entity names (<=4 chars), require contextual keywords
+      const isShortSourceName = sourceNameLower.length <= 4;
+      let nameAppearsInContext = lowerText.includes(sourceNameLower);
+      
+      if (isShortSourceName && nameAppearsInContext) {
+        const contextualKeywords = ['pipeline', 'lng', 'gas', 'energy', 'protest', 'indigenous', 'first nation', 'coastal gaslink', 'prgt'];
+        const hasContext = contextualKeywords.some(kw => lowerText.includes(kw));
+        if (!hasContext) {
+          console.log(`Skipping disambiguation failure for "${sourceName}": ${text.substring(0, 60)}`);
+          nameAppearsInContext = false;
+        }
+      }
+      
       const isRelevant = 
         ACTIVISM_KEYWORDS.some(k => lowerText.includes(k.toLowerCase())) ||
-        lowerText.includes(sourceName.toLowerCase()) ||
+        nameAppearsInContext ||
         isHighPriorityContent(text);
 
       if (text.length > 20 && isRelevant) {
