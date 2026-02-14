@@ -109,6 +109,22 @@ const NeuralConstellation = () => {
     enabled: !!user,
   });
 
+  const { data: signalLocations = [] } = useQuery({
+    queryKey: ["signal-locations-for-globe"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("signals")
+        .select("location")
+        .not("location", "is", null)
+        .neq("location", "")
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return (data || []).map((s) => s.location).filter(Boolean) as string[];
+    },
+    enabled: !!user,
+  });
+
   // Real data hooks
   const { data: commLinks = [] } = useAgentCommLinks(!!user);
   const { data: activeDebates = [] } = useActiveDebates(!!user);
@@ -166,6 +182,7 @@ const NeuralConstellation = () => {
             knowledgeGraphEdges={knowledgeGraphEdges}
             operatorDevices={operatorDevices}
             operatorMessageActivity={operatorMessageActivity}
+            signalLocations={signalLocations}
           />
         </div>
 

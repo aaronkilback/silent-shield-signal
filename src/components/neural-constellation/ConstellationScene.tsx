@@ -26,6 +26,7 @@ interface ConstellationSceneProps {
   knowledgeGraphEdges?: KnowledgeGraphEdge[];
   operatorDevices?: OperatorDevice[];
   operatorMessageActivity?: OperatorMessageActivity;
+  signalLocations?: string[];
 }
 
 // Deep space starfield
@@ -921,59 +922,202 @@ function DebateClusterRing({ agents, debate }: { agents: AgentNode[]; debate: Ac
   );
 }
 
-// Earth with realistic textures — positioned as a background celestial body
-function EarthGlobe({ position }: { position: [number, number, number] }) {
+// Convert lat/lng to 3D position on a sphere
+function latLngToVector3(lat: number, lng: number, radius: number): [number, number, number] {
+  const phi = (90 - lat) * (Math.PI / 180);
+  const theta = (lng + 180) * (Math.PI / 180);
+  return [
+    -(radius * Math.sin(phi) * Math.cos(theta)),
+    radius * Math.cos(phi),
+    radius * Math.sin(phi) * Math.sin(theta),
+  ];
+}
+
+// Known location coordinates for signal pins
+const LOCATION_COORDS: Record<string, [number, number]> = {
+  'british columbia': [53.7, -127.6],
+  'bc': [53.7, -127.6],
+  'vancouver': [49.28, -123.12],
+  'montreal': [45.5, -73.57],
+  'newfoundland': [48.5, -55.7],
+  'venezuela': [6.42, -66.59],
+  'austin': [30.27, -97.74],
+  'pickering': [43.84, -79.09],
+  'charlie lake': [56.3, -120.97],
+  'hudson bay': [52.5, -79.5],
+  'owen sound': [44.57, -80.94],
+  'fire lake': [52.8, -66.6],
+  'lake cowichan': [48.83, -124.05],
+  'canada': [56.13, -106.35],
+};
+
+// Glowing pin on the globe surface
+function SignalPin({ position, color, intensity = 1 }: {
+  position: [number, number, number];
+  color: string;
+  intensity?: number;
+}) {
+  const ref = useRef<THREE.Mesh>(null);
+  const beamRef = useRef<THREE.Mesh>(null);
+  const phaseRef = useRef(Math.random() * Math.PI * 2);
+
+  useFrame((_, delta) => {
+    phaseRef.current += delta * 2;
+    const pulse = Math.sin(phaseRef.current);
+    if (ref.current) {
+      ref.current.scale.setScalar(1 + pulse * 0.3);
+      (ref.current.material as THREE.MeshBasicMaterial).opacity = 0.6 + pulse * 0.3;
+    }
+    if (beamRef.current) {
+      beamRef.current.scale.y = 1 + pulse * 0.5;
+      (beamRef.current.material as THREE.MeshBasicMaterial).opacity = 0.15 + pulse * 0.1;
+    }
+  });
+
+  // Calculate beam direction (points away from globe center)
+  const dir = new THREE.Vector3(...position).normalize();
+  const beamPos: [number, number, number] = [
+    position[0] + dir.x * 0.4,
+    position[1] + dir.y * 0.4,
+    position[2] + dir.z * 0.4,
+  ];
+
+  return (
+    <group>
+      {/* Pin dot */}
+      <mesh ref={ref} position={position}>
+        <sphereGeometry args={[0.12 * intensity, 8, 8]} />
+        <meshBasicMaterial color={color} transparent opacity={0.8} />
+      </mesh>
+      {/* Glow around pin */}
+      <mesh position={position}>
+        <sphereGeometry args={[0.25 * intensity, 8, 8]} />
+        <meshBasicMaterial color={color} transparent opacity={0.15} />
+      </mesh>
+      {/* Light beam shooting up from pin */}
+      <mesh ref={beamRef} position={beamPos} quaternion={new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir)}>
+        <cylinderGeometry args={[0.02, 0.06, 0.8, 6]} />
+        <meshBasicMaterial color={color} transparent opacity={0.2} />
+      </mesh>
+    </group>
+  );
+}
+
+// Earth with realistic textures — bright, vivid, Google Earth VR inspired
+function EarthGlobe({ position, signalLocations = [] }: {
+  position: [number, number, number];
+  signalLocations?: string[];
+}) {
   const earthRef = useRef<THREE.Mesh>(null);
   const cloudsRef = useRef<THREE.Mesh>(null);
-  const atmosphereRef = useRef<THREE.Mesh>(null);
+  const nightRef = useRef<THREE.Mesh>(null);
 
-  const [earthMap, bumpMap, cloudMap] = useTexture([
+  const [earthMap, bumpMap, nightMap, specularMap] = useTexture([
     '/textures/earth.jpg',
     '/textures/earth-bump.png',
-    '/textures/earth-clouds.png',
+    '/textures/earth-night.jpg',
+    '/textures/earth-specular.png',
   ]);
 
   useFrame((_, delta) => {
-    if (earthRef.current) earthRef.current.rotation.y += delta * 0.02;
-    if (cloudsRef.current) cloudsRef.current.rotation.y += delta * 0.03;
+    if (earthRef.current) earthRef.current.rotation.y += delta * 0.015;
+    if (cloudsRef.current) cloudsRef.current.rotation.y += delta * 0.025;
+    if (nightRef.current) nightRef.current.rotation.y += delta * 0.015;
   });
 
   const earthRadius = 8;
 
+  // Resolve signal locations to pins
+  const pins = useMemo(() => {
+    const seen = new Set<string>();
+    const result: { pos: [number, number, number]; color: string }[] = [];
+    signalLocations.forEach((loc) => {
+      const key = loc.toLowerCase().trim();
+      // Try exact match, then partial
+      let coords = LOCATION_COORDS[key];
+      if (!coords) {
+        for (const [k, v] of Object.entries(LOCATION_COORDS)) {
+          if (key.includes(k) || k.includes(key)) { coords = v; break; }
+        }
+      }
+      if (coords && !seen.has(`${coords[0]},${coords[1]}`)) {
+        seen.add(`${coords[0]},${coords[1]}`);
+        result.push({
+          pos: latLngToVector3(coords[0], coords[1], earthRadius * 1.01),
+          color: '#f59e0b',
+        });
+      }
+    });
+    return result;
+  }, [signalLocations, earthRadius]);
+
   return (
     <group position={position}>
-      {/* Earth core */}
-      <mesh ref={earthRef} rotation={[0.4, 0, 0]}>
+      {/* Earth — bright vivid surface */}
+      <mesh ref={earthRef} rotation={[0.41, 0, 0]}>
         <sphereGeometry args={[earthRadius, 64, 64]} />
-        <meshStandardMaterial
+        <meshPhongMaterial
           map={earthMap}
           bumpMap={bumpMap}
-          bumpScale={0.3}
-          roughness={0.7}
-          metalness={0.1}
+          bumpScale={0.5}
+          specularMap={specularMap}
+          specular={new THREE.Color('#334466')}
+          shininess={15}
         />
       </mesh>
-      {/* Cloud layer */}
-      <mesh ref={cloudsRef} rotation={[0.4, 0, 0]}>
-        <sphereGeometry args={[earthRadius * 1.005, 48, 48]} />
-        <meshStandardMaterial
-          map={cloudMap}
+      {/* Night side city lights */}
+      <mesh ref={nightRef} rotation={[0.41, 0, 0]}>
+        <sphereGeometry args={[earthRadius * 1.001, 64, 64]} />
+        <meshBasicMaterial
+          map={nightMap}
           transparent
-          opacity={0.15}
+          opacity={0.6}
+          blending={THREE.AdditiveBlending}
           depthWrite={false}
         />
       </mesh>
-      {/* Atmosphere glow */}
-      <mesh ref={atmosphereRef}>
-        <sphereGeometry args={[earthRadius * 1.08, 48, 48]} />
-        <meshBasicMaterial color="#4488ff" transparent opacity={0.06} side={THREE.BackSide} />
+      {/* Cloud layer */}
+      <mesh ref={cloudsRef} rotation={[0.41, 0, 0]}>
+        <sphereGeometry args={[earthRadius * 1.008, 48, 48]} />
+        <meshPhongMaterial
+          color="#ffffff"
+          transparent
+          opacity={0.12}
+          depthWrite={false}
+        />
       </mesh>
+      {/* Inner atmosphere — vivid blue rim */}
       <mesh>
-        <sphereGeometry args={[earthRadius * 1.15, 32, 32]} />
-        <meshBasicMaterial color="#66aaff" transparent opacity={0.025} side={THREE.BackSide} />
+        <sphereGeometry args={[earthRadius * 1.04, 48, 48]} />
+        <meshBasicMaterial color="#4499ff" transparent opacity={0.12} side={THREE.BackSide} />
       </mesh>
-      {/* Subtle earth light on the constellation */}
-      <pointLight color="#4488cc" intensity={0.4} distance={40} />
+      {/* Mid atmosphere glow */}
+      <mesh>
+        <sphereGeometry args={[earthRadius * 1.10, 48, 48]} />
+        <meshBasicMaterial color="#66bbff" transparent opacity={0.06} side={THREE.BackSide} />
+      </mesh>
+      {/* Outer atmosphere haze */}
+      <mesh>
+        <sphereGeometry args={[earthRadius * 1.20, 32, 32]} />
+        <meshBasicMaterial color="#88ccff" transparent opacity={0.025} side={THREE.BackSide} />
+      </mesh>
+
+      {/* Signal origin pins */}
+      <group rotation={[0.41, 0, 0]}>
+        {pins.map((pin, i) => (
+          <SignalPin key={i} position={pin.pos} color={pin.color} />
+        ))}
+      </group>
+
+      {/* Bright sunlight hitting Earth */}
+      <directionalLight
+        position={[20, 10, 15]}
+        intensity={2.5}
+        color="#fffaf0"
+      />
+      <pointLight color="#6699cc" intensity={1.5} distance={50} />
+      {/* Subtle fill light from opposite side */}
+      <pointLight color="#223344" intensity={0.5} distance={30} position={[-10, -5, -10]} />
     </group>
   );
 }
@@ -1003,16 +1147,20 @@ function MoonBody({ earthPosition }: { earthPosition: [number, number, number] }
         <sphereGeometry args={[moonRadius, 48, 48]} />
         <meshStandardMaterial
           map={moonMap}
-          roughness={0.9}
+          roughness={0.85}
           metalness={0.05}
         />
       </mesh>
-      {/* Subtle moon glow */}
+      {/* Moon glow */}
       <mesh>
-        <sphereGeometry args={[moonRadius * 1.05, 24, 24]} />
-        <meshBasicMaterial color="#aaaacc" transparent opacity={0.03} side={THREE.BackSide} />
+        <sphereGeometry args={[moonRadius * 1.06, 24, 24]} />
+        <meshBasicMaterial color="#ccccdd" transparent opacity={0.05} side={THREE.BackSide} />
       </mesh>
-      <pointLight color="#8899aa" intensity={0.2} distance={15} />
+      <mesh>
+        <sphereGeometry args={[moonRadius * 1.15, 24, 24]} />
+        <meshBasicMaterial color="#aaaacc" transparent opacity={0.02} side={THREE.BackSide} />
+      </mesh>
+      <pointLight color="#ccccdd" intensity={0.4} distance={20} />
     </group>
   );
 }
@@ -1029,6 +1177,7 @@ export function ConstellationScene({
   knowledgeGraphEdges = [],
   operatorDevices = [],
   operatorMessageActivity,
+  signalLocations = [],
 }: ConstellationSceneProps) {
   const handleClick = useCallback((agent: AgentNode) => { onNodeClick?.(agent); }, [onNodeClick]);
   const [hoveredAgent, setHoveredAgent] = useState<AgentNode | null>(null);
@@ -1056,14 +1205,14 @@ export function ConstellationScene({
       style={{ background: "#020408" }}
       gl={{ antialias: true, alpha: false }}
     >
-      <ambientLight intensity={0.08} />
-      <directionalLight position={[10, 10, 5]} intensity={0.15} color="#4488ff" />
-      <directionalLight position={[-10, -5, -5]} intensity={0.08} color="#ff6600" />
+      <ambientLight intensity={0.12} />
+      <directionalLight position={[10, 10, 5]} intensity={0.25} color="#4488ff" />
+      <directionalLight position={[-10, -5, -5]} intensity={0.12} color="#ff6600" />
 
       <DeepSpaceField neutralizedCount={neutralizedCount} />
 
       {/* Earth & Moon — background celestial bodies */}
-      <EarthGlobe position={[-35, -15, -40]} />
+      <EarthGlobe position={[-35, -15, -40]} signalLocations={signalLocations} />
       <MoonBody earthPosition={[-35, -15, -40]} />
 
 
