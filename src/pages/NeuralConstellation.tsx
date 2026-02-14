@@ -9,7 +9,7 @@ import { NodeDetailPanel } from "@/components/neural-constellation/NodeDetailPan
 import { ConstellationLegend } from "@/components/neural-constellation/ConstellationLegend";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMetrics, useKnowledgeGraphEdges, useOperatorDevices } from "@/hooks/useConstellationData";
+import { useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMetrics, useKnowledgeGraphEdges, useOperatorDevices, useOperatorMessageActivity } from "@/hooks/useConstellationData";
 
 // Map agents to 3D positions in a constellation layout
 function assignPositions(agents: any[]): AgentNode[] {
@@ -116,6 +116,7 @@ const NeuralConstellation = () => {
   const { data: activityMetrics = [] } = useAgentActivityMetrics(!!user);
   const { data: knowledgeGraphEdges = [] } = useKnowledgeGraphEdges(!!user);
   const { data: operatorDevices = [] } = useOperatorDevices(!!user);
+  const { data: operatorMessageActivity } = useOperatorMessageActivity(!!user);
 
   const agentNodes = useMemo(() => {
     if (!agents) return [];
@@ -164,6 +165,7 @@ const NeuralConstellation = () => {
             activityMetrics={activityMetrics}
             knowledgeGraphEdges={knowledgeGraphEdges}
             operatorDevices={operatorDevices}
+            operatorMessageActivity={operatorMessageActivity}
           />
         </div>
 
