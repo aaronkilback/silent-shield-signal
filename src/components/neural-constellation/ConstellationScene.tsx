@@ -1354,10 +1354,8 @@ function MoonBody({ earthPosition }: { earthPosition: [number, number, number] }
   const inclination = 5.14 * (Math.PI / 180);
 
   useFrame(({ clock }) => {
-    // Slow orbital period — roughly 1 full orbit per ~78 seconds
     const t = clock.getElapsedTime() * 0.08;
     if (moonRef.current) {
-      // Inclined elliptical orbit
       const x = Math.cos(t) * orbitRadius;
       const z = Math.sin(t) * orbitRadius * 0.9;
       const y = Math.sin(t) * orbitRadius * Math.sin(inclination);
@@ -1367,10 +1365,9 @@ function MoonBody({ earthPosition }: { earthPosition: [number, number, number] }
         earthPosition[2] + z
       );
     }
-    // Tidally locked — always face Earth
-    if (meshRef.current && moonRef.current) {
-      meshRef.current.lookAt(earthPosition[0], earthPosition[1], earthPosition[2]);
-      meshRef.current.rotateY(Math.PI); // texture faces away by default
+    // Slow synchronous rotation (tidally locked feel)
+    if (meshRef.current) {
+      meshRef.current.rotation.y = -t + Math.PI;
     }
   });
 
