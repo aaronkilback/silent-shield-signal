@@ -162,11 +162,18 @@ const NeuralConstellation = () => {
       <MinimalHeader />
       <main className="flex-1 relative overflow-hidden">
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 text-center pointer-events-none">
-          <h1 className="text-lg font-bold text-foreground tracking-[0.25em] uppercase">
-            Neural Constellation Map
+          <h1 className={`text-lg font-bold tracking-[0.25em] uppercase transition-colors duration-500 ${
+            isExecutiveMode ? "text-amber-300" : "text-foreground"
+          }`}>
+            {isExecutiveMode ? "Command Network" : "Neural Constellation Map"}
           </h1>
-          <p className="text-[10px] text-muted-foreground tracking-wider mt-0.5">
-            FORTRESS INTELLIGENCE NETWORK · {agentNodes.length} ACTIVE NODES · {commLinks.length} LIVE LINKS
+          <p className={`text-[10px] tracking-wider mt-0.5 transition-colors duration-500 ${
+            isExecutiveMode ? "text-amber-400/50" : "text-muted-foreground"
+          }`}>
+            {isExecutiveMode 
+              ? `EXECUTIVE VIEW · ${agentNodes.filter(a => a.tier !== 'support').length} COMMAND NODES`
+              : `FORTRESS INTELLIGENCE NETWORK · ${agentNodes.length} ACTIVE NODES · ${commLinks.length} LIVE LINKS`
+            }
           </p>
         </div>
 
