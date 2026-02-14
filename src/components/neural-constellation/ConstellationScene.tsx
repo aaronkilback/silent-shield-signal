@@ -399,23 +399,14 @@ function ConnectionLines({ agents, commLinks = [] }: { agents: AgentNode[]; comm
       }
     }
 
+    // Ensure every agent connects to AEGIS-CMD (the orchestrator parent)
+    const aegisIdx = callSignIndex.get("AEGIS-CMD");
     agents.forEach((agent, idx) => {
-      if (agent.tier !== "primary") {
-        const hasRealLink = commLinks.some(
-          (l) => l.sourceCallSign === agent.callSign || l.targetCallSign === agent.callSign
-        );
-        if (!hasRealLink) {
-          let nearest = primaryIndices[0];
-          let minDist = Infinity;
-          primaryIndices.forEach((pi) => {
-            const dx = agent.position[0] - agents[pi].position[0];
-            const dy = agent.position[1] - agents[pi].position[1];
-            const dz = agent.position[2] - agents[pi].position[2];
-            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            if (dist < minDist) { minDist = dist; nearest = pi; }
-          });
-          conns.push({ a: idx, b: nearest, isReal: false, strength: 0.15 });
-        }
+      if (idx === aegisIdx) return;
+      const key = [Math.min(idx, aegisIdx ?? 0), Math.max(idx, aegisIdx ?? 0)].join("-");
+      if (!realPairs.has(key) && aegisIdx !== undefined) {
+        conns.push({ a: idx, b: aegisIdx, isReal: true, strength: 0.4 });
+        realPairs.add(key);
       }
     });
 
