@@ -1390,41 +1390,115 @@ function MoonBody({ earthPosition }: { earthPosition: [number, number, number] }
   );
 }
 
-// Knowledge Nebula — glowing cosmic source of intelligence, positioned above the constellation
+// Knowledge Nebula — volumetric particle cloud that looks like a real nebula
 function KnowledgeNebula({ totalEntries = 0 }: { totalEntries: number }) {
   const nebulaRef = useRef<THREE.Group>(null);
-  const coreRef = useRef<THREE.Mesh>(null);
+  const dustRef = useRef<THREE.Points>(null);
+  const wispsRef = useRef<THREE.Points>(null);
   const pulseRef = useRef(0);
   const scale = Math.min(1 + totalEntries / 500, 3);
 
+  const dustCount = 600;
+  const wispCount = 200;
+
+  // Soft radial gradient sprite for cloud-like particles
+  const spriteTexture = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d")!;
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gradient.addColorStop(0, "rgba(255,255,255,1)");
+    gradient.addColorStop(0.3, "rgba(255,255,255,0.5)");
+    gradient.addColorStop(0.7, "rgba(255,255,255,0.1)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(canvas);
+  }, []);
+
+  // Main dust cloud — Gaussian-distributed with color gradients
+  const { dustPositions, dustColors } = useMemo(() => {
+    const pos = new Float32Array(dustCount * 3);
+    const col = new Float32Array(dustCount * 3);
+    for (let i = 0; i < dustCount; i++) {
+      const r = (Math.random() + Math.random() + Math.random()) / 3 * 6 * scale;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      const flatY = 0.35 + Math.random() * 0.3;
+      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta) * (1 + Math.sin(theta * 3) * 0.3);
+      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * flatY;
+      pos[i * 3 + 2] = r * Math.cos(phi) * (1 + Math.cos(theta * 2) * 0.2);
+      const dn = r / (6 * scale);
+      if (dn < 0.3) {
+        col[i*3]=0.75+Math.random()*0.2; col[i*3+1]=0.2+Math.random()*0.25; col[i*3+2]=0.95+Math.random()*0.05;
+      } else if (dn < 0.6) {
+        col[i*3]=0.6+Math.random()*0.3; col[i*3+1]=0.1+Math.random()*0.2; col[i*3+2]=0.7+Math.random()*0.2;
+      } else {
+        col[i*3]=0.3+Math.random()*0.2; col[i*3+1]=0.15+Math.random()*0.2; col[i*3+2]=0.8+Math.random()*0.2;
+      }
+    }
+    return { dustPositions: pos, dustColors: col };
+  }, [scale]);
+
+  // Bright wispy filaments / tendrils
+  const { wispPositions, wispColors } = useMemo(() => {
+    const pos = new Float32Array(wispCount * 3);
+    const col = new Float32Array(wispCount * 3);
+    for (let i = 0; i < wispCount; i++) {
+      const arm = Math.floor(Math.random() * 4);
+      const armAngle = (arm / 4) * Math.PI * 2;
+      const t = Math.random();
+      const spiralR = t * 5 * scale;
+      const spiralAngle = armAngle + t * 1.5 + Math.random() * 0.5;
+      pos[i*3] = Math.cos(spiralAngle) * spiralR + (Math.random()-0.5)*1.5;
+      pos[i*3+1] = (Math.random()-0.5) * 2 * scale * 0.35;
+      pos[i*3+2] = Math.sin(spiralAngle) * spiralR + (Math.random()-0.5)*1.5;
+      col[i*3]=0.85+Math.random()*0.15; col[i*3+1]=0.6+Math.random()*0.3; col[i*3+2]=1.0;
+    }
+    return { wispPositions: pos, wispColors: col };
+  }, [scale]);
+
   useFrame((_, delta) => {
-    pulseRef.current += delta * 0.8;
+    pulseRef.current += delta * 0.5;
     const pulse = Math.sin(pulseRef.current);
-    if (nebulaRef.current) nebulaRef.current.rotation.y += delta * 0.02;
-    if (coreRef.current) {
-      coreRef.current.scale.setScalar(scale + pulse * 0.15);
-      (coreRef.current.material as THREE.MeshBasicMaterial).opacity = 0.08 + pulse * 0.03;
+    if (nebulaRef.current) nebulaRef.current.rotation.y += delta * 0.015;
+    if (dustRef.current) {
+      (dustRef.current.material as THREE.PointsMaterial).opacity = 0.12 + pulse * 0.03;
+      dustRef.current.rotation.y += delta * 0.008;
+      dustRef.current.rotation.z += delta * 0.003;
+    }
+    if (wispsRef.current) {
+      (wispsRef.current.material as THREE.PointsMaterial).opacity = 0.25 + pulse * 0.08;
+      wispsRef.current.rotation.y -= delta * 0.005;
     }
   });
 
   return (
     <group ref={nebulaRef} position={[0, 18, -5]}>
-      {/* Core nebula glow */}
-      <mesh ref={coreRef}>
-        <sphereGeometry args={[2.5, 24, 24]} />
-        <meshBasicMaterial color="#a855f7" transparent opacity={0.08} side={THREE.DoubleSide} />
-      </mesh>
-      {/* Inner violet haze */}
+      {/* Main dust cloud */}
+      <points ref={dustRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={dustCount} array={dustPositions} itemSize={3} />
+          <bufferAttribute attach="attributes-color" count={dustCount} array={dustColors} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial size={0.6} vertexColors transparent opacity={0.12} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={spriteTexture} />
+      </points>
+      {/* Bright wisps */}
+      <points ref={wispsRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={wispCount} array={wispPositions} itemSize={3} />
+          <bufferAttribute attach="attributes-color" count={wispCount} array={wispColors} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial size={0.35} vertexColors transparent opacity={0.25} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={spriteTexture} />
+      </points>
+      {/* Soft inner glow sphere */}
       <mesh>
-        <sphereGeometry args={[4, 16, 16]} />
-        <meshBasicMaterial color="#7c3aed" transparent opacity={0.04} side={THREE.DoubleSide} />
+        <sphereGeometry args={[2 * scale, 24, 24]} />
+        <meshBasicMaterial color="#a855f7" transparent opacity={0.04} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
-      {/* Outer diffuse glow */}
-      <mesh>
-        <sphereGeometry args={[6, 12, 12]} />
-        <meshBasicMaterial color="#6d28d9" transparent opacity={0.02} side={THREE.DoubleSide} />
-      </mesh>
-      <pointLight color="#a855f7" intensity={1.5} distance={30} />
+      <pointLight color="#a855f7" intensity={2.0} distance={35} />
+      <pointLight color="#ec4899" intensity={0.8} distance={20} />
     </group>
   );
 }
