@@ -89,7 +89,34 @@ export function useAgentCommLinks(enabled: boolean) {
         }
       });
 
-      // Source 2 removed — same-user pairing was inflating link counts combinatorially
+      // --- Source 2: Agents with real message activity form links weighted by volume ---
+      const { data: msgAgents } = await supabase
+        .from("agent_conversations")
+        .select("agent_id, updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(200);
+
+      // Build list of active agents (ones with conversations)
+      const activeAgentCallSigns: { callSign: string; lastActive: string }[] = [];
+      msgAgents?.forEach((c) => {
+        const cs = agentMap.get(c.agent_id);
+        if (cs && !activeAgentCallSigns.some((a) => a.callSign === cs)) {
+          activeAgentCallSigns.push({ callSign: cs, lastActive: c.updated_at });
+        }
+      });
+
+      // Active agents with real messages form a mesh (they collaborate through AEGIS)
+      for (let i = 0; i < activeAgentCallSigns.length; i++) {
+        for (let j = i + 1; j < activeAgentCallSigns.length; j++) {
+          addPair(
+            activeAgentCallSigns[i].callSign,
+            activeAgentCallSigns[j].callSign,
+            activeAgentCallSigns[i].lastActive > activeAgentCallSigns[j].lastActive
+              ? activeAgentCallSigns[i].lastActive
+              : activeAgentCallSigns[j].lastActive
+          );
+        }
+      }
 
       // --- Source 3: AEGIS-CMD connects to every active agent (it's the orchestrator) ---
       const aegisCallSign = "AEGIS-CMD";
