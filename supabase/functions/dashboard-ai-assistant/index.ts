@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { callAiGatewayStream } from "../_shared/ai-gateway.ts";
+import { callAiGateway, callAiGatewayStream } from "../_shared/ai-gateway.ts";
 import { validateMessages } from "../_shared/input-validation.ts";
 import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, upsertProject, touchProject } from "../_shared/user-memory.ts";
 import { logError } from "../_shared/error-logger.ts";
@@ -19,31 +19,55 @@ const corsHeaders = {
 // Timeout for AI API calls (45 seconds - well under edge function limits)
 const AI_TIMEOUT_MS = 45000;
 
-// Helper to fetch with timeout — delegates to callAiGatewayStream for AI gateway URLs
+// Helper to fetch with timeout — delegates to AI gateway wrappers for resilience
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
   // If this is an AI gateway call, use the resilient wrapper
   if (url.includes('ai.gateway.lovable.dev')) {
     const bodyObj = JSON.parse(options.body as string);
-    const result = await callAiGatewayStream({
-      model: bodyObj.model || 'google/gemini-2.5-flash',
-      messages: bodyObj.messages || [],
-      functionName: 'dashboard-ai-assistant',
-      timeoutMs,
-      extraBody: (() => {
-        const { model: _m, messages: _msgs, stream: _s, ...rest } = bodyObj;
-        return Object.keys(rest).length > 0 ? rest : undefined;
-      })(),
-    });
+    const isStreaming = bodyObj.stream === true;
+    
+    const extraBody = (() => {
+      const { model: _m, messages: _msgs, stream: _s, ...rest } = bodyObj;
+      return Object.keys(rest).length > 0 ? rest : undefined;
+    })();
+    
+    if (isStreaming) {
+      // Streaming call — return SSE stream
+      const result = await callAiGatewayStream({
+        model: bodyObj.model || 'google/gemini-2.5-flash',
+        messages: bodyObj.messages || [],
+        functionName: 'dashboard-ai-assistant',
+        timeoutMs,
+        extraBody,
+      });
 
-    if (result.error || !result.stream) {
-      throw new Error(result.error || 'AI Gateway stream failed');
+      if (result.error || !result.stream) {
+        throw new Error(result.error || 'AI Gateway stream failed');
+      }
+
+      return new Response(result.stream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    } else {
+      // Non-streaming call — return JSON response (for tool-use decisions)
+      const result = await callAiGateway({
+        model: bodyObj.model || 'google/gemini-2.5-flash',
+        messages: bodyObj.messages || [],
+        functionName: 'dashboard-ai-assistant',
+        retries: 2,
+        extraBody,
+      });
+
+      if (result.error) {
+        throw new Error(result.error);
+      }
+
+      return new Response(JSON.stringify(result.raw), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
-
-    // Return a Response-like object the existing code can use
-    return new Response(result.stream, {
-      status: 200,
-      headers: { 'Content-Type': 'text/event-stream' },
-    });
   }
 
   // Non-AI-gateway URLs: standard fetch with timeout
@@ -7871,18 +7895,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
       throw new Error(`AI gateway error: ${response.status}`);
     }
 
-    // Safe JSON parse — gateway may return non-JSON (e.g. SSE text or upstream error string)
-    let firstResult: any;
-    try {
-      const responseText = await response.text();
-      firstResult = JSON.parse(responseText);
-    } catch (parseErr) {
-      console.error("AI gateway returned non-JSON response (possible upstream error)");
-      return new Response(
-        JSON.stringify({ error: "AI service temporarily unavailable. Please try again." }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    const firstResult = await response.json();
     
     if (!firstResult?.choices?.[0]?.message) {
       console.error("AI gateway returned unexpected structure:", JSON.stringify(firstResult).substring(0, 500));
