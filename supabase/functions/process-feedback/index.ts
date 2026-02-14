@@ -116,6 +116,37 @@ async function handleSignalFeedback(supabase: ReturnType<typeof createServiceCli
   } else if (feedback === 'irrelevant') {
     updates.relevance_score = 0.0;
     updates.status = 'false_positive';
+
+    // Actively learn from irrelevant feedback — extract title/location patterns to suppress future similar signals
+    try {
+      const { data: signal } = await supabase
+        .from('signals')
+        .select('title, location, signal_type, category, normalized_text, source_id')
+        .eq('id', objectId)
+        .single();
+
+      if (signal) {
+        // Extract suppression patterns from the rejected signal
+        const titleWords = (signal.title || '').toLowerCase().split(/\s+/).filter((w: string) => w.length > 4);
+        const locationStr = (signal.location || '').toLowerCase().trim();
+        
+        // Build a location-based suppression pattern if location is outside client area
+        const clientRelevantLocations = ['fort st. john', 'dawson creek', 'prince george', 'kitimat', 'terrace', 'northeast bc', 'ne bc', 'coastal gaslink', 'lng canada', 'pipeline'];
+        const isOutsideClientArea = locationStr && !clientRelevantLocations.some(loc => locationStr.includes(loc));
+        
+        if (isOutsideClientArea || titleWords.length > 2) {
+          const suppressionFeatures: Record<string, number> = {};
+          if (isOutsideClientArea) suppressionFeatures[`location:${locationStr}`] = 3;
+          titleWords.slice(0, 10).forEach((w: string) => { suppressionFeatures[w] = 1; });
+          if (signal.signal_type) suppressionFeatures[`type:${signal.signal_type}`] = 1;
+          
+          await upsertLearningProfile(supabase, 'rejected_signal_patterns', suppressionFeatures);
+          console.log(`[FeedbackLearning] Extracted suppression patterns from rejected signal: location=${locationStr}, keywords=${titleWords.slice(0, 5).join(',')}`);
+        }
+      }
+    } catch (err) {
+      console.error('[FeedbackLearning] Error extracting rejection patterns:', err);
+    }
   } else if (feedback === 'too_minor') {
     updates.relevance_score = 0.3;
     updates.status = 'resolved';
