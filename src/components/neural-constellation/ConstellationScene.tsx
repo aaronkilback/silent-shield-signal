@@ -2,7 +2,7 @@ import { useRef, useMemo, useCallback, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Line, Html } from "@react-three/drei";
 import * as THREE from "three";
-import type { AgentCommLink, ActiveDebate, ScanPulse, AgentActivityMetrics, KnowledgeGraphEdge, OperatorDevice } from "@/hooks/useConstellationData";
+import type { AgentCommLink, ActiveDebate, ScanPulse, AgentActivityMetrics, KnowledgeGraphEdge, OperatorDevice, OperatorMessageActivity } from "@/hooks/useConstellationData";
 
 interface AgentNode {
   id: string;
@@ -25,6 +25,7 @@ interface ConstellationSceneProps {
   activityMetrics?: AgentActivityMetrics[];
   knowledgeGraphEdges?: KnowledgeGraphEdge[];
   operatorDevices?: OperatorDevice[];
+  operatorMessageActivity?: OperatorMessageActivity;
 }
 
 // Deep space starfield
@@ -252,10 +253,11 @@ function AegisCommandHub({ agent, onClick, activityScore = 0, onHover, onUnhover
 }
 
 // Operator device node — represents a connected mobile/desktop client
-function OperatorDeviceNode({ position, isOnline = false, deviceCount = 0, onHover, onUnhover }: {
+function OperatorDeviceNode({ position, isOnline = false, deviceCount = 0, hasMessageActivity = false, onHover, onUnhover }: {
   position: [number, number, number];
   isOnline?: boolean;
   deviceCount?: number;
+  hasMessageActivity?: boolean;
   onHover?: () => void;
   onUnhover?: () => void;
 }) {
@@ -265,22 +267,26 @@ function OperatorDeviceNode({ position, isOnline = false, deviceCount = 0, onHov
   const pulseRef = useRef(0);
   const [hovered, setHovered] = useState(false);
 
+  // Online if heartbeat OR recent message activity
+  const isActive = isOnline || hasMessageActivity;
+
   const activeColor = new THREE.Color("#10b981");
+  const messagingColor = new THREE.Color("#22d3ee");
   const offlineColor = new THREE.Color("#475569");
-  const color = isOnline ? activeColor : offlineColor;
+  const color = isActive ? (hasMessageActivity && !isOnline ? messagingColor : activeColor) : offlineColor;
 
   useFrame((_, delta) => {
-    pulseRef.current += delta * (isOnline ? 1.5 : 0.3);
+    pulseRef.current += delta * (isActive ? 1.5 : 0.3);
     const pulse = Math.sin(pulseRef.current);
     if (groupRef.current) {
-      groupRef.current.rotation.y += delta * (isOnline ? 0.4 : 0.1);
+      groupRef.current.rotation.y += delta * (isActive ? 0.4 : 0.1);
     }
     if (coreRef.current) {
-      coreRef.current.scale.setScalar(1 + pulse * (isOnline ? 0.05 : 0.02));
+      coreRef.current.scale.setScalar(1 + pulse * (isActive ? 0.05 : 0.02));
     }
     if (ringRef.current) {
-      ringRef.current.rotation.z += delta * (isOnline ? 0.8 : 0.2);
-      (ringRef.current.material as THREE.MeshBasicMaterial).opacity = isOnline ? 0.3 + pulse * 0.1 : 0.1;
+      ringRef.current.rotation.z += delta * (isActive ? 0.8 : 0.2);
+      (ringRef.current.material as THREE.MeshBasicMaterial).opacity = isActive ? 0.3 + pulse * 0.1 : 0.1;
     }
   });
 
@@ -296,30 +302,30 @@ function OperatorDeviceNode({ position, isOnline = false, deviceCount = 0, onHov
       <group ref={groupRef} rotation={[Math.PI / 4, 0, Math.PI / 4]}>
         <mesh ref={coreRef}>
           <boxGeometry args={[0.4, 0.4, 0.4]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isOnline ? 1.2 : 0.3} roughness={0.15} metalness={0.9} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isActive ? 1.2 : 0.3} roughness={0.15} metalness={0.9} />
         </mesh>
       </group>
       <mesh ref={ringRef}>
         <torusGeometry args={[0.8, 0.015, 8, 32]} />
-        <meshBasicMaterial color={isOnline ? "#10b981" : "#475569"} transparent opacity={isOnline ? 0.35 : 0.1} />
+        <meshBasicMaterial color={isActive ? (hasMessageActivity ? "#22d3ee" : "#10b981") : "#475569"} transparent opacity={isActive ? 0.35 : 0.1} />
       </mesh>
       <mesh>
         <sphereGeometry args={[0.6, 12, 12]} />
-        <meshBasicMaterial color={isOnline ? "#10b981" : "#475569"} transparent opacity={isOnline ? 0.06 : 0.02} />
+        <meshBasicMaterial color={isActive ? "#10b981" : "#475569"} transparent opacity={isActive ? 0.06 : 0.02} />
       </mesh>
-      <pointLight color={isOnline ? "#10b981" : "#334155"} intensity={isOnline ? 1.0 : 0.15} distance={isOnline ? 8 : 3} />
+      <pointLight color={isActive ? "#10b981" : "#334155"} intensity={isActive ? 1.0 : 0.15} distance={isActive ? 8 : 3} />
       {hovered && (
         <Html center distanceFactor={18} style={{ pointerEvents: "none" }}>
-          <div className="bg-card/95 backdrop-blur-xl border rounded-lg px-4 py-3 min-w-[180px] shadow-2xl" style={{ transform: "translateY(-45px)", borderColor: isOnline ? "rgba(16,185,129,0.4)" : "rgba(71,85,105,0.4)" }}>
+          <div className="bg-card/95 backdrop-blur-xl border rounded-lg px-4 py-3 min-w-[180px] shadow-2xl" style={{ transform: "translateY(-45px)", borderColor: isActive ? "rgba(16,185,129,0.4)" : "rgba(71,85,105,0.4)" }}>
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: isOnline ? "#10b981" : "#64748b", animation: isOnline ? "pulse 2s infinite" : "none" }} />
-              <div className="text-xs font-bold tracking-widest" style={{ color: isOnline ? "#10b981" : "#64748b" }}>OPERATOR</div>
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: isActive ? "#10b981" : "#64748b", animation: isActive ? "pulse 2s infinite" : "none" }} />
+              <div className="text-xs font-bold tracking-widest" style={{ color: isActive ? "#10b981" : "#64748b" }}>OPERATOR</div>
             </div>
             <div className="text-[10px] text-muted-foreground mt-0.5">
-              {isOnline ? `${deviceCount} Device${deviceCount !== 1 ? "s" : ""} · Connected` : "No Active Devices"}
+              {isOnline ? `${deviceCount} Device${deviceCount !== 1 ? "s" : ""} · Connected` : hasMessageActivity ? "Active via AEGIS Chat" : "No Active Devices"}
             </div>
-            <div className="text-[9px] mt-1.5 border-t pt-1.5" style={{ color: isOnline ? "rgba(16,185,129,0.7)" : "rgba(100,116,139,0.7)", borderColor: isOnline ? "rgba(16,185,129,0.2)" : "rgba(71,85,105,0.2)" }}>
-              {isOnline ? "Live operator link via Fortress Mobile" : "No mobile sessions in last 5 min"}
+            <div className="text-[9px] mt-1.5 border-t pt-1.5" style={{ color: isActive ? "rgba(16,185,129,0.7)" : "rgba(100,116,139,0.7)", borderColor: isActive ? "rgba(16,185,129,0.2)" : "rgba(71,85,105,0.2)" }}>
+              {isOnline ? "Live operator link via Fortress Mobile" : hasMessageActivity ? "Recent AEGIS messages detected" : "No mobile sessions in last 5 min"}
             </div>
           </div>
         </Html>
@@ -860,6 +866,7 @@ export function ConstellationScene({
   activityMetrics = [],
   knowledgeGraphEdges = [],
   operatorDevices = [],
+  operatorMessageActivity,
 }: ConstellationSceneProps) {
   const handleClick = useCallback((agent: AgentNode) => { onNodeClick?.(agent); }, [onNodeClick]);
   const [hoveredAgent, setHoveredAgent] = useState<AgentNode | null>(null);
@@ -943,15 +950,17 @@ export function ConstellationScene({
         const aegisAgent = visibleAgents.find((a) => a.callSign === "AEGIS-CMD");
         const aegisPos = aegisAgent?.position || [0, 0, 0];
         const hasOnlineDevices = operatorDevices.length > 0;
+        const hasMessages = operatorMessageActivity?.hasRecentMessages || false;
+        const isActive = hasOnlineDevices || hasMessages;
         return (
           <>
-            <OperatorDeviceNode position={operatorPos} isOnline={hasOnlineDevices} deviceCount={operatorDevices.length} />
+            <OperatorDeviceNode position={operatorPos} isOnline={hasOnlineDevices} deviceCount={operatorDevices.length} hasMessageActivity={hasMessages} />
             <Line
               points={[new THREE.Vector3(...aegisPos), new THREE.Vector3(...operatorPos)]}
-              color={hasOnlineDevices ? "#10b981" : "#334155"}
+              color={isActive ? (hasMessages ? "#22d3ee" : "#10b981") : "#334155"}
               transparent
-              opacity={hasOnlineDevices ? 0.5 : 0.12}
-              lineWidth={hasOnlineDevices ? 1.5 : 0.5}
+              opacity={isActive ? 0.5 : 0.12}
+              lineWidth={isActive ? 1.5 : 0.5}
             />
           </>
         );

@@ -378,3 +378,65 @@ export function useOperatorDevices(enabled: boolean) {
     refetchInterval: 15000,
   });
 }
+
+export interface OperatorMessageActivity {
+  hasRecentMessages: boolean;
+  recentMessageCount: number;
+  lastMessageAt: string | null;
+}
+
+/** Detect recent operator message activity with AEGIS agents (last 5 min) */
+export function useOperatorMessageActivity(enabled: boolean) {
+  return useQuery({
+    queryKey: ["operator-message-activity"],
+    queryFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { hasRecentMessages: false, recentMessageCount: 0, lastMessageAt: null } as OperatorMessageActivity;
+
+      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+      // Check for recent conversations the user has with any agent
+      const { data: conversations } = await supabase
+        .from("agent_conversations")
+        .select("id, updated_at")
+        .eq("user_id", user.id)
+        .gte("updated_at", fiveMinAgo)
+        .order("updated_at", { ascending: false })
+        .limit(5);
+
+      if (!conversations || conversations.length === 0) {
+        // Also check ai_assistant_messages as fallback (AEGIS chat)
+        const { data: assistantMsgs } = await supabase
+          .from("ai_assistant_messages")
+          .select("id, created_at")
+          .eq("user_id", user.id)
+          .gte("created_at", fiveMinAgo)
+          .order("created_at", { ascending: false })
+          .limit(5);
+
+        const count = assistantMsgs?.length || 0;
+        return {
+          hasRecentMessages: count > 0,
+          recentMessageCount: count,
+          lastMessageAt: assistantMsgs?.[0]?.created_at || null,
+        } as OperatorMessageActivity;
+      }
+
+      // Count recent messages in those conversations
+      const convIds = conversations.map((c) => c.id);
+      const { count } = await supabase
+        .from("agent_messages")
+        .select("id", { count: "exact", head: true })
+        .in("conversation_id", convIds)
+        .gte("created_at", fiveMinAgo);
+
+      return {
+        hasRecentMessages: true,
+        recentMessageCount: (count || 0) + conversations.length,
+        lastMessageAt: conversations[0]?.updated_at || null,
+      } as OperatorMessageActivity;
+    },
+    enabled,
+    refetchInterval: 10000,
+  });
+}
