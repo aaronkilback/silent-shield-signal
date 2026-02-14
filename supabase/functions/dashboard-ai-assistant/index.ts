@@ -5100,6 +5100,20 @@ The signal is now in the database with status 'triaged' and rules have been appl
         results.investigations = invData || [];
       }
 
+      // Query AI agents
+      if (query_type === 'agents' || query_type === 'comprehensive') {
+        let agentQ = supabaseClient.from('ai_agents').select('id, call_sign, codename, header_name, specialty, mission_scope, persona, interaction_style, is_active, is_client_facing, input_sources, output_types, avatar_color, created_at');
+        if (filters.keywords?.length) {
+          const kf = filters.keywords.map((k: string) => `call_sign.ilike.%${k}%,codename.ilike.%${k}%,specialty.ilike.%${k}%`).join(',');
+          agentQ = agentQ.or(kf);
+        }
+        if (filters.is_active !== undefined) {
+          agentQ = agentQ.eq('is_active', filters.is_active);
+        }
+        const { data: agentData } = await agentQ.limit(limit).order('created_at', { ascending: false });
+        results.agents = agentData || [];
+      }
+
       // Query knowledge base
       if (query_type === 'knowledge_base' || query_type === 'comprehensive') {
         let kbQ = supabaseClient.from('knowledge_base_articles').select('id, title, summary, content, category_id, tags, created_at');
@@ -5187,6 +5201,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
             knowledge_base_count: results.knowledge_base?.length || 0,
             monitoring_history_count: results.monitoring_history?.length || 0,
             travel_count: results.travel?.length || 0,
+            agents_count: results.agents?.length || 0,
           },
           filters_applied: filters,
           data: results
