@@ -81,6 +81,7 @@ export const Header = () => {
     { path: "/bug-reports", icon: Bug, label: "Bugs" },
     ...((isSuperAdmin || isAdmin) ? [{ path: "/user-management", icon: UserCog, label: "Users" }] : []),
     ...(isSuperAdmin ? [
+      { path: "/neural-constellation", icon: Brain, label: "Neural Map" },
       { path: "/super-admin", icon: Shield, label: "Super Admin" },
       { path: "/tenant-admin", icon: Building2, label: "Tenant Settings" },
     ] : []),
