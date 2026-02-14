@@ -38,9 +38,13 @@ Deno.serve(async (req) => {
       searchQuery += ' news events';
     }
 
-    // Add aliases for better coverage
+    // Add aliases for better coverage — but SKIP short aliases (<=4 chars)
+    // to prevent disambiguation failures (e.g., "CGL" matching game miniatures)
     if (entity.aliases && entity.aliases.length > 0) {
-      searchQuery += ` OR "${entity.aliases[0]}"`;
+      const usableAliases = entity.aliases.filter((a: string) => a.length > 4);
+      if (usableAliases.length > 0) {
+        searchQuery += ` OR "${usableAliases[0]}"`;
+      }
     }
 
     // Use Google Custom Search API
@@ -57,6 +61,8 @@ Deno.serve(async (req) => {
     searchUrl.searchParams.set('q', searchQuery);
     searchUrl.searchParams.set('num', '10');
     searchUrl.searchParams.set('sort', 'date');
+    // Restrict to last 30 days to prevent historical content from polluting the feed
+    searchUrl.searchParams.set('dateRestrict', 'm1');
 
     console.log(`Searching for: ${searchQuery}`);
 
@@ -78,6 +84,37 @@ Deno.serve(async (req) => {
     for (const item of searchData.items || []) {
       try {
         console.log(`Processing: ${item.link}`);
+
+        // ═══ RELEVANCE GATE ═══
+        // Verify the entity name actually appears in the result to prevent
+        // disambiguation failures (e.g., "CGL" matching unrelated content)
+        const resultText = `${item.title || ''} ${item.snippet || ''}`.toLowerCase();
+        const nameLower = entity.name.toLowerCase();
+        const nameWords = nameLower.split(' ').filter((w: string) => w.length > 3);
+        
+        // For short entity names (<=4 chars), require EXACT match in context
+        const isShortName = nameLower.length <= 4;
+        let isRelevant = false;
+        
+        if (isShortName) {
+          // Short names must appear as standalone words with surrounding context
+          const wordBoundaryPattern = new RegExp(`(^|[^a-z0-9])${nameLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i');
+          isRelevant = wordBoundaryPattern.test(resultText);
+          // Additional check: must also contain a contextual word from the entity description or type
+          if (isRelevant && entity.description) {
+            const contextWords = entity.description.toLowerCase().split(' ').filter((w: string) => w.length > 4);
+            const hasContext = contextWords.some((cw: string) => resultText.includes(cw));
+            if (!hasContext) isRelevant = false;
+          }
+        } else {
+          isRelevant = resultText.includes(nameLower) || 
+            nameWords.some((word: string) => resultText.includes(word));
+        }
+        
+        if (!isRelevant) {
+          console.log(`Skipping irrelevant result (no entity match): ${item.title?.substring(0, 60)}`);
+          continue;
+        }
 
         // Determine content type based on source
         let contentType = 'news_article';
@@ -102,7 +139,6 @@ Deno.serve(async (req) => {
 
         // Calculate relevance score based on title match
         const titleLower = (item.title || '').toLowerCase();
-        const nameLower = entity.name.toLowerCase();
         let relevanceScore = titleLower.includes(nameLower) ? 80 : 50;
         
         // Boost score for exact matches

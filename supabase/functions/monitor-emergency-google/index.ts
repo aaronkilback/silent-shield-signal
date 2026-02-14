@@ -8,7 +8,6 @@ const EMERGENCY_CONTENT_VALIDATORS = [
   /\bshots?\s+fired\b/i,
   /\barmed\s+(person|suspect|individual)\b/i,
   /\bbomb\s+threat\b/i,
-  /\bexplosion\b/i,
   /\bsuspicious\s+package\b/i,
   /\bhostage\b/i,
   /\bbarricade[d]?\b/i,
@@ -20,7 +19,7 @@ const EMERGENCY_CONTENT_VALIDATORS = [
   /\bchild\s+abduction\b/i,
   /\bevacuation\s+order\b/i,
   /\bcivil\s+emergency\b/i,
-  /\bterroris[tm]\b/i,
+  /\bterrorist\s+(attack|plot|threat|suspect)\b/i,  // Require "terrorist" + action context
   /\bradicalized\b/i,
   /\bschool\s+shoot/i,
   /\bmass\s+shooting\b/i,
@@ -29,6 +28,23 @@ const EMERGENCY_CONTENT_VALIDATORS = [
   /\bpolice\s+(respond|investigating|confirm)/i,
   /\bkilled\b.*\b(shoot|attack|stab)/i,
   /\bdead\b.*\b(shoot|attack|incident)/i,
+];
+
+// Commercial/product patterns that should NEVER be ingested as emergencies
+const COMMERCIAL_EXCLUSION_PATTERNS = [
+  /\b(shop|buy|price|store|sale|discount|order|cart|shipping)\b/i,
+  /\b(camera|cctv|surveillance|equipment|product|device)\b.*\b(explosion\s*proof|bulletproof|bullet\s*proof)\b/i,
+  /\b(explosion\s*proof|bulletproof|bullet\s*proof)\b.*\b(camera|cctv|surveillance|equipment|product|device)\b/i,
+  /\bcamera\s+\d{4}\b/i,  // Camera model numbers
+  /\bpromitel\b/i,
+  /\baxis\b.*\b[A-Z]{2,3}\d{3,4}\b/i, // AXIS model numbers
+  /\b(amazon|ebay|aliexpress|alibaba|walmart)\b/i,
+  /\bswampflix\b/i, // Entertainment site
+  /\bon\s+this\s+day\b/i, // Historical "on this day" content
+  /\bborn\s+(on|in)\s+\d{4}\b/i, // Biographical dates
+  /\bdied\s+(on|in)\s+\d{4}\b/i, // Biographical dates
+  /\b\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december),?\s+1[89]\d{2}\b/i, // Historical dates pre-2000
+  /\b(countess|duchess|baron|earl|marquess)\b/i, // Noble titles = historical content
 ];
 
 /**
@@ -147,6 +163,14 @@ Deno.serve(async (req) => {
           const hasEmergencyContent = EMERGENCY_CONTENT_VALIDATORS.some(pattern => pattern.test(fullText));
           if (!hasEmergencyContent) {
             console.log(`[EmergencyGoogle] ✗ Skipping non-emergency result: ${item.title.substring(0, 60)}`);
+            continue;
+          }
+
+          // ═══ COMMERCIAL/IRRELEVANT EXCLUSION GATE ═══
+          // Reject product listings, historical content, and entertainment
+          const isCommercialOrIrrelevant = COMMERCIAL_EXCLUSION_PATTERNS.some(pattern => pattern.test(fullText));
+          if (isCommercialOrIrrelevant) {
+            console.log(`[EmergencyGoogle] ✗ Excluded commercial/irrelevant: ${item.title.substring(0, 60)}`);
             continue;
           }
 
