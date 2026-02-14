@@ -15,11 +15,17 @@ import {
 } from '../_shared/social-media-parser.ts';
 
 // Activism and protest-related keywords to monitor
+// HIGH-SPECIFICITY keywords that indicate actionable intelligence
+// Generic terms like 'pipeline', 'LNG', 'protest' alone cause too many false positives
+// They match content about completely unrelated pipelines, LNG projects, and protests worldwide
 const ACTIVISM_KEYWORDS = [
-  'protest', 'pipeline', 'activist', 'demonstration', 'blockade',
-  'environmental', 'climate', 'indigenous rights', 'first nation',
-  'stand.earth', 'standearth', 'stop', 'oppose', 'rally', 'march',
-  'occupation', 'resistance', 'campaign', 'PRGT', 'LNG', 'Coastal GasLink', 'CGL'
+  'Coastal GasLink', 'CGL pipeline', 'PRGT', 'Wet\'suwet\'en', 'Gidimt\'en',
+  'Unist\'ot\'en', 'Petronas Canada', 'LNG Canada', 'Cedar LNG',
+  'Ksi Lisims', 'Prince Rupert Gas', 'TC Energy pipeline',
+  'stand.earth', 'standearth', 'Dogwood BC', 'Dogwood Initiative',
+  'BC Counter Info', 'Frack Free BC', 'pipeline blockade',
+  'pipeline sabotage', 'pipeline protest', 'LNG protest', 'LNG blockade',
+  'indigenous pipeline', 'first nation pipeline'
 ];
 
 // Custom error to signal rate limit bail-out

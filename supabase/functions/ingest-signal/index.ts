@@ -664,6 +664,95 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
     
     const signalTitle = generateTitle(classification.normalized_text || signalText);
     
+    // ===== AI RELEVANCE GATE: Fast LLM check for client-specific relevance =====
+    // This catches what keyword matching misses: geographic irrelevance, corporate PR,
+    // historical content, and tangentially-related signals.
+    if (clientId) {
+      try {
+        const { data: clientForGate } = await supabase
+          .from('clients')
+          .select('name, industry, locations, high_value_assets')
+          .eq('id', clientId)
+          .single();
+
+        if (clientForGate) {
+          const gateResult = await callAiGatewayJson({
+            model: 'google/gemini-2.5-flash-lite',
+            messages: [
+              {
+                role: 'system',
+                content: `You are a signal relevance filter for a corporate security intelligence platform. Your ONLY job is to determine if a signal is ACTIONABLE INTELLIGENCE worth showing to an analyst.
+
+REJECT signals that are:
+1. GEOGRAPHICALLY IRRELEVANT: About events/protests/incidents in regions unrelated to the client's operations (e.g., Paris attacks, Australian protests, Standing Rock when client operates in BC/Alberta)
+2. CORPORATE PR / POSITIVE CONTENT: The client's own press releases, social media promotions, sponsorship announcements, community goodwill posts
+3. HISTORICAL: Events from more than 6 months ago (old protests, historical incidents) with no current relevance
+4. TANGENTIALLY RELATED: Mentions a keyword (e.g., "pipeline", "LNG") but is about a completely different project, company, or context (e.g., Keystone XL when monitoring Coastal GasLink)
+5. LOW-VALUE NOISE: Generic environmental org "about us" pages, merch listings, unrelated entertainment, sports content
+6. NO THREAT/RISK VALUE: Content that describes no threat, risk, legal action, protest, sabotage, or operational concern
+
+ACCEPT signals that are:
+- Direct threats, protests, or sabotage targeting the client's specific assets
+- Legal/regulatory actions affecting the client's operations
+- Activist campaigns specifically targeting the client or their projects
+- Security incidents in the client's operational area
+- Supply chain or partner risks directly impacting the client
+
+Respond with JSON: {"relevant": true/false, "reason": "one sentence explanation"}`
+              },
+              {
+                role: 'user',
+                content: `CLIENT: ${clientForGate.name}
+INDUSTRY: ${clientForGate.industry || 'unknown'}
+LOCATIONS: ${(clientForGate.locations || []).join(', ')}
+KEY ASSETS: ${(clientForGate.high_value_assets || []).join(', ')}
+
+SIGNAL TO EVALUATE:
+${(classification.normalized_text || signalText).substring(0, 1500)}
+
+Is this signal actionable intelligence for this specific client?`
+              }
+            ],
+            functionName: 'ingest-signal-relevance-gate',
+            extraBody: { max_completion_tokens: 100 },
+          });
+
+          if (gateResult.data && gateResult.data.relevant === false) {
+            console.log(`[AI Relevance Gate] REJECTED: ${gateResult.data.reason}`);
+            
+            // Store the hash so it doesn't come back
+            const encoder2 = new TextEncoder();
+            const data2 = encoder2.encode(classification.normalized_text || signalText);
+            const hashBuffer2 = await crypto.subtle.digest('SHA-256', data2);
+            const hashArray2 = Array.from(new Uint8Array(hashBuffer2));
+            const rejectedHash2 = hashArray2.map((b: number) => b.toString(16).padStart(2, '0')).join('');
+            
+            await supabase.from('rejected_content_hashes').insert({
+              content_hash: rejectedHash2,
+              client_id: clientId,
+              reason: 'ai_relevance_gate',
+              original_signal_title: signalTitle.substring(0, 200)
+            }).then(() => {}).catch(() => {});
+
+            return new Response(
+              JSON.stringify({
+                status: 'rejected',
+                reason: 'ai_relevance_gate',
+                detail: gateResult.data.reason,
+                message: 'Signal rejected by AI relevance gate - not actionable intelligence for this client'
+              }),
+              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          } else {
+            console.log(`[AI Relevance Gate] ACCEPTED: ${gateResult.data?.reason || 'relevant'}`);
+          }
+        }
+      } catch (gateError) {
+        // Non-blocking - if the gate fails, let the signal through
+        console.error('[AI Relevance Gate] Error (non-blocking):', gateError);
+      }
+    }
+
     // ===== RELEVANCE SCORING: Use learned patterns to gate noise =====
     const severityNum = classification.severity === 'critical' ? 100 :
                         classification.severity === 'high' ? 75 :

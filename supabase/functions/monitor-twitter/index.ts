@@ -10,13 +10,17 @@ import {
   extractAuthorFromUrl 
 } from '../_shared/social-media-parser.ts';
 
-// Activism and threat-related keywords
+// HIGH-SPECIFICITY keywords — generic terms like 'pipeline' or 'protest' alone
+// match content about unrelated projects worldwide, causing massive false positives
 const ACTIVISM_KEYWORDS = [
-  'protest', 'pipeline', 'activist', 'demonstration', 'blockade',
-  'environmental', 'climate', 'indigenous rights', 'first nation',
-  'stop', 'oppose', 'rally', 'march', 'occupation', 'resistance',
-  'campaign', 'PRGT', 'LNG', 'Coastal GasLink', 'CGL', 'shutdown',
-  'strike', 'boycott', 'divest', 'fossil fuel', 'tar sands'
+  'Coastal GasLink', 'CGL pipeline', 'PRGT', 'Wet\'suwet\'en', 'Gidimt\'en',
+  'Unist\'ot\'en', 'Petronas Canada', 'LNG Canada', 'Cedar LNG',
+  'Ksi Lisims', 'Prince Rupert Gas', 'TC Energy pipeline',
+  'stand.earth', 'standearth', 'Dogwood BC', 'Dogwood Initiative',
+  'BC Counter Info', 'Frack Free BC', 'pipeline blockade',
+  'pipeline sabotage', 'pipeline protest', 'LNG protest', 'LNG blockade',
+  'indigenous pipeline', 'first nation pipeline',
+  'Shut Down Canada', 'land defender pipeline'
 ];
 
 Deno.serve(async (req) => {
