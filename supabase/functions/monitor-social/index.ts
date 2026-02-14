@@ -531,6 +531,8 @@ Deno.serve(async (req) => {
           const contentLower = content.toLowerCase();
           
           // Suppress "no results found" responses — Perplexity often returns verbose negatives
+          // NOTE: Check negative FIRST because Perplexity echoes back query keywords,
+          // causing hasThreatContent to be true even on empty results
           const negativeIndicators = [
             'no recent', 'no specific', 'no information about', 'no information regarding',
             'do not contain', 'does not contain', 'no relevant', 'no evidence of',
@@ -542,40 +544,53 @@ Deno.serve(async (req) => {
             'based on the search results provided, there is **no',
             'based on the provided search results, there is **no',
             'do not contain information about',
+            // Additional patterns that were leaking through
+            'i cannot identify', 'cannot identify any',
+            'i could not find', 'i did not find',
+            'there are no specific', 'there is no specific',
+            'no direct', 'no particular', 'not aware of any',
+            'search results contain information about', // echoed query context
+            'based on the available search results, i cannot',
+            'based on the provided search results, i cannot',
+            'no matching', 'no actionable',
           ];
           const isNegativeResult = negativeIndicators.some(phrase => contentLower.includes(phrase));
           
-          const hasThreatContent = [
-            ...SECURITY_KEYWORDS, ...ACTIVIST_KEYWORDS, ...PHYSICAL_THREAT_KEYWORDS
-          ].some(kw => includesKeyword(contentLower, kw));
-
-          if (hasThreatContent && content.length > 100 && !isNegativeResult) {
-            let category = 'social_media';
-            let severity = 'low';
-            if (SECURITY_KEYWORDS.some(kw => includesKeyword(contentLower, kw))) { category = 'cybersecurity'; severity = 'medium'; }
-            else if (PHYSICAL_THREAT_KEYWORDS.some(kw => includesKeyword(contentLower, kw))) { category = 'physical'; severity = 'high'; }
-            else if (ACTIVIST_KEYWORDS.some(kw => includesKeyword(contentLower, kw))) { category = 'reputation'; severity = 'medium'; }
-
-            const { error: signalError } = await supabase
-              .from('signals')
-              .insert({
-                client_id: client.id,
-                normalized_text: `Social Intelligence: ${content.substring(0, 300)}`,
-                category,
-                severity,
-                location: 'Social Media (Multi-Platform)',
-                raw_json: {
-                  platform: 'perplexity_sonar',
-                  source: 'multi_platform_search',
-                  citations: pData.citations || [],
-                  full_content: content.substring(0, 2000),
-                },
-                status: 'new',
-                confidence: 0.70
-              });
-            if (!signalError) { signalsCreated++; console.log(`Created Perplexity social signal for ${client.name}`); }
-          } else if (isNegativeResult) {
+          // If negative, suppress immediately — don't even check for threat keywords
+          // because Perplexity echoes back the query terms in negative responses
+          if (isNegativeResult) {
             console.log(`Suppressed negative-result signal for ${client.name} — no actionable intelligence found`);
+          } else {
+            const hasThreatContent = [
+              ...SECURITY_KEYWORDS, ...ACTIVIST_KEYWORDS, ...PHYSICAL_THREAT_KEYWORDS
+            ].some(kw => includesKeyword(contentLower, kw));
+
+            if (hasThreatContent && content.length > 100) {
+              let category = 'social_media';
+              let severity = 'low';
+              if (SECURITY_KEYWORDS.some(kw => includesKeyword(contentLower, kw))) { category = 'cybersecurity'; severity = 'medium'; }
+              else if (PHYSICAL_THREAT_KEYWORDS.some(kw => includesKeyword(contentLower, kw))) { category = 'physical'; severity = 'high'; }
+              else if (ACTIVIST_KEYWORDS.some(kw => includesKeyword(contentLower, kw))) { category = 'reputation'; severity = 'medium'; }
+
+              const { error: signalError } = await supabase
+                .from('signals')
+                .insert({
+                  client_id: client.id,
+                  normalized_text: `Social Intelligence: ${content.substring(0, 300)}`,
+                  category,
+                  severity,
+                  location: 'Social Media (Multi-Platform)',
+                  raw_json: {
+                    platform: 'perplexity_sonar',
+                    source: 'multi_platform_search',
+                    citations: pData.citations || [],
+                    full_content: content.substring(0, 2000),
+                  },
+                  status: 'new',
+                  confidence: 0.70
+                });
+              if (!signalError) { signalsCreated++; console.log(`Created Perplexity social signal for ${client.name}`); }
+            }
           }
         } catch (error) {
           console.error(`Perplexity error for ${client.name}:`, error);
