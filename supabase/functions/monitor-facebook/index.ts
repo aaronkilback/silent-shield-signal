@@ -10,6 +10,11 @@ import {
   extractAuthorFromUrl 
 } from '../_shared/social-media-parser.ts';
 
+// Custom error to signal rate limit bail-out
+class RateLimitError extends Error {
+  constructor() { super('Google API rate limited'); this.name = 'RateLimitError'; }
+}
+
 // Activism and protest-related keywords
 const ACTIVISM_KEYWORDS = [
   'protest', 'pipeline', 'activist', 'demonstration', 'blockade',
@@ -98,6 +103,10 @@ Deno.serve(async (req) => {
         console.log(`Processed Facebook mentions for ${client.name}`);
 
       } catch (error) {
+        if (error instanceof RateLimitError) {
+          console.log('Rate limited — stopping all Facebook searches early');
+          break;
+        }
         if (error instanceof Error && error.name === 'AbortError') {
           console.log(`Facebook search timeout for ${client.name}`);
         } else {
@@ -187,39 +196,44 @@ async function processSearch(
   try {
     console.log(`Facebook search: ${query.substring(0, 80)}...`);
     
-    const response = await fetch(
-      `https://www.google.com/search?q=${encodeURIComponent(query)}&num=10`,
-      {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
-        signal: controller.signal
-      }
-    ).finally(() => clearTimeout(timeout));
+    // Use Google Custom Search API instead of raw scraping
+    const apiKey = Deno.env.get('GOOGLE_SEARCH_API_KEY');
+    const engineId = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
+    
+    if (!apiKey || !engineId) {
+      console.log('Google Search API not configured, skipping');
+      return { signals: 0, media: 0 };
+    }
+
+    const apiUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${engineId}&q=${encodeURIComponent(query)}&num=5`;
+    
+    const response = await fetch(apiUrl, {
+      signal: controller.signal
+    }).finally(() => clearTimeout(timeout));
 
     if (!response.ok) {
-      console.log(`Facebook search failed: ${response.status}`);
-      if (response.status === 429) {
-        await new Promise(resolve => setTimeout(resolve, 30000));
+      const status = response.status;
+      console.log(`Facebook search failed: ${status}`);
+      if (status === 429) {
+        console.log('Google API rate limited — ending Facebook scan early');
+        // Signal caller to stop all further searches
+        throw new RateLimitError();
       }
       return { signals: 0, media: 0 };
     }
 
-    const html = await response.text();
-    const resultMatches = html.matchAll(/<div class="g"[^>]*>(.*?)<\/div>/gs);
+    const data = await response.json();
+    const items = data.items || [];
+    
+    // Process API results instead of scraping HTML
+    const resultTexts: { text: string; url: string | null }[] = items.map((item: any) => ({
+      text: `${item.title || ''} ${item.snippet || ''}`.trim(),
+      url: item.link || null,
+    }));
 
-    for (const match of Array.from(resultMatches).slice(0, 5)) {
-      const text = match[1]
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&[^;]+;/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      // Extract Facebook URL if present
-      const urlMatch = text.match(/facebook\.com\/[^\s"'<>]+/);
-      const facebookUrl = urlMatch ? `https://${urlMatch[0]}` : null;
+    for (const result of resultTexts.slice(0, 5)) {
+      const text = result.text;
+      const facebookUrl = result.url;
 
       // Skip duplicates
       if (facebookUrl && processedUrls.has(facebookUrl)) continue;
@@ -331,6 +345,9 @@ async function processSearch(
       }
     }
   } catch (error) {
+    if (error instanceof RateLimitError) {
+      throw error; // Propagate to caller
+    }
     if (error instanceof Error && error.name === 'AbortError') {
       console.log(`Facebook search timeout`);
     } else {

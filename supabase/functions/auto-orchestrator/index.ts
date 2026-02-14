@@ -321,6 +321,10 @@ async function runOSINTMonitorsInBackground(supabase: any) {
       
       const promises = batch.map(async (monitor) => {
         try {
+          // 60-second timeout per monitor to prevent gateway timeouts
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 60000);
+          
           const response = await fetch(
             `${Deno.env.get('SUPABASE_URL')}/functions/v1/${monitor}`,
             {
@@ -329,28 +333,39 @@ async function runOSINTMonitorsInBackground(supabase: any) {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
               },
-              body: JSON.stringify({})
+              body: JSON.stringify({}),
+              signal: controller.signal
             }
-          );
+          ).finally(() => clearTimeout(timeout));
 
           if (response.ok) {
             monitorsRun++;
             console.log(`Executed ${monitor}`);
           } else {
-            console.error(`Failed to execute ${monitor}: ${response.statusText}`);
-            await logError(new Error(`Monitor ${monitor} failed: ${response.statusText}`), {
-              functionName: 'auto-orchestrator',
-              severity: response.status === 429 ? 'warning' : 'error',
-              requestContext: { monitor, status: response.status },
-            });
+            const status = response.status;
+            // Silently handle rate limits — not a real error
+            if (status === 429) {
+              console.log(`${monitor}: rate limited (expected), skipping`);
+            } else {
+              console.error(`Failed to execute ${monitor}: ${response.statusText}`);
+              await logError(new Error(`Monitor ${monitor} failed: ${response.statusText}`), {
+                functionName: 'auto-orchestrator',
+                severity: 'warning',
+                requestContext: { monitor, status },
+              });
+            }
           }
         } catch (error) {
-          console.error(`Error running ${monitor}:`, error);
-          await logError(error, {
-            functionName: 'auto-orchestrator',
-            severity: 'error',
-            requestContext: { monitor },
-          });
+          if (error instanceof Error && error.name === 'AbortError') {
+            console.log(`${monitor}: timed out after 60s, skipping`);
+          } else {
+            console.error(`Error running ${monitor}:`, error);
+            await logError(error, {
+              functionName: 'auto-orchestrator',
+              severity: 'error',
+              requestContext: { monitor },
+            });
+          }
         }
       });
 

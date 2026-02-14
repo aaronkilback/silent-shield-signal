@@ -22,6 +22,11 @@ const ACTIVISM_KEYWORDS = [
   'occupation', 'resistance', 'campaign', 'PRGT', 'LNG', 'Coastal GasLink', 'CGL'
 ];
 
+// Custom error to signal rate limit bail-out
+class RateLimitError extends Error {
+  constructor() { super('Google API rate limited'); this.name = 'RateLimitError'; }
+}
+
 // Known activist organizations targeting energy sector
 const ACTIVIST_ORGANIZATIONS = [
   'Stand.earth', 'Greenpeace', 'Sierra Club', '350.org', 'Extinction Rebellion',
@@ -112,6 +117,10 @@ Deno.serve(async (req) => {
         console.log(`Processed Instagram mentions for ${client.name}`);
 
       } catch (error) {
+        if (error instanceof RateLimitError) {
+          console.log('Rate limited — stopping all Instagram searches early');
+          break;
+        }
         if (error instanceof Error && error.name === 'AbortError') {
           console.log(`Instagram search timeout for ${client.name}`);
         } else {
@@ -214,37 +223,42 @@ async function processSearch(
   try {
     console.log(`Instagram search: ${query.substring(0, 80)}...`);
     
-    const response = await fetch(
-      `https://www.google.com/search?q=${encodeURIComponent(query)}&num=15`,
-      {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
-        signal: controller.signal
-      }
-    ).finally(() => clearTimeout(timeout));
+    // Use Google Custom Search API instead of raw scraping
+    const apiKey = Deno.env.get('GOOGLE_SEARCH_API_KEY');
+    const engineId = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
+    
+    if (!apiKey || !engineId) {
+      console.log('Google Search API not configured, skipping');
+      return;
+    }
+
+    const apiUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${engineId}&q=${encodeURIComponent(query)}&num=5`;
+    
+    const response = await fetch(apiUrl, {
+      signal: controller.signal
+    }).finally(() => clearTimeout(timeout));
 
     if (!response.ok) {
-      console.log(`Instagram search failed: ${response.status}`);
-      if (response.status === 429) {
-        console.log('Rate limited, waiting longer...');
-        await new Promise(resolve => setTimeout(resolve, 30000));
+      const status = response.status;
+      console.log(`Instagram search failed: ${status}`);
+      if (status === 429) {
+        console.log('Google API rate limited — ending Instagram scan early');
+        throw new RateLimitError();
       }
       return;
     }
 
-    const html = await response.text();
+    const data = await response.json();
+    const items = data.items || [];
 
-    // Extract all Instagram URLs from search results
+    // Extract Instagram URLs from API results
     const instagramUrls: string[] = [];
-    const urlPattern = /https?:\/\/(?:www\.)?instagram\.com\/(?:p|reel|tv)\/([a-zA-Z0-9_-]+)/g;
-    let urlMatch;
-    while ((urlMatch = urlPattern.exec(html)) !== null) {
-      const fullUrl = urlMatch[0];
-      if (!instagramUrls.includes(fullUrl) && !processedUrls.has(fullUrl)) {
-        instagramUrls.push(fullUrl);
+    for (const item of items) {
+      const link = item.link || '';
+      if (link.match(/instagram\.com\/(p|reel|tv)\//)) {
+        if (!instagramUrls.includes(link) && !processedUrls.has(link)) {
+          instagramUrls.push(link);
+        }
       }
     }
 
@@ -255,8 +269,11 @@ async function processSearch(
       processedUrls.add(instagramUrl);
       
       try {
-        // Extract content from URL context in search results
-        const urlContext = extractUrlContext(html, instagramUrl);
+        // Extract content from API result context
+        const matchingItem = items.find((item: any) => item.link === instagramUrl);
+        const urlContext = matchingItem 
+          ? `${matchingItem.title || ''} ${matchingItem.snippet || ''}`.trim()
+          : '';
         
         if (!urlContext || urlContext.length < 30) {
           console.log(`No content extracted from ${instagramUrl}`);
@@ -365,6 +382,9 @@ async function processSearch(
     }
 
   } catch (error) {
+    if (error instanceof RateLimitError) {
+      throw error; // Propagate to caller
+    }
     if (error instanceof Error && error.name === 'AbortError') {
       console.log(`Instagram search timeout`);
     } else {
@@ -373,21 +393,4 @@ async function processSearch(
   }
 }
 
-function extractUrlContext(html: string, url: string): string {
-  // Find text near the URL in search results
-  const urlIndex = html.indexOf(url);
-  if (urlIndex === -1) return '';
-  
-  // Get surrounding context
-  const start = Math.max(0, urlIndex - 500);
-  const end = Math.min(html.length, urlIndex + 500);
-  const context = html.substring(start, end);
-  
-  // Clean HTML
-  return context
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&[^;]+;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .substring(0, 500);
-}
+// extractUrlContext removed — API returns structured data directly
