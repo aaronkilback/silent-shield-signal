@@ -1226,6 +1226,7 @@ function EarthGlobe({ position, signalLocations = [] }: {
   position: [number, number, number];
   signalLocations?: string[];
 }) {
+  const earthGroupRef = useRef<THREE.Group>(null);
   const earthRef = useRef<THREE.Mesh>(null);
   const cloudsRef = useRef<THREE.Mesh>(null);
   const nightRef = useRef<THREE.Mesh>(null);
@@ -1244,9 +1245,8 @@ function EarthGlobe({ position, signalLocations = [] }: {
   useFrame((_, delta) => {
     // Rotate Earth at realistic-feeling speed (1 rotation ~= 4 minutes for visual interest)
     const rotSpeed = delta * 0.025;
-    if (earthRef.current) earthRef.current.rotation.y += rotSpeed;
-    if (cloudsRef.current) cloudsRef.current.rotation.y += rotSpeed * 1.15;
-    if (nightRef.current) nightRef.current.rotation.y += rotSpeed;
+    if (earthGroupRef.current) earthGroupRef.current.rotation.y += rotSpeed;
+    if (cloudsRef.current) cloudsRef.current.rotation.y += rotSpeed * 0.15; // clouds drift slightly faster than earth
 
     // Update sun position in real-time
     if (sunLightRef.current) {
@@ -1301,30 +1301,37 @@ function EarthGlobe({ position, signalLocations = [] }: {
       {/* Very dim fill on the dark side — simulates earthshine/ambient space light */}
       <pointLight color="#112233" intensity={0.3} distance={40} position={[-initialSunDir.x * 20, -initialSunDir.y * 20, -initialSunDir.z * 20]} />
 
-      {/* Earth — day side with specular oceans */}
-      <mesh ref={earthRef} rotation={[axialTilt, 0, 0]}>
-        <sphereGeometry args={[earthRadius, 64, 64]} />
-        <meshPhongMaterial
-          map={earthMap}
-          bumpMap={bumpMap}
-          bumpScale={0.5}
-          specularMap={specularMap}
-          specular={new THREE.Color('#556677')}
-          shininess={25}
-        />
-      </mesh>
-      {/* Night side city lights — additive blending makes them glow only in shadow */}
-      <mesh ref={nightRef} rotation={[axialTilt, 0, 0]}>
-        <sphereGeometry args={[earthRadius * 1.001, 64, 64]} />
-        <meshBasicMaterial
-          map={nightMap}
-          transparent
-          opacity={0.7}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-        />
-      </mesh>
-      {/* Cloud layer — lit by sun, casts subtle shadow feeling */}
+      {/* Rotating Earth group — earth, night lights, and signal pins all rotate together */}
+      <group ref={earthGroupRef} rotation={[axialTilt, 0, 0]}>
+        {/* Earth — day side with specular oceans */}
+        <mesh ref={earthRef}>
+          <sphereGeometry args={[earthRadius, 64, 64]} />
+          <meshPhongMaterial
+            map={earthMap}
+            bumpMap={bumpMap}
+            bumpScale={0.5}
+            specularMap={specularMap}
+            specular={new THREE.Color('#556677')}
+            shininess={25}
+          />
+        </mesh>
+        {/* Night side city lights — additive blending makes them glow only in shadow */}
+        <mesh ref={nightRef}>
+          <sphereGeometry args={[earthRadius * 1.001, 64, 64]} />
+          <meshBasicMaterial
+            map={nightMap}
+            transparent
+            opacity={0.7}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+          />
+        </mesh>
+        {/* Signal origin pins — rotate with the Earth */}
+        {pins.map((pin, i) => (
+          <SignalPin key={i} position={pin.pos} color={pin.color} />
+        ))}
+      </group>
+      {/* Cloud layer — rotates slightly differently for visual depth */}
       <mesh ref={cloudsRef} rotation={[axialTilt, 0, 0]}>
         <sphereGeometry args={[earthRadius * 1.008, 48, 48]} />
         <meshPhongMaterial
@@ -1339,13 +1346,6 @@ function EarthGlobe({ position, signalLocations = [] }: {
         <sphereGeometry args={[earthRadius * 1.03, 48, 48]} />
         <meshBasicMaterial color="#4499ff" transparent opacity={0.04} side={THREE.BackSide} />
       </mesh>
-
-      {/* Signal origin pins */}
-      <group rotation={[axialTilt, 0, 0]}>
-        {pins.map((pin, i) => (
-          <SignalPin key={i} position={pin.pos} color={pin.color} />
-        ))}
-      </group>
     </group>
   );
 }
