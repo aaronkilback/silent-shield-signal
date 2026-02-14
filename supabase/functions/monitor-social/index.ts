@@ -529,11 +529,27 @@ Deno.serve(async (req) => {
 
           // Only create signal if content indicates actual threats/mentions
           const contentLower = content.toLowerCase();
+          
+          // Suppress "no results found" responses — Perplexity often returns verbose negatives
+          const negativeIndicators = [
+            'no recent', 'no specific', 'no information about', 'no information regarding',
+            'do not contain', 'does not contain', 'no relevant', 'no evidence of',
+            'no reports of', 'no mentions of', 'no data about', 'no significant',
+            'could not find', 'unable to find', 'nothing found', 'no results',
+            'there is no information', 'there are no reports', 'no news about',
+            'no public discussions', 'no social media', 'not found any',
+            'no threats', 'no incidents', 'no breaches', 'no protests',
+            'based on the search results provided, there is **no',
+            'based on the provided search results, there is **no',
+            'do not contain information about',
+          ];
+          const isNegativeResult = negativeIndicators.some(phrase => contentLower.includes(phrase));
+          
           const hasThreatContent = [
             ...SECURITY_KEYWORDS, ...ACTIVIST_KEYWORDS, ...PHYSICAL_THREAT_KEYWORDS
           ].some(kw => includesKeyword(contentLower, kw));
 
-          if (hasThreatContent && content.length > 100 && !contentLower.includes('no recent') && !contentLower.includes('no specific')) {
+          if (hasThreatContent && content.length > 100 && !isNegativeResult) {
             let category = 'social_media';
             let severity = 'low';
             if (SECURITY_KEYWORDS.some(kw => includesKeyword(contentLower, kw))) { category = 'cybersecurity'; severity = 'medium'; }
@@ -558,6 +574,8 @@ Deno.serve(async (req) => {
                 confidence: 0.70
               });
             if (!signalError) { signalsCreated++; console.log(`Created Perplexity social signal for ${client.name}`); }
+          } else if (isNegativeResult) {
+            console.log(`Suppressed negative-result signal for ${client.name} — no actionable intelligence found`);
           }
         } catch (error) {
           console.error(`Perplexity error for ${client.name}:`, error);
