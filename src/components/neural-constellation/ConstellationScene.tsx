@@ -134,6 +134,122 @@ function PerformanceHalo({ position, activityScore, color, size }: {
   );
 }
 
+// AEGIS Command Hub — unique central node with orbital rings
+function AegisCommandHub({ agent, onClick, activityScore = 0, onHover, onUnhover }: {
+  agent: AgentNode;
+  onClick?: () => void;
+  activityScore?: number;
+  onHover?: (agent: AgentNode) => void;
+  onUnhover?: () => void;
+}) {
+  const coreRef = useRef<THREE.Mesh>(null);
+  const ring1Ref = useRef<THREE.Mesh>(null);
+  const ring2Ref = useRef<THREE.Mesh>(null);
+  const ring3Ref = useRef<THREE.Mesh>(null);
+  const glowRef = useRef<THREE.Mesh>(null);
+  const pulseRef = useRef(0);
+  const [hovered, setHovered] = useState(false);
+
+  const color = new THREE.Color("#f59e0b");
+  const size = 0.7;
+
+  useFrame((_, delta) => {
+    pulseRef.current += delta * 2.0;
+    const pulse = Math.sin(pulseRef.current);
+
+    if (coreRef.current) {
+      coreRef.current.scale.setScalar(1 + pulse * 0.06);
+    }
+    if (ring1Ref.current) {
+      ring1Ref.current.rotation.x += delta * 0.4;
+      ring1Ref.current.rotation.z += delta * 0.15;
+    }
+    if (ring2Ref.current) {
+      ring2Ref.current.rotation.y += delta * 0.3;
+      ring2Ref.current.rotation.x += delta * 0.1;
+    }
+    if (ring3Ref.current) {
+      ring3Ref.current.rotation.z += delta * 0.5;
+      ring3Ref.current.rotation.y += delta * 0.2;
+    }
+    if (glowRef.current) {
+      glowRef.current.scale.setScalar(4.0 + pulse * 0.6);
+      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.12 + pulse * 0.04;
+    }
+  });
+
+  const handlePointerOver = useCallback(() => {
+    setHovered(true);
+    onHover?.(agent);
+    document.body.style.cursor = "pointer";
+  }, [agent, onHover]);
+
+  const handlePointerOut = useCallback(() => {
+    setHovered(false);
+    onUnhover?.();
+    document.body.style.cursor = "auto";
+  }, [onUnhover]);
+
+  return (
+    <group position={agent.position}>
+      {/* Outer detection sphere for interaction */}
+      <mesh onClick={onClick} onPointerOver={handlePointerOver} onPointerOut={handlePointerOut}>
+        <sphereGeometry args={[2.5, 12, 12]} />
+        <meshBasicMaterial transparent opacity={0} />
+      </mesh>
+      {/* Ambient glow */}
+      <mesh ref={glowRef}>
+        <sphereGeometry args={[size, 16, 16]} />
+        <meshBasicMaterial color="#f59e0b" transparent opacity={0.12} />
+      </mesh>
+      {/* Core sphere */}
+      <mesh ref={coreRef}>
+        <sphereGeometry args={[size, 32, 32]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={1.8}
+          roughness={0.1}
+          metalness={0.9}
+        />
+      </mesh>
+      {/* Orbital ring 1 — equatorial */}
+      <mesh ref={ring1Ref}>
+        <torusGeometry args={[1.4, 0.025, 8, 64]} />
+        <meshBasicMaterial color="#f59e0b" transparent opacity={0.5} />
+      </mesh>
+      {/* Orbital ring 2 — tilted */}
+      <mesh ref={ring2Ref} rotation={[Math.PI / 3, 0, Math.PI / 6]}>
+        <torusGeometry args={[1.8, 0.018, 8, 64]} />
+        <meshBasicMaterial color="#fbbf24" transparent opacity={0.3} />
+      </mesh>
+      {/* Orbital ring 3 — opposite tilt */}
+      <mesh ref={ring3Ref} rotation={[-Math.PI / 4, Math.PI / 5, 0]}>
+        <torusGeometry args={[2.2, 0.012, 8, 64]} />
+        <meshBasicMaterial color="#d97706" transparent opacity={0.2} />
+      </mesh>
+      {/* Strong point light — AEGIS illuminates the constellation */}
+      <pointLight color="#f59e0b" intensity={3.0} distance={25} />
+      <pointLight color="#fbbf24" intensity={1.0} distance={15} />
+      {/* Hover tooltip */}
+      {hovered && (
+        <Html center distanceFactor={18} style={{ pointerEvents: "none" }}>
+          <div className="bg-card/95 backdrop-blur-xl border border-amber-500/40 rounded-lg px-4 py-3 min-w-[200px] shadow-2xl" style={{ transform: "translateY(-50px)" }}>
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
+              <div className="text-sm font-bold text-amber-400 tracking-widest">AEGIS-CMD</div>
+            </div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">Primary Command AI • Orchestrator</div>
+            <div className="text-[10px] text-amber-400/70 mt-1.5 border-t border-amber-500/20 pt-1.5">
+              All agent communications route through AEGIS
+            </div>
+          </div>
+        </Html>
+      )}
+    </group>
+  );
+}
+
 // Agent node with activity-driven pulse speed + hover tooltip
 function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, onUnhover }: {
   agent: AgentNode;
@@ -743,8 +859,20 @@ export function ConstellationScene({
         );
       })}
 
-      {/* Agent nodes */}
-      {visibleAgents.map((agent) => (
+      {/* AEGIS Command Hub — unique central node */}
+      {visibleAgents.filter((a) => a.callSign === "AEGIS-CMD").map((agent) => (
+        <AegisCommandHub
+          key={agent.id}
+          agent={agent}
+          onClick={() => handleClick(agent)}
+          activityScore={activityMap.get(agent.callSign) || 0}
+          onHover={setHoveredAgent}
+          onUnhover={() => setHoveredAgent(null)}
+        />
+      ))}
+
+      {/* Agent nodes (non-AEGIS) */}
+      {visibleAgents.filter((a) => a.callSign !== "AEGIS-CMD").map((agent) => (
         <AgentSphere
           key={agent.id}
           agent={agent}

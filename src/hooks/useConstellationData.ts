@@ -49,64 +49,101 @@ export interface KnowledgeGraphEdge {
   createdAt: string;
 }
 
-/** Fetch real inter-agent communication links from conversation data */
+/** Fetch real inter-agent communication links by tracing shared conversations and debate co-participation */
 export function useAgentCommLinks(enabled: boolean) {
   return useQuery({
     queryKey: ["agent-comm-links"],
     queryFn: async () => {
-      const { data: conversations, error } = await supabase
-        .from("agent_conversations")
-        .select("agent_id, created_at, updated_at")
-        .order("updated_at", { ascending: false })
-        .limit(100);
-
-      if (error) throw error;
-
       const { data: agents } = await supabase
         .from("ai_agents")
         .select("id, call_sign")
         .eq("is_active", true);
 
-      const agentMap = new Map(agents?.map((a) => [a.id, a.call_sign]) || []);
+      if (!agents) return [];
+      const agentMap = new Map(agents.map((a) => [a.id, a.call_sign]));
+      const callSigns = new Set(agents.map((a) => a.call_sign));
 
-      const { data: msgCounts } = await supabase
-        .from("agent_messages")
-        .select("conversation_id, role, created_at")
+      // --- Source 1: Debate co-participation (strongest signal of real interaction) ---
+      const { data: debates } = await supabase
+        .from("agent_debate_records")
+        .select("participating_agents, created_at")
         .order("created_at", { ascending: false })
-        .limit(500);
+        .limit(50);
 
-      const agentActivity = new Map<string, { msgCount: number; lastActive: string }>();
-      const convAgentMap = new Map<string, string>();
+      const pairCounts = new Map<string, { count: number; lastActive: string }>();
+      const addPair = (a: string, b: string, date: string) => {
+        if (!callSigns.has(a) || !callSigns.has(b)) return;
+        const key = [a, b].sort().join("|");
+        const existing = pairCounts.get(key) || { count: 0, lastActive: date };
+        existing.count += 1;
+        if (date > existing.lastActive) existing.lastActive = date;
+        pairCounts.set(key, existing);
+      };
 
-      conversations?.forEach((c) => {
-        const callSign = agentMap.get(c.agent_id);
-        if (callSign) {
-          convAgentMap.set(c.agent_id, callSign);
-          const existing = agentActivity.get(callSign) || { msgCount: 0, lastActive: c.updated_at };
-          existing.msgCount += 1;
-          if (c.updated_at > existing.lastActive) existing.lastActive = c.updated_at;
-          agentActivity.set(callSign, existing);
+      debates?.forEach((d) => {
+        const participants = d.participating_agents || [];
+        for (let i = 0; i < participants.length; i++) {
+          for (let j = i + 1; j < participants.length; j++) {
+            addPair(participants[i], participants[j], d.created_at);
+          }
         }
       });
 
-      const activeAgents = Array.from(agentActivity.entries())
-        .sort((a, b) => b[1].msgCount - a[1].msgCount);
+      // --- Source 2: Agents that share conversations with the same user (collaboration proxy) ---
+      const { data: conversations } = await supabase
+        .from("agent_conversations")
+        .select("agent_id, user_id, updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(200);
 
-      const links: AgentCommLink[] = [];
-      for (let i = 0; i < activeAgents.length; i++) {
-        for (let j = i + 1; j < Math.min(activeAgents.length, i + 3); j++) {
-          links.push({
-            sourceCallSign: activeAgents[i][0],
-            targetCallSign: activeAgents[j][0],
-            messageCount: activeAgents[i][1].msgCount + activeAgents[j][1].msgCount,
-            lastActivity: activeAgents[i][1].lastActive > activeAgents[j][1].lastActive
-              ? activeAgents[i][1].lastActive
-              : activeAgents[j][1].lastActive,
-          });
+      // Group by user_id to find agents working for the same user
+      const userAgents = new Map<string, { callSign: string; lastActive: string }[]>();
+      conversations?.forEach((c) => {
+        const callSign = agentMap.get(c.agent_id);
+        if (!callSign) return;
+        const list = userAgents.get(c.user_id) || [];
+        if (!list.some((e) => e.callSign === callSign)) {
+          list.push({ callSign, lastActive: c.updated_at });
         }
+        userAgents.set(c.user_id, list);
+      });
+
+      // Agents serving the same user have an implicit comm link
+      userAgents.forEach((agentList) => {
+        for (let i = 0; i < agentList.length; i++) {
+          for (let j = i + 1; j < agentList.length; j++) {
+            addPair(agentList[i].callSign, agentList[j].callSign,
+              agentList[i].lastActive > agentList[j].lastActive ? agentList[i].lastActive : agentList[j].lastActive);
+          }
+        }
+      });
+
+      // --- Source 3: AEGIS-CMD connects to every active agent (it's the orchestrator) ---
+      const aegisCallSign = "AEGIS-CMD";
+      if (callSigns.has(aegisCallSign)) {
+        callSigns.forEach((cs) => {
+          if (cs !== aegisCallSign) {
+            const key = [aegisCallSign, cs].sort().join("|");
+            if (!pairCounts.has(key)) {
+              pairCounts.set(key, { count: 1, lastActive: new Date().toISOString() });
+            }
+          }
+        });
       }
 
-      return links;
+      // Convert to links
+      const links: AgentCommLink[] = [];
+      pairCounts.forEach((val, key) => {
+        const [a, b] = key.split("|");
+        links.push({
+          sourceCallSign: a,
+          targetCallSign: b,
+          messageCount: val.count,
+          lastActivity: val.lastActive,
+        });
+      });
+
+      return links.sort((a, b) => b.messageCount - a.messageCount);
     },
     enabled,
     refetchInterval: 30000,
