@@ -1217,7 +1217,7 @@ function EarthGlobe({ position, signalLocations = [] }: {
 
     // Update sun position in real-time
     const sunDir = getSunDirection();
-    const sunDist = 60;
+    const sunDist = 500;
     const sunPos = [sunDir.x * sunDist, sunDir.y * sunDist, sunDir.z * sunDist];
     if (sunLightRef.current) {
       sunLightRef.current.position.set(sunPos[0], sunPos[1], sunPos[2]);
@@ -1260,35 +1260,35 @@ function EarthGlobe({ position, signalLocations = [] }: {
       {/* Real-time sunlight — tracks actual sun position */}
       <directionalLight
         ref={sunLightRef}
-        position={[initialSunDir.x * 60, initialSunDir.y * 60, initialSunDir.z * 60]}
+        position={[initialSunDir.x * 500, initialSunDir.y * 500, initialSunDir.z * 500]}
         intensity={3.0}
         color="#fffaf0"
       />
-      {/* Very dim fill on the dark side — simulates earthshine/ambient space light */}
+      {/* Very dim fill on the dark side */}
       <pointLight color="#112233" intensity={0.3} distance={40} position={[-initialSunDir.x * 20, -initialSunDir.y * 20, -initialSunDir.z * 20]} />
 
-      {/* Realistic Sun body */}
-      <group ref={sunMeshRef} position={[initialSunDir.x * 60, initialSunDir.y * 60, initialSunDir.z * 60]}>
+      {/* Realistic Sun body — distant and large */}
+      <group ref={sunMeshRef} position={[initialSunDir.x * 500, initialSunDir.y * 500, initialSunDir.z * 500]}>
         <mesh>
-          <sphereGeometry args={[4, 32, 32]} />
+          <sphereGeometry args={[50, 48, 48]} />
           <meshBasicMaterial color="#fff8e0" />
         </mesh>
         {/* Inner corona */}
         <mesh>
-          <sphereGeometry args={[5.5, 32, 32]} />
-          <meshBasicMaterial color="#ffee88" transparent opacity={0.15} side={THREE.BackSide} />
+          <sphereGeometry args={[58, 32, 32]} />
+          <meshBasicMaterial color="#ffee88" transparent opacity={0.12} side={THREE.BackSide} />
         </mesh>
         {/* Outer corona */}
         <mesh>
-          <sphereGeometry args={[8, 24, 24]} />
-          <meshBasicMaterial color="#ffdd66" transparent opacity={0.06} side={THREE.BackSide} />
+          <sphereGeometry args={[70, 24, 24]} />
+          <meshBasicMaterial color="#ffdd66" transparent opacity={0.05} side={THREE.BackSide} />
         </mesh>
-        {/* Warm glow */}
+        {/* Distant glow haze */}
         <mesh>
-          <sphereGeometry args={[12, 16, 16]} />
-          <meshBasicMaterial color="#ffcc44" transparent opacity={0.025} side={THREE.BackSide} />
+          <sphereGeometry args={[90, 16, 16]} />
+          <meshBasicMaterial color="#ffcc44" transparent opacity={0.02} side={THREE.BackSide} />
         </mesh>
-        <pointLight color="#fff8e0" intensity={5} distance={120} />
+        <pointLight color="#fff8e0" intensity={8} distance={600} />
       </group>
 
       {/* Rotating Earth group — earth, night lights, and signal pins all rotate together */}
@@ -1549,7 +1549,7 @@ export function ConstellationScene({
           enablePan
           enableZoom
           minDistance={1}
-          maxDistance={120}
+          maxDistance={600}
           autoRotate={cameraView === "constellation"}
           autoRotateSpeed={0.2}
           dampingFactor={0.05}
