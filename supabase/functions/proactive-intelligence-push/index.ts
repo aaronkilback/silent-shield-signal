@@ -7,10 +7,10 @@
  * 
  * Detectors:
  *  1. Signal surge — unusual spike in signal volume
- *  2. Emerging threat cluster — related signals converging rapidly
- *  3. Unattended high-risk — critical items with no human action
+ *  2. Unattended high-risk — critical items with no human action
+ *  3. Risk posture shift — significant change in overall risk score
  *  4. Cross-client pattern — same threat across multiple clients
- *  5. Risk posture shift — significant change in overall risk score
+ *  5. High-probability escalation queue
  */
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
@@ -18,8 +18,8 @@ import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { getCriticalDateContext } from "../_shared/anti-hallucination.ts";
 
 const AEGIS_AGENT_ID = '894e87b8-039a-4f6f-9966-85f932ee7a05';
-const COOLDOWN_KEY = 'proactive_intelligence_last_push';
 const MIN_PUSH_INTERVAL_MS = 10 * 60 * 1000; // 10 min between pushes per user
+const RISK_BASELINE_FALLBACK = 50; // When no previous scan exists, assume moderate baseline
 
 interface Insight {
   type: string;
@@ -50,9 +50,7 @@ Deno.serve(async (req) => {
       { data: signals24h },
       { data: openIncidents },
       { data: highRiskScores },
-      { data: recentClusters },
-      { data: latestRiskScan },
-      { data: previousRiskScan },
+      { data: latestRiskScans },
       { data: activeUsers },
     ] = await Promise.all([
       supabase.from('signals').select('id, category, severity, normalized_text, entity_tags, client_id, created_at')
@@ -63,13 +61,10 @@ Deno.serve(async (req) => {
         .eq('status', 'open'),
       supabase.from('predictive_incident_scores').select('signal_id, escalation_probability, predicted_severity')
         .gte('escalation_probability', 0.65).gte('scored_at', cutoff4h),
-      supabase.from('autonomous_scan_results').select('findings, risk_score, created_at, scan_type')
-        .eq('scan_type', 'threat_cluster').gte('created_at', cutoff4h)
-        .order('created_at', { ascending: false }).limit(5),
+      // Get last 2 risk scans for delta comparison
       supabase.from('autonomous_scan_results').select('risk_score, created_at')
-        .order('created_at', { ascending: false }).limit(1),
-      supabase.from('autonomous_scan_results').select('risk_score, created_at')
-        .order('created_at', { ascending: false }).range(1, 1),
+        .not('risk_score', 'is', null)
+        .order('created_at', { ascending: false }).limit(2),
       // Get all users with analyst/admin roles who have proactive enabled
       supabase.from('user_roles').select('user_id, role')
         .in('role', ['admin', 'super_admin', 'analyst']),
@@ -130,19 +125,25 @@ Deno.serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //  DETECT 3: Risk Posture Shift
+    //  DETECT 3: Risk Posture Shift (with safe baseline)
     // ═══════════════════════════════════════════════════════════════════
-    const currentRisk = latestRiskScan?.[0]?.risk_score ?? 0;
-    const previousRisk = previousRiskScan?.[0]?.risk_score ?? 0;
-    const riskDelta = currentRisk - previousRisk;
+    const scans = latestRiskScans || [];
+    // Only fire if we have at least 2 data points to compare
+    if (scans.length >= 2) {
+      const currentRisk = scans[0]?.risk_score ?? RISK_BASELINE_FALLBACK;
+      const previousRisk = scans[1]?.risk_score ?? RISK_BASELINE_FALLBACK;
+      const riskDelta = currentRisk - previousRisk;
 
-    if (Math.abs(riskDelta) >= 15) {
-      insights.push({
-        type: 'risk_posture_shift',
-        priority: riskDelta >= 25 ? 'urgent' : 'high',
-        headline: `Risk posture ${riskDelta > 0 ? 'increased' : 'decreased'} by ${Math.abs(riskDelta)} points (now ${currentRisk}/100)`,
-        details: { currentRisk, previousRisk, delta: riskDelta },
-      });
+      if (Math.abs(riskDelta) >= 15) {
+        insights.push({
+          type: 'risk_posture_shift',
+          priority: riskDelta >= 25 ? 'urgent' : 'high',
+          headline: `Risk posture ${riskDelta > 0 ? 'increased' : 'decreased'} by ${Math.abs(riskDelta)} points (now ${currentRisk}/100)`,
+          details: { currentRisk, previousRisk, delta: riskDelta },
+        });
+      }
+    } else {
+      console.log('[ProactiveIntel] Skipping risk posture check — insufficient historical data (need 2+ scans)');
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -203,17 +204,23 @@ Deno.serve(async (req) => {
       messages: [
         {
           role: 'system',
-          content: `You are AEGIS, a senior intelligence officer delivering a proactive situational update. Write a concise push notification message (80-150 words) that:
-1. Opens with the single most critical finding
-2. Provides context on what it means operationally
-3. Ends with a specific recommended action
-4. Uses measured, professional tone — no alarmism
-5. Current date: ${dateContext.currentDateISO}
-Never use markdown. Write plain text suitable for a notification. Do not use bullet points.`,
+          content: `You are AEGIS, a senior intelligence officer delivering a routine situational update via short push notification. 
+
+TONE RULES (MANDATORY):
+- Measured, calm, professional. You are informing, not alarming.
+- NEVER use phrases like "critical compromise", "unprecedented", "severe consequences", "mandatory", "failure to act", "shattered", or any language implying imminent disaster.
+- NEVER claim systems are "compromised" or "under attack" unless there is explicit evidence of an active intrusion.
+- Unassigned incidents are a staffing/workflow gap, NOT a security breach. Frame them as operational items needing attention.
+- Risk scores are analytical indicators, not emergency sirens. A score of 80/100 means "elevated monitoring warranted", not "the building is on fire".
+- Do NOT invent contingency protocols, threat levels, or emergency procedures.
+- Write as if briefing a calm executive over coffee, not sounding a battle alarm.
+
+FORMAT: 60-120 words of plain text. No markdown, no bullet points, no special characters. One short paragraph.
+Current date: ${dateContext.currentDateISO}`,
         },
         {
           role: 'user',
-          content: `Generate a proactive intelligence push based on these detected patterns:\n\n${JSON.stringify(topInsights, null, 2)}`,
+          content: `Generate a calm, measured situational update based on these patterns:\n\n${JSON.stringify(topInsights, null, 2)}`,
         },
       ],
     });
@@ -223,6 +230,7 @@ Never use markdown. Write plain text suitable for a notification. Do not use bul
 
     // ═══════════════════════════════════════════════════════════════════
     //  DELIVER: Push to eligible users via agent_pending_messages
+    //  Dedup: ONE message per cycle (not per user), skip if identical
     // ═══════════════════════════════════════════════════════════════════
     const eligibleUserIds = [...new Set((activeUsers || []).map(u => u.user_id))];
 
@@ -234,19 +242,27 @@ Never use markdown. Write plain text suitable for a notification. Do not use bul
 
     const prefMap = new Map((userPrefs || []).map(p => [p.user_id, p]));
 
-    // Check recent pushes to avoid spam
+    // Check recent pushes to avoid spam — use a wider window (15 min = cron interval)
+    const cooldownCutoff = new Date(now.getTime() - MIN_PUSH_INTERVAL_MS).toISOString();
     const { data: recentPushes } = await supabase
       .from('agent_pending_messages')
       .select('recipient_user_id, created_at')
-      .eq('agent_id', AEGIS_AGENT_ID)
       .eq('trigger_event', 'proactive_intelligence')
-      .gte('created_at', new Date(now.getTime() - MIN_PUSH_INTERVAL_MS).toISOString());
+      .gte('created_at', cooldownCutoff);
 
     const recentPushUsers = new Set((recentPushes || []).map(p => p.recipient_user_id));
 
-    let deliveredCount = 0;
+    // Build batch insert array to avoid per-user round-trips
+    const messagesToInsert: Array<{
+      agent_id: string;
+      recipient_user_id: string;
+      message: string;
+      priority: string;
+      trigger_event: string;
+    }> = [];
+
     for (const userId of eligibleUserIds) {
-      // Skip if recently pushed
+      // Skip if recently pushed (any proactive message, not just from AEGIS)
       if (recentPushUsers.has(userId)) continue;
 
       // Skip if user disabled proactive messages
@@ -254,15 +270,26 @@ Never use markdown. Write plain text suitable for a notification. Do not use bul
       if (pref?.proactive_enabled === false) continue;
       if (pref?.muted_until && new Date(pref.muted_until) > now) continue;
 
-      const { error } = await supabase.from('agent_pending_messages').insert({
+      messagesToInsert.push({
         agent_id: AEGIS_AGENT_ID,
         recipient_user_id: userId,
         message: pushMessage,
         priority: pushPriority,
         trigger_event: 'proactive_intelligence',
       });
+    }
 
-      if (!error) deliveredCount++;
+    let deliveredCount = 0;
+    if (messagesToInsert.length > 0) {
+      const { error, count } = await supabase
+        .from('agent_pending_messages')
+        .insert(messagesToInsert);
+
+      if (error) {
+        console.error('[ProactiveIntel] Batch insert error:', error.message);
+      } else {
+        deliveredCount = messagesToInsert.length;
+      }
     }
 
     // Log the autonomous action
@@ -274,12 +301,14 @@ Never use markdown. Write plain text suitable for a notification. Do not use bul
         insight_types: insights.map(i => i.type),
         push_priority: pushPriority,
         delivered_to: deliveredCount,
+        eligible_users: eligibleUserIds.length,
+        skipped_cooldown: recentPushUsers.size,
         message_preview: pushMessage.substring(0, 100),
       },
       status: 'completed',
     });
 
-    console.log(`[ProactiveIntel] Pushed to ${deliveredCount} users. ${insights.length} insights synthesized.`);
+    console.log(`[ProactiveIntel] Pushed to ${deliveredCount} users (${recentPushUsers.size} skipped by cooldown). ${insights.length} insights synthesized.`);
 
     return successResponse({
       status: 'pushed',
