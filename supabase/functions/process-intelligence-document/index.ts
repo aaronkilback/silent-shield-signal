@@ -316,12 +316,43 @@ Deno.serve(async (req) => {
       .limit(1)
       .single();
 
+    // Build concise rejection reason summaries from feedback
+    let feedbackRejectionContext = '';
+    try {
+      const { data: recentRejections } = await supabase
+        .from('feedback_events')
+        .select('notes, feedback_context')
+        .eq('object_type', 'signal')
+        .eq('feedback', 'irrelevant')
+        .order('created_at', { ascending: false })
+        .limit(30);
+
+      if (recentRejections && recentRejections.length > 0) {
+        const reasons = new Map<string, number>();
+        const rejectedTitles: string[] = [];
+        recentRejections.forEach(r => {
+          const ctx = r.feedback_context as Record<string, string> | null;
+          const reason = ctx?.reason_label || ctx?.reason || '';
+          if (reason) reasons.set(reason, (reasons.get(reason) || 0) + 1);
+          if (r.notes) rejectedTitles.push(r.notes.substring(0, 80));
+        });
+        const topReasons = [...reasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+        feedbackRejectionContext = `
+ANALYST FEEDBACK — RECENTLY REJECTED SIGNALS (DO NOT create similar signals):
+Top rejection reasons: ${topReasons.map(([r, c]) => `"${r}" (${c}x)`).join(', ')}
+Examples of rejected signals: ${rejectedTitles.slice(0, 8).join(' | ')}
+`;
+      }
+    } catch { /* non-critical */ }
+
     const learningContext = `
 APPROVED PATTERNS (prioritize these):
 ${JSON.stringify(approvedPatterns?.features || {}, null, 2)}
 
 REJECTED PATTERNS (avoid these):
 ${JSON.stringify(rejectedPatterns?.features || {}, null, 2)}
+
+${feedbackRejectionContext}
 `;
 
     // Call AI for extraction via resilient gateway
@@ -340,6 +371,16 @@ ${JSON.stringify(rejectedPatterns?.features || {}, null, 2)}
 5. A fire at a school is NOT related to activism unless the article explicitly says activists were involved
 6. If in doubt, describe ONLY what the article explicitly states - never extrapolate
 7. Signal descriptions must be direct paraphrases of source content, not interpretations
+
+**GEOGRAPHIC RELEVANCE RULES:**
+8. Only create signals that are geographically relevant to the client's area of operations (NE British Columbia, pipeline corridors, LNG terminals)
+9. DO NOT create signals about events in distant provinces/cities (e.g., Halifax, Toronto, Quebec) unless they DIRECTLY impact the client's infrastructure, supply chain, or named stakeholders
+10. National policy/regulatory signals are acceptable only if they explicitly mention the client, their projects, or their region
+
+**QUALITY RULES:**
+11. Do NOT create signals for general government programs, worker safety policies, or agricultural programs unless they specifically impact the client
+12. Do NOT create signals for wildlife/health events unless they directly threaten operations in the client's operating area
+13. Give a relevance_score of 0.3 or lower to signals that are tangentially related
 
 KNOWN ENTITIES:
 ${entityContext}
@@ -685,12 +726,25 @@ Extract all entities, signals, and their relationships.`
           } catch { /* ignore invalid dates */ }
         }
         
+        // Map signal_type to category so both fields are populated
+        const signalTypeToCategory: Record<string, string> = {
+          theft: 'active_threat', protest: 'protest', threat: 'active_threat',
+          surveillance: 'cybersecurity', sabotage: 'active_threat', violence: 'active_threat',
+          cyber: 'cybersecurity', data_exposure: 'cybersecurity',
+          wildlife: 'environmental', wildfire: 'civil_emergency', weather: 'civil_emergency',
+          health: 'health_concern', regulatory: 'regulatory', legal: 'regulatory',
+          operational: 'operational', media: 'social_sentiment', reputational: 'social_sentiment',
+          environmental: 'environmental', community_impact: 'social_sentiment',
+        };
+        const derivedCategory = signalTypeToCategory[signal.signal_type] || 'general';
+
         const { data: newSignal, error: signalError } = await supabase
           .from('signals')
           .insert({
             title: signal.title,
             description: signal.description,
             signal_type: signal.signal_type,
+            category: derivedCategory,
             severity_score: signal.severity_score,
             relevance_score: signal.relevance_score || 0.7,
             normalized_text: signal.description,

@@ -130,11 +130,37 @@ export async function createSignal(
 
   const contentHash = await computeContentHash(signalData.content);
 
+  // Check rejected content hashes to prevent re-ingestion of feedback-rejected content
+  try {
+    const { data: rejected } = await supabase
+      .from('rejected_content_hashes')
+      .select('id')
+      .eq('content_hash', contentHash)
+      .limit(1);
+    if (rejected && rejected.length > 0) {
+      console.log(`[createSignal] Blocked re-ingestion of rejected content (hash match)`);
+      return null;
+    }
+  } catch { /* non-critical */ }
+
+  // Map signal_type (if provided in metadata) to category for consistent categorization
+  const signalType = signalData.metadata?.signal_type;
+  const categoryFromType: Record<string, string> = {
+    theft: 'active_threat', protest: 'protest', threat: 'active_threat',
+    surveillance: 'cybersecurity', sabotage: 'active_threat', violence: 'active_threat',
+    cyber: 'cybersecurity', data_exposure: 'cybersecurity',
+    wildlife: 'environmental', wildfire: 'civil_emergency', weather: 'civil_emergency',
+    health: 'health_concern', regulatory: 'regulatory', legal: 'regulatory',
+    operational: 'operational', media: 'social_sentiment', reputational: 'social_sentiment',
+    environmental: 'environmental', community_impact: 'social_sentiment',
+  };
+  const finalCategory = signalData.category || (signalType ? categoryFromType[signalType] : null) || detectCategory(signalData.content);
+
   const { data, error } = await supabase
     .from('signals')
     .insert({
       normalized_text: signalData.content,
-      category: signalData.category,
+      category: finalCategory,
       severity: signalData.severity,
       location: signalData.location || null,
       client_id: signalData.client_id || null,
