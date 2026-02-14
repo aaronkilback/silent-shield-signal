@@ -131,18 +131,27 @@ Deno.serve(async (req) => {
           searchQueries.push(`site:facebook.com/${fbPage}/posts`);
         }
         
-        // ALWAYS search by entity name on Facebook (primary search)
-        searchQueries.push(`site:facebook.com "${entity.name}"`);
+        // Skip broad name-only searches for short entity names (<=4 chars)
+        // to prevent disambiguation failures (e.g., "CGL" matching unrelated pages)
+        const isShortName = entity.name.length <= 4;
+        
+        if (!isShortName) {
+          // ALWAYS search by entity name on Facebook (primary search)
+          searchQueries.push(`site:facebook.com "${entity.name}"`);
+        }
         
         // Entity name + pipeline/energy project terms for more targeted results
         searchQueries.push(`site:facebook.com "${entity.name}" (pipeline OR LNG OR "Coastal GasLink" OR PRGT OR protest OR indigenous)`);
         
-        // Entity name + Facebook Live streams
-        searchQueries.push(`site:facebook.com "${entity.name}" ("facebook live" OR "going live" OR "live video" OR "streaming")`);
+        // Entity name + Facebook Live streams (only for longer names)
+        if (!isShortName) {
+          searchQueries.push(`site:facebook.com "${entity.name}" ("facebook live" OR "going live" OR "live video" OR "streaming")`);
+        }
         
-        // Include aliases in search
+        // Include aliases in search — SKIP short aliases (<=4 chars)
         if (entity.aliases && entity.aliases.length > 0) {
-          for (const alias of entity.aliases.slice(0, 3)) {
+          const usableAliases = entity.aliases.filter((a: string) => a.length > 4);
+          for (const alias of usableAliases.slice(0, 3)) {
             searchQueries.push(`site:facebook.com "${alias}"`);
           }
         }
@@ -249,9 +258,27 @@ async function processSearch(
 
       // Check for relevance
       const lowerText = text.toLowerCase();
+      const sourceNameLower = sourceName.toLowerCase();
+      
+      // ═══ DISAMBIGUATION GATE ═══
+      // For short entity names (<=4 chars), require BOTH the name AND a contextual keyword
+      // to prevent false matches (e.g., "CGL" matching drug support centers or miniature gaming)
+      const isShortSourceName = sourceNameLower.length <= 4;
+      let nameAppearsInContext = lowerText.includes(sourceNameLower);
+      
+      if (isShortSourceName && nameAppearsInContext) {
+        // Short names must appear with at least one activism/pipeline keyword
+        const contextualKeywords = ['pipeline', 'lng', 'gas', 'energy', 'protest', 'indigenous', 'first nation', 'coastal gaslink', 'prgt'];
+        const hasContext = contextualKeywords.some(kw => lowerText.includes(kw));
+        if (!hasContext) {
+          console.log(`Skipping disambiguation failure for "${sourceName}": ${text.substring(0, 60)}`);
+          nameAppearsInContext = false;
+        }
+      }
+      
       const isRelevant = 
         ACTIVISM_KEYWORDS.some(k => lowerText.includes(k.toLowerCase())) ||
-        lowerText.includes(sourceName.toLowerCase()) ||
+        nameAppearsInContext ||
         isHighPriorityContent(text);
 
       if (text.length > 30 && isRelevant) {
