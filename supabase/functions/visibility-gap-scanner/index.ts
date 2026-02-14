@@ -114,13 +114,14 @@ Deno.serve(async (req) => {
             const { error } = await supabase.from('signals').insert({
               title: `CISA KEV: ${vuln.cveID} — ${vuln.vulnerabilityName || 'Unknown'}`,
               normalized_text: `Known Exploited Vulnerability ${vuln.cveID}. ${vuln.vulnerabilityName || ''}. Vendor: ${vuln.vendorProject || 'Unknown'}. Product: ${vuln.product || 'Unknown'}. ${vuln.shortDescription || ''}. Required action: ${vuln.requiredAction || 'Patch immediately'}. Due date: ${vuln.dueDate || 'ASAP'}.`,
-              source_type: 'cisa_kev',
-              category: 'cyber_threat',
+              signal_type: 'cyber',
+              category: 'cybersecurity',
+              source_id: 'cisa-kev',
               severity: 'high',
               confidence: 1.0,
               relevance_score: 0.9,
               status: 'new',
-              raw_json: { cve: vuln.cveID, vendor: vuln.vendorProject, product: vuln.product, date_added: vuln.dateAdded },
+              raw_json: { cve: vuln.cveID, vendor: vuln.vendorProject, product: vuln.product, date_added: vuln.dateAdded, source_url: `https://nvd.nist.gov/vuln/detail/${vuln.cveID}` },
             });
 
             if (!error) kevIngested++;
