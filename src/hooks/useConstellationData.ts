@@ -89,34 +89,7 @@ export function useAgentCommLinks(enabled: boolean) {
         }
       });
 
-      // --- Source 2: Agents that share conversations with the same user (collaboration proxy) ---
-      const { data: conversations } = await supabase
-        .from("agent_conversations")
-        .select("agent_id, user_id, updated_at")
-        .order("updated_at", { ascending: false })
-        .limit(200);
-
-      // Group by user_id to find agents working for the same user
-      const userAgents = new Map<string, { callSign: string; lastActive: string }[]>();
-      conversations?.forEach((c) => {
-        const callSign = agentMap.get(c.agent_id);
-        if (!callSign) return;
-        const list = userAgents.get(c.user_id) || [];
-        if (!list.some((e) => e.callSign === callSign)) {
-          list.push({ callSign, lastActive: c.updated_at });
-        }
-        userAgents.set(c.user_id, list);
-      });
-
-      // Agents serving the same user have an implicit comm link
-      userAgents.forEach((agentList) => {
-        for (let i = 0; i < agentList.length; i++) {
-          for (let j = i + 1; j < agentList.length; j++) {
-            addPair(agentList[i].callSign, agentList[j].callSign,
-              agentList[i].lastActive > agentList[j].lastActive ? agentList[i].lastActive : agentList[j].lastActive);
-          }
-        }
-      });
+      // Source 2 removed — same-user pairing was inflating link counts combinatorially
 
       // --- Source 3: AEGIS-CMD connects to every active agent (it's the orchestrator) ---
       const aegisCallSign = "AEGIS-CMD";
