@@ -1197,6 +1197,7 @@ function EarthGlobe({ position, signalLocations = [] }: {
   const cloudsRef = useRef<THREE.Mesh>(null);
   const nightRef = useRef<THREE.Mesh>(null);
   const sunLightRef = useRef<THREE.DirectionalLight>(null);
+  const sunMeshRef = useRef<THREE.Group>(null);
 
   const [earthMap, bumpMap, nightMap, specularMap] = useTexture([
     '/textures/earth.jpg',
@@ -1215,14 +1216,14 @@ function EarthGlobe({ position, signalLocations = [] }: {
     if (cloudsRef.current) cloudsRef.current.rotation.y += rotSpeed * 0.15; // clouds drift slightly faster than earth
 
     // Update sun position in real-time
+    const sunDir = getSunDirection();
+    const sunDist = 60;
+    const sunPos = [sunDir.x * sunDist, sunDir.y * sunDist, sunDir.z * sunDist];
     if (sunLightRef.current) {
-      const sunDir = getSunDirection();
-      const sunDist = 30;
-      sunLightRef.current.position.set(
-        sunDir.x * sunDist,
-        sunDir.y * sunDist,
-        sunDir.z * sunDist
-      );
+      sunLightRef.current.position.set(sunPos[0], sunPos[1], sunPos[2]);
+    }
+    if (sunMeshRef.current) {
+      sunMeshRef.current.position.set(sunPos[0], sunPos[1], sunPos[2]);
     }
   });
 
@@ -1259,13 +1260,36 @@ function EarthGlobe({ position, signalLocations = [] }: {
       {/* Real-time sunlight — tracks actual sun position */}
       <directionalLight
         ref={sunLightRef}
-        position={[initialSunDir.x * 30, initialSunDir.y * 30, initialSunDir.z * 30]}
+        position={[initialSunDir.x * 60, initialSunDir.y * 60, initialSunDir.z * 60]}
         intensity={3.0}
         color="#fffaf0"
-        castShadow
       />
       {/* Very dim fill on the dark side — simulates earthshine/ambient space light */}
       <pointLight color="#112233" intensity={0.3} distance={40} position={[-initialSunDir.x * 20, -initialSunDir.y * 20, -initialSunDir.z * 20]} />
+
+      {/* Realistic Sun body */}
+      <group ref={sunMeshRef} position={[initialSunDir.x * 60, initialSunDir.y * 60, initialSunDir.z * 60]}>
+        <mesh>
+          <sphereGeometry args={[4, 32, 32]} />
+          <meshBasicMaterial color="#fff8e0" />
+        </mesh>
+        {/* Inner corona */}
+        <mesh>
+          <sphereGeometry args={[5.5, 32, 32]} />
+          <meshBasicMaterial color="#ffee88" transparent opacity={0.15} side={THREE.BackSide} />
+        </mesh>
+        {/* Outer corona */}
+        <mesh>
+          <sphereGeometry args={[8, 24, 24]} />
+          <meshBasicMaterial color="#ffdd66" transparent opacity={0.06} side={THREE.BackSide} />
+        </mesh>
+        {/* Warm glow */}
+        <mesh>
+          <sphereGeometry args={[12, 16, 16]} />
+          <meshBasicMaterial color="#ffcc44" transparent opacity={0.025} side={THREE.BackSide} />
+        </mesh>
+        <pointLight color="#fff8e0" intensity={5} distance={120} />
+      </group>
 
       {/* Rotating Earth group — earth, night lights, and signal pins all rotate together */}
       <group ref={earthGroupRef} rotation={[axialTilt, 0, 0]}>
@@ -1316,7 +1340,7 @@ function EarthGlobe({ position, signalLocations = [] }: {
   );
 }
 
-// Moon orbiting the Earth
+// Moon orbiting the Earth — lit by the sun for realistic shadow
 function MoonBody({ earthPosition }: { earthPosition: [number, number, number] }) {
   const moonRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
@@ -1339,22 +1363,17 @@ function MoonBody({ earthPosition }: { earthPosition: [number, number, number] }
     <group ref={moonRef}>
       <mesh ref={meshRef}>
         <sphereGeometry args={[moonRadius, 48, 48]} />
-        <meshStandardMaterial
+        <meshPhongMaterial
           map={moonMap}
-          roughness={0.85}
-          metalness={0.05}
+          shininess={2}
+          specular={new THREE.Color('#111111')}
         />
       </mesh>
-      {/* Moon glow */}
+      {/* Very subtle rim glow */}
       <mesh>
-        <sphereGeometry args={[moonRadius * 1.06, 24, 24]} />
-        <meshBasicMaterial color="#ccccdd" transparent opacity={0.05} side={THREE.BackSide} />
+        <sphereGeometry args={[moonRadius * 1.04, 24, 24]} />
+        <meshBasicMaterial color="#ccccdd" transparent opacity={0.03} side={THREE.BackSide} />
       </mesh>
-      <mesh>
-        <sphereGeometry args={[moonRadius * 1.15, 24, 24]} />
-        <meshBasicMaterial color="#aaaacc" transparent opacity={0.02} side={THREE.BackSide} />
-      </mesh>
-      <pointLight color="#ccccdd" intensity={0.4} distance={20} />
     </group>
   );
 }
