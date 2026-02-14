@@ -119,10 +119,16 @@ export const LiveEventFeed = () => {
 
     // Fetch initial signals
     const fetchSignals = async () => {
+      // Calculate the cutoff for historical signals (90 days ago)
+      const historicalCutoff = new Date();
+      historicalCutoff.setDate(historicalCutoff.getDate() - 90);
+      const cutoffISO = historicalCutoff.toISOString();
+
       let query = supabase
         .from('signals')
         .select('*')
         .neq('status', 'false_positive') // Exclude false positives
+        .or(`event_date.is.null,event_date.gte.${cutoffISO}`) // Exclude historical signals
         .order('received_at', { ascending: false })
         .limit(10);
 

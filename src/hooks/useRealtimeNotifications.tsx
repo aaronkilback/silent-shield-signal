@@ -2,6 +2,14 @@ import { useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
+import { differenceInDays } from 'date-fns';
+
+/** Returns true if a signal's event_date is older than 90 days (historical). */
+const isHistoricalSignal = (signal: { event_date?: string | null; created_at?: string }): boolean => {
+  const refDate = signal.event_date || signal.created_at;
+  if (!refDate) return false;
+  return differenceInDays(new Date(), new Date(refDate)) > 90;
+};
 
 const POLL_INTERVAL_MS = 30_000; // 30s fallback poll
 const VISIBILITY_REFETCH_KEYS = [
@@ -31,7 +39,7 @@ export const useRealtimeNotifications = () => {
     try {
       const { data: newSignals } = await supabase
         .from('signals')
-        .select('id, title, normalized_text, is_test, created_at')
+        .select('id, title, normalized_text, is_test, created_at, event_date')
         .gt('created_at', lastSeenSignalAt.current)
         .eq('is_test', false)
         .order('created_at', { ascending: false })
@@ -39,13 +47,16 @@ export const useRealtimeNotifications = () => {
 
       if (newSignals && newSignals.length > 0) {
         lastSeenSignalAt.current = newSignals[0].created_at;
-        invalidateAll();
-        // Only toast the most recent one to avoid spam
-        toast({
-          title: `📡 ${newSignals.length} New Signal${newSignals.length > 1 ? 's' : ''}`,
-          description: newSignals[0].title || newSignals[0].normalized_text?.slice(0, 80) || 'New intelligence received',
-          duration: 6000,
-        });
+        // Filter out historical signals before notifying
+        const recentSignals = newSignals.filter(s => !isHistoricalSignal(s));
+        if (recentSignals.length > 0) {
+          invalidateAll();
+          toast({
+            title: `📡 ${recentSignals.length} New Signal${recentSignals.length > 1 ? 's' : ''}`,
+            description: recentSignals[0].title || recentSignals[0].normalized_text?.slice(0, 80) || 'New intelligence received',
+            duration: 6000,
+          });
+        }
       }
 
       const { data: newIncidents } = await supabase
@@ -101,11 +112,14 @@ export const useRealtimeNotifications = () => {
           if (!signal.is_test) {
             lastSeenSignalAt.current = signal.created_at || new Date().toISOString();
 
-            toast({
-              title: '📡 New Signal Received',
-              description: signal.normalized_text?.slice(0, 100) || `Signal from ${signal.source_id || 'unknown source'}`,
-              duration: 6000,
-            });
+            // Skip toast for historical signals
+            if (!isHistoricalSignal(signal)) {
+              toast({
+                title: '📡 New Signal Received',
+                description: signal.normalized_text?.slice(0, 100) || `Signal from ${signal.source_id || 'unknown source'}`,
+                duration: 6000,
+              });
+            }
             invalidateAll();
           }
         }
