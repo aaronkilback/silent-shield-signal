@@ -1304,14 +1304,15 @@ export function ConstellationScene({
       ))}
 
       <OrbitControls
-        enablePan={false}
+        enablePan
         enableZoom
-        minDistance={8}
-        maxDistance={40}
+        minDistance={3}
+        maxDistance={120}
         autoRotate
         autoRotateSpeed={0.2}
         dampingFactor={0.05}
         enableDamping
+        panSpeed={1.2}
       />
     </Canvas>
   );
