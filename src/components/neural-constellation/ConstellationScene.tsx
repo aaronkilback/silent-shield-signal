@@ -1340,39 +1340,52 @@ function EarthGlobe({ position, signalLocations = [] }: {
   );
 }
 
-// Moon orbiting the Earth — lit by the sun for realistic shadow
+// Moon orbiting the Earth — realistic PBR lighting from the sun
 function MoonBody({ earthPosition }: { earthPosition: [number, number, number] }) {
   const moonRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
 
   const moonMap = useTexture('/textures/moon.jpg');
+  // Use the same texture as a bump map for crater relief
+  const moonBump = useTexture('/textures/moon.jpg');
   const moonRadius = 2.2;
   const orbitRadius = 14;
+  // ~5.14° orbital inclination
+  const inclination = 5.14 * (Math.PI / 180);
 
   useFrame(({ clock }) => {
+    // Slow orbital period — roughly 1 full orbit per ~78 seconds
     const t = clock.getElapsedTime() * 0.08;
     if (moonRef.current) {
-      moonRef.current.position.x = earthPosition[0] + Math.cos(t) * orbitRadius;
-      moonRef.current.position.y = earthPosition[1] + Math.sin(t) * orbitRadius * 0.3;
-      moonRef.current.position.z = earthPosition[2] + Math.sin(t) * orbitRadius * 0.8;
+      // Inclined elliptical orbit
+      const x = Math.cos(t) * orbitRadius;
+      const z = Math.sin(t) * orbitRadius * 0.9;
+      const y = Math.sin(t) * orbitRadius * Math.sin(inclination);
+      moonRef.current.position.set(
+        earthPosition[0] + x,
+        earthPosition[1] + y,
+        earthPosition[2] + z
+      );
     }
-    if (meshRef.current) meshRef.current.rotation.y += 0.002;
+    // Tidally locked — always face Earth
+    if (meshRef.current && moonRef.current) {
+      meshRef.current.lookAt(earthPosition[0], earthPosition[1], earthPosition[2]);
+      meshRef.current.rotateY(Math.PI); // texture faces away by default
+    }
   });
 
   return (
     <group ref={moonRef}>
-      <mesh ref={meshRef}>
-        <sphereGeometry args={[moonRadius, 48, 48]} />
-        <meshPhongMaterial
+      <mesh ref={meshRef} castShadow receiveShadow>
+        <sphereGeometry args={[moonRadius, 64, 64]} />
+        <meshStandardMaterial
           map={moonMap}
-          shininess={2}
-          specular={new THREE.Color('#111111')}
+          bumpMap={moonBump}
+          bumpScale={0.04}
+          roughness={0.95}
+          metalness={0.0}
+          color="#c8c8c8"
         />
-      </mesh>
-      {/* Very subtle rim glow */}
-      <mesh>
-        <sphereGeometry args={[moonRadius * 1.04, 24, 24]} />
-        <meshBasicMaterial color="#ccccdd" transparent opacity={0.03} side={THREE.BackSide} />
       </mesh>
     </group>
   );
