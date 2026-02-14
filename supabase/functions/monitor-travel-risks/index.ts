@@ -1,10 +1,45 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { logError } from "../_shared/error-logger.ts";
+
+// Track Perplexity failures per invocation to avoid duplicate warnings
+let perplexityFailureLogged = false;
+
+async function logPerplexityFailure(status: number, source: string) {
+  if (perplexityFailureLogged) return;
+  perplexityFailureLogged = true;
+  
+  const isCredits = status === 401 || status === 403;
+  const isRateLimit = status === 429;
+  
+  const message = isCredits
+    ? `Perplexity API credentials rejected (HTTP ${status}). Likely expired API key or exhausted credits. Real-time travel intelligence is degraded — falling back to AI gateway.`
+    : isRateLimit
+    ? `Perplexity API rate limited (HTTP ${status}). Too many requests. Real-time travel intelligence temporarily degraded.`
+    : `Perplexity API returned unexpected HTTP ${status}. Real-time intelligence may be degraded.`;
+
+  console.error(`[PERPLEXITY ALERT] ${message}`);
+  
+  await logError(new Error(message), {
+    functionName: 'monitor-travel-risks',
+    severity: isCredits ? 'critical' : 'warning',
+    requestContext: {
+      source,
+      httpStatus: status,
+      apiProvider: 'perplexity',
+      issue: isCredits ? 'api_credits_exhausted' : isRateLimit ? 'rate_limited' : 'unknown',
+      recommendation: isCredits 
+        ? 'Top up Perplexity API credits at https://perplexity.ai/settings/api' 
+        : 'Reduce scan frequency or wait for rate limit reset',
+    },
+  });
+}
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
+  perplexityFailureLogged = false; // Reset per invocation
   try {
     const supabaseClient = createServiceClient();
 
@@ -96,6 +131,7 @@ Return as JSON: { "flights": [...], "airport_conditions": {...}, "weather_impact
           } else {
             console.warn(`Perplexity flight status returned ${response.status}, falling back to AI gateway`);
             await response.text(); // consume body
+            await logPerplexityFailure(response.status, 'flight_status');
           }
         } catch (error) {
           console.warn("Perplexity flight status failed, falling back to AI gateway:", error);
@@ -173,6 +209,7 @@ Return as JSON: { "safety_level": "low|medium|high|critical", "advisories": [...
           } else {
             console.warn(`Perplexity destination intel returned ${response.status}, falling back to AI gateway`);
             await response.text(); // consume body
+            await logPerplexityFailure(response.status, 'destination_intel');
           }
         } catch (error) {
           console.warn("Perplexity destination intel failed, falling back to AI gateway:", error);
