@@ -3,7 +3,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Line, Html, useTexture } from "@react-three/drei";
 import * as THREE from "three";
 import { MilkyWayBand, PlanetParade, AsteroidBelt, Comets } from "./SolarSystemElements";
-import type { AgentCommLink, ActiveDebate, ScanPulse, AgentActivityMetrics, KnowledgeGraphEdge, OperatorDevice, OperatorMessageActivity } from "@/hooks/useConstellationData";
+import type { AgentCommLink, ActiveDebate, ScanPulse, AgentActivityMetrics, KnowledgeGraphEdge, OperatorDevice, OperatorMessageActivity, KnowledgeGrowthData } from "@/hooks/useConstellationData";
 
 interface AgentNode {
   id: string;
@@ -30,6 +30,7 @@ interface ConstellationSceneProps {
   operatorDevices?: OperatorDevice[];
   operatorMessageActivity?: OperatorMessageActivity;
   signalLocations?: string[];
+  knowledgeGrowth?: KnowledgeGrowthData;
 }
 
 // Camera presets
@@ -1389,6 +1390,194 @@ function MoonBody({ earthPosition }: { earthPosition: [number, number, number] }
   );
 }
 
+// Knowledge Nebula — glowing cosmic source of intelligence, positioned above the constellation
+function KnowledgeNebula({ totalEntries = 0 }: { totalEntries: number }) {
+  const nebulaRef = useRef<THREE.Group>(null);
+  const coreRef = useRef<THREE.Mesh>(null);
+  const pulseRef = useRef(0);
+  const scale = Math.min(1 + totalEntries / 500, 3);
+
+  useFrame((_, delta) => {
+    pulseRef.current += delta * 0.8;
+    const pulse = Math.sin(pulseRef.current);
+    if (nebulaRef.current) nebulaRef.current.rotation.y += delta * 0.02;
+    if (coreRef.current) {
+      coreRef.current.scale.setScalar(scale + pulse * 0.15);
+      (coreRef.current.material as THREE.MeshBasicMaterial).opacity = 0.08 + pulse * 0.03;
+    }
+  });
+
+  return (
+    <group ref={nebulaRef} position={[0, 18, -5]}>
+      {/* Core nebula glow */}
+      <mesh ref={coreRef}>
+        <sphereGeometry args={[2.5, 24, 24]} />
+        <meshBasicMaterial color="#a855f7" transparent opacity={0.08} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Inner violet haze */}
+      <mesh>
+        <sphereGeometry args={[4, 16, 16]} />
+        <meshBasicMaterial color="#7c3aed" transparent opacity={0.04} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Outer diffuse glow */}
+      <mesh>
+        <sphereGeometry args={[6, 12, 12]} />
+        <meshBasicMaterial color="#6d28d9" transparent opacity={0.02} side={THREE.DoubleSide} />
+      </mesh>
+      <pointLight color="#a855f7" intensity={1.5} distance={30} />
+    </group>
+  );
+}
+
+// Learning Particle Streams — violet particles flowing from Knowledge Nebula to agents that are actively learning
+function LearningParticleStreams({ agents, activelyLearningAgents = [] }: {
+  agents: AgentNode[];
+  activelyLearningAgents: string[];
+}) {
+  const particleCount = 40;
+  const ref = useRef<THREE.Points>(null);
+  const progressRef = useRef(new Float32Array(particleCount));
+  const targetsRef = useRef<number[]>([]);
+
+  const nebulaPos: [number, number, number] = [0, 18, -5];
+
+  const learningAgentIndices = useMemo(() => {
+    const indices = agents
+      .map((a, i) => activelyLearningAgents.includes(a.callSign) ? i : -1)
+      .filter(i => i >= 0);
+    // If no agents are actively learning, show ambient flow to random agents
+    if (indices.length === 0 && agents.length > 0) {
+      return [0, Math.min(2, agents.length - 1), Math.min(4, agents.length - 1)].filter((v, i, a) => a.indexOf(v) === i);
+    }
+    return indices;
+  }, [agents, activelyLearningAgents]);
+
+  const { positions, colors } = useMemo(() => {
+    const pos = new Float32Array(particleCount * 3);
+    const col = new Float32Array(particleCount * 3);
+    for (let i = 0; i < particleCount; i++) {
+      const targetIdx = learningAgentIndices[i % Math.max(learningAgentIndices.length, 1)] || 0;
+      targetsRef.current[i] = targetIdx;
+      progressRef.current[i] = Math.random();
+      const t = progressRef.current[i];
+      const tgt = agents[targetIdx]?.position || [0, 0, 0];
+      pos[i * 3] = nebulaPos[0] + (tgt[0] - nebulaPos[0]) * t;
+      pos[i * 3 + 1] = nebulaPos[1] + (tgt[1] - nebulaPos[1]) * t;
+      pos[i * 3 + 2] = nebulaPos[2] + (tgt[2] - nebulaPos[2]) * t;
+      // Violet/purple gradient with some variation
+      const isActive = activelyLearningAgents.length > 0;
+      col[i * 3] = isActive ? 0.66 : 0.4;
+      col[i * 3 + 1] = isActive ? 0.33 : 0.25;
+      col[i * 3 + 2] = isActive ? 0.97 : 0.6;
+    }
+    return { positions: pos, colors: col };
+  }, [agents, learningAgentIndices, activelyLearningAgents.length]);
+
+  useFrame((_, delta) => {
+    if (!ref.current || agents.length === 0) return;
+    const posArr = ref.current.geometry.attributes.position.array as Float32Array;
+    const speed = activelyLearningAgents.length > 0 ? 0.12 : 0.04;
+
+    for (let i = 0; i < particleCount; i++) {
+      progressRef.current[i] += delta * (speed + Math.random() * 0.04);
+      if (progressRef.current[i] >= 1) {
+        progressRef.current[i] = 0;
+        targetsRef.current[i] = learningAgentIndices[Math.floor(Math.random() * learningAgentIndices.length)] || 0;
+      }
+      const t = progressRef.current[i];
+      const tgt = agents[targetsRef.current[i]]?.position || [0, 0, 0];
+      // Add a gentle arc via sine curve on Y
+      const arcHeight = Math.sin(t * Math.PI) * 3;
+      posArr[i * 3] = nebulaPos[0] + (tgt[0] - nebulaPos[0]) * t + Math.sin(t * 4 + i) * 0.3;
+      posArr[i * 3 + 1] = nebulaPos[1] + (tgt[1] - nebulaPos[1]) * t + arcHeight;
+      posArr[i * 3 + 2] = nebulaPos[2] + (tgt[2] - nebulaPos[2]) * t + Math.cos(t * 4 + i) * 0.3;
+    }
+    ref.current.geometry.attributes.position.needsUpdate = true;
+  });
+
+  return (
+    <points ref={ref}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" count={particleCount} array={positions} itemSize={3} />
+        <bufferAttribute attach="attributes-color" count={particleCount} array={colors} itemSize={3} />
+      </bufferGeometry>
+      <pointsMaterial size={0.18} vertexColors transparent opacity={activelyLearningAgents.length > 0 ? 0.9 : 0.4} sizeAttenuation />
+    </points>
+  );
+}
+
+// Neural Synapse Flashes — electric pulses that ripple across connection lines when knowledge propagates
+function SynapseFlashes({ agents, commLinks = [], todayEntries = 0 }: {
+  agents: AgentNode[];
+  commLinks?: AgentCommLink[];
+  todayEntries: number;
+}) {
+  const flashCount = Math.min(todayEntries, 8);
+  const groupRef = useRef<THREE.Group>(null);
+  const flashRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const flashProgress = useRef<number[]>([]);
+  const flashRoutes = useRef<{ from: number; to: number }[]>([]);
+
+  const callSignIndex = useMemo(() => new Map(agents.map((a, i) => [a.callSign, i])), [agents]);
+
+  // Build routes from comm links
+  const routes = useMemo(() => {
+    const r: { from: number; to: number }[] = [];
+    commLinks.forEach(link => {
+      const src = callSignIndex.get(link.sourceCallSign);
+      const tgt = callSignIndex.get(link.targetCallSign);
+      if (src !== undefined && tgt !== undefined) r.push({ from: src, to: tgt });
+    });
+    return r.length > 0 ? r : agents.map((_, i) => ({ from: 0, to: i }));
+  }, [agents, commLinks, callSignIndex]);
+
+  // Initialize flash data
+  useMemo(() => {
+    flashProgress.current = Array.from({ length: flashCount }, () => Math.random());
+    flashRoutes.current = Array.from({ length: flashCount }, (_, i) => routes[i % routes.length] || { from: 0, to: 0 });
+  }, [flashCount, routes]);
+
+  useFrame((_, delta) => {
+    if (agents.length === 0 || flashCount === 0) return;
+    for (let i = 0; i < flashCount; i++) {
+      flashProgress.current[i] += delta * (0.8 + Math.random() * 0.4);
+      if (flashProgress.current[i] >= 1) {
+        flashProgress.current[i] = 0;
+        flashRoutes.current[i] = routes[Math.floor(Math.random() * routes.length)] || { from: 0, to: 0 };
+      }
+      const mesh = flashRefs.current[i];
+      if (mesh) {
+        const route = flashRoutes.current[i];
+        const src = agents[route.from]?.position || [0, 0, 0];
+        const tgt = agents[route.to]?.position || [0, 0, 0];
+        const t = flashProgress.current[i];
+        mesh.position.set(
+          src[0] + (tgt[0] - src[0]) * t,
+          src[1] + (tgt[1] - src[1]) * t,
+          src[2] + (tgt[2] - src[2]) * t
+        );
+        // Flash brightness peaks at center of travel
+        const brightness = Math.sin(t * Math.PI);
+        mesh.scale.setScalar(0.1 + brightness * 0.25);
+        (mesh.material as THREE.MeshBasicMaterial).opacity = brightness * 0.9;
+      }
+    }
+  });
+
+  if (flashCount === 0) return null;
+
+  return (
+    <group ref={groupRef}>
+      {Array.from({ length: flashCount }, (_, i) => (
+        <mesh key={`synapse-${i}`} ref={(el) => { flashRefs.current[i] = el; }}>
+          <sphereGeometry args={[0.15, 8, 8]} />
+          <meshBasicMaterial color="#e0e7ff" transparent opacity={0} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 export function ConstellationScene({
   agents,
   onNodeClick,
@@ -1402,6 +1591,7 @@ export function ConstellationScene({
   operatorDevices = [],
   operatorMessageActivity,
   signalLocations = [],
+  knowledgeGrowth,
 }: ConstellationSceneProps) {
   const [cameraView, setCameraView] = useState<CameraView>("constellation");
   const controlsRef = useRef<any>(null);
@@ -1468,6 +1658,22 @@ export function ConstellationScene({
         <PlanetParade />
         <AsteroidBelt />
         <Comets />
+
+        {/* Knowledge Nebula — cosmic source of intelligence above the constellation */}
+        <KnowledgeNebula totalEntries={knowledgeGrowth?.totalEntries || 0} />
+
+        {/* Learning particle streams — violet particles from nebula to learning agents */}
+        <LearningParticleStreams
+          agents={visibleAgents}
+          activelyLearningAgents={knowledgeGrowth?.activelyLearningAgents || []}
+        />
+
+        {/* Neural synapse flashes — electric pulses across connections when knowledge grows */}
+        <SynapseFlashes
+          agents={visibleAgents}
+          commLinks={commLinks}
+          todayEntries={knowledgeGrowth?.todayEntries || 0}
+        />
 
         {/* Earth & Moon — background celestial bodies */}
         <EarthGlobe position={earthPosition} signalLocations={signalLocations} />

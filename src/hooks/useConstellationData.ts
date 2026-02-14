@@ -440,3 +440,86 @@ export function useOperatorMessageActivity(enabled: boolean) {
     refetchInterval: 10000,
   });
 }
+
+// ── Knowledge Growth Data ──
+
+export interface KnowledgeGrowthData {
+  totalEntries: number;
+  todayEntries: number;
+  recentLearningSessions: {
+    agentCallSign: string;
+    sessionType: string;
+    entriesCreated: number;
+    createdAt: string;
+  }[];
+  activelyLearningAgents: string[];
+}
+
+/** Fetch knowledge growth metrics for the Neural Constellation Map */
+export function useKnowledgeGrowthData(enabled: boolean) {
+  return useQuery({
+    queryKey: ["knowledge-growth-data"],
+    queryFn: async (): Promise<KnowledgeGrowthData> => {
+      // Total expert knowledge entries
+      const { count: totalEntries } = await supabase
+        .from("expert_knowledge")
+        .select("id", { count: "exact", head: true })
+        .eq("is_active", true);
+
+      // Today's entries
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const { count: todayEntries } = await supabase
+        .from("expert_knowledge")
+        .select("id", { count: "exact", head: true })
+        .gte("created_at", todayStart.toISOString());
+
+      // Recent learning sessions (last 24h)
+      const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: sessions } = await supabase
+        .from("agent_learning_sessions")
+        .select("agent_id, session_type, learnings, source_count, created_at")
+        .gte("created_at", dayAgo)
+        .order("created_at", { ascending: false })
+        .limit(20);
+
+      // Get agent call signs for sessions
+      const agentIds = (sessions || []).map(s => s.agent_id).filter(Boolean);
+      let agentMap = new Map<string, string>();
+      if (agentIds.length > 0) {
+        const { data: agents } = await supabase
+          .from("ai_agents")
+          .select("id, call_sign")
+          .in("id", agentIds);
+        if (agents) {
+          agentMap = new Map(agents.map(a => [a.id, a.call_sign]));
+        }
+      }
+
+      const recentLearningSessions = (sessions || []).map(s => {
+        const learnings = s.learnings as any;
+        return {
+          agentCallSign: agentMap.get(s.agent_id || "") || "AEGIS-CMD",
+          sessionType: s.session_type,
+          entriesCreated: learnings?.entries_created || s.source_count || 0,
+          createdAt: s.created_at,
+        };
+      });
+
+      // Agents that learned in the last 2 hours (for active visual effects)
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      const activelyLearningAgents = recentLearningSessions
+        .filter(s => s.createdAt >= twoHoursAgo && s.entriesCreated > 0)
+        .map(s => s.agentCallSign);
+
+      return {
+        totalEntries: totalEntries || 0,
+        todayEntries: todayEntries || 0,
+        recentLearningSessions,
+        activelyLearningAgents: [...new Set(activelyLearningAgents)],
+      };
+    },
+    enabled,
+    refetchInterval: 30000,
+  });
+}
