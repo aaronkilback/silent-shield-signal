@@ -15,7 +15,7 @@ import { useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMet
 function assignPositions(agents: any[]): AgentNode[] {
   const AEGIS_CALL_SIGN = "AEGIS-CMD";
   const coreCallSigns = ["MATRIX", "GLOBE-SAGE", "FININT", "CHAIN-WATCH", "INSIDE-EYE", "ECHO-WATCH"];
-  const secondaryCallSigns = ["ECHO-ALPHA", "LOCUS-INTEL", "VICODIN", "LEX-MAGNA", "NARCO-INTEL", "PATTERN-SEEKER", "SENTINEL-OPS", "Scout", "CRUCIBLE", "AUREUS-GUARD", "FORTRESS-GUARD", "BRAVO-1", "SIM-COMMAND", "TIME-WARP"];
+  const secondaryCallSigns = ["ECHO-ALPHA", "LOCUS-INTEL", "VICODIN", "LEX-MAGNA", "NARCO-INTEL", "PATTERN-SEEKER", "SENTINEL-OPS", "Scout", "CRUCIBLE", "AUREUS-GUARD", "FORTRESS-GUARD", "BRAVO-1", "SIM-COMMAND", "TIME-WARP", "PURE-DATA", "SENT-CON", "WATCH-ALPHA-2"];
 
   const aegisAgent = agents.find((a) => a.call_sign === AEGIS_CALL_SIGN);
   const primaryAgents = agents.filter((a) => coreCallSigns.includes(a.call_sign));
