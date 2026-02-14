@@ -78,14 +78,22 @@ function CameraController({ view, controlsRef }: { view: CameraView; controlsRef
         controlsRef.current.update();
       }
     } else if (isTransitioning.current) {
-      transitionProgress.current += delta * 1.5;
-      const t = Math.min(transitionProgress.current, 1);
-      camera.position.lerp(targetPos.current, t * 0.08);
+      transitionProgress.current += delta * 1.8;
+      const progress = Math.min(transitionProgress.current, 1);
+      // Use a smooth ease-out curve for snappy transitions
+      const ease = 1 - Math.pow(1 - progress, 3);
+      camera.position.lerpVectors(camera.position, targetPos.current, Math.min(ease * 0.15 + 0.02, 1));
       if (controlsRef.current) {
-        controlsRef.current.target.lerp(targetLook.current, t * 0.08);
+        controlsRef.current.target.lerp(targetLook.current, Math.min(ease * 0.15 + 0.02, 1));
         controlsRef.current.update();
       }
-      if (t >= 1) {
+      // End transition when close enough
+      if (camera.position.distanceTo(targetPos.current) < 0.5) {
+        camera.position.copy(targetPos.current);
+        if (controlsRef.current) {
+          controlsRef.current.target.copy(targetLook.current);
+          controlsRef.current.update();
+        }
         isTransitioning.current = false;
       }
     }
@@ -1326,18 +1334,10 @@ function EarthGlobe({ position, signalLocations = [] }: {
           depthWrite={false}
         />
       </mesh>
-      {/* Atmospheric rim — blue glow visible on sunlit edge */}
+      {/* Subtle atmospheric rim */}
       <mesh>
-        <sphereGeometry args={[earthRadius * 1.04, 48, 48]} />
-        <meshBasicMaterial color="#4499ff" transparent opacity={0.10} side={THREE.BackSide} />
-      </mesh>
-      <mesh>
-        <sphereGeometry args={[earthRadius * 1.10, 48, 48]} />
-        <meshBasicMaterial color="#66bbff" transparent opacity={0.05} side={THREE.BackSide} />
-      </mesh>
-      <mesh>
-        <sphereGeometry args={[earthRadius * 1.20, 32, 32]} />
-        <meshBasicMaterial color="#88ccff" transparent opacity={0.02} side={THREE.BackSide} />
+        <sphereGeometry args={[earthRadius * 1.03, 48, 48]} />
+        <meshBasicMaterial color="#4499ff" transparent opacity={0.04} side={THREE.BackSide} />
       </mesh>
 
       {/* Signal origin pins */}
