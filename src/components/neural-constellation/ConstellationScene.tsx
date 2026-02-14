@@ -1390,115 +1390,282 @@ function MoonBody({ earthPosition }: { earthPosition: [number, number, number] }
   );
 }
 
-// Knowledge Nebula — volumetric particle cloud that looks like a real nebula
+// Knowledge Nebula — Hubble-style volumetric gas cloud with pillars, emission regions, and dust lanes
 function KnowledgeNebula({ totalEntries = 0 }: { totalEntries: number }) {
   const nebulaRef = useRef<THREE.Group>(null);
-  const dustRef = useRef<THREE.Points>(null);
-  const wispsRef = useRef<THREE.Points>(null);
+  const layer1Ref = useRef<THREE.Points>(null);
+  const layer2Ref = useRef<THREE.Points>(null);
+  const layer3Ref = useRef<THREE.Points>(null);
+  const coreRef = useRef<THREE.Points>(null);
+  const starsRef = useRef<THREE.Points>(null);
   const pulseRef = useRef(0);
   const scale = Math.min(1 + totalEntries / 500, 3);
 
-  const dustCount = 600;
-  const wispCount = 200;
-
-  // Soft radial gradient sprite for cloud-like particles
-  const spriteTexture = useMemo(() => {
+  // Soft cloud sprite — larger, more diffuse for gas cloud look
+  const cloudTexture = useMemo(() => {
     const canvas = document.createElement("canvas");
-    canvas.width = 64;
-    canvas.height = 64;
+    canvas.width = 128;
+    canvas.height = 128;
     const ctx = canvas.getContext("2d")!;
-    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
     gradient.addColorStop(0, "rgba(255,255,255,1)");
-    gradient.addColorStop(0.3, "rgba(255,255,255,0.5)");
-    gradient.addColorStop(0.7, "rgba(255,255,255,0.1)");
+    gradient.addColorStop(0.15, "rgba(255,255,255,0.8)");
+    gradient.addColorStop(0.35, "rgba(255,255,255,0.4)");
+    gradient.addColorStop(0.55, "rgba(255,255,255,0.15)");
+    gradient.addColorStop(0.8, "rgba(255,255,255,0.03)");
     gradient.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 64, 64);
+    ctx.fillRect(0, 0, 128, 128);
     return new THREE.CanvasTexture(canvas);
   }, []);
 
-  // Main dust cloud — Gaussian-distributed with color gradients
-  const { dustPositions, dustColors } = useMemo(() => {
-    const pos = new Float32Array(dustCount * 3);
-    const col = new Float32Array(dustCount * 3);
-    for (let i = 0; i < dustCount; i++) {
-      const r = (Math.random() + Math.random() + Math.random()) / 3 * 6 * scale;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      const flatY = 0.35 + Math.random() * 0.3;
-      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta) * (1 + Math.sin(theta * 3) * 0.3);
-      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * flatY;
-      pos[i * 3 + 2] = r * Math.cos(phi) * (1 + Math.cos(theta * 2) * 0.2);
-      const dn = r / (6 * scale);
-      if (dn < 0.3) {
-        col[i*3]=0.75+Math.random()*0.2; col[i*3+1]=0.2+Math.random()*0.25; col[i*3+2]=0.95+Math.random()*0.05;
-      } else if (dn < 0.6) {
-        col[i*3]=0.6+Math.random()*0.3; col[i*3+1]=0.1+Math.random()*0.2; col[i*3+2]=0.7+Math.random()*0.2;
+  // Sharp star sprite
+  const starTexture = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 32;
+    canvas.height = 32;
+    const ctx = canvas.getContext("2d")!;
+    const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+    gradient.addColorStop(0, "rgba(255,255,255,1)");
+    gradient.addColorStop(0.1, "rgba(255,255,255,0.9)");
+    gradient.addColorStop(0.3, "rgba(255,255,255,0.2)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 32, 32);
+    return new THREE.CanvasTexture(canvas);
+  }, []);
+
+  // Perlin-like noise helper for organic shapes
+  const noise3D = (x: number, y: number, z: number) => {
+    const p = Math.sin(x * 1.3 + y * 0.7) * Math.cos(z * 0.9 + x * 0.5) * Math.sin(y * 1.1 - z * 0.8);
+    return p * 0.5 + 0.5;
+  };
+
+  // Layer 1: Dense inner emission nebula (warm reds, oranges, pinks — like Carina/Eagle)
+  const { l1Pos, l1Col, l1Count } = useMemo(() => {
+    const count = 1200;
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      // Clustered, elongated shape with pillar-like structures
+      const arm = Math.random() * Math.PI * 2;
+      const r = Math.pow(Math.random(), 0.6) * 4.5 * scale;
+      const pillarStrength = noise3D(arm * 2, r * 0.5, i * 0.01);
+      const x = Math.cos(arm) * r * (1 + pillarStrength * 0.8) + (Math.random() - 0.5) * 1.2;
+      const y = (Math.random() - 0.5) * 3.5 * scale * (0.3 + pillarStrength * 0.5);
+      const z = Math.sin(arm) * r * (1 + Math.sin(arm * 3) * 0.4) + (Math.random() - 0.5) * 1.2;
+      pos[i * 3] = x;
+      pos[i * 3 + 1] = y;
+      pos[i * 3 + 2] = z;
+      // Color: warm emission palette — dusty rose, amber, burnt orange
+      const dn = r / (4.5 * scale);
+      const n = noise3D(x * 0.3, y * 0.3, z * 0.3);
+      if (n > 0.6) {
+        // Bright emission pink/magenta
+        col[i * 3] = 0.9 + Math.random() * 0.1;
+        col[i * 3 + 1] = 0.2 + Math.random() * 0.2;
+        col[i * 3 + 2] = 0.4 + Math.random() * 0.3;
+      } else if (dn < 0.4) {
+        // Inner warm amber/gold
+        col[i * 3] = 0.95 + Math.random() * 0.05;
+        col[i * 3 + 1] = 0.55 + Math.random() * 0.25;
+        col[i * 3 + 2] = 0.15 + Math.random() * 0.15;
       } else {
-        col[i*3]=0.3+Math.random()*0.2; col[i*3+1]=0.15+Math.random()*0.2; col[i*3+2]=0.8+Math.random()*0.2;
+        // Outer dusty orange-red
+        col[i * 3] = 0.8 + Math.random() * 0.15;
+        col[i * 3 + 1] = 0.25 + Math.random() * 0.2;
+        col[i * 3 + 2] = 0.1 + Math.random() * 0.15;
       }
     }
-    return { dustPositions: pos, dustColors: col };
+    return { l1Pos: pos, l1Col: col, l1Count: count };
   }, [scale]);
 
-  // Bright wispy filaments / tendrils
-  const { wispPositions, wispColors } = useMemo(() => {
-    const pos = new Float32Array(wispCount * 3);
-    const col = new Float32Array(wispCount * 3);
-    for (let i = 0; i < wispCount; i++) {
-      const arm = Math.floor(Math.random() * 4);
-      const armAngle = (arm / 4) * Math.PI * 2;
-      const t = Math.random();
-      const spiralR = t * 5 * scale;
-      const spiralAngle = armAngle + t * 1.5 + Math.random() * 0.5;
-      pos[i*3] = Math.cos(spiralAngle) * spiralR + (Math.random()-0.5)*1.5;
-      pos[i*3+1] = (Math.random()-0.5) * 2 * scale * 0.35;
-      pos[i*3+2] = Math.sin(spiralAngle) * spiralR + (Math.random()-0.5)*1.5;
-      col[i*3]=0.85+Math.random()*0.15; col[i*3+1]=0.6+Math.random()*0.3; col[i*3+2]=1.0;
+  // Layer 2: Outer cool gas (blues, teals, cyans — like reflection nebula regions)
+  const { l2Pos, l2Col, l2Count } = useMemo(() => {
+    const count = 800;
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const theta = Math.random() * Math.PI * 2;
+      const r = (2 + Math.pow(Math.random(), 0.4) * 5) * scale;
+      const phi = Math.acos(2 * Math.random() - 1);
+      const flatY = 0.25 + Math.random() * 0.35;
+      const n = noise3D(theta, r * 0.2, phi);
+      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta) * (1 + n * 0.5);
+      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * flatY;
+      pos[i * 3 + 2] = r * Math.cos(phi) * (1 + Math.sin(theta * 2) * 0.3);
+      // Cool palette: deep blue, teal, cyan
+      const mix = Math.random();
+      if (mix < 0.4) {
+        col[i * 3] = 0.15 + Math.random() * 0.15;
+        col[i * 3 + 1] = 0.3 + Math.random() * 0.3;
+        col[i * 3 + 2] = 0.8 + Math.random() * 0.2;
+      } else if (mix < 0.7) {
+        col[i * 3] = 0.1 + Math.random() * 0.2;
+        col[i * 3 + 1] = 0.5 + Math.random() * 0.3;
+        col[i * 3 + 2] = 0.7 + Math.random() * 0.2;
+      } else {
+        // Some purple transitions
+        col[i * 3] = 0.4 + Math.random() * 0.3;
+        col[i * 3 + 1] = 0.15 + Math.random() * 0.15;
+        col[i * 3 + 2] = 0.7 + Math.random() * 0.3;
+      }
     }
-    return { wispPositions: pos, wispColors: col };
+    return { l2Pos: pos, l2Col: col, l2Count: count };
+  }, [scale]);
+
+  // Layer 3: Dark dust lanes / pillars (dark brown-black, low opacity creates "holes")
+  const { l3Pos, l3Col, l3Count } = useMemo(() => {
+    const count = 300;
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      // Dark columns and tendrils — arranged as vertical pillars
+      const pillar = Math.floor(Math.random() * 5);
+      const baseAngle = (pillar / 5) * Math.PI * 2 + 0.3;
+      const baseR = 1.5 + Math.random() * 2.5;
+      const x = Math.cos(baseAngle) * baseR * scale + (Math.random() - 0.5) * 1.5;
+      const y = (Math.random() - 0.5) * 4 * scale * 0.4;
+      const z = Math.sin(baseAngle) * baseR * scale + (Math.random() - 0.5) * 1.5;
+      pos[i * 3] = x;
+      pos[i * 3 + 1] = y;
+      pos[i * 3 + 2] = z;
+      // Very dark brownish — absorbs light
+      col[i * 3] = 0.15 + Math.random() * 0.1;
+      col[i * 3 + 1] = 0.08 + Math.random() * 0.07;
+      col[i * 3 + 2] = 0.05 + Math.random() * 0.05;
+    }
+    return { l3Pos: pos, l3Col: col, l3Count: count };
+  }, [scale]);
+
+  // Core: Ultra-bright hot stars at center
+  const { corePos, coreCol, coreCount } = useMemo(() => {
+    const count = 150;
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const r = Math.pow(Math.random(), 1.5) * 2 * scale;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * 0.4;
+      pos[i * 3 + 2] = r * Math.cos(phi);
+      // White-hot to pale blue
+      col[i * 3] = 0.9 + Math.random() * 0.1;
+      col[i * 3 + 1] = 0.85 + Math.random() * 0.15;
+      col[i * 3 + 2] = 1.0;
+    }
+    return { corePos: pos, coreCol: col, coreCount: count };
+  }, [scale]);
+
+  // Embedded stars scattered throughout
+  const { starPos, starCol, starCount } = useMemo(() => {
+    const count = 80;
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const r = 1 + Math.random() * 6 * scale;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * 0.35;
+      pos[i * 3 + 2] = r * Math.cos(phi);
+      // Hot blue-white stars
+      const temp = Math.random();
+      col[i * 3] = temp > 0.5 ? 1.0 : 0.9 + Math.random() * 0.1;
+      col[i * 3 + 1] = temp > 0.5 ? 0.95 : 0.7 + Math.random() * 0.2;
+      col[i * 3 + 2] = 1.0;
+    }
+    return { starPos: pos, starCol: col, starCount: count };
   }, [scale]);
 
   useFrame((_, delta) => {
-    pulseRef.current += delta * 0.5;
+    pulseRef.current += delta * 0.3;
     const pulse = Math.sin(pulseRef.current);
-    if (nebulaRef.current) nebulaRef.current.rotation.y += delta * 0.015;
-    if (dustRef.current) {
-      (dustRef.current.material as THREE.PointsMaterial).opacity = 0.12 + pulse * 0.03;
-      dustRef.current.rotation.y += delta * 0.008;
-      dustRef.current.rotation.z += delta * 0.003;
+    const pulse2 = Math.sin(pulseRef.current * 0.7 + 1.5);
+    if (nebulaRef.current) nebulaRef.current.rotation.y += delta * 0.008;
+    if (layer1Ref.current) {
+      (layer1Ref.current.material as THREE.PointsMaterial).opacity = 0.18 + pulse * 0.04;
+      layer1Ref.current.rotation.y += delta * 0.003;
     }
-    if (wispsRef.current) {
-      (wispsRef.current.material as THREE.PointsMaterial).opacity = 0.25 + pulse * 0.08;
-      wispsRef.current.rotation.y -= delta * 0.005;
+    if (layer2Ref.current) {
+      (layer2Ref.current.material as THREE.PointsMaterial).opacity = 0.1 + pulse2 * 0.03;
+      layer2Ref.current.rotation.y -= delta * 0.004;
+      layer2Ref.current.rotation.z += delta * 0.002;
+    }
+    if (layer3Ref.current) {
+      (layer3Ref.current.material as THREE.PointsMaterial).opacity = 0.35 + pulse * 0.05;
+    }
+    if (coreRef.current) {
+      (coreRef.current.material as THREE.PointsMaterial).opacity = 0.4 + pulse * 0.1;
+      coreRef.current.rotation.y += delta * 0.01;
+    }
+    if (starsRef.current) {
+      (starsRef.current.material as THREE.PointsMaterial).opacity = 0.7 + pulse2 * 0.15;
     }
   });
 
   return (
     <group ref={nebulaRef} position={[0, 18, -5]}>
-      {/* Main dust cloud */}
-      <points ref={dustRef}>
+      {/* Layer 1: Dense inner emission gas — warm reds, pinks, oranges */}
+      <points ref={layer1Ref}>
         <bufferGeometry>
-          <bufferAttribute attach="attributes-position" count={dustCount} array={dustPositions} itemSize={3} />
-          <bufferAttribute attach="attributes-color" count={dustCount} array={dustColors} itemSize={3} />
+          <bufferAttribute attach="attributes-position" count={l1Count} array={l1Pos} itemSize={3} />
+          <bufferAttribute attach="attributes-color" count={l1Count} array={l1Col} itemSize={3} />
         </bufferGeometry>
-        <pointsMaterial size={0.6} vertexColors transparent opacity={0.12} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={spriteTexture} />
+        <pointsMaterial size={1.4} vertexColors transparent opacity={0.18} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={cloudTexture} />
       </points>
-      {/* Bright wisps */}
-      <points ref={wispsRef}>
+
+      {/* Layer 2: Outer reflection gas — blues, teals, purples */}
+      <points ref={layer2Ref}>
         <bufferGeometry>
-          <bufferAttribute attach="attributes-position" count={wispCount} array={wispPositions} itemSize={3} />
-          <bufferAttribute attach="attributes-color" count={wispCount} array={wispColors} itemSize={3} />
+          <bufferAttribute attach="attributes-position" count={l2Count} array={l2Pos} itemSize={3} />
+          <bufferAttribute attach="attributes-color" count={l2Count} array={l2Col} itemSize={3} />
         </bufferGeometry>
-        <pointsMaterial size={0.35} vertexColors transparent opacity={0.25} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={spriteTexture} />
+        <pointsMaterial size={1.8} vertexColors transparent opacity={0.1} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={cloudTexture} />
       </points>
-      {/* Soft inner glow sphere */}
+
+      {/* Layer 3: Dark dust lanes — creates depth and structure */}
+      <points ref={layer3Ref}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={l3Count} array={l3Pos} itemSize={3} />
+          <bufferAttribute attach="attributes-color" count={l3Count} array={l3Col} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial size={2.2} vertexColors transparent opacity={0.35} sizeAttenuation depthWrite={false} blending={THREE.NormalBlending} map={cloudTexture} />
+      </points>
+
+      {/* Core: Hot bright center emission */}
+      <points ref={coreRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={coreCount} array={corePos} itemSize={3} />
+          <bufferAttribute attach="attributes-color" count={coreCount} array={coreCol} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial size={0.8} vertexColors transparent opacity={0.4} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={cloudTexture} />
+      </points>
+
+      {/* Embedded stars — bright pinpoints within the gas */}
+      <points ref={starsRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={starCount} array={starPos} itemSize={3} />
+          <bufferAttribute attach="attributes-color" count={starCount} array={starCol} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial size={0.25} vertexColors transparent opacity={0.7} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={starTexture} />
+      </points>
+
+      {/* Volumetric glow spheres for depth */}
       <mesh>
-        <sphereGeometry args={[2 * scale, 24, 24]} />
-        <meshBasicMaterial color="#a855f7" transparent opacity={0.04} side={THREE.DoubleSide} depthWrite={false} />
+        <sphereGeometry args={[3 * scale, 24, 24]} />
+        <meshBasicMaterial color="#e8553a" transparent opacity={0.025} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
-      <pointLight color="#a855f7" intensity={2.0} distance={35} />
-      <pointLight color="#ec4899" intensity={0.8} distance={20} />
+      <mesh>
+        <sphereGeometry args={[5 * scale, 24, 24]} />
+        <meshBasicMaterial color="#3b82f6" transparent opacity={0.015} side={THREE.DoubleSide} depthWrite={false} />
+      </mesh>
+
+      {/* Lighting — warm core, cool outer halo */}
+      <pointLight color="#f97316" intensity={1.8} distance={25} />
+      <pointLight color="#ec4899" intensity={1.2} distance={30} />
+      <pointLight color="#3b82f6" intensity={0.6} distance={40} position={[3, 0, -2]} />
     </group>
   );
 }
