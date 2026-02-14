@@ -1390,248 +1390,342 @@ function MoonBody({ earthPosition }: { earthPosition: [number, number, number] }
   );
 }
 
-// Knowledge Nebula — Hubble-style volumetric gas cloud with pillars, emission regions, and dust lanes
+// Knowledge Nebula — High-fidelity Hubble-style volumetric gas cloud
 function KnowledgeNebula({ totalEntries = 0 }: { totalEntries: number }) {
   const nebulaRef = useRef<THREE.Group>(null);
   const layer1Ref = useRef<THREE.Points>(null);
   const layer2Ref = useRef<THREE.Points>(null);
   const layer3Ref = useRef<THREE.Points>(null);
+  const layer4Ref = useRef<THREE.Points>(null);
   const coreRef = useRef<THREE.Points>(null);
   const starsRef = useRef<THREE.Points>(null);
+  const filamentRef = useRef<THREE.Points>(null);
   const pulseRef = useRef(0);
   const scale = Math.min(1 + totalEntries / 500, 3);
 
-  // Soft cloud sprite — larger, more diffuse for gas cloud look
+  // High-res soft cloud sprite with more natural falloff
   const cloudTexture = useMemo(() => {
     const canvas = document.createElement("canvas");
-    canvas.width = 128;
-    canvas.height = 128;
+    canvas.width = 256;
+    canvas.height = 256;
     const ctx = canvas.getContext("2d")!;
-    const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    const gradient = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
     gradient.addColorStop(0, "rgba(255,255,255,1)");
-    gradient.addColorStop(0.15, "rgba(255,255,255,0.8)");
-    gradient.addColorStop(0.35, "rgba(255,255,255,0.4)");
-    gradient.addColorStop(0.55, "rgba(255,255,255,0.15)");
-    gradient.addColorStop(0.8, "rgba(255,255,255,0.03)");
+    gradient.addColorStop(0.08, "rgba(255,255,255,0.95)");
+    gradient.addColorStop(0.18, "rgba(255,255,255,0.7)");
+    gradient.addColorStop(0.3, "rgba(255,255,255,0.45)");
+    gradient.addColorStop(0.45, "rgba(255,255,255,0.2)");
+    gradient.addColorStop(0.6, "rgba(255,255,255,0.08)");
+    gradient.addColorStop(0.8, "rgba(255,255,255,0.02)");
     gradient.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 128, 128);
+    ctx.fillRect(0, 0, 256, 256);
     return new THREE.CanvasTexture(canvas);
   }, []);
 
-  // Sharp star sprite
+  // Wispy elongated cloud for filaments
+  const wispTexture = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext("2d")!;
+    // Elongated elliptical gradient for wispy look
+    ctx.save();
+    ctx.translate(128, 128);
+    ctx.scale(1, 0.4);
+    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 128);
+    gradient.addColorStop(0, "rgba(255,255,255,1)");
+    gradient.addColorStop(0.2, "rgba(255,255,255,0.6)");
+    gradient.addColorStop(0.5, "rgba(255,255,255,0.15)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(-128, -320, 256, 640);
+    ctx.restore();
+    return new THREE.CanvasTexture(canvas);
+  }, []);
+
+  // Sharp star sprite with diffraction spikes
   const starTexture = useMemo(() => {
     const canvas = document.createElement("canvas");
-    canvas.width = 32;
-    canvas.height = 32;
+    canvas.width = 64;
+    canvas.height = 64;
     const ctx = canvas.getContext("2d")!;
-    const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+    // Core glow
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
     gradient.addColorStop(0, "rgba(255,255,255,1)");
-    gradient.addColorStop(0.1, "rgba(255,255,255,0.9)");
-    gradient.addColorStop(0.3, "rgba(255,255,255,0.2)");
+    gradient.addColorStop(0.05, "rgba(255,255,255,0.95)");
+    gradient.addColorStop(0.15, "rgba(255,255,255,0.5)");
+    gradient.addColorStop(0.35, "rgba(255,255,255,0.1)");
     gradient.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 32, 32);
+    ctx.fillRect(0, 0, 64, 64);
+    // Diffraction spikes
+    ctx.strokeStyle = "rgba(255,255,255,0.3)";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(32, 2); ctx.lineTo(32, 62); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(2, 32); ctx.lineTo(62, 32); ctx.stroke();
     return new THREE.CanvasTexture(canvas);
   }, []);
 
-  // Perlin-like noise helper for organic shapes
+  // Improved noise with octaves for organic detail
   const noise3D = (x: number, y: number, z: number) => {
-    const p = Math.sin(x * 1.3 + y * 0.7) * Math.cos(z * 0.9 + x * 0.5) * Math.sin(y * 1.1 - z * 0.8);
-    return p * 0.5 + 0.5;
+    const p1 = Math.sin(x * 1.3 + y * 0.7) * Math.cos(z * 0.9 + x * 0.5) * Math.sin(y * 1.1 - z * 0.8);
+    const p2 = Math.sin(x * 3.1 - z * 1.7) * Math.cos(y * 2.3 + x * 1.1) * 0.5;
+    const p3 = Math.cos(x * 5.7 + y * 4.3) * Math.sin(z * 3.9) * 0.25;
+    return (p1 + p2 + p3) * 0.35 + 0.5;
   };
 
-  // Layer 1: Dense inner emission nebula (warm reds, oranges, pinks — like Carina/Eagle)
-  const { l1Pos, l1Col, l1Count } = useMemo(() => {
-    const count = 1200;
+  // Layer 1: Dense inner emission nebula — warm reds, oranges, pinks with pillar structures
+  const { l1Pos, l1Col, l1Sizes, l1Count } = useMemo(() => {
+    const count = 2400;
     const pos = new Float32Array(count * 3);
     const col = new Float32Array(count * 3);
+    const sizes = new Float32Array(count);
     for (let i = 0; i < count; i++) {
-      // Clustered, elongated shape with pillar-like structures
       const arm = Math.random() * Math.PI * 2;
-      const r = Math.pow(Math.random(), 0.6) * 4.5 * scale;
-      const pillarStrength = noise3D(arm * 2, r * 0.5, i * 0.01);
-      const x = Math.cos(arm) * r * (1 + pillarStrength * 0.8) + (Math.random() - 0.5) * 1.2;
-      const y = (Math.random() - 0.5) * 3.5 * scale * (0.3 + pillarStrength * 0.5);
-      const z = Math.sin(arm) * r * (1 + Math.sin(arm * 3) * 0.4) + (Math.random() - 0.5) * 1.2;
-      pos[i * 3] = x;
-      pos[i * 3 + 1] = y;
-      pos[i * 3 + 2] = z;
-      // Color: warm emission palette — dusty rose, amber, burnt orange
-      const dn = r / (4.5 * scale);
-      const n = noise3D(x * 0.3, y * 0.3, z * 0.3);
-      if (n > 0.6) {
-        // Bright emission pink/magenta
-        col[i * 3] = 0.9 + Math.random() * 0.1;
-        col[i * 3 + 1] = 0.2 + Math.random() * 0.2;
-        col[i * 3 + 2] = 0.4 + Math.random() * 0.3;
-      } else if (dn < 0.4) {
-        // Inner warm amber/gold
+      const r = Math.pow(Math.random(), 0.5) * 5.5 * scale;
+      const pillar = noise3D(arm * 2, r * 0.5, i * 0.008);
+      const tendril = noise3D(arm * 3.7, r * 1.2, i * 0.003);
+      const x = Math.cos(arm) * r * (1 + pillar * 1.2) + (Math.random() - 0.5) * 1.0 * tendril;
+      const y = (Math.random() - 0.5) * 4 * scale * (0.25 + pillar * 0.6);
+      const z = Math.sin(arm) * r * (1 + pillar * 0.6) + (Math.random() - 0.5) * 0.8;
+      pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
+
+      // Rich color palette with more variation
+      const colorSeed = noise3D(x * 0.3, y * 0.5, z * 0.4);
+      if (colorSeed > 0.65) {
+        // Deep crimson / dusty rose
+        col[i * 3] = 0.85 + Math.random() * 0.15;
+        col[i * 3 + 1] = 0.15 + Math.random() * 0.2;
+        col[i * 3 + 2] = 0.2 + Math.random() * 0.15;
+      } else if (colorSeed > 0.4) {
+        // Warm amber / salmon
         col[i * 3] = 0.95 + Math.random() * 0.05;
-        col[i * 3 + 1] = 0.55 + Math.random() * 0.25;
-        col[i * 3 + 2] = 0.15 + Math.random() * 0.15;
-      } else {
-        // Outer dusty orange-red
-        col[i * 3] = 0.8 + Math.random() * 0.15;
-        col[i * 3 + 1] = 0.25 + Math.random() * 0.2;
+        col[i * 3 + 1] = 0.45 + Math.random() * 0.25;
         col[i * 3 + 2] = 0.1 + Math.random() * 0.15;
+      } else if (colorSeed > 0.2) {
+        // Hot pink / magenta
+        col[i * 3] = 0.9 + Math.random() * 0.1;
+        col[i * 3 + 1] = 0.2 + Math.random() * 0.15;
+        col[i * 3 + 2] = 0.5 + Math.random() * 0.3;
+      } else {
+        // Pale gold / peach
+        col[i * 3] = 0.98;
+        col[i * 3 + 1] = 0.7 + Math.random() * 0.2;
+        col[i * 3 + 2] = 0.3 + Math.random() * 0.2;
       }
+      // Vary particle size for depth — some very large diffuse, some tight
+      sizes[i] = (0.6 + Math.random() * 2.0) * (0.5 + pillar * 0.8);
     }
-    return { l1Pos: pos, l1Col: col, l1Count: count };
+    return { l1Pos: pos, l1Col: col, l1Sizes: sizes, l1Count: count };
   }, [scale]);
 
-  // Layer 2: Outer cool gas (blues, teals, cyans — like reflection nebula regions)
-  const { l2Pos, l2Col, l2Count } = useMemo(() => {
+  // Layer 2: Outer reflection nebula — blues, teals, purples, larger and more diffuse
+  const { l2Pos, l2Col, l2Sizes, l2Count } = useMemo(() => {
+    const count = 1800;
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    const sizes = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      const arm = Math.random() * Math.PI * 2;
+      const r = 2 + Math.pow(Math.random(), 0.4) * 7 * scale;
+      const wisp = noise3D(arm * 1.5, r * 0.3, i * 0.005);
+      const x = Math.cos(arm) * r + (Math.random() - 0.5) * 2.5 * wisp;
+      const y = (Math.random() - 0.5) * 5 * scale * (0.3 + wisp * 0.4);
+      const z = Math.sin(arm) * r + (Math.random() - 0.5) * 2;
+      pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
+
+      const mix = Math.random();
+      if (mix < 0.35) {
+        // Deep sapphire blue
+        col[i * 3] = 0.1 + Math.random() * 0.1;
+        col[i * 3 + 1] = 0.25 + Math.random() * 0.25;
+        col[i * 3 + 2] = 0.85 + Math.random() * 0.15;
+      } else if (mix < 0.6) {
+        // Teal / cyan
+        col[i * 3] = 0.05 + Math.random() * 0.15;
+        col[i * 3 + 1] = 0.5 + Math.random() * 0.35;
+        col[i * 3 + 2] = 0.7 + Math.random() * 0.2;
+      } else if (mix < 0.8) {
+        // Purple / violet
+        col[i * 3] = 0.4 + Math.random() * 0.35;
+        col[i * 3 + 1] = 0.1 + Math.random() * 0.15;
+        col[i * 3 + 2] = 0.75 + Math.random() * 0.25;
+      } else {
+        // Indigo transition
+        col[i * 3] = 0.2 + Math.random() * 0.15;
+        col[i * 3 + 1] = 0.15 + Math.random() * 0.15;
+        col[i * 3 + 2] = 0.6 + Math.random() * 0.3;
+      }
+      sizes[i] = 1.0 + Math.random() * 2.8;
+    }
+    return { l2Pos: pos, l2Col: col, l2Sizes: sizes, l2Count: count };
+  }, [scale]);
+
+  // Layer 3: Dark dust lanes — creates silhouette pillars and depth
+  const { l3Pos, l3Col, l3Sizes, l3Count } = useMemo(() => {
+    const count = 600;
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    const sizes = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      const pillar = Math.floor(Math.random() * 7);
+      const baseAngle = (pillar / 7) * Math.PI * 2 + 0.2;
+      const baseR = 1.2 + Math.random() * 3.0;
+      const pillarNoise = noise3D(pillar * 2.1, baseR * 0.8, i * 0.01);
+      const x = Math.cos(baseAngle) * baseR * scale + (Math.random() - 0.5) * 1.2 * pillarNoise;
+      const y = (Math.random() - 0.5) * 5 * scale * (0.3 + pillarNoise * 0.4);
+      const z = Math.sin(baseAngle) * baseR * scale + (Math.random() - 0.5) * 1.0;
+      pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
+      // Very dark — absorbs light
+      const darkness = 0.03 + Math.random() * 0.08;
+      col[i * 3] = darkness * 1.5;
+      col[i * 3 + 1] = darkness * 0.8;
+      col[i * 3 + 2] = darkness * 0.5;
+      sizes[i] = 1.5 + Math.random() * 2.5;
+    }
+    return { l3Pos: pos, l3Col: col, l3Sizes: sizes, l3Count: count };
+  }, [scale]);
+
+  // Layer 4: Wispy edge filaments — tendrils extending outward
+  const { l4Pos, l4Col, l4Count } = useMemo(() => {
     const count = 800;
     const pos = new Float32Array(count * 3);
     const col = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      const theta = Math.random() * Math.PI * 2;
-      const r = (2 + Math.pow(Math.random(), 0.4) * 5) * scale;
-      const phi = Math.acos(2 * Math.random() - 1);
-      const flatY = 0.25 + Math.random() * 0.35;
-      const n = noise3D(theta, r * 0.2, phi);
-      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta) * (1 + n * 0.5);
-      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * flatY;
-      pos[i * 3 + 2] = r * Math.cos(phi) * (1 + Math.sin(theta * 2) * 0.3);
-      // Cool palette: deep blue, teal, cyan
-      const mix = Math.random();
-      if (mix < 0.4) {
-        col[i * 3] = 0.15 + Math.random() * 0.15;
-        col[i * 3 + 1] = 0.3 + Math.random() * 0.3;
-        col[i * 3 + 2] = 0.8 + Math.random() * 0.2;
-      } else if (mix < 0.7) {
-        col[i * 3] = 0.1 + Math.random() * 0.2;
-        col[i * 3 + 1] = 0.5 + Math.random() * 0.3;
-        col[i * 3 + 2] = 0.7 + Math.random() * 0.2;
-      } else {
-        // Some purple transitions
-        col[i * 3] = 0.4 + Math.random() * 0.3;
-        col[i * 3 + 1] = 0.15 + Math.random() * 0.15;
-        col[i * 3 + 2] = 0.7 + Math.random() * 0.3;
-      }
+      // Create tendril-like extensions from the main body
+      const tendrilId = Math.floor(Math.random() * 12);
+      const tendrilAngle = (tendrilId / 12) * Math.PI * 2;
+      const progress = Math.pow(Math.random(), 0.7);
+      const r = 4 + progress * 6 * scale;
+      const spread = progress * 2.5;
+      const x = Math.cos(tendrilAngle) * r + (Math.random() - 0.5) * spread;
+      const y = (Math.random() - 0.5) * 2 * (1 - progress * 0.5);
+      const z = Math.sin(tendrilAngle) * r + (Math.random() - 0.5) * spread;
+      pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
+      // Fade from warm to cool at edges
+      const fade = 1 - progress;
+      col[i * 3] = 0.7 * fade + 0.15 * (1 - fade);
+      col[i * 3 + 1] = 0.3 * fade + 0.3 * (1 - fade);
+      col[i * 3 + 2] = 0.4 * fade + 0.7 * (1 - fade);
     }
-    return { l2Pos: pos, l2Col: col, l2Count: count };
+    return { l4Pos: pos, l4Col: col, l4Count: count };
   }, [scale]);
 
-  // Layer 3: Dark dust lanes / pillars (dark brown-black, low opacity creates "holes")
-  const { l3Pos, l3Col, l3Count } = useMemo(() => {
-    const count = 300;
-    const pos = new Float32Array(count * 3);
-    const col = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      // Dark columns and tendrils — arranged as vertical pillars
-      const pillar = Math.floor(Math.random() * 5);
-      const baseAngle = (pillar / 5) * Math.PI * 2 + 0.3;
-      const baseR = 1.5 + Math.random() * 2.5;
-      const x = Math.cos(baseAngle) * baseR * scale + (Math.random() - 0.5) * 1.5;
-      const y = (Math.random() - 0.5) * 4 * scale * 0.4;
-      const z = Math.sin(baseAngle) * baseR * scale + (Math.random() - 0.5) * 1.5;
-      pos[i * 3] = x;
-      pos[i * 3 + 1] = y;
-      pos[i * 3 + 2] = z;
-      // Very dark brownish — absorbs light
-      col[i * 3] = 0.15 + Math.random() * 0.1;
-      col[i * 3 + 1] = 0.08 + Math.random() * 0.07;
-      col[i * 3 + 2] = 0.05 + Math.random() * 0.05;
-    }
-    return { l3Pos: pos, l3Col: col, l3Count: count };
-  }, [scale]);
-
-  // Core: Ultra-bright hot stars at center
+  // Core: Ultra-bright hot region
   const { corePos, coreCol, coreCount } = useMemo(() => {
-    const count = 150;
+    const count = 250;
     const pos = new Float32Array(count * 3);
     const col = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      const r = Math.pow(Math.random(), 1.5) * 2 * scale;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * 0.4;
-      pos[i * 3 + 2] = r * Math.cos(phi);
-      // White-hot to pale blue
-      col[i * 3] = 0.9 + Math.random() * 0.1;
-      col[i * 3 + 1] = 0.85 + Math.random() * 0.15;
-      col[i * 3 + 2] = 1.0;
-    }
-    return { corePos: pos, coreCol: col, coreCount: count };
-  }, [scale]);
-
-  // Embedded stars scattered throughout
-  const { starPos, starCol, starCount } = useMemo(() => {
-    const count = 80;
-    const pos = new Float32Array(count * 3);
-    const col = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      const r = 1 + Math.random() * 6 * scale;
+      const r = Math.pow(Math.random(), 1.8) * 2.5 * scale;
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
       pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
       pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * 0.35;
       pos[i * 3 + 2] = r * Math.cos(phi);
-      // Hot blue-white stars
+      // White-hot to pale yellow
+      col[i * 3] = 1.0;
+      col[i * 3 + 1] = 0.9 + Math.random() * 0.1;
+      col[i * 3 + 2] = 0.85 + Math.random() * 0.15;
+    }
+    return { corePos: pos, coreCol: col, coreCount: count };
+  }, [scale]);
+
+  // Embedded young stars
+  const { starPos, starCol, starCount } = useMemo(() => {
+    const count = 120;
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const r = 0.5 + Math.random() * 7 * scale;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * 0.3;
+      pos[i * 3 + 2] = r * Math.cos(phi);
       const temp = Math.random();
-      col[i * 3] = temp > 0.5 ? 1.0 : 0.9 + Math.random() * 0.1;
-      col[i * 3 + 1] = temp > 0.5 ? 0.95 : 0.7 + Math.random() * 0.2;
-      col[i * 3 + 2] = 1.0;
+      if (temp > 0.7) {
+        // Hot blue-white O/B type
+        col[i * 3] = 0.8; col[i * 3 + 1] = 0.9; col[i * 3 + 2] = 1.0;
+      } else if (temp > 0.4) {
+        // White A type
+        col[i * 3] = 1.0; col[i * 3 + 1] = 0.98; col[i * 3 + 2] = 0.95;
+      } else {
+        // Yellow-orange young star
+        col[i * 3] = 1.0; col[i * 3 + 1] = 0.85; col[i * 3 + 2] = 0.6;
+      }
     }
     return { starPos: pos, starCol: col, starCount: count };
   }, [scale]);
 
   useFrame((_, delta) => {
-    pulseRef.current += delta * 0.3;
+    pulseRef.current += delta * 0.25;
     const pulse = Math.sin(pulseRef.current);
-    const pulse2 = Math.sin(pulseRef.current * 0.7 + 1.5);
-    if (nebulaRef.current) nebulaRef.current.rotation.y += delta * 0.008;
+    const pulse2 = Math.sin(pulseRef.current * 0.6 + 1.5);
+    const pulse3 = Math.sin(pulseRef.current * 1.3 + 0.8);
+    if (nebulaRef.current) nebulaRef.current.rotation.y += delta * 0.006;
     if (layer1Ref.current) {
-      (layer1Ref.current.material as THREE.PointsMaterial).opacity = 0.18 + pulse * 0.04;
-      layer1Ref.current.rotation.y += delta * 0.003;
+      (layer1Ref.current.material as THREE.PointsMaterial).opacity = 0.22 + pulse * 0.04;
+      layer1Ref.current.rotation.y += delta * 0.002;
     }
     if (layer2Ref.current) {
-      (layer2Ref.current.material as THREE.PointsMaterial).opacity = 0.1 + pulse2 * 0.03;
-      layer2Ref.current.rotation.y -= delta * 0.004;
-      layer2Ref.current.rotation.z += delta * 0.002;
+      (layer2Ref.current.material as THREE.PointsMaterial).opacity = 0.12 + pulse2 * 0.03;
+      layer2Ref.current.rotation.y -= delta * 0.003;
+      layer2Ref.current.rotation.z += delta * 0.001;
     }
     if (layer3Ref.current) {
-      (layer3Ref.current.material as THREE.PointsMaterial).opacity = 0.35 + pulse * 0.05;
+      (layer3Ref.current.material as THREE.PointsMaterial).opacity = 0.45 + pulse * 0.06;
+    }
+    if (layer4Ref.current) {
+      (layer4Ref.current.material as THREE.PointsMaterial).opacity = 0.08 + pulse3 * 0.03;
+      layer4Ref.current.rotation.y += delta * 0.001;
     }
     if (coreRef.current) {
-      (coreRef.current.material as THREE.PointsMaterial).opacity = 0.4 + pulse * 0.1;
-      coreRef.current.rotation.y += delta * 0.01;
+      (coreRef.current.material as THREE.PointsMaterial).opacity = 0.5 + pulse * 0.12;
+      coreRef.current.rotation.y += delta * 0.008;
     }
     if (starsRef.current) {
-      (starsRef.current.material as THREE.PointsMaterial).opacity = 0.7 + pulse2 * 0.15;
+      (starsRef.current.material as THREE.PointsMaterial).opacity = 0.75 + pulse2 * 0.15;
     }
   });
 
   return (
     <group ref={nebulaRef} position={[0, 18, -5]}>
-      {/* Layer 1: Dense inner emission gas — warm reds, pinks, oranges */}
+      {/* Layer 1: Dense inner emission gas */}
       <points ref={layer1Ref}>
         <bufferGeometry>
           <bufferAttribute attach="attributes-position" count={l1Count} array={l1Pos} itemSize={3} />
           <bufferAttribute attach="attributes-color" count={l1Count} array={l1Col} itemSize={3} />
         </bufferGeometry>
-        <pointsMaterial size={1.4} vertexColors transparent opacity={0.18} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={cloudTexture} />
+        <pointsMaterial size={1.6} vertexColors transparent opacity={0.22} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={cloudTexture} />
       </points>
 
-      {/* Layer 2: Outer reflection gas — blues, teals, purples */}
+      {/* Layer 2: Outer reflection gas */}
       <points ref={layer2Ref}>
         <bufferGeometry>
           <bufferAttribute attach="attributes-position" count={l2Count} array={l2Pos} itemSize={3} />
           <bufferAttribute attach="attributes-color" count={l2Count} array={l2Col} itemSize={3} />
         </bufferGeometry>
-        <pointsMaterial size={1.8} vertexColors transparent opacity={0.1} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={cloudTexture} />
+        <pointsMaterial size={2.2} vertexColors transparent opacity={0.12} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={cloudTexture} />
       </points>
 
-      {/* Layer 3: Dark dust lanes — creates depth and structure */}
+      {/* Layer 3: Dark dust lanes */}
       <points ref={layer3Ref}>
         <bufferGeometry>
           <bufferAttribute attach="attributes-position" count={l3Count} array={l3Pos} itemSize={3} />
           <bufferAttribute attach="attributes-color" count={l3Count} array={l3Col} itemSize={3} />
         </bufferGeometry>
-        <pointsMaterial size={2.2} vertexColors transparent opacity={0.35} sizeAttenuation depthWrite={false} blending={THREE.NormalBlending} map={cloudTexture} />
+        <pointsMaterial size={2.8} vertexColors transparent opacity={0.45} sizeAttenuation depthWrite={false} blending={THREE.NormalBlending} map={cloudTexture} />
+      </points>
+
+      {/* Layer 4: Wispy edge filaments */}
+      <points ref={layer4Ref}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={l4Count} array={l4Pos} itemSize={3} />
+          <bufferAttribute attach="attributes-color" count={l4Count} array={l4Col} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial size={1.4} vertexColors transparent opacity={0.08} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={wispTexture} />
       </points>
 
       {/* Core: Hot bright center emission */}
@@ -1640,32 +1734,41 @@ function KnowledgeNebula({ totalEntries = 0 }: { totalEntries: number }) {
           <bufferAttribute attach="attributes-position" count={coreCount} array={corePos} itemSize={3} />
           <bufferAttribute attach="attributes-color" count={coreCount} array={coreCol} itemSize={3} />
         </bufferGeometry>
-        <pointsMaterial size={0.8} vertexColors transparent opacity={0.4} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={cloudTexture} />
+        <pointsMaterial size={1.0} vertexColors transparent opacity={0.5} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={cloudTexture} />
       </points>
 
-      {/* Embedded stars — bright pinpoints within the gas */}
+      {/* Embedded young stars with diffraction spikes */}
       <points ref={starsRef}>
         <bufferGeometry>
           <bufferAttribute attach="attributes-position" count={starCount} array={starPos} itemSize={3} />
           <bufferAttribute attach="attributes-color" count={starCount} array={starCol} itemSize={3} />
         </bufferGeometry>
-        <pointsMaterial size={0.25} vertexColors transparent opacity={0.7} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={starTexture} />
+        <pointsMaterial size={0.3} vertexColors transparent opacity={0.75} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} map={starTexture} />
       </points>
 
-      {/* Volumetric glow spheres for depth */}
+      {/* Volumetric glow shells for overall luminosity */}
       <mesh>
-        <sphereGeometry args={[3 * scale, 24, 24]} />
-        <meshBasicMaterial color="#e8553a" transparent opacity={0.025} side={THREE.DoubleSide} depthWrite={false} />
+        <sphereGeometry args={[2.5 * scale, 32, 32]} />
+        <meshBasicMaterial color="#e8553a" transparent opacity={0.035} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
       <mesh>
-        <sphereGeometry args={[5 * scale, 24, 24]} />
-        <meshBasicMaterial color="#3b82f6" transparent opacity={0.015} side={THREE.DoubleSide} depthWrite={false} />
+        <sphereGeometry args={[4 * scale, 32, 32]} />
+        <meshBasicMaterial color="#c026d3" transparent opacity={0.02} side={THREE.DoubleSide} depthWrite={false} />
+      </mesh>
+      <mesh>
+        <sphereGeometry args={[6 * scale, 24, 24]} />
+        <meshBasicMaterial color="#3b82f6" transparent opacity={0.012} side={THREE.DoubleSide} depthWrite={false} />
+      </mesh>
+      <mesh>
+        <sphereGeometry args={[8 * scale, 16, 16]} />
+        <meshBasicMaterial color="#6366f1" transparent opacity={0.006} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
 
-      {/* Lighting — warm core, cool outer halo */}
-      <pointLight color="#f97316" intensity={1.8} distance={25} />
-      <pointLight color="#ec4899" intensity={1.2} distance={30} />
-      <pointLight color="#3b82f6" intensity={0.6} distance={40} position={[3, 0, -2]} />
+      {/* Multi-color lighting for richness */}
+      <pointLight color="#f97316" intensity={2.2} distance={30} />
+      <pointLight color="#ec4899" intensity={1.5} distance={35} position={[1, 1, 0]} />
+      <pointLight color="#a855f7" intensity={0.8} distance={25} position={[-2, 0, 1]} />
+      <pointLight color="#3b82f6" intensity={0.6} distance={45} position={[3, -1, -3]} />
     </group>
   );
 }
