@@ -8001,6 +8001,7 @@ export type Database = {
           engagement_metrics: Json | null
           entity_tags: string[] | null
           event_date: string | null
+          expert_context: Json | null
           hashtags: string[] | null
           id: string
           information_accuracy: string | null
@@ -8049,6 +8050,7 @@ export type Database = {
           engagement_metrics?: Json | null
           entity_tags?: string[] | null
           event_date?: string | null
+          expert_context?: Json | null
           hashtags?: string[] | null
           id?: string
           information_accuracy?: string | null
@@ -8097,6 +8099,7 @@ export type Database = {
           engagement_metrics?: Json | null
           entity_tags?: string[] | null
           event_date?: string | null
+          expert_context?: Json | null
           hashtags?: string[] | null
           id?: string
           information_accuracy?: string | null

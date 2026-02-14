@@ -855,6 +855,115 @@ Is this signal actionable intelligence for this specific client?`
       }
     }).catch(err => console.error('Entity correlation error:', err));
     
+    // ===== EXPERT KNOWLEDGE ENRICHMENT (async, non-blocking) =====
+    // Match incoming signal against learned expert knowledge for contextual intelligence
+    (async () => {
+      try {
+        const signalCategory = classification.category || '';
+        const signalSeverity = classification.severity || 'medium';
+        
+        // Map signal category to expert knowledge domain
+        const domainMap: Record<string, string> = {
+          malware: 'cyber', phishing: 'cyber', intrusion: 'cyber', data_exfil: 'cyber',
+          ransomware: 'cyber', data_exposure: 'cyber', cyber: 'cyber',
+          protest: 'geopolitical', civil_unrest: 'geopolitical', regulatory: 'compliance',
+          theft: 'physical_security', sabotage: 'physical_security', violence: 'physical_security',
+          surveillance: 'physical_security', trespass: 'physical_security',
+          threat: 'threat_intelligence', emergency: 'crisis_management',
+          wildfire: 'crisis_management', weather: 'crisis_management', earthquake: 'crisis_management',
+          travel: 'travel_security', executive: 'executive_protection',
+        };
+        
+        const mappedDomain = domainMap[signalCategory] || null;
+        
+        // Build search keywords from signal text (top 8 meaningful words)
+        const stopWords = new Set(['the','a','an','is','are','was','were','be','been','has','have','had','do','does','did','will','would','could','should','may','might','shall','can','for','and','but','or','not','no','this','that','these','those','from','with','into','about','after','before','during','between','through','above','below','under','over','such','than','too','very','just','also','more','most','some','any','each','every','all','both','few','many','much','other','another','new','old','first','last','long','great','little','own','same','big','high','small','large','next','early','young','important','few','public','bad','good']);
+        const keywords = (classification.normalized_text || signalText)
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, ' ')
+          .split(/\s+/)
+          .filter(w => w.length > 3 && !stopWords.has(w))
+          .slice(0, 8);
+        
+        if (keywords.length < 2) return; // Not enough signal content to match
+        
+        // Query expert knowledge for matching entries
+        let query = supabase
+          .from('expert_knowledge')
+          .select('id, domain, subdomain, knowledge_type, title, content, applicability_tags, confidence_score')
+          .eq('is_active', true)
+          .gte('confidence_score', 0.7)
+          .order('confidence_score', { ascending: false })
+          .limit(5);
+        
+        // Filter by domain if we can map it
+        if (mappedDomain) {
+          query = query.eq('domain', mappedDomain);
+        }
+        
+        // Use OR conditions on keywords for relevance matching
+        const orConditions = keywords
+          .slice(0, 4)
+          .map(k => `title.ilike.%${k}%,content.ilike.%${k}%,applicability_tags.cs.{${k}}`)
+          .join(',');
+        query = query.or(orConditions);
+        
+        const { data: matchedKnowledge, error: knowledgeError } = await query;
+        
+        if (knowledgeError) {
+          console.error('[Knowledge Enrichment] Query error:', knowledgeError);
+          return;
+        }
+        
+        if (!matchedKnowledge || matchedKnowledge.length === 0) {
+          console.log(`[Knowledge Enrichment] No matches for signal ${signal.id} (domain: ${mappedDomain || 'any'})`);
+          return;
+        }
+        
+        // Build expert context payload
+        const expertContext = {
+          matched_at: new Date().toISOString(),
+          domain: mappedDomain,
+          matches: matchedKnowledge.map(k => ({
+            id: k.id,
+            title: k.title,
+            domain: k.domain,
+            subdomain: k.subdomain,
+            knowledge_type: k.knowledge_type,
+            confidence: k.confidence_score,
+            // Include actionable excerpt (first 300 chars of content)
+            excerpt: k.content.substring(0, 300),
+            tags: k.applicability_tags,
+          })),
+          total_matches: matchedKnowledge.length,
+          enrichment_keywords: keywords.slice(0, 4),
+        };
+        
+        // Update signal with expert context
+        await supabase
+          .from('signals')
+          .update({ expert_context: expertContext })
+          .eq('id', signal.id);
+        
+        console.log(`[Knowledge Enrichment] ✅ Signal ${signal.id} enriched with ${matchedKnowledge.length} expert knowledge entries (domain: ${mappedDomain || 'cross-domain'})`);
+        
+        // For high-severity signals, also trigger reactive learning if no matches found in the mapped domain
+        if ((signalSeverity === 'critical' || signalSeverity === 'high') && matchedKnowledge.length < 2) {
+          console.log(`[Knowledge Enrichment] Knowledge gap detected for ${signalSeverity} signal — triggering reactive learning`);
+          supabase.functions.invoke('agent-self-learning', {
+            body: {
+              mode: 'reactive',
+              topic: `${signalCategory} security threat: ${(classification.normalized_text || signalText).substring(0, 200)}`,
+              context: `High-severity signal detected with insufficient expert knowledge coverage in domain "${mappedDomain || 'unknown'}"`,
+              agent_call_sign: mappedDomain === 'cyber' ? 'NEO' : mappedDomain === 'physical_security' ? 'ARGUS' : mappedDomain === 'geopolitical' ? 'MERIDIAN' : 'AEGIS-CMD',
+            }
+          }).catch(err => console.error('[Knowledge Enrichment] Reactive learning error:', err));
+        }
+      } catch (enrichError) {
+        console.error('[Knowledge Enrichment] Error (non-blocking):', enrichError);
+      }
+    })();
+    
     // ===== CRITICAL SIGNAL FAST-PATH (P0 Priority) =====
     // For P1/Critical signals: Bypass queue, parallel execution for sub-10s latency
     const isCriticalFastPath = 
