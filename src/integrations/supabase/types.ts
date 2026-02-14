@@ -3934,6 +3934,7 @@ export type Database = {
           knowledge_type: string
           last_validated_at: string | null
           source_id: string | null
+          source_type: string | null
           subdomain: string | null
           title: string
           updated_at: string
@@ -3950,6 +3951,7 @@ export type Database = {
           knowledge_type?: string
           last_validated_at?: string | null
           source_id?: string | null
+          source_type?: string | null
           subdomain?: string | null
           title: string
           updated_at?: string
@@ -3966,6 +3968,7 @@ export type Database = {
           knowledge_type?: string
           last_validated_at?: string | null
           source_id?: string | null
+          source_type?: string | null
           subdomain?: string | null
           title?: string
           updated_at?: string

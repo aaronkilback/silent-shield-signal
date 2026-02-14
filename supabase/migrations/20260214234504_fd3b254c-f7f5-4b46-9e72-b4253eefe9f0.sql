@@ -1,0 +1,1 @@
+ALTER TABLE public.expert_knowledge ADD COLUMN source_type TEXT DEFAULT 'web_research';
