@@ -7544,84 +7544,76 @@ Deno.serve(async (req) => {
     let userTenantId: string | undefined;
     let tenantKnowledgeContext = "";
     const authHeader = req.headers.get("Authorization");
-    if (authHeader?.startsWith("Bearer ")) {
-      const token = authHeader.replace("Bearer ", "");
-      try {
+    
+    // ═══ PARALLELIZED CONTEXT LOADING ═══
+    // Run auth + learning + corrections concurrently to cut latency
+    const [authResult, learningResult, correctionsResult] = await Promise.allSettled([
+      // 1. Auth + tenant + tenant knowledge (chained since they depend on each other)
+      (async () => {
+        if (!authHeader?.startsWith("Bearer ")) return null;
+        const token = authHeader.replace("Bearer ", "");
         const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token);
-        if (!authError && user) {
-          authenticatedUserId = user.id;
-          console.log("Authenticated user for memory tools:", authenticatedUserId);
+        if (authError || !user) return null;
+        
+        authenticatedUserId = user.id;
+        console.log("Authenticated user for memory tools:", authenticatedUserId);
+        
+        const { data: tenantUserData } = await supabaseClient
+          .from("tenant_users")
+          .select("tenant_id, tenants(name)")
+          .eq("user_id", user.id)
+          .limit(1)
+          .single();
+        
+        if (tenantUserData?.tenant_id) {
+          userTenantId = tenantUserData.tenant_id;
+          const tenantName = (tenantUserData.tenants as any)?.name || "Unknown Tenant";
+          console.log("User tenant:", userTenantId, tenantName);
           
-          // Get user's tenant ID
-          const { data: tenantUserData } = await supabaseClient
-            .from("tenant_users")
-            .select("tenant_id, tenants(name)")
-            .eq("user_id", user.id)
-            .limit(1)
-            .single();
+          const { data: tenantKnowledge } = await supabaseClient
+            .from("tenant_knowledge")
+            .select("*")
+            .eq("tenant_id", userTenantId)
+            .eq("is_active", true)
+            .or("expires_at.is.null,expires_at.gt.now()")
+            .order("importance_score", { ascending: false })
+            .limit(50);
           
-          if (tenantUserData?.tenant_id) {
-            userTenantId = tenantUserData.tenant_id;
-            const tenantName = (tenantUserData.tenants as any)?.name || "Unknown Tenant";
-            console.log("User tenant:", userTenantId, tenantName);
-            
-            // Fetch tenant knowledge for this user's tenant
-            const { data: tenantKnowledge } = await supabaseClient
-              .from("tenant_knowledge")
-              .select("*")
-              .eq("tenant_id", userTenantId)
-              .eq("is_active", true)
-              .or("expires_at.is.null,expires_at.gt.now()")
-              .order("importance_score", { ascending: false })
-              .limit(50);
-            
-            if (tenantKnowledge && tenantKnowledge.length > 0) {
-              console.log(`Found ${tenantKnowledge.length} tenant knowledge entries for ${tenantName}`);
-              tenantKnowledgeContext = `
-═══════════════════════════════════════════════════════════════════════════════
-                     📚 TENANT KNOWLEDGE CONTEXT: ${tenantName}
-═══════════════════════════════════════════════════════════════════════════════
-The following context has been provided by administrators about this tenant and its users. Use this information to personalize your responses:
-
-${tenantKnowledge.map(k => `[${k.knowledge_type?.toUpperCase() || 'CONTEXT'}]${k.subject ? ` (${k.subject})` : ''}: ${k.content}`).join('\n\n')}
-
-═══════════════════════════════════════════════════════════════════════════════
-`;
-            }
+          if (tenantKnowledge && tenantKnowledge.length > 0) {
+            console.log(`Found ${tenantKnowledge.length} tenant knowledge entries for ${tenantName}`);
+            tenantKnowledgeContext = `\n═══ TENANT KNOWLEDGE: ${tenantName} ═══\n${tenantKnowledge.map(k => `[${k.knowledge_type?.toUpperCase() || 'CONTEXT'}]${k.subject ? ` (${k.subject})` : ''}: ${k.content}`).join('\n\n')}\n`;
           }
         }
-      } catch (authErr) {
-        console.log("Could not extract user from auth token (non-fatal):", authErr);
-      }
-    }
-
-    // Fetch adaptive learning context from the neural net
-    let learningContext = "";
-    try {
-      learningContext = await getLearningPromptBlock(supabaseClient, 'standard');
-      console.log(`[AEGIS] Loaded adaptive learning context (${learningContext.length} chars)`);
-    } catch (e) {
-      console.warn("[AEGIS] Failed to load learning context (non-fatal):", e);
-    }
-
-    // Load active behavioral corrections from watchdog (global agent_memory)
-    let behavioralCorrectionContext = "";
-    try {
-      const { data: corrections } = await supabaseClient
+        return user;
+      })(),
+      
+      // 2. Adaptive learning context
+      getLearningPromptBlock(supabaseClient, 'standard').catch(e => {
+        console.warn("[AEGIS] Failed to load learning context (non-fatal):", e);
+        return "";
+      }),
+      
+      // 3. Behavioral corrections
+      supabaseClient
         .from("agent_memory")
         .select("content")
         .eq("memory_type", "behavioral_correction")
         .eq("scope", "global")
         .gt("expires_at", new Date().toISOString())
         .order("importance_score", { ascending: false })
-        .limit(3);
-      
-      if (corrections && corrections.length > 0) {
-        behavioralCorrectionContext = `\n\n⚠️ ACTIVE BEHAVIORAL CORRECTIONS (from System Watchdog — HIGHEST PRIORITY):\n${corrections.map(c => c.content).join('\n---\n')}\n`;
-        console.log(`[AEGIS] Loaded ${corrections.length} active behavioral correction(s) from watchdog`);
-      }
-    } catch (e) {
-      console.warn("[AEGIS] Failed to load behavioral corrections (non-fatal):", e);
+        .limit(3)
+        .then(({ data }: any) => data)
+        .catch(() => null),
+    ]);
+
+    const learningContext = learningResult.status === 'fulfilled' ? (learningResult.value as string) : "";
+    if (learningContext) console.log(`[AEGIS] Loaded adaptive learning context (${learningContext.length} chars)`);
+    
+    let behavioralCorrectionContext = "";
+    const corrections = correctionsResult.status === 'fulfilled' ? correctionsResult.value : null;
+    if (corrections && (corrections as any[])?.length > 0) {
+      behavioralCorrectionContext = `\n\n⚠️ ACTIVE BEHAVIORAL CORRECTIONS:\n${(corrections as any[]).map((c: any) => c.content).join('\n---\n')}\n`;
+      console.log(`[AEGIS] Loaded ${(corrections as any[]).length} active behavioral correction(s)`);
     }
 
     const truncateContent = (content: string, maxChars: number = 50000): string => {
@@ -7856,7 +7848,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
       })
     );
 
-    // First AI call with tools (with timeout)
+    // First AI call with tools — use fast model for tool routing decision
     const response = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -7864,7 +7856,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-pro-preview",
+        model: "google/gemini-2.5-flash",
         messages: [
           {
             role: "system",

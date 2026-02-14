@@ -18,7 +18,7 @@ import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { getCriticalDateContext } from "../_shared/anti-hallucination.ts";
 
 const AEGIS_AGENT_ID = '894e87b8-039a-4f6f-9966-85f932ee7a05';
-const MIN_PUSH_INTERVAL_MS = 10 * 60 * 1000; // 10 min between pushes per user
+const MIN_PUSH_INTERVAL_MS = 30 * 60 * 1000; // 30 min between pushes per user (raised from 10)
 const RISK_BASELINE_FALLBACK = 50; // When no previous scan exists, assume moderate baseline
 
 interface Insight {
@@ -79,37 +79,44 @@ Deno.serve(async (req) => {
     const avgHourlyRate = Math.max(1, ((signals24h || []).length) / 24);
     const surgeMultiplier = signalCount1h / avgHourlyRate;
 
-    if (surgeMultiplier >= 3 && signalCount1h >= 5) {
-      const topCategories = Object.entries(
-        (signals1h || []).reduce((acc: Record<string, number>, s) => {
-          acc[s.category || 'uncategorized'] = (acc[s.category || 'uncategorized'] || 0) + 1;
-          return acc;
-        }, {})
-      ).sort(([, a], [, b]) => (b as number) - (a as number)).slice(0, 3);
+    // Raised thresholds: 5x surge AND at least 10 signals to avoid noise
+    if (surgeMultiplier >= 5 && signalCount1h >= 10) {
+      const criticalCount = (signals1h || []).filter(s => s.severity === 'critical').length;
+      // Only push if there are actually critical/high signals in the surge
+      if (criticalCount >= 2 || signalCount1h >= 20) {
+        const topCategories = Object.entries(
+          (signals1h || []).reduce((acc: Record<string, number>, s) => {
+            acc[s.category || 'uncategorized'] = (acc[s.category || 'uncategorized'] || 0) + 1;
+            return acc;
+          }, {})
+        ).sort(([, a], [, b]) => (b as number) - (a as number)).slice(0, 3);
 
-      insights.push({
-        type: 'signal_surge',
-        priority: surgeMultiplier >= 5 ? 'urgent' : 'high',
-        headline: `Signal surge detected: ${signalCount1h} signals in the last hour (${surgeMultiplier.toFixed(1)}x normal rate)`,
-        details: {
-          count: signalCount1h,
-          multiplier: surgeMultiplier,
-          topCategories,
-          criticalCount: (signals1h || []).filter(s => s.severity === 'critical').length,
-        },
-      });
+        insights.push({
+          type: 'signal_surge',
+          priority: surgeMultiplier >= 8 ? 'urgent' : 'high',
+          headline: `Signal surge detected: ${signalCount1h} signals in the last hour (${surgeMultiplier.toFixed(1)}x normal rate)`,
+          details: {
+            count: signalCount1h,
+            multiplier: surgeMultiplier,
+            topCategories,
+            criticalCount,
+          },
+        });
+      }
     }
 
     // ═══════════════════════════════════════════════════════════════════
     //  DETECT 2: Unattended High-Risk
     // ═══════════════════════════════════════════════════════════════════
+    // Only flag P1 unowned for 1+ hours, P2 unowned for 4+ hours (raised from 30min/2h)
     const unattendedCritical = (openIncidents || []).filter(i => {
       const age = now.getTime() - new Date(i.opened_at).getTime();
-      return (i.priority === 'p1' && age > 30 * 60000 && !i.owner_user_id)
-        || (i.priority === 'p2' && age > 2 * 3600000 && !i.owner_user_id);
+      return (i.priority === 'p1' && age > 60 * 60000 && !i.owner_user_id)
+        || (i.priority === 'p2' && age > 4 * 3600000 && !i.owner_user_id);
     });
 
-    if (unattendedCritical.length > 0) {
+    // Only push if there are multiple unattended or a P1
+    if (unattendedCritical.length >= 2 || unattendedCritical.some(i => i.priority === 'p1')) {
       insights.push({
         type: 'unattended_high_risk',
         priority: unattendedCritical.some(i => i.priority === 'p1') ? 'urgent' : 'high',
@@ -134,10 +141,11 @@ Deno.serve(async (req) => {
       const previousRisk = scans[1]?.risk_score ?? RISK_BASELINE_FALLBACK;
       const riskDelta = currentRisk - previousRisk;
 
-      if (Math.abs(riskDelta) >= 15) {
+      // Raised threshold: only alert on 20+ point shifts (was 15)
+      if (Math.abs(riskDelta) >= 20) {
         insights.push({
           type: 'risk_posture_shift',
-          priority: riskDelta >= 25 ? 'urgent' : 'high',
+          priority: riskDelta >= 30 ? 'urgent' : 'high',
           headline: `Risk posture ${riskDelta > 0 ? 'increased' : 'decreased'} by ${Math.abs(riskDelta)} points (now ${currentRisk}/100)`,
           details: { currentRisk, previousRisk, delta: riskDelta },
         });
@@ -156,7 +164,7 @@ Deno.serve(async (req) => {
       clientSignalMap[sig.category].add(sig.client_id);
     }
     const crossClientPatterns = Object.entries(clientSignalMap)
-      .filter(([, clients]) => clients.size >= 3)
+      .filter(([, clients]) => clients.size >= 5)  // Raised from 3 to 5 clients
       .map(([category, clients]) => ({ category, clientCount: clients.size }));
 
     if (crossClientPatterns.length > 0) {
@@ -171,12 +179,13 @@ Deno.serve(async (req) => {
     // ═══════════════════════════════════════════════════════════════════
     //  DETECT 5: High-Probability Escalation Queue
     // ═══════════════════════════════════════════════════════════════════
-    const highProbSignals = (highRiskScores || []).filter(s => s.escalation_probability >= 0.8);
-    if (highProbSignals.length >= 2) {
+    // Raised: need 4+ signals at 85%+ probability (was 2 at 80%)
+    const highProbSignals = (highRiskScores || []).filter(s => s.escalation_probability >= 0.85);
+    if (highProbSignals.length >= 4) {
       insights.push({
         type: 'escalation_queue',
         priority: 'high',
-        headline: `${highProbSignals.length} signals have 80%+ escalation probability and may require preemptive action`,
+        headline: `${highProbSignals.length} signals have 85%+ escalation probability and may require preemptive action`,
         details: {
           count: highProbSignals.length,
           topProbability: Math.max(...highProbSignals.map(s => s.escalation_probability)),
