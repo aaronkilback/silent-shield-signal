@@ -649,18 +649,16 @@ function ConnectionLines({ agents, commLinks = [] }: { agents: AgentNode[]; comm
       }
     }
 
-    // Connect AEGIS to primaries only (not every agent)
+    // Ensure every agent connects to AEGIS-CMD (the orchestrator parent)
     const aegisIdx = callSignIndex.get("AEGIS-CMD");
-    if (aegisIdx !== undefined) {
-      const primaryIdxSet = new Set(primaryIndices);
-      primaryIndices.forEach((pIdx) => {
-        const key = [Math.min(pIdx, aegisIdx), Math.max(pIdx, aegisIdx)].join("-");
-        if (!realPairs.has(key)) {
-          conns.push({ a: pIdx, b: aegisIdx, isReal: true, strength: 0.5 });
-          realPairs.add(key);
-        }
-      });
-    }
+    agents.forEach((agent, idx) => {
+      if (idx === aegisIdx) return;
+      const key = [Math.min(idx, aegisIdx ?? 0), Math.max(idx, aegisIdx ?? 0)].join("-");
+      if (!realPairs.has(key) && aegisIdx !== undefined) {
+        conns.push({ a: idx, b: aegisIdx, isReal: true, strength: 0.4 });
+        realPairs.add(key);
+      }
+    });
 
     return conns;
   }, [agents, commLinks]);
@@ -761,7 +759,7 @@ function IncidentHeatTrails({ agents, activeDebates = [], scanPulses = [] }: {
   activeDebates?: ActiveDebate[];
   scanPulses?: ScanPulse[];
 }) {
-  const particleCount = 12;
+  const particleCount = 30;
   const ref = useRef<THREE.Points>(null);
   const velocities = useRef(new Float32Array(particleCount));
   const targets = useRef<number[]>([]);
@@ -881,7 +879,7 @@ function IncidentHeatTrails({ agents, activeDebates = [], scanPulses = [] }: {
 
 // Real signal particles — travel along actual comm links
 function SignalParticles({ agents, commLinks = [] }: { agents: AgentNode[]; commLinks?: AgentCommLink[] }) {
-  const particleCount = 20;
+  const particleCount = 50;
   const ref = useRef<THREE.Points>(null);
   const velocities = useRef(new Float32Array(particleCount));
   const targets = useRef<number[]>([]);
@@ -1780,7 +1778,7 @@ function LearningParticleStreams({ agents, activelyLearningAgents = [] }: {
   agents: AgentNode[];
   activelyLearningAgents: string[];
 }) {
-  const particleCount = 16;
+  const particleCount = 40;
   const ref = useRef<THREE.Points>(null);
   const progressRef = useRef(new Float32Array(particleCount));
   const targetsRef = useRef<number[]>([]);

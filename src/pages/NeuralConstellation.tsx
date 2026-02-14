@@ -36,36 +36,36 @@ function assignPositions(agents: any[]): AgentNode[] {
     });
   }
 
-  // Core agents orbit AEGIS — wider inner ring
+  // Core agents orbit AEGIS in the inner ring
   primaryAgents.forEach((agent, i) => {
     const angle = (i / Math.max(primaryAgents.length, 1)) * Math.PI * 2;
-    const radius = 8;
+    const radius = 5;
     nodes.push({
       id: agent.id, callSign: agent.call_sign, codename: agent.codename,
       specialty: agent.specialty, color: agent.avatar_color || "#3B82F6",
-      position: [Math.cos(angle) * radius, Math.sin(angle) * radius * 0.4, Math.sin(angle) * 2],
+      position: [Math.cos(angle) * radius, Math.sin(angle) * radius * 0.6, Math.sin(angle) * 1.5],
       tier: "primary",
     });
   });
 
   secondaryAgents.forEach((agent, i) => {
     const angle = (i / Math.max(secondaryAgents.length, 1)) * Math.PI * 2 + 0.3;
-    const radius = 15;
+    const radius = 9;
     nodes.push({
       id: agent.id, callSign: agent.call_sign, codename: agent.codename,
       specialty: agent.specialty, color: agent.avatar_color || "#6366F1",
-      position: [Math.cos(angle) * radius, Math.sin(angle) * radius * 0.3, Math.cos(angle) * 2.5],
+      position: [Math.cos(angle) * radius, Math.sin(angle) * radius * 0.5, Math.cos(angle) * 2 - 1],
       tier: "secondary",
     });
   });
 
   supportAgents.forEach((agent, i) => {
     const angle = (i / Math.max(supportAgents.length, 1)) * Math.PI * 2 + 0.7;
-    const radius = 22;
+    const radius = 13;
     nodes.push({
       id: agent.id, callSign: agent.call_sign, codename: agent.codename,
       specialty: agent.specialty, color: agent.avatar_color || "#64748B",
-      position: [Math.cos(angle) * radius, Math.sin(angle) * radius * 0.25, Math.sin(angle * 2) * 3],
+      position: [Math.cos(angle) * radius, Math.sin(angle) * radius * 0.4 + (Math.random() - 0.5) * 2, Math.sin(angle * 2) * 3],
       tier: "support",
     });
   });
