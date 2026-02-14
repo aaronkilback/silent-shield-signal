@@ -1307,6 +1307,11 @@ function EarthGlobe({ position, signalLocations = [] }: {
           depthWrite={false}
         />
       </mesh>
+      {/* Thin atmospheric rim */}
+      <mesh>
+        <sphereGeometry args={[earthRadius * 1.025, 48, 48]} />
+        <meshBasicMaterial color="#4499ff" transparent opacity={0.035} side={THREE.BackSide} />
+      </mesh>
     </group>
   );
 }
