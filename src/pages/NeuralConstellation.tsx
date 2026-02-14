@@ -9,7 +9,7 @@ import { NodeDetailPanel } from "@/components/neural-constellation/NodeDetailPan
 import { ConstellationLegend } from "@/components/neural-constellation/ConstellationLegend";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useAgentCommLinks, useActiveDebates, useScanPulses } from "@/hooks/useConstellationData";
+import { useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMetrics, useKnowledgeGraphEdges } from "@/hooks/useConstellationData";
 
 // Map agents to 3D positions in a constellation layout
 function assignPositions(agents: any[]): AgentNode[] {
@@ -100,6 +100,8 @@ const NeuralConstellation = () => {
   const { data: commLinks = [] } = useAgentCommLinks(!!user);
   const { data: activeDebates = [] } = useActiveDebates(!!user);
   const { data: scanPulses = [] } = useScanPulses(!!user);
+  const { data: activityMetrics = [] } = useAgentActivityMetrics(!!user);
+  const { data: knowledgeGraphEdges = [] } = useKnowledgeGraphEdges(!!user);
 
   const agentNodes = useMemo(() => {
     if (!agents) return [];
@@ -145,6 +147,8 @@ const NeuralConstellation = () => {
             commLinks={commLinks}
             activeDebates={activeDebates}
             scanPulses={scanPulses}
+            activityMetrics={activityMetrics}
+            knowledgeGraphEdges={knowledgeGraphEdges}
           />
         </div>
 
@@ -178,12 +182,16 @@ const NeuralConstellation = () => {
           onToggleMode={() => setIsExecutiveMode((p) => !p)}
           agentCount={agentNodes.length}
           connectionCount={connectionCount}
+          knowledgeEdgeCount={knowledgeGraphEdges.length}
+          activeAgentCount={activityMetrics.filter((m) => m.activityScore > 0.3).length}
         />
 
         <NodeDetailPanel
           agent={selectedAgent}
           onClose={() => setSelectedAgent(null)}
           isExecutiveMode={isExecutiveMode}
+          activityMetrics={activityMetrics}
+          scanPulses={scanPulses}
         />
       </main>
     </div>

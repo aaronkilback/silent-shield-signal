@@ -1,8 +1,8 @@
-import { useRef, useMemo, useCallback } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, Line } from "@react-three/drei";
+import { useRef, useMemo, useCallback, useState } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { OrbitControls, Line, Html } from "@react-three/drei";
 import * as THREE from "three";
-import type { AgentCommLink, ActiveDebate, ScanPulse } from "@/hooks/useConstellationData";
+import type { AgentCommLink, ActiveDebate, ScanPulse, AgentActivityMetrics, KnowledgeGraphEdge } from "@/hooks/useConstellationData";
 
 interface AgentNode {
   id: string;
@@ -22,6 +22,8 @@ interface ConstellationSceneProps {
   commLinks?: AgentCommLink[];
   activeDebates?: ActiveDebate[];
   scanPulses?: ScanPulse[];
+  activityMetrics?: AgentActivityMetrics[];
+  knowledgeGraphEdges?: KnowledgeGraphEdge[];
 }
 
 // Deep space starfield
@@ -96,58 +98,158 @@ function NebulaCloud({ position, color, scale = 3 }: { position: [number, number
   );
 }
 
-// Agent node with cinematic glow — enhanced for debate participation
-function AgentSphere({ agent, onClick, isInDebate }: { agent: AgentNode; onClick?: () => void; isInDebate?: boolean }) {
+// Performance halo ring around agent nodes
+function PerformanceHalo({ position, activityScore, color, size }: {
+  position: [number, number, number];
+  activityScore: number;
+  color: string;
+  size: number;
+}) {
+  const ringRef = useRef<THREE.Mesh>(null);
+  const pulseRef = useRef(Math.random() * Math.PI * 2);
+
+  // Halo color based on activity: green=high, cyan=medium, dim=low
+  const haloColor = activityScore > 0.7 ? "#10b981" : activityScore > 0.3 ? "#22d3ee" : "#475569";
+  const haloOpacity = 0.15 + activityScore * 0.35;
+
+  useFrame((_, delta) => {
+    pulseRef.current += delta * (1 + activityScore * 2);
+    if (ringRef.current) {
+      const pulse = Math.sin(pulseRef.current);
+      ringRef.current.rotation.x += delta * 0.3;
+      ringRef.current.rotation.y += delta * 0.2;
+      const scale = 1 + pulse * 0.08 * activityScore;
+      ringRef.current.scale.setScalar(scale);
+      (ringRef.current.material as THREE.MeshBasicMaterial).opacity = haloOpacity + pulse * 0.05;
+    }
+  });
+
+  if (activityScore < 0.05) return null;
+
+  return (
+    <mesh ref={ringRef} position={position}>
+      <torusGeometry args={[size * 2.5, 0.025 + activityScore * 0.03, 8, 48]} />
+      <meshBasicMaterial color={haloColor} transparent opacity={haloOpacity} side={THREE.DoubleSide} />
+    </mesh>
+  );
+}
+
+// Agent node with activity-driven pulse speed + hover tooltip
+function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, onUnhover }: {
+  agent: AgentNode;
+  onClick?: () => void;
+  isInDebate?: boolean;
+  activityScore?: number;
+  onHover?: (agent: AgentNode) => void;
+  onUnhover?: () => void;
+}) {
   const meshRef = useRef<THREE.Mesh>(null);
   const glowRef = useRef<THREE.Mesh>(null);
   const outerRef = useRef<THREE.Mesh>(null);
   const pulseRef = useRef(Math.random() * Math.PI * 2);
+  const [hovered, setHovered] = useState(false);
 
   const color = new THREE.Color(agent.color);
   const size = agent.tier === "primary" ? 0.5 : agent.tier === "secondary" ? 0.35 : 0.22;
 
+  // Activity drives pulse speed: more active = faster pulse
+  const basePulseSpeed = 1.2 + activityScore * 3.5;
+  const pulseSpeed = isInDebate ? 4.0 : basePulseSpeed;
+  const pulseAmplitude = isInDebate ? 0.15 : 0.04 + activityScore * 0.12;
+
   useFrame((_, delta) => {
-    pulseRef.current += delta * (isInDebate ? 3.5 : 1.8);
+    pulseRef.current += delta * pulseSpeed;
     const pulse = Math.sin(pulseRef.current);
 
     if (meshRef.current) {
-      meshRef.current.scale.setScalar(1 + pulse * (isInDebate ? 0.15 : 0.06));
+      meshRef.current.scale.setScalar(1 + pulse * pulseAmplitude);
     }
     if (glowRef.current) {
-      glowRef.current.scale.setScalar((isInDebate ? 3.0 : 2.2) + pulse * 0.4);
-      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = (isInDebate ? 0.25 : 0.15) + pulse * 0.05;
+      const glowScale = (isInDebate ? 3.0 : 2.0 + activityScore * 1.0) + pulse * 0.4;
+      glowRef.current.scale.setScalar(glowScale);
+      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = 
+        (isInDebate ? 0.25 : 0.1 + activityScore * 0.15) + pulse * 0.05;
     }
     if (outerRef.current) {
-      outerRef.current.scale.setScalar((isInDebate ? 5.0 : 3.5) + pulse * 0.6);
-      (outerRef.current.material as THREE.MeshBasicMaterial).opacity = (isInDebate ? 0.08 : 0.04) + pulse * 0.02;
+      outerRef.current.scale.setScalar((isInDebate ? 5.0 : 3.0 + activityScore * 1.5) + pulse * 0.6);
+      (outerRef.current.material as THREE.MeshBasicMaterial).opacity = 
+        (isInDebate ? 0.08 : 0.02 + activityScore * 0.04) + pulse * 0.02;
     }
   });
 
+  const handlePointerOver = useCallback(() => {
+    setHovered(true);
+    onHover?.(agent);
+    document.body.style.cursor = "pointer";
+  }, [agent, onHover]);
+
+  const handlePointerOut = useCallback(() => {
+    setHovered(false);
+    onUnhover?.();
+    document.body.style.cursor = "auto";
+  }, [onUnhover]);
+
+  const emissiveColor = isInDebate ? new THREE.Color("#f59e0b") : color;
+  const emissiveIntensity = isInDebate ? 1.5 : 0.5 + activityScore * 1.0;
+
   return (
     <group position={agent.position}>
-      <mesh ref={outerRef} onClick={onClick}>
+      <mesh ref={outerRef} onClick={onClick} onPointerOver={handlePointerOver} onPointerOut={handlePointerOut}>
         <sphereGeometry args={[size, 12, 12]} />
         <meshBasicMaterial color={isInDebate ? "#f59e0b" : color} transparent opacity={0.04} />
       </mesh>
-      <mesh ref={glowRef} onClick={onClick}>
+      <mesh ref={glowRef}>
         <sphereGeometry args={[size, 16, 16]} />
         <meshBasicMaterial color={isInDebate ? "#f59e0b" : color} transparent opacity={0.15} />
       </mesh>
-      <mesh ref={meshRef} onClick={onClick}>
+      <mesh ref={meshRef}>
         <sphereGeometry args={[size, 32, 32]} />
         <meshStandardMaterial
           color={color}
-          emissive={isInDebate ? new THREE.Color("#f59e0b") : color}
-          emissiveIntensity={isInDebate ? 1.5 : 0.8}
+          emissive={emissiveColor}
+          emissiveIntensity={emissiveIntensity}
           roughness={0.2}
           metalness={0.8}
         />
       </mesh>
       <pointLight
         color={isInDebate ? "#f59e0b" : agent.color}
-        intensity={isInDebate ? 2.0 : agent.tier === "primary" ? 1.2 : 0.5}
-        distance={isInDebate ? 12 : agent.tier === "primary" ? 8 : 4}
+        intensity={isInDebate ? 2.0 : (agent.tier === "primary" ? 0.8 : 0.3) + activityScore * 1.0}
+        distance={isInDebate ? 12 : (agent.tier === "primary" ? 8 : 4) + activityScore * 4}
       />
+      {/* Hover tooltip */}
+      {hovered && (
+        <Html center distanceFactor={18} style={{ pointerEvents: "none" }}>
+          <div className="bg-card/95 backdrop-blur-xl border border-border rounded-lg px-3 py-2 min-w-[160px] shadow-2xl" style={{ transform: "translateY(-40px)" }}>
+            <div className="text-xs font-bold text-foreground tracking-wider">{agent.callSign}</div>
+            <div className="text-[10px] text-muted-foreground">{agent.codename}</div>
+            <div className="flex items-center gap-2 mt-1.5">
+              <div className="flex-1">
+                <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Activity</div>
+                <div className="h-1 bg-secondary rounded-full mt-0.5 overflow-hidden">
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${Math.max(5, activityScore * 100)}%`,
+                      backgroundColor: activityScore > 0.7 ? "#10b981" : activityScore > 0.3 ? "#22d3ee" : "#64748b",
+                    }}
+                  />
+                </div>
+              </div>
+              <span className="text-[10px] font-mono font-bold" style={{ color: activityScore > 0.7 ? "#10b981" : activityScore > 0.3 ? "#22d3ee" : "#64748b" }}>
+                {Math.round(activityScore * 100)}%
+              </span>
+            </div>
+            <div className="text-[9px] text-muted-foreground mt-1">{agent.specialty}</div>
+            {isInDebate && (
+              <div className="flex items-center gap-1 mt-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                <span className="text-[9px] text-amber-400 font-medium">IN DEBATE</span>
+              </div>
+            )}
+          </div>
+        </Html>
+      )}
     </group>
   );
 }
@@ -159,7 +261,6 @@ function ConnectionLines({ agents, commLinks = [] }: { agents: AgentNode[]; comm
     const callSignIndex = new Map(agents.map((a, i) => [a.callSign, i]));
     const primaryIndices = agents.map((a, i) => (a.tier === "primary" ? i : -1)).filter((i) => i >= 0);
 
-    // Real communication links — bright and prominent
     const realPairs = new Set<string>();
     commLinks.forEach((link) => {
       const srcIdx = callSignIndex.get(link.sourceCallSign);
@@ -173,7 +274,6 @@ function ConnectionLines({ agents, commLinks = [] }: { agents: AgentNode[]; comm
       }
     });
 
-    // Fallback structural connections (dimmer)
     for (let i = 0; i < primaryIndices.length; i++) {
       for (let j = i + 1; j < primaryIndices.length; j++) {
         const key = [primaryIndices[i], primaryIndices[j]].join("-");
@@ -185,7 +285,6 @@ function ConnectionLines({ agents, commLinks = [] }: { agents: AgentNode[]; comm
 
     agents.forEach((agent, idx) => {
       if (agent.tier !== "primary") {
-        // Check if already has a real link
         const hasRealLink = commLinks.some(
           (l) => l.sourceCallSign === agent.callSign || l.targetCallSign === agent.callSign
         );
@@ -226,6 +325,201 @@ function ConnectionLines({ agents, commLinks = [] }: { agents: AgentNode[]; comm
   );
 }
 
+// Knowledge graph overlay — shows incident relationships as a separate visual layer
+function KnowledgeGraphOverlay({ agents, edges }: { agents: AgentNode[]; edges: KnowledgeGraphEdge[] }) {
+  const groupRef = useRef<THREE.Group>(null);
+
+  // Map edges to visual connections between random agent pairs (since incidents aren't directly agent-mapped,
+  // we distribute edges across the agent network to show the knowledge density)
+  const graphConns = useMemo(() => {
+    if (edges.length === 0) return [];
+
+    const relationColors: Record<string, string> = {
+      entity_overlap: "#a855f7",    // purple
+      same_location: "#f59e0b",     // amber
+      same_tactic: "#ef4444",       // red
+      temporal_cluster: "#06b6d4",  // cyan
+    };
+
+    return edges.slice(0, 20).map((edge, i) => {
+      // Distribute edges across agent network proportionally
+      const srcIdx = i % agents.length;
+      const tgtIdx = (i + Math.floor(agents.length / 3) + 1) % agents.length;
+      return {
+        from: agents[srcIdx].position,
+        to: agents[tgtIdx].position,
+        color: relationColors[edge.relationshipType] || "#6366f1",
+        strength: edge.strength,
+        type: edge.relationshipType,
+      };
+    });
+  }, [agents, edges]);
+
+  useFrame((_, delta) => {
+    if (groupRef.current) {
+      // Subtle rotation to differentiate from comm lines
+      groupRef.current.rotation.y += delta * 0.005;
+    }
+  });
+
+  if (graphConns.length === 0) return null;
+
+  return (
+    <group ref={groupRef}>
+      {graphConns.map((conn, idx) => {
+        // Create a slight arc for knowledge graph lines to visually separate from comm lines
+        const mid: [number, number, number] = [
+          (conn.from[0] + conn.to[0]) / 2 + (Math.sin(idx) * 1.5),
+          (conn.from[1] + conn.to[1]) / 2 + 1.5 + Math.cos(idx) * 0.5,
+          (conn.from[2] + conn.to[2]) / 2 + (Math.cos(idx) * 1),
+        ];
+        const points = [
+          new THREE.Vector3(...conn.from),
+          new THREE.Vector3(...mid),
+          new THREE.Vector3(...conn.to),
+        ];
+        return (
+          <Line
+            key={`kg-${idx}`}
+            points={points}
+            color={conn.color}
+            transparent
+            opacity={0.15 + conn.strength * 0.25}
+            lineWidth={0.5 + conn.strength * 1.5}
+            dashed
+            dashSize={0.3}
+            gapSize={0.2}
+          />
+        );
+      })}
+    </group>
+  );
+}
+
+// Incident heat trail particles — flow between agents on shared incidents with severity coloring
+function IncidentHeatTrails({ agents, activeDebates = [], scanPulses = [] }: {
+  agents: AgentNode[];
+  activeDebates?: ActiveDebate[];
+  scanPulses?: ScanPulse[];
+}) {
+  const particleCount = 30;
+  const ref = useRef<THREE.Points>(null);
+  const velocities = useRef(new Float32Array(particleCount));
+  const targets = useRef<number[]>([]);
+  const sources = useRef<number[]>([]);
+
+  const callSignIndex = useMemo(() => new Map(agents.map((a, i) => [a.callSign, i])), [agents]);
+
+  // Build hot routes from debates and scans
+  const hotRoutes = useMemo(() => {
+    const routes: { from: number; to: number; severity: "critical" | "high" | "medium" }[] = [];
+
+    // Debate participants form hot routes
+    activeDebates.forEach((d) => {
+      const participants = d.participatingAgents
+        .map((cs) => callSignIndex.get(cs))
+        .filter((idx): idx is number => idx !== undefined);
+      for (let i = 0; i < participants.length; i++) {
+        for (let j = i + 1; j < participants.length; j++) {
+          const severity = (d.consensusScore ?? 0) < 0.5 ? "critical" : "high";
+          routes.push({ from: participants[i], to: participants[j], severity });
+        }
+      }
+    });
+
+    // High-risk scans create trails to core nodes
+    scanPulses.forEach((s) => {
+      if ((s.riskScore ?? 0) > 50) {
+        const srcIdx = callSignIndex.get(s.agentCallSign);
+        if (srcIdx !== undefined) {
+          // Connect to nearest primary
+          const primaries = agents.map((a, i) => a.tier === "primary" ? i : -1).filter(i => i >= 0);
+          if (primaries.length > 0) {
+            routes.push({ from: srcIdx, to: primaries[0], severity: (s.riskScore ?? 0) > 75 ? "critical" : "medium" });
+          }
+        }
+      }
+    });
+
+    // If no hot routes, create ambient ones
+    if (routes.length === 0 && agents.length > 2) {
+      for (let i = 0; i < 3; i++) {
+        routes.push({
+          from: i % agents.length,
+          to: (i + 2) % agents.length,
+          severity: "medium",
+        });
+      }
+    }
+
+    return routes;
+  }, [agents, activeDebates, scanPulses, callSignIndex]);
+
+  const { positions, colors } = useMemo(() => {
+    const pos = new Float32Array(particleCount * 3);
+    const col = new Float32Array(particleCount * 3);
+
+    const severityColors = {
+      critical: [1.0, 0.2, 0.15],
+      high: [0.96, 0.62, 0.04],
+      medium: [0.13, 0.83, 0.93],
+    };
+
+    for (let i = 0; i < particleCount; i++) {
+      const route = hotRoutes[i % Math.max(hotRoutes.length, 1)] || { from: 0, to: 1, severity: "medium" as const };
+      sources.current[i] = route.from;
+      targets.current[i] = route.to;
+      velocities.current[i] = Math.random();
+
+      const src = agents[route.from]?.position || [0, 0, 0];
+      const tgt = agents[route.to]?.position || [0, 0, 0];
+      const t = velocities.current[i];
+      pos[i * 3] = src[0] + (tgt[0] - src[0]) * t;
+      pos[i * 3 + 1] = src[1] + (tgt[1] - src[1]) * t;
+      pos[i * 3 + 2] = src[2] + (tgt[2] - src[2]) * t;
+
+      const c = severityColors[route.severity];
+      col[i * 3] = c[0]; col[i * 3 + 1] = c[1]; col[i * 3 + 2] = c[2];
+    }
+    return { positions: pos, colors: col };
+  }, [agents, hotRoutes]);
+
+  useFrame((_, delta) => {
+    if (!ref.current || agents.length === 0 || hotRoutes.length === 0) return;
+    const posArr = ref.current.geometry.attributes.position.array as Float32Array;
+
+    for (let i = 0; i < particleCount; i++) {
+      velocities.current[i] += delta * (0.08 + Math.random() * 0.06);
+
+      if (velocities.current[i] >= 1) {
+        velocities.current[i] = 0;
+        const route = hotRoutes[Math.floor(Math.random() * hotRoutes.length)];
+        sources.current[i] = route.from;
+        targets.current[i] = route.to;
+      }
+
+      const src = agents[sources.current[i]]?.position || [0, 0, 0];
+      const tgt = agents[targets.current[i]]?.position || [0, 0, 0];
+      const t = velocities.current[i];
+      posArr[i * 3] = src[0] + (tgt[0] - src[0]) * t;
+      posArr[i * 3 + 1] = src[1] + (tgt[1] - src[1]) * t;
+      posArr[i * 3 + 2] = src[2] + (tgt[2] - src[2]) * t;
+    }
+
+    ref.current.geometry.attributes.position.needsUpdate = true;
+  });
+
+  return (
+    <points ref={ref}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" count={particleCount} array={positions} itemSize={3} />
+        <bufferAttribute attach="attributes-color" count={particleCount} array={colors} itemSize={3} />
+      </bufferGeometry>
+      <pointsMaterial size={0.2} vertexColors transparent opacity={0.85} sizeAttenuation />
+    </points>
+  );
+}
+
 // Real signal particles — travel along actual comm links
 function SignalParticles({ agents, commLinks = [] }: { agents: AgentNode[]; commLinks?: AgentCommLink[] }) {
   const particleCount = 50;
@@ -236,19 +530,16 @@ function SignalParticles({ agents, commLinks = [] }: { agents: AgentNode[]; comm
 
   const callSignIndex = useMemo(() => new Map(agents.map((a, i) => [a.callSign, i])), [agents]);
 
-  // Build route pairs from real comm links
   const routePairs = useMemo(() => {
     const pairs: [number, number][] = [];
     commLinks.forEach((link) => {
       const src = callSignIndex.get(link.sourceCallSign);
       const tgt = callSignIndex.get(link.targetCallSign);
       if (src !== undefined && tgt !== undefined) {
-        // Weight by message count — more messages = more particles use this route
         const weight = Math.min(Math.ceil(link.messageCount / 5), 5);
         for (let w = 0; w < weight; w++) pairs.push([src, tgt]);
       }
     });
-    // Fallback: if no real links, use primary-to-all
     if (pairs.length === 0) {
       const primaries = agents.map((a, i) => (a.tier === "primary" ? i : -1)).filter((i) => i >= 0);
       agents.forEach((_, idx) => {
@@ -276,7 +567,6 @@ function SignalParticles({ agents, commLinks = [] }: { agents: AgentNode[]; comm
       pos[i * 3 + 1] = src[1] + (tgt[1] - src[1]) * t;
       pos[i * 3 + 2] = src[2] + (tgt[2] - src[2]) * t;
 
-      // Real comms = cyan, structural = dimmer blue
       const isReal = commLinks.length > 0;
       if (isReal) {
         col[i * 3] = 0.13; col[i * 3 + 1] = 0.83; col[i * 3 + 2] = 0.93;
@@ -296,7 +586,6 @@ function SignalParticles({ agents, commLinks = [] }: { agents: AgentNode[]; comm
 
       if (velocities.current[i] >= 1) {
         velocities.current[i] = 0;
-        // Pick a new real route
         const pair = routePairs[Math.floor(Math.random() * routePairs.length)] || [0, 0];
         sources.current[i] = pair[0];
         targets.current[i] = pair[1];
@@ -324,12 +613,11 @@ function SignalParticles({ agents, commLinks = [] }: { agents: AgentNode[]; comm
   );
 }
 
-// Debate cluster ring — visual indicator of agents reconfiguring around a problem
+// Debate cluster ring
 function DebateClusterRing({ agents, debate }: { agents: AgentNode[]; debate: ActiveDebate }) {
   const ringRef = useRef<THREE.Mesh>(null);
   const participants = debate.participatingAgents;
 
-  // Calculate centroid of participating agents
   const centroid = useMemo(() => {
     const matched = agents.filter((a) => participants.includes(a.callSign));
     if (matched.length === 0) return [0, 0, 0] as [number, number, number];
@@ -368,7 +656,6 @@ function DebateClusterRing({ agents, debate }: { agents: AgentNode[]; debate: Ac
         <torusGeometry args={[radius, 0.03, 8, 64]} />
         <meshBasicMaterial color="#f59e0b" transparent opacity={0.4} />
       </mesh>
-      {/* Outer pulse ring */}
       <mesh rotation={[Math.PI / 4, 0, 0]}>
         <torusGeometry args={[radius * 1.2, 0.02, 8, 64]} />
         <meshBasicMaterial color="#ef4444" transparent opacity={0.15} />
@@ -385,19 +672,28 @@ export function ConstellationScene({
   commLinks = [],
   activeDebates = [],
   scanPulses = [],
+  activityMetrics = [],
+  knowledgeGraphEdges = [],
 }: ConstellationSceneProps) {
   const handleClick = useCallback((agent: AgentNode) => { onNodeClick?.(agent); }, [onNodeClick]);
+  const [hoveredAgent, setHoveredAgent] = useState<AgentNode | null>(null);
 
   const visibleAgents = isExecutiveMode
     ? agents.filter((a) => a.tier === "primary" || a.tier === "secondary")
     : agents;
 
-  // Set of agents currently in debates
   const debatingAgents = useMemo(() => {
     const set = new Set<string>();
     activeDebates.forEach((d) => d.participatingAgents.forEach((a) => set.add(a)));
     return set;
   }, [activeDebates]);
+
+  // Build activity score lookup
+  const activityMap = useMemo(() => {
+    const map = new Map<string, number>();
+    activityMetrics.forEach((m) => map.set(m.callSign, m.activityScore));
+    return map;
+  }, [activityMetrics]);
 
   return (
     <Canvas
@@ -419,17 +715,44 @@ export function ConstellationScene({
       <ConnectionLines agents={visibleAgents} commLinks={commLinks} />
       <SignalParticles agents={visibleAgents} commLinks={commLinks} />
 
+      {/* Knowledge graph overlay — dashed colored arcs */}
+      {!isExecutiveMode && knowledgeGraphEdges.length > 0 && (
+        <KnowledgeGraphOverlay agents={visibleAgents} edges={knowledgeGraphEdges} />
+      )}
+
+      {/* Incident heat trails — severity-colored particles */}
+      <IncidentHeatTrails agents={visibleAgents} activeDebates={activeDebates} scanPulses={scanPulses} />
+
       {/* Debate cluster rings */}
       {activeDebates.map((debate) => (
         <DebateClusterRing key={debate.id} agents={visibleAgents} debate={debate} />
       ))}
 
+      {/* Performance halos */}
+      {visibleAgents.map((agent) => {
+        const score = activityMap.get(agent.callSign) || 0;
+        const size = agent.tier === "primary" ? 0.5 : agent.tier === "secondary" ? 0.35 : 0.22;
+        return (
+          <PerformanceHalo
+            key={`halo-${agent.id}`}
+            position={agent.position}
+            activityScore={score}
+            color={agent.color}
+            size={size}
+          />
+        );
+      })}
+
+      {/* Agent nodes */}
       {visibleAgents.map((agent) => (
         <AgentSphere
           key={agent.id}
           agent={agent}
           onClick={() => handleClick(agent)}
           isInDebate={debatingAgents.has(agent.callSign)}
+          activityScore={activityMap.get(agent.callSign) || 0}
+          onHover={setHoveredAgent}
+          onUnhover={() => setHoveredAgent(null)}
         />
       ))}
 
