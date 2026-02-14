@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SignalMergeProposals } from "@/components/SignalMergeProposals";
+import { MonitoringProposals } from "@/components/MonitoringProposals";
 
 interface RuleProposal {
   key: string;
@@ -150,8 +151,9 @@ const RuleApprovals = () => {
         </div>
 
         <Tabs defaultValue="rules" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="rules">Categorization Rules</TabsTrigger>
+            <TabsTrigger value="monitoring">Monitoring Updates</TabsTrigger>
             <TabsTrigger value="merges">Signal Merges</TabsTrigger>
           </TabsList>
 
@@ -306,6 +308,10 @@ const RuleApprovals = () => {
             </div>
           </>
         )}
+          </TabsContent>
+
+          <TabsContent value="monitoring" className="space-y-6">
+            {user && <MonitoringProposals userId={user.id} />}
           </TabsContent>
 
           <TabsContent value="merges" className="space-y-6">

@@ -108,6 +108,14 @@ Deno.serve(async (req) => {
       promoted_to_global: results.entries_created > 2,
     });
 
+    // Trigger monitoring proposal generation after learning
+    if (results.entries_created > 0) {
+      console.log('[agent-self-learning] Triggering monitoring proposal generation...');
+      supabase.functions.invoke('generate-monitoring-proposals', {
+        body: { agent_call_sign: agent_call_sign || 'CRUCIBLE' }
+      }).catch(err => console.error('[agent-self-learning] Proposal generation failed:', err));
+    }
+
     console.log(`[agent-self-learning] Complete: ${results.entries_created} new, ${results.entries_updated} updated`);
 
     return successResponse({

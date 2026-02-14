@@ -6021,6 +6021,75 @@ export type Database = {
         }
         Relationships: []
       }
+      monitoring_proposals: {
+        Row: {
+          applied_at: string | null
+          client_id: string | null
+          confidence: number | null
+          created_at: string
+          expires_at: string | null
+          id: string
+          proposal_type: string
+          proposed_by_agent: string
+          proposed_value: string
+          reasoning: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          source_evidence: Json | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          applied_at?: string | null
+          client_id?: string | null
+          confidence?: number | null
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          proposal_type: string
+          proposed_by_agent: string
+          proposed_value: string
+          reasoning: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          source_evidence?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          applied_at?: string | null
+          client_id?: string | null
+          confidence?: number | null
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          proposal_type?: string
+          proposed_by_agent?: string
+          proposed_value?: string
+          reasoning?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          source_evidence?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "monitoring_proposals_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "monitoring_proposals_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notification_preferences: {
         Row: {
           alert_frequency: string | null
