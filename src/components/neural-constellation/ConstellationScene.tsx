@@ -192,40 +192,6 @@ function ShootingStarTrail({ star }: { star: { pos: THREE.Vector3; vel: THREE.Ve
   );
 }
 
-// Aurora effect around Earth
-function AuroraEffect({ earthPosition }: { earthPosition: [number, number, number] }) {
-  const ref = useRef<THREE.Mesh>(null);
-  const ref2 = useRef<THREE.Mesh>(null);
-
-  useFrame(({ clock }) => {
-    const t = clock.getElapsedTime();
-    if (ref.current) {
-      ref.current.rotation.y = t * 0.03;
-      ref.current.rotation.x = Math.sin(t * 0.1) * 0.1 + 0.3;
-      (ref.current.material as THREE.MeshBasicMaterial).opacity = 0.04 + Math.sin(t * 0.5) * 0.02;
-    }
-    if (ref2.current) {
-      ref2.current.rotation.y = t * -0.02;
-      ref2.current.rotation.x = Math.cos(t * 0.08) * 0.15 - 0.3;
-      (ref2.current.material as THREE.MeshBasicMaterial).opacity = 0.03 + Math.sin(t * 0.7 + 1) * 0.015;
-    }
-  });
-
-  return (
-    <group position={earthPosition}>
-      {/* Northern aurora band */}
-      <mesh ref={ref} position={[0, 6, 0]}>
-        <torusGeometry args={[5.5, 1.5, 8, 48]} />
-        <meshBasicMaterial color="#22ff88" transparent opacity={0.04} side={THREE.DoubleSide} />
-      </mesh>
-      {/* Southern aurora band */}
-      <mesh ref={ref2} position={[0, -6, 0]}>
-        <torusGeometry args={[5, 1.2, 8, 48]} />
-        <meshBasicMaterial color="#44aaff" transparent opacity={0.03} side={THREE.DoubleSide} />
-      </mesh>
-    </group>
-  );
-}
 
 function DeepSpaceField({ neutralizedCount = 0 }: { neutralizedCount: number }) {
   const ref = useRef<THREE.Points>(null);
@@ -1467,7 +1433,7 @@ export function ConstellationScene({
         {/* Earth & Moon — background celestial bodies */}
         <EarthGlobe position={earthPosition} signalLocations={signalLocations} />
         <MoonBody earthPosition={earthPosition} />
-        <AuroraEffect earthPosition={earthPosition} />
+        
 
         <ConnectionLines agents={visibleAgents} commLinks={commLinks} />
         <SignalParticles agents={visibleAgents} commLinks={commLinks} />
