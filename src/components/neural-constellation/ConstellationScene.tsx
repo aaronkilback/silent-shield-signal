@@ -34,7 +34,7 @@ interface ConstellationSceneProps {
 // Camera presets
 const CAMERA_PRESETS: Record<CameraView, { position: THREE.Vector3; target: THREE.Vector3 }> = {
   constellation: { position: new THREE.Vector3(0, 2, 20), target: new THREE.Vector3(0, 0, 0) },
-  earth: { position: new THREE.Vector3(-25, -5, -20), target: new THREE.Vector3(-35, -15, -40) },
+  earth: { position: new THREE.Vector3(-27, -10, -32), target: new THREE.Vector3(-35, -15, -40) },
   cinematic: { position: new THREE.Vector3(-15, 8, 10), target: new THREE.Vector3(-10, -5, -15) },
 };
 
@@ -1563,7 +1563,7 @@ export function ConstellationScene({
           ref={controlsRef}
           enablePan
           enableZoom
-          minDistance={3}
+          minDistance={1}
           maxDistance={120}
           autoRotate={cameraView === "constellation"}
           autoRotateSpeed={0.2}
