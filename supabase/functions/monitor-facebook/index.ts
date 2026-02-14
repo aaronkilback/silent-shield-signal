@@ -15,6 +15,30 @@ class RateLimitError extends Error {
   constructor() { super('Google API rate limited'); this.name = 'RateLimitError'; }
 }
 
+/**
+ * Checks if a Facebook URL points to a specific piece of content (post, video, event, reel)
+ * rather than a generic page or profile. Generic pages are not actionable intelligence.
+ */
+function isSpecificFacebookUrl(url: string): boolean {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  // These path patterns indicate a specific piece of content
+  const specificPatterns = [
+    '/posts/',        // Individual posts
+    '/videos/',       // Individual videos
+    '/watch/',        // Watch page with specific content
+    '/reel/',         // Reels
+    '/events/',       // Events
+    '/live/',         // Live streams
+    '/story/',        // Stories
+    '/photo',         // Photos (photo.php or /photos/)
+    'video_id=',      // Video by ID
+    'story_fbid=',    // Story by ID
+    'permalink',      // Direct permalinks
+  ];
+  return specificPatterns.some(p => lower.includes(p));
+}
+
 // HIGH-SPECIFICITY keywords — generic terms like 'pipeline' or 'protest' alone
 // match content about unrelated projects worldwide, causing massive false positives
 const ACTIVISM_KEYWORDS = [
@@ -251,6 +275,14 @@ async function processSearch(
       // Skip duplicates
       if (facebookUrl && processedUrls.has(facebookUrl)) continue;
       if (facebookUrl) processedUrls.add(facebookUrl);
+
+      // ═══ URL SPECIFICITY GATE ═══
+      // Reject generic Facebook page/profile URLs — they're not actionable intelligence.
+      // Only ingest content with specific post/video/event/reel URLs.
+      if (facebookUrl && facebookUrl.includes('facebook.com') && !isSpecificFacebookUrl(facebookUrl)) {
+        console.log(`Skipping generic Facebook page URL (not a specific post): ${facebookUrl}`);
+        continue;
+      }
 
       // Extract social media metadata
       const mentions = extractMentions(text);
