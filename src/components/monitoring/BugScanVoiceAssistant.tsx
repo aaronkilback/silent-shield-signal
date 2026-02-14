@@ -62,7 +62,11 @@ The user is viewing Error Monitoring. You can help them:
 - Explain error patterns and trends
 - Identify critical vs minor issues
 - Discuss error categorization
-- Suggest proactive monitoring strategies`;
+- Suggest proactive monitoring strategies
+- Explain the Proactive Intelligence Push engine that autonomously detects signal surges, unattended incidents, risk posture shifts, and cross-client patterns every 15 minutes
+- Discuss the Watchdog parallel probe architecture that checks all edge functions simultaneously to prevent timeout crashes
+- Explain circuit breaker states, dead letter queue health, and edge function error rates
+- Describe watchdog self-healing: orphan cleanup, stale flag resets, importance_score overflow fixes`;
     }
     
     return baseContext;

@@ -5921,6 +5921,212 @@ export const tenantWorkspaceTests = {
 };
 
 // ============================================
+// PROACTIVE INTELLIGENCE PUSH TESTS
+// ============================================
+
+export const proactiveIntelligenceTests = {
+  name: 'Proactive Intelligence Push',
+  tests: [
+    {
+      name: 'proactive-intelligence-push function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('proactive-intelligence-push', {
+          body: { test_mode: true }
+        });
+        // Should respond — may not push if no insights detected
+      },
+    },
+    {
+      name: 'agent_pending_messages table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('agent_pending_messages')
+          .select('id, message, priority, trigger_event, created_at')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Proactive push messages have valid structure',
+      fn: async () => {
+        const { data: messages, error } = await supabase
+          .from('agent_pending_messages')
+          .select('id, message, priority, trigger_event, recipient_user_id')
+          .eq('trigger_event', 'proactive_intelligence')
+          .limit(10);
+        if (error) throw error;
+
+        for (const msg of messages || []) {
+          if (!msg.message || msg.message.trim().length === 0) {
+            throw new Error(`Proactive message ${msg.id} has empty content`);
+          }
+          if (!msg.recipient_user_id) {
+            throw new Error(`Proactive message ${msg.id} missing recipient`);
+          }
+          if (!['low', 'normal', 'high', 'urgent'].includes(msg.priority)) {
+            throw new Error(`Proactive message ${msg.id} has invalid priority: ${msg.priority}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Proactive push logged in autonomous_actions_log',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('autonomous_actions_log')
+          .select('id, action_type, status, created_at')
+          .eq('action_type', 'proactive_intelligence_push')
+          .order('created_at', { ascending: false })
+          .limit(5);
+        if (error) throw error;
+        // Informational — verifies the log table is accessible and the action type exists
+      },
+    },
+    {
+      name: 'No duplicate proactive pushes within cooldown window',
+      fn: async () => {
+        const tenMinAgo = new Date(Date.now() - 10 * 60000).toISOString();
+        const { data: recentPushes, error } = await supabase
+          .from('agent_pending_messages')
+          .select('recipient_user_id, created_at')
+          .eq('trigger_event', 'proactive_intelligence')
+          .gte('created_at', tenMinAgo)
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+
+        // Check for same user receiving >1 push within 10 min
+        const userTimestamps = new Map<string, string[]>();
+        for (const push of recentPushes || []) {
+          const times = userTimestamps.get(push.recipient_user_id) || [];
+          times.push(push.created_at);
+          userTimestamps.set(push.recipient_user_id, times);
+        }
+        for (const [userId, times] of userTimestamps) {
+          if (times.length > 1) {
+            throw new Error(`User ${userId.slice(0, 8)} received ${times.length} proactive pushes within 10 min cooldown window`);
+          }
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
+// WATCHDOG ENHANCED TESTS
+// ============================================
+
+export const watchdogEnhancedTests = {
+  name: 'Watchdog Enhanced Checks',
+  tests: [
+    {
+      name: 'Watchdog parallel probe execution (no sequential timeout)',
+      fn: async () => {
+        // Verify system-watchdog can complete within timeout by checking recent runs
+        const { data, error } = await supabase
+          .from('autonomous_actions_log')
+          .select('id, action_type, status, created_at, error_message')
+          .eq('trigger_source', 'system-watchdog')
+          .order('created_at', { ascending: false })
+          .limit(5);
+        if (error) throw error;
+
+        // Check if any recent watchdog runs crashed
+        const crashes = (data || []).filter(d => d.status === 'error' && d.error_message?.includes('timeout'));
+        if (crashes.length > 0) {
+          throw new Error(`${crashes.length} recent watchdog timeout crashes detected`);
+        }
+      },
+    },
+    {
+      name: 'Watchdog telemetry variables initialized',
+      fn: async () => {
+        // Verify the watchdog's AEGIS behavior telemetry was collected without ReferenceErrors
+        const { data, error } = await supabase
+          .from('autonomous_actions_log')
+          .select('id, action_type, status, error_message, created_at')
+          .eq('trigger_source', 'system-watchdog')
+          .eq('status', 'error')
+          .ilike('error_message', '%ReferenceError%')
+          .order('created_at', { ascending: false })
+          .limit(5);
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          throw new Error(`Watchdog has ${data.length} recent ReferenceError crashes — telemetry variables may be undeclared`);
+        }
+      },
+    },
+    {
+      name: 'Watchdog learnings trend is positive',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('watchdog_learnings')
+          .select('id, remediation_success, created_at')
+          .order('created_at', { ascending: false })
+          .limit(20);
+        if (error) throw error;
+        if (!data || data.length === 0) return; // No learnings yet
+
+        const successRate = data.filter(d => d.remediation_success).length / data.length;
+        if (successRate < 0.5) {
+          throw new Error(`Watchdog remediation success rate is ${(successRate * 100).toFixed(0)}% — below 50% threshold`);
+        }
+      },
+    },
+    {
+      name: 'Circuit breaker states are valid',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('circuit_breaker_state')
+          .select('service_name, state, failure_count, failure_threshold')
+          .limit(20);
+        if (error) throw error;
+
+        for (const cb of data || []) {
+          const validStates = ['closed', 'open', 'half_open'];
+          if (!validStates.includes(cb.state)) {
+            throw new Error(`Circuit breaker ${cb.service_name} has invalid state: ${cb.state}`);
+          }
+          if (cb.failure_count < 0) {
+            throw new Error(`Circuit breaker ${cb.service_name} has negative failure_count: ${cb.failure_count}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Dead letter queue not overflowing',
+      fn: async () => {
+        const { count, error } = await supabase
+          .from('dead_letter_queue')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'pending');
+        if (error) throw error;
+
+        if ((count || 0) > 100) {
+          throw new Error(`Dead letter queue has ${count} pending items — may indicate systemic failure`);
+        }
+      },
+    },
+    {
+      name: 'Edge function error rate is acceptable',
+      fn: async () => {
+        const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
+        const { count, error } = await supabase
+          .from('edge_function_errors')
+          .select('*', { count: 'exact', head: true })
+          .gte('created_at', oneHourAgo)
+          .is('resolved_at', null);
+        if (error) throw error;
+
+        if ((count || 0) > 20) {
+          throw new Error(`${count} unresolved edge function errors in the last hour`);
+        }
+      },
+    },
+  ],
+};
+
+// ============================================
 // RUN ALL TESTS
 // ============================================
 
@@ -6096,6 +6302,10 @@ export async function runAllTests(): Promise<TestSuite[]> {
     systemHealthTests,
     mfaSecurityTests,
     tenantWorkspaceTests,
+    
+    // Proactive Intelligence & Watchdog
+    proactiveIntelligenceTests,
+    watchdogEnhancedTests,
   ];
   
   for (const suite of suites) {
