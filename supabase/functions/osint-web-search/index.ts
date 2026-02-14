@@ -84,10 +84,13 @@ Deno.serve(async (req) => {
 
           if (analysis.create_signal && analysis.security_concerns?.length > 0) {
             const severityInt = analysis.signal_severity === 'critical' ? 90 : analysis.signal_severity === 'high' ? 75 : analysis.signal_severity === 'medium' ? 50 : 30;
+            const severityLabel = severityInt >= 80 ? 'critical' : severityInt >= 50 ? 'high' : severityInt >= 20 ? 'medium' : 'low';
             const { data: signalData } = await supabase.from('signals').insert({
               title: `Security Intelligence: ${entity.name}`, description: analysis.summary,
               normalized_text: analysis.summary, signal_type: 'osint', severity_score: severityInt,
-              source_url: item.link, status: 'new', relevance_score: analysis.relevance_score
+              severity: severityLabel, category: 'cybersecurity', source_id: 'osint-web-search',
+              status: 'new', relevance_score: analysis.relevance_score,
+              raw_json: { source_url: item.link, link: item.link, snippet: item.snippet },
             }).select('id').single();
             if (signalData) {
               signalsCreated++;
