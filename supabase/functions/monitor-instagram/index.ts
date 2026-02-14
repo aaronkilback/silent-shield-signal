@@ -81,44 +81,23 @@ Deno.serve(async (req) => {
     let mediaDownloaded = 0;
     const processedUrls = new Set<string>();
 
-    // PART 1: Client-focused searches
-    for (const client of clients || []) {
-      try {
-        const searchQueries: string[] = [];
-        
-        // Direct client name + activism/protest terms
-        searchQueries.push(`site:instagram.com "${client.name}" (protest OR pipeline OR activist OR blockade OR demonstration OR environmental)`);
-        
-        // Client name + security threats
-        searchQueries.push(`site:instagram.com "${client.name}" (hack OR scam OR fake OR phishing OR breach)`);
-        
-        // Search for known activist organizations mentioning client or related projects
-        const orgSearchTerms = ACTIVIST_ORGANIZATIONS.slice(0, 5).map(org => `"${org}"`).join(' OR ');
-        searchQueries.push(`site:instagram.com (${orgSearchTerms}) ("${client.name}" OR LNG OR pipeline)`);
-        
-        // Use client's monitoring keywords if available
-        const clientKeywords = client.monitoring_keywords || [];
-        const priorityKeywords = clientKeywords.filter((k: string) => 
-          k.toLowerCase().includes('pipeline') || 
-          k.toLowerCase().includes('lng') || 
-          k.toLowerCase().includes('first nation') ||
-          k.toLowerCase().includes('indigenous')
-        );
-        
-        if (priorityKeywords.length > 0) {
-          const keywordTerms = priorityKeywords.slice(0, 3).map((k: string) => `"${k}"`).join(' OR ');
-          searchQueries.push(`site:instagram.com (protest OR activist OR stand.earth) (${keywordTerms})`);
-        }
-        
-        // Specific search for PRGT/LNG Canada projects
-        if (client.name.toLowerCase().includes('petronas') || client.industry?.toLowerCase().includes('energy')) {
-          searchQueries.push(`site:instagram.com (stand.earth OR standearth) (PRGT OR "LNG Canada" OR "Pacific NorthWest" OR "Coastal GasLink")`);
-        }
+    // ═══ SEARCH BUDGET ═══
+    // Cap total Google API calls to prevent Gateway Timeouts
+    const MAX_SEARCHES = 12;
+    let searchBudgetRemaining = MAX_SEARCHES;
 
-        for (const query of searchQueries) {
-          totalSearches++;
-          await processSearch(supabase, query, client.id, client.name, 'client', processedUrls, (count) => signalsCreated += count, (count) => mediaDownloaded += count);
-        }
+    // PART 1: Client-focused searches (max 1 combined query per client)
+    for (const client of clients || []) {
+      if (searchBudgetRemaining <= 0) {
+        console.log('Search budget exhausted — stopping client searches');
+        break;
+      }
+      try {
+        // Single combined query per client
+        const query = `site:instagram.com "${client.name}" (protest OR blockade OR activist OR hack OR breach)`;
+        totalSearches++;
+        searchBudgetRemaining--;
+        await processSearch(supabase, query, client.id, client.name, 'client', processedUrls, (count) => signalsCreated += count, (count) => mediaDownloaded += count);
 
         console.log(`Processed Instagram mentions for ${client.name}`);
 
@@ -135,58 +114,44 @@ Deno.serve(async (req) => {
       }
     }
 
-    // PART 2: Entity-focused searches (activist groups, threat actors, etc.)
-    for (const entity of watchedEntities || []) {
+    // PART 2: Entity-focused searches (max 1 query per entity, prioritize handles)
+    // Sort: entities with Instagram handles first
+    const sortedEntities = [...(watchedEntities || [])].sort((a, b) => {
+      const aHas = a.attributes?.instagram_handle || a.aliases?.some((al: string) => al.startsWith('@')) ? 1 : 0;
+      const bHas = b.attributes?.instagram_handle || b.aliases?.some((al: string) => al.startsWith('@')) ? 1 : 0;
+      return bHas - aHas;
+    });
+
+    for (const entity of sortedEntities) {
+      if (searchBudgetRemaining <= 0) {
+        console.log('Search budget exhausted — stopping entity searches');
+        break;
+      }
       try {
-        const searchQueries: string[] = [];
-        
-        // Get Instagram handle if available
         const instagramHandle = entity.attributes?.instagram_handle || 
           entity.aliases?.find((a: string) => a.startsWith('@'));
         
-        // PRIORITY: Direct profile search if we have a handle
+        // Single targeted query per entity
+        let query: string;
         if (instagramHandle) {
           const cleanHandle = instagramHandle.replace('@', '');
-          // Search for recent posts from this specific profile
-          searchQueries.push(`site:instagram.com/${cleanHandle}`);
-          searchQueries.push(`site:instagram.com/reel "${cleanHandle}"`);
-          searchQueries.push(`site:instagram.com/p "${cleanHandle}" (pipeline OR LNG OR protest OR blockade OR action)`);
-          // Search for their tagged content
-          searchQueries.push(`site:instagram.com "#${cleanHandle}" OR "@${cleanHandle}"`);
+          query = `site:instagram.com/${cleanHandle}`;
           console.log(`Direct profile monitoring for @${cleanHandle}`);
-        }
-        
-        // Entity name + pipeline/energy project terms
-        searchQueries.push(`site:instagram.com "${entity.name}" (pipeline OR LNG OR "Coastal GasLink" OR PRGT OR protest OR blockade)`);
-        
-        // Entity name + video/reel content (more likely to have protest footage)
-        searchQueries.push(`site:instagram.com/reel "${entity.name}"`);
-        searchQueries.push(`site:instagram.com/p "${entity.name}" (action OR campaign OR protest)`);
-        
-        // Include aliases in search
-        if (entity.aliases && entity.aliases.length > 0) {
-          for (const alias of entity.aliases.slice(0, 2)) {
-            if (!alias.startsWith('@')) { // Skip handles, already covered
-              searchQueries.push(`site:instagram.com "${alias}" (pipeline OR protest OR blockade)`);
-            }
-          }
-        }
-        
-        // Search for focus areas if available
-        const focusAreas = entity.attributes?.focus_areas || entity.attributes?.client_targets;
-        if (focusAreas && focusAreas.length > 0) {
-          const focusTerms = focusAreas.slice(0, 3).map((f: string) => `"${f}"`).join(' OR ');
-          searchQueries.push(`site:instagram.com "${entity.name}" (${focusTerms})`);
+        } else {
+          query = `site:instagram.com "${entity.name}" (pipeline OR LNG OR protest OR blockade)`;
         }
 
-        for (const query of searchQueries) {
-          totalSearches++;
-          await processSearch(supabase, query, null, entity.name, 'entity', processedUrls, (count) => signalsCreated += count, (count) => mediaDownloaded += count, entity.id);
-        }
+        totalSearches++;
+        searchBudgetRemaining--;
+        await processSearch(supabase, query, null, entity.name, 'entity', processedUrls, (count) => signalsCreated += count, (count) => mediaDownloaded += count, entity.id);
 
         console.log(`Processed Instagram mentions for entity: ${entity.name}`);
 
       } catch (error) {
+        if (error instanceof RateLimitError) {
+          console.log('Rate limited — stopping all Instagram searches');
+          break;
+        }
         console.error(`Error monitoring Instagram for entity ${entity.name}:`, error);
       }
     }

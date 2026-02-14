@@ -97,10 +97,10 @@ Deno.serve(async (req) => {
       console.error('Error monitoring Cyber Centre:', error);
     }
 
-    // 3. Public Safety Canada Alerts
+    // 3. Public Safety Canada Alerts (use RSS feed with fallback)
     try {
       console.log('Monitoring Public Safety Canada...');
-      const psResponse = await fetch('https://www.publicsafety.gc.ca/index-en.atom.xml');
+      const psResponse = await fetch('https://www.publicsafety.gc.ca/cnt/rsrcs/pblctns/rss-eng.xml');
       if (psResponse.ok) {
         const psText = await psResponse.text();
         const psItems = parseAtomFeed(psText);

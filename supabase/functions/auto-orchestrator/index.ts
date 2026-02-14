@@ -292,7 +292,7 @@ async function autoCloseIncidentsInBackground(supabase: any) {
   }
 }
 
-// Background task: Run OSINT monitors with concurrency control
+// Background task: Run OSINT monitors with concurrency control and circuit breaker
 async function runOSINTMonitorsInBackground(supabase: any) {
   try {
     console.log('Starting OSINT monitors...');
@@ -313,11 +313,42 @@ async function runOSINTMonitorsInBackground(supabase: any) {
       'monitor-community-outreach'
     ];
 
+    // ═══ CIRCUIT BREAKER ═══
+    // Check recent failures per monitor — skip those with 3+ failures in last 2 hours
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const { data: recentErrors } = await supabase
+      .from('edge_function_errors')
+      .select('error_message')
+      .eq('function_name', 'auto-orchestrator')
+      .gte('created_at', twoHoursAgo)
+      .is('resolved_at', null);
+
+    // Count failures per monitor from error messages
+    const failureCounts: Record<string, number> = {};
+    for (const err of recentErrors || []) {
+      const match = err.error_message?.match(/Monitor ([\w-]+) failed/);
+      if (match) {
+        failureCounts[match[1]] = (failureCounts[match[1]] || 0) + 1;
+      }
+    }
+
+    const CIRCUIT_BREAKER_THRESHOLD = 3;
+    const activeMonitors = monitors.filter(m => {
+      const failures = failureCounts[m] || 0;
+      if (failures >= CIRCUIT_BREAKER_THRESHOLD) {
+        console.log(`⚡ Circuit breaker OPEN for ${m} (${failures} recent failures) — skipping`);
+        return false;
+      }
+      return true;
+    });
+
+    console.log(`Running ${activeMonitors.length}/${monitors.length} monitors (${monitors.length - activeMonitors.length} circuit-broken)`);
+
     let monitorsRun = 0;
 
     // Run monitors in batches to control concurrency
-    for (let i = 0; i < monitors.length; i += MAX_CONCURRENT_OSINT) {
-      const batch = monitors.slice(i, i + MAX_CONCURRENT_OSINT);
+    for (let i = 0; i < activeMonitors.length; i += MAX_CONCURRENT_OSINT) {
+      const batch = activeMonitors.slice(i, i + MAX_CONCURRENT_OSINT);
       
       const promises = batch.map(async (monitor) => {
         try {
@@ -358,6 +389,12 @@ async function runOSINTMonitorsInBackground(supabase: any) {
         } catch (error) {
           if (error instanceof Error && error.name === 'AbortError') {
             console.log(`${monitor}: timed out after 60s, skipping`);
+            // Log timeout as error so circuit breaker catches it
+            await logError(new Error(`Monitor ${monitor} failed: Timeout after 60s`), {
+              functionName: 'auto-orchestrator',
+              severity: 'warning',
+              requestContext: { monitor },
+            });
           } else {
             console.error(`Error running ${monitor}:`, error);
             await logError(error, {
@@ -373,7 +410,7 @@ async function runOSINTMonitorsInBackground(supabase: any) {
       await Promise.allSettled(promises);
       
       // Small delay between batches to avoid overwhelming the system
-      if (i + MAX_CONCURRENT_OSINT < monitors.length) {
+      if (i + MAX_CONCURRENT_OSINT < activeMonitors.length) {
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }

@@ -92,41 +92,27 @@ Deno.serve(async (req) => {
     let totalSearches = 0;
     const processedUrls = new Set<string>();
 
-    // PART 1: Client-focused searches
-    for (const client of clients || []) {
-      try {
-        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
-        
-        const searchQueries: string[] = [];
-        
-        // Client name + activism/protest terms
-        searchQueries.push(`site:facebook.com "${client.name}" (protest OR pipeline OR activist OR blockade OR demonstration)`);
-        
-        // Client name + Facebook Live streams
-        searchQueries.push(`site:facebook.com "${client.name}" ("facebook live" OR "going live" OR "live video" OR "streaming live")`);
-        
-        // Client name + security threats
-        searchQueries.push(`site:facebook.com "${client.name}" (breach OR hack OR security OR scam OR threat)`);
-        
-        // Use client's monitoring keywords
-        const clientKeywords = client.monitoring_keywords || [];
-        const priorityKeywords = clientKeywords.filter((k: string) => 
-          k.toLowerCase().includes('pipeline') || 
-          k.toLowerCase().includes('lng') || 
-          k.toLowerCase().includes('first nation')
-        );
-        
-        if (priorityKeywords.length > 0) {
-          const keywordTerms = priorityKeywords.slice(0, 3).map((k: string) => `"${k}"`).join(' OR ');
-          searchQueries.push(`site:facebook.com (protest OR activist) (${keywordTerms})`);
-        }
+    // ═══ SEARCH BUDGET ═══
+    // Cap total Google API calls to prevent Gateway Timeouts
+    const MAX_SEARCHES = 12;
+    let searchBudgetRemaining = MAX_SEARCHES;
 
-        for (const query of searchQueries) {
-          totalSearches++;
-          const result = await processSearch(supabase, query, client.id, client.name, 'client', processedUrls);
-          signalsCreated += result.signals;
-          mediaCaptures += result.media;
-        }
+    // PART 1: Client-focused searches (max 2 queries per client)
+    for (const client of clients || []) {
+      if (searchBudgetRemaining <= 0) {
+        console.log('Search budget exhausted — stopping client searches');
+        break;
+      }
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 1000));
+        
+        // Single combined query per client (most impactful)
+        const query = `site:facebook.com "${client.name}" (protest OR blockade OR "facebook live" OR breach OR hack)`;
+        totalSearches++;
+        searchBudgetRemaining--;
+        const result = await processSearch(supabase, query, client.id, client.name, 'client', processedUrls);
+        signalsCreated += result.signals;
+        mediaCaptures += result.media;
 
         console.log(`Processed Facebook mentions for ${client.name}`);
 
@@ -143,57 +129,50 @@ Deno.serve(async (req) => {
       }
     }
 
-    // PART 2: Entity-focused searches - ALL monitored entities (not just those with FB handles)
+    // PART 2: Entity-focused searches (max 1 query per entity, prioritize those with FB handles)
     const allMonitoredEntities = watchedEntities || [];
+    // Prioritize entities with Facebook handles first
+    const sortedEntities = [...allMonitoredEntities].sort((a, b) => {
+      const aHasFb = a.attributes?.facebook_page || a.attributes?.facebook_handle ? 1 : 0;
+      const bHasFb = b.attributes?.facebook_page || b.attributes?.facebook_handle ? 1 : 0;
+      return bHasFb - aHasFb;
+    });
     
-    for (const entity of allMonitoredEntities) {
+    for (const entity of sortedEntities) {
+      if (searchBudgetRemaining <= 0) {
+        console.log('Search budget exhausted — stopping entity searches');
+        break;
+      }
       try {
-        await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 1500));
+        await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 1000));
         
-        const searchQueries: string[] = [];
         const fbPage = entity.attributes?.facebook_page || entity.attributes?.facebook_handle;
-        
-        // If entity has a Facebook handle, search that directly
-        if (fbPage) {
-          searchQueries.push(`site:facebook.com/${fbPage}`);
-          searchQueries.push(`site:facebook.com/${fbPage}/posts`);
-        }
-        
-        // Skip broad name-only searches for short entity names (<=4 chars)
-        // to prevent disambiguation failures (e.g., "CGL" matching unrelated pages)
         const isShortName = entity.name.length <= 4;
         
-        if (!isShortName) {
-          // ALWAYS search by entity name on Facebook (primary search)
-          searchQueries.push(`site:facebook.com "${entity.name}"`);
-        }
-        
-        // Entity name + pipeline/energy project terms for more targeted results
-        searchQueries.push(`site:facebook.com "${entity.name}" (pipeline OR LNG OR "Coastal GasLink" OR PRGT OR protest OR indigenous)`);
-        
-        // Entity name + Facebook Live streams (only for longer names)
-        if (!isShortName) {
-          searchQueries.push(`site:facebook.com "${entity.name}" ("facebook live" OR "going live" OR "live video" OR "streaming")`);
-        }
-        
-        // Include aliases in search — SKIP short aliases (<=4 chars)
-        if (entity.aliases && entity.aliases.length > 0) {
-          const usableAliases = entity.aliases.filter((a: string) => a.length > 4);
-          for (const alias of usableAliases.slice(0, 3)) {
-            searchQueries.push(`site:facebook.com "${alias}"`);
-          }
+        // Single targeted query per entity
+        let query: string;
+        if (fbPage) {
+          query = `site:facebook.com/${fbPage}`;
+        } else if (!isShortName) {
+          query = `site:facebook.com "${entity.name}" (pipeline OR LNG OR protest OR blockade)`;
+        } else {
+          // Short names need more context to avoid false positives
+          query = `site:facebook.com "${entity.name}" ("Coastal GasLink" OR PRGT OR "LNG Canada")`;
         }
 
-        for (const query of searchQueries) {
-          totalSearches++;
-          const result = await processSearch(supabase, query, null, entity.name, 'entity', processedUrls, entity.id);
-          signalsCreated += result.signals;
-          mediaCaptures += result.media;
-        }
+        totalSearches++;
+        searchBudgetRemaining--;
+        const result = await processSearch(supabase, query, null, entity.name, 'entity', processedUrls, entity.id);
+        signalsCreated += result.signals;
+        mediaCaptures += result.media;
 
         console.log(`Processed Facebook mentions for entity: ${entity.name}`);
 
       } catch (error) {
+        if (error instanceof RateLimitError) {
+          console.log('Rate limited — stopping all Facebook searches');
+          break;
+        }
         console.error(`Error monitoring Facebook for entity ${entity.name}:`, error);
       }
     }
