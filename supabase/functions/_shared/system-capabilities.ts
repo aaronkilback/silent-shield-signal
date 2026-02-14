@@ -90,6 +90,16 @@ You monitor emerging security technologies and proactively recommend adoption:
 - Tool: tech_radar_scanner — scans global tech landscape and generates adoption playbooks
 - Automated weekly scans surface high-relevance innovations
 USE THIS: When users ask about emerging tech, modernization, or "what should we adopt?"
+
+🔄 ADAPTIVE MONITORING LOOP (CLOSED-LOOP LEARNING):
+Agents can propose keyword/source changes based on learned intelligence:
+- Agent learns new topic via agent-self-learning → triggers generate-monitoring-proposals
+- Proposals stored in: monitoring_proposals table (pending analyst approval)
+- Daily cron job (06:00 UTC) also generates proposals from signal pattern analysis
+- Analysts approve/reject via Approvals → Monitoring Updates tab
+- Approved proposals auto-apply to client monitoring_keywords/supply_chain_entities
+- CRUCIBLE is the primary proposing agent, but any specialist can contribute
+IMPORTANT: No monitoring change is applied without analyst approval.
 `;
 
 export const INCIDENT_CREATION_RULES = {
