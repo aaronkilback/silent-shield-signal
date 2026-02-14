@@ -8,6 +8,7 @@ import SupportChatWidget from "@/components/SupportChatWidget";
 import { RealtimeNotifications } from "@/components/RealtimeNotifications";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ProactiveAgentMessages } from "@/components/agents/ProactiveAgentMessages";
+import { ContextualKnowledgeWidget } from "@/components/agents/ContextualKnowledgeWidget";
 import { CommandPalette } from "@/components/CommandPalette";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
@@ -59,6 +60,7 @@ const App = () => (
             <ClientSelectionProvider>
               <RealtimeNotifications />
               <ProactiveAgentMessages />
+              <ContextualKnowledgeWidget />
               <EnsureDefaultRole />
               <CommandPalette />
               <Routes>
