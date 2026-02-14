@@ -26,30 +26,14 @@ Deno.serve(async (req) => {
     
     const PERPLEXITY_API_KEY = Deno.env.get("PERPLEXITY_API_KEY");
     
-    // Helper function to get real-time flight status via Perplexity
+    // Helper function to get real-time flight status via Perplexity (with AI gateway fallback)
     async function getFlightStatus(flightNumbers: string[], departureDate: string): Promise<any> {
-      if (!PERPLEXITY_API_KEY || !flightNumbers || flightNumbers.length === 0) {
+      if (!flightNumbers || flightNumbers.length === 0) {
         return null;
       }
       
-      try {
-        const flightQuery = flightNumbers.join(", ");
-        const response = await fetch("https://api.perplexity.ai/chat/completions", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "sonar",
-            messages: [
-              {
-                role: "system",
-                content: "You are a flight status analyst. Provide accurate, real-time flight status information. Return structured JSON data only."
-              },
-              {
-                role: "user",
-                content: `Get the current real-time status for these flights scheduled around ${departureDate}: ${flightQuery}
+      const flightQuery = flightNumbers.join(", ");
+      const flightPrompt = `Get the current real-time status for these flights scheduled around ${departureDate}: ${flightQuery}
 
 For each flight, provide:
 - Flight number
@@ -62,102 +46,92 @@ For each flight, provide:
 - Gate information if available
 - Any disruption reasons (weather, mechanical, crew, etc.)
 
-Return as JSON: { "flights": [...], "airport_conditions": {...}, "weather_impacts": [...] }`
-              }
-            ],
-            response_format: {
-              type: "json_schema",
-              json_schema: {
-                name: "flight_status",
-                schema: {
-                  type: "object",
-                  properties: {
-                    flights: {
-                      type: "array",
-                      items: {
-                        type: "object",
-                        properties: {
-                          flight_number: { type: "string" },
-                          airline: { type: "string" },
-                          origin: { type: "string" },
-                          destination: { type: "string" },
-                          scheduled_departure: { type: "string" },
-                          actual_departure: { type: "string" },
-                          status: { type: "string" },
-                          delay_minutes: { type: "number" },
-                          delay_reason: { type: "string" },
-                          gate: { type: "string" }
-                        }
-                      }
-                    },
-                    airport_conditions: {
-                      type: "object",
-                      properties: {
-                        delays: { type: "array", items: { type: "string" } },
-                        closures: { type: "array", items: { type: "string" } },
-                        weather_alerts: { type: "array", items: { type: "string" } }
-                      }
-                    },
-                    weather_impacts: {
-                      type: "array",
-                      items: { type: "string" }
+Return as JSON: { "flights": [...], "airport_conditions": {...}, "weather_impacts": [...] }`;
+
+      // Try Perplexity first
+      if (PERPLEXITY_API_KEY) {
+        try {
+          const response = await fetch("https://api.perplexity.ai/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "sonar",
+              messages: [
+                { role: "system", content: "You are a flight status analyst. Provide accurate, real-time flight status information. Return structured JSON data only." },
+                { role: "user", content: flightPrompt }
+              ],
+              response_format: {
+                type: "json_schema",
+                json_schema: {
+                  name: "flight_status",
+                  schema: {
+                    type: "object",
+                    properties: {
+                      flights: { type: "array", items: { type: "object", properties: { flight_number: { type: "string" }, airline: { type: "string" }, origin: { type: "string" }, destination: { type: "string" }, scheduled_departure: { type: "string" }, actual_departure: { type: "string" }, status: { type: "string" }, delay_minutes: { type: "number" }, delay_reason: { type: "string" }, gate: { type: "string" } } } },
+                      airport_conditions: { type: "object", properties: { delays: { type: "array", items: { type: "string" } }, closures: { type: "array", items: { type: "string" } }, weather_alerts: { type: "array", items: { type: "string" } } } },
+                      weather_impacts: { type: "array", items: { type: "string" } }
                     }
                   }
                 }
               }
+            }),
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            const content = data.choices?.[0]?.message?.content;
+            const citations = data.citations || [];
+            if (content) {
+              try {
+                const parsed = JSON.parse(content);
+                parsed.citations = citations;
+                console.log("Flight status retrieved via Perplexity");
+                return parsed;
+              } catch { return { citations }; }
             }
-          }),
-        });
-        
-        if (!response.ok) {
-          console.error("Perplexity flight status error:", await response.text());
-          return null;
-        }
-        
-        const data = await response.json();
-        const content = data.choices?.[0]?.message?.content;
-        const citations = data.citations || [];
-        
-        if (content) {
-          try {
-            const parsed = JSON.parse(content);
-            parsed.citations = citations;
-            return parsed;
-          } catch {
-            console.error("Failed to parse flight status JSON");
             return { citations };
+          } else {
+            console.warn(`Perplexity flight status returned ${response.status}, falling back to AI gateway`);
+            await response.text(); // consume body
           }
+        } catch (error) {
+          console.warn("Perplexity flight status failed, falling back to AI gateway:", error);
         }
-        return { citations };
-      } catch (error) {
-        console.error("Error fetching flight status:", error);
-        return null;
       }
+
+      // Fallback: use AI gateway with web-search-capable model
+      try {
+        const fallbackResult = await callAiGateway({
+          model: 'google/gemini-2.5-flash',
+          messages: [
+            { role: "system", content: "You are a flight status analyst. Use your knowledge of current airline schedules and conditions to provide the best available flight status information. Return valid JSON only, no markdown." },
+            { role: "user", content: flightPrompt }
+          ],
+          functionName: 'monitor-travel-risks',
+          retries: 1,
+        });
+        if (!fallbackResult.error && fallbackResult.text) {
+          try {
+            const cleaned = fallbackResult.text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+            const parsed = JSON.parse(cleaned);
+            parsed.citations = [];
+            parsed.source = "ai-gateway-fallback";
+            console.log("Flight status retrieved via AI gateway fallback");
+            return parsed;
+          } catch { console.warn("Failed to parse AI gateway flight status response"); }
+        }
+      } catch (error) {
+        console.error("AI gateway flight status fallback also failed:", error);
+      }
+      return null;
     }
     
-    // Helper function to get destination intelligence via Perplexity
+    // Helper function to get destination intelligence via Perplexity (with AI gateway fallback)
     async function getDestinationIntelligence(city: string, country: string, travelDates: string): Promise<any> {
-      if (!PERPLEXITY_API_KEY) {
-        return null;
-      }
-      
-      try {
-        const response = await fetch("https://api.perplexity.ai/chat/completions", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "sonar",
-            messages: [
-              {
-                role: "system",
-                content: "You are a travel security analyst providing real-time destination intelligence. Focus on current events, safety conditions, and travel advisories. Return structured JSON only."
-              },
-              {
-                role: "user",
-                content: `Provide current travel intelligence for ${city}, ${country} for travel around ${travelDates}:
+      const destPrompt = `Provide current travel intelligence for ${city}, ${country} for travel around ${travelDates}:
 
 1. Current travel advisories and safety level
 2. Recent security incidents or threats (last 7 days)
@@ -168,27 +142,66 @@ Return as JSON: { "flights": [...], "airport_conditions": {...}, "weather_impact
 7. Major events that could affect travel
 8. Current geopolitical situation
 
-Return as JSON: { "safety_level": "low|medium|high|critical", "advisories": [...], "current_threats": [...], "weather": {...}, "civil_unrest": [...], "health_alerts": [...], "infrastructure": [...], "events": [...], "geopolitical": {...} }`
-              }
-            ],
-            search_recency_filter: "week",
-          }),
-        });
-        
-        if (!response.ok) {
-          console.error("Perplexity destination intel error:", await response.text());
-          return null;
+Return as JSON: { "safety_level": "low|medium|high|critical", "advisories": [...], "current_threats": [...], "weather": {...}, "civil_unrest": [...], "health_alerts": [...], "infrastructure": [...], "events": [...], "geopolitical": {...} }`;
+
+      // Try Perplexity first
+      if (PERPLEXITY_API_KEY) {
+        try {
+          const response = await fetch("https://api.perplexity.ai/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${PERPLEXITY_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "sonar",
+              messages: [
+                { role: "system", content: "You are a travel security analyst providing real-time destination intelligence. Focus on current events, safety conditions, and travel advisories. Return structured JSON only." },
+                { role: "user", content: destPrompt }
+              ],
+              search_recency_filter: "week",
+            }),
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            console.log("Destination intel retrieved via Perplexity");
+            return {
+              content: data.choices?.[0]?.message?.content,
+              citations: data.citations || []
+            };
+          } else {
+            console.warn(`Perplexity destination intel returned ${response.status}, falling back to AI gateway`);
+            await response.text(); // consume body
+          }
+        } catch (error) {
+          console.warn("Perplexity destination intel failed, falling back to AI gateway:", error);
         }
-        
-        const data = await response.json();
-        return {
-          content: data.choices?.[0]?.message?.content,
-          citations: data.citations || []
-        };
-      } catch (error) {
-        console.error("Error fetching destination intelligence:", error);
-        return null;
       }
+
+      // Fallback: use AI gateway
+      try {
+        const fallbackResult = await callAiGateway({
+          model: 'google/gemini-2.5-flash',
+          messages: [
+            { role: "system", content: "You are a travel security analyst. Using your knowledge of current world events, provide the most up-to-date destination intelligence. Focus on real, verifiable conditions. Return detailed analysis as prose, not JSON." },
+            { role: "user", content: `Provide current travel security intelligence for ${city}, ${country} for travel around ${travelDates}. Cover: travel advisories, weather conditions, security threats, civil unrest, health risks, infrastructure issues, and any major events affecting travel. Be specific about current conditions.` }
+          ],
+          functionName: 'monitor-travel-risks',
+          retries: 1,
+        });
+        if (!fallbackResult.error && fallbackResult.text) {
+          console.log("Destination intel retrieved via AI gateway fallback");
+          return {
+            content: fallbackResult.text,
+            citations: [],
+            source: "ai-gateway-fallback"
+          };
+        }
+      } catch (error) {
+        console.error("AI gateway destination intel fallback also failed:", error);
+      }
+      return null;
     }
 
     // Process each itinerary with AI risk assessment
