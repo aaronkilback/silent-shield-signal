@@ -91,8 +91,10 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  let documentId: string | undefined;
   try {
-    const { documentId } = await req.json();
+    const body = await req.json();
+    documentId = body.documentId;
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -351,7 +353,7 @@ Extract entities, signals, and entity mentions from documents.`
           content: `Analyze this document and extract intelligence:
 
 TITLE: ${document.title}
-TEXT: ${document.raw_text}
+TEXT: ${(document.raw_text || '').substring(0, 80000)}
 
 Extract all entities, signals, and their relationships.`
         }
@@ -722,19 +724,23 @@ Extract all entities, signals, and their relationships.`
   } catch (error) {
     console.error('Error processing document:', error);
     
-    // Mark as failed
-    if (req.json && (await req.json()).documentId) {
-      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-      const supabase = createClient(supabaseUrl, supabaseKey);
-      
-      await supabase
-        .from('ingested_documents')
-        .update({
-          processing_status: 'failed',
-          error_message: error instanceof Error ? error.message : 'Unknown error'
-        })
-        .eq('id', (await req.json()).documentId);
+    // Mark as failed using documentId captured at the top
+    if (documentId) {
+      try {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+        const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        
+        await supabase
+          .from('ingested_documents')
+          .update({
+            processing_status: 'failed',
+            error_message: error instanceof Error ? error.message : 'Unknown error'
+          })
+          .eq('id', documentId);
+      } catch (updateErr) {
+        console.error('Failed to update document status:', updateErr);
+      }
     }
 
     return new Response(
