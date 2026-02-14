@@ -383,6 +383,8 @@ async function createSignal(supabaseClient: any, data: {
           title: data.title,
           description: data.description,
           url: data.url,
+          source_url: data.url,
+          link: data.url,
           published_date: data.published_date,
           relevance_score: data.relevance_score,
           relevance_reasons: data.relevance_reasons

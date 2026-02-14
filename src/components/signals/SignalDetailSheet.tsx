@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, History, Clock, Heart, MessageCircle, Eye, Hash, AtSign, Instagram, Twitter, Facebook } from "lucide-react";
+import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, History, Clock, Heart, MessageCircle, Eye, Hash, AtSign, Instagram, Twitter, Facebook, FileText } from "lucide-react";
 import { format, differenceInDays } from "date-fns";
 import { SignalAgeBadge } from "./SignalAgeBadge";
 import { FacebookVideoEmbed, isFacebookVideoUrl } from "./FacebookVideoEmbed";
@@ -82,10 +82,16 @@ export function SignalDetailSheet({
     (Array.isArray(signal.sources_json) ? signal.sources_json : [signal.sources_json]) : 
     [];
 
-  // Extract source URL from sources (and sanitize it)
+  // Extract source URL from sources_json OR raw_json (many monitors store URLs in raw_json)
   const rawSourceUrl = sources.find((s: any) => s?.url || s?.link)?.url ||
-                       sources.find((s: any) => s?.url || s?.link)?.link;
+                       sources.find((s: any) => s?.url || s?.link)?.link ||
+                       signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link;
   const sourceUrl = extractHttpUrl(rawSourceUrl);
+
+  // For document-sourced signals, extract document reference
+  const sourceDocument = signal.raw_json?.source_metadata?.archival_document_id || 
+                         signal.raw_json?.source_metadata?.document_id;
+  const sourceType = signal.raw_json?.source_metadata?.file_type || signal.raw_json?.source;
 
   // Detect if this is a social media signal
   const sourceMetadata = signal.raw_json?.source_metadata || signal.raw_json;
@@ -366,6 +372,20 @@ export function SignalDetailSheet({
                     <ExternalLink className="h-3.5 w-3.5" />
                     <span className="truncate">{sourceUrl}</span>
                   </a>
+                </div>
+              </>
+            )}
+
+            {/* Document Source Reference (for PDF/document-sourced signals without external URL) */}
+            {!sourceUrl && sourceDocument && (
+              <>
+                <Separator />
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Source Document</h4>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <FileText className="h-3.5 w-3.5" />
+                    <span>Extracted from uploaded {sourceType || 'document'}</span>
+                  </div>
                 </div>
               </>
             )}
