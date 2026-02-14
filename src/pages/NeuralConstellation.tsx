@@ -14,7 +14,7 @@ import { useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMet
 // Map agents to 3D positions in a constellation layout
 function assignPositions(agents: any[]): AgentNode[] {
   const AEGIS_CALL_SIGN = "AEGIS-CMD";
-  const coreCallSigns = ["MATRIX", "FININT", "CHAIN-WATCH", "INSIDE-EYE", "ECHO-WATCH"];
+  const coreCallSigns = ["MATRIX", "GLOBE-SAGE", "FININT", "CHAIN-WATCH", "INSIDE-EYE", "ECHO-WATCH"];
   const secondaryCallSigns = ["ECHO-ALPHA", "LOCUS-INTEL", "VICODIN", "LEX-MAGNA", "NARCO-INTEL", "PATTERN-SEEKER", "SENTINEL-OPS", "Scout", "CRUCIBLE", "AUREUS-GUARD", "FORTRESS-GUARD", "BRAVO-1", "SIM-COMMAND", "TIME-WARP"];
 
   const aegisAgent = agents.find((a) => a.call_sign === AEGIS_CALL_SIGN);
