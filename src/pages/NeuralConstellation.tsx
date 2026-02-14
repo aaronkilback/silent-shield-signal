@@ -13,17 +13,30 @@ import { useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMet
 
 // Map agents to 3D positions in a constellation layout
 function assignPositions(agents: any[]): AgentNode[] {
-  const coreCallSigns = ["AEGIS-CMD", "MATRIX", "GLOBE-SAGE", "FININT", "CHAIN-WATCH", "INSIDE-EYE"];
+  const AEGIS_CALL_SIGN = "AEGIS-CMD";
+  const coreCallSigns = ["MATRIX", "GLOBE-SAGE", "FININT", "CHAIN-WATCH", "INSIDE-EYE"];
   const secondaryCallSigns = ["ECHO-ALPHA", "LOCUS-INTEL", "VICODIN", "LEX-MAGNA", "NARCO-INTEL", "PATTERN-SEEKER", "SENTINEL-OPS", "Scout"];
 
+  const aegisAgent = agents.find((a) => a.call_sign === AEGIS_CALL_SIGN);
   const primaryAgents = agents.filter((a) => coreCallSigns.includes(a.call_sign));
   const secondaryAgents = agents.filter((a) => secondaryCallSigns.includes(a.call_sign));
   const supportAgents = agents.filter(
-    (a) => !coreCallSigns.includes(a.call_sign) && !secondaryCallSigns.includes(a.call_sign)
+    (a) => a.call_sign !== AEGIS_CALL_SIGN && !coreCallSigns.includes(a.call_sign) && !secondaryCallSigns.includes(a.call_sign)
   );
 
   const nodes: AgentNode[] = [];
 
+  // AEGIS at dead center — the command hub
+  if (aegisAgent) {
+    nodes.push({
+      id: aegisAgent.id, callSign: aegisAgent.call_sign, codename: aegisAgent.codename,
+      specialty: aegisAgent.specialty, color: "#f59e0b",
+      position: [0, 0, 0],
+      tier: "primary",
+    });
+  }
+
+  // Core agents orbit AEGIS in the inner ring
   primaryAgents.forEach((agent, i) => {
     const angle = (i / Math.max(primaryAgents.length, 1)) * Math.PI * 2;
     const radius = 5;
