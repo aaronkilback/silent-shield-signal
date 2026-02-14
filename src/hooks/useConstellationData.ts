@@ -344,3 +344,37 @@ export function useKnowledgeGraphEdges(enabled: boolean) {
     refetchInterval: 60000,
   });
 }
+
+export interface OperatorDevice {
+  userId: string;
+  deviceType: string;
+  deviceLabel: string | null;
+  lastSeenAt: string;
+  isOnline: boolean;
+}
+
+/** Fetch connected operator devices from heartbeat table */
+export function useOperatorDevices(enabled: boolean) {
+  return useQuery({
+    queryKey: ["operator-devices"],
+    queryFn: async () => {
+      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const { data, error } = await supabase
+        .from("operator_heartbeats")
+        .select("user_id, device_type, device_label, last_seen_at, is_online")
+        .gte("last_seen_at", fiveMinAgo);
+
+      if (error) throw error;
+
+      return (data || []).map((d) => ({
+        userId: d.user_id,
+        deviceType: d.device_type,
+        deviceLabel: d.device_label,
+        lastSeenAt: d.last_seen_at,
+        isOnline: d.is_online,
+      })) as OperatorDevice[];
+    },
+    enabled,
+    refetchInterval: 15000,
+  });
+}

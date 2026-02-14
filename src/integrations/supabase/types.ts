@@ -6151,6 +6151,39 @@ export type Database = {
           },
         ]
       }
+      operator_heartbeats: {
+        Row: {
+          created_at: string
+          device_label: string | null
+          device_type: string
+          id: string
+          ip_address: string | null
+          is_online: boolean
+          last_seen_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          device_label?: string | null
+          device_type?: string
+          id?: string
+          ip_address?: string | null
+          is_online?: boolean
+          last_seen_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          device_label?: string | null
+          device_type?: string
+          id?: string
+          ip_address?: string | null
+          is_online?: boolean
+          last_seen_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       pending_shares: {
         Row: {
           consortium_id: string
