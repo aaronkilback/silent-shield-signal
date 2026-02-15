@@ -26,12 +26,24 @@ Deno.serve(async (req) => {
       return errorResponse("Unauthorized", 401);
     }
 
-    console.log(`Processing travel security report: ${file_name} from ${provider}`);
+    console.log(`Processing travel security report: ${file_name || 'unknown'} from ${provider || 'unknown'}`);
+
+    // Validate and cap base64 size to prevent AI token limit errors
+    if (!file_base64 || file_base64.length === 0) {
+      return errorResponse("No file data received", 400);
+    }
+
+    // Cap at 80K chars to prevent token limit issues
+    const cappedBase64 = file_base64.length > 80000 
+      ? file_base64.substring(0, 80000)
+      : file_base64;
+
+    const mimeType = file_type || 'application/pdf';
 
     const prompt = `You are a security intelligence analyst. Parse this security briefing document and extract structured intelligence for travel risk assessment.
 
-The document is from: ${provider}
-File name: ${file_name}
+The document is from: ${provider || 'Unknown'}
+File name: ${file_name || 'Unknown'}
 
 Extract the following information in a structured JSON format:
 
@@ -63,25 +75,21 @@ Extract the following information in a structured JSON format:
 Parse the document content carefully and extract all relevant security intelligence.`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-pro',
+      model: 'google/gemini-2.5-flash',
       messages: [
-        {
-          role: 'system',
-          content: 'You are an expert at parsing security briefing documents from providers like International SOS, Control Risks, and other security consultancies. Extract structured intelligence data accurately.'
-        },
         {
           role: 'user',
           content: [
-            { type: 'text', text: prompt },
+            { type: 'text', text: 'You are an expert at parsing security briefing documents from providers like International SOS, Control Risks, and other security consultancies. Extract structured intelligence data accurately.\n\n' + prompt },
             {
               type: 'image_url',
               image_url: {
-                url: `data:${file_type};base64,${file_base64}`
+                url: `data:${mimeType};base64,${cappedBase64}`
               }
             }
           ]
         }
-      ],
+      ] as any,
       functionName: 'parse-travel-security-report',
       dlqOnFailure: true,
       dlqPayload: { file_name, provider },
