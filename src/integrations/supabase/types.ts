@@ -6009,6 +6009,45 @@ export type Database = {
         }
         Relationships: []
       }
+      knowledge_freshness_audits: {
+        Row: {
+          actions_taken: Json | null
+          audit_date: string
+          avg_confidence: number | null
+          avg_decayed_confidence: number | null
+          created_at: string
+          decayed_entries: number
+          id: string
+          stale_domains: Json | null
+          stale_entries: number
+          total_entries: number
+        }
+        Insert: {
+          actions_taken?: Json | null
+          audit_date?: string
+          avg_confidence?: number | null
+          avg_decayed_confidence?: number | null
+          created_at?: string
+          decayed_entries?: number
+          id?: string
+          stale_domains?: Json | null
+          stale_entries?: number
+          total_entries?: number
+        }
+        Update: {
+          actions_taken?: Json | null
+          audit_date?: string
+          avg_confidence?: number | null
+          avg_decayed_confidence?: number | null
+          created_at?: string
+          decayed_entries?: number
+          id?: string
+          stale_domains?: Json | null
+          stale_entries?: number
+          total_entries?: number
+        }
+        Relationships: []
+      }
       learning_feedback: {
         Row: {
           agent_id: string | null
@@ -8056,6 +8095,82 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      signal_contradictions: {
+        Row: {
+          confidence: number
+          contradiction_type: string
+          created_at: string
+          detected_at: string
+          entity_name: string
+          id: string
+          resolution_notes: string | null
+          resolution_status: string
+          resolved_at: string | null
+          resolved_by: string | null
+          severity: string
+          signal_a_id: string | null
+          signal_a_summary: string | null
+          signal_b_id: string | null
+          signal_b_summary: string | null
+        }
+        Insert: {
+          confidence?: number
+          contradiction_type?: string
+          created_at?: string
+          detected_at?: string
+          entity_name: string
+          id?: string
+          resolution_notes?: string | null
+          resolution_status?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          severity?: string
+          signal_a_id?: string | null
+          signal_a_summary?: string | null
+          signal_b_id?: string | null
+          signal_b_summary?: string | null
+        }
+        Update: {
+          confidence?: number
+          contradiction_type?: string
+          created_at?: string
+          detected_at?: string
+          entity_name?: string
+          id?: string
+          resolution_notes?: string | null
+          resolution_status?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          severity?: string
+          signal_a_id?: string | null
+          signal_a_summary?: string | null
+          signal_b_id?: string | null
+          signal_b_summary?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_contradictions_resolved_by_fkey"
+            columns: ["resolved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_contradictions_signal_a_id_fkey"
+            columns: ["signal_a_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_contradictions_signal_b_id_fkey"
+            columns: ["signal_b_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       signal_correlation_groups: {
         Row: {
@@ -10701,6 +10816,7 @@ export type Database = {
     }
     Functions: {
       calculate_signal_hash: { Args: { text_content: string }; Returns: string }
+      calibrate_analyst_accuracy: { Args: never; Returns: number }
       can_add_analysis: {
         Args: { _user_id: string; _workspace_id: string }
         Returns: boolean
