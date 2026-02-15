@@ -41,6 +41,9 @@ Deno.serve(async (req) => {
       case 'retry-dead-letters':
         return await handleRetryDeadLetters();
 
+      case 'cleanup-false-positives':
+        return await handleCleanupFalsePositives();
+
       // ── Delegated handlers (large functions, will be inlined in future) ──
       case 'data-quality':
         return await delegateToFunction('data-quality-monitor', body);
@@ -54,7 +57,7 @@ Deno.serve(async (req) => {
         return await delegateToFunction('system-watchdog', body);
 
       default:
-        return errorResponse(`Unknown action: ${action}. Valid actions: health-check, data-integrity-fix, retry-dead-letters, data-quality, orchestrate, ooda-loop, pipeline-tests, watchdog`, 400);
+        return errorResponse(`Unknown action: ${action}. Valid actions: health-check, data-integrity-fix, retry-dead-letters, cleanup-false-positives, data-quality, orchestrate, ooda-loop, pipeline-tests, watchdog`, 400);
     }
   } catch (error) {
     console.error('[SystemOps] Router error:', error);
@@ -393,10 +396,59 @@ async function handleRetryDeadLetters(): Promise<Response> {
         const backoffMs = 60_000 * Math.pow(5, newRetryCount);
         await supabase.from('dead_letter_queue').update({ status: 'pending', retry_count: newRetryCount, next_retry_at: new Date(Date.now() + backoffMs).toISOString(), error_message: String(retryErr), updated_at: new Date().toISOString() }).eq('id', item.id);
       }
-      failCount++;
     }
   }
 
   console.log(`[SystemOps:DLQ] Processed ${items.length} items: ${successCount} success, ${failCount} failed`);
   return successResponse({ processed: items.length, success: successCount, failed: failCount });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//      HANDLER: cleanup-false-positives (inlined)
+// ═══════════════════════════════════════════════════════════════
+
+async function handleCleanupFalsePositives(): Promise<Response> {
+  const supabase = createServiceClient();
+
+  // Step 1: Save hashes of false_positive signals to prevent re-ingestion
+  const { data: fpSignals, error: fetchErr } = await supabase
+    .from('signals')
+    .select('id, content_hash, client_id, title')
+    .eq('status', 'false_positive');
+
+  if (fetchErr) {
+    return errorResponse(`Failed to fetch false positives: ${fetchErr.message}`, 500);
+  }
+
+  const signalsToClean = fpSignals || [];
+  if (signalsToClean.length === 0) {
+    return successResponse({ purged: 0, hashes_saved: 0, message: 'No false positives found' });
+  }
+
+  // Save hashes to rejected_content_hashes
+  let hashesSaved = 0;
+  for (const sig of signalsToClean) {
+    if (sig.content_hash) {
+      const { error } = await supabase.from('rejected_content_hashes').upsert({
+        content_hash: sig.content_hash,
+        client_id: sig.client_id,
+        reason: 'false_positive_cleanup',
+        original_signal_title: (sig.title || '').slice(0, 200),
+      }, { onConflict: 'content_hash,client_id', ignoreDuplicates: true });
+      if (!error) hashesSaved++;
+    }
+  }
+
+  // Step 2: Delete false_positive signals
+  const { error: deleteErr } = await supabase
+    .from('signals')
+    .delete()
+    .eq('status', 'false_positive');
+
+  if (deleteErr) {
+    return errorResponse(`Hashes saved (${hashesSaved}) but delete failed: ${deleteErr.message}`, 500);
+  }
+
+  console.log(`[SystemOps:cleanup-false-positives] Purged ${signalsToClean.length} signals, saved ${hashesSaved} hashes`);
+  return successResponse({ purged: signalsToClean.length, hashes_saved: hashesSaved });
 }
