@@ -178,7 +178,7 @@ Respond with ONLY valid JSON (no markdown):
   "severity": "healthy" | "monitoring" | "degraded" | "critical",
   "findings": [
     {
-      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan" | "Communications" | "Investigation Autopilot" | "Signal Contradictions" | "Knowledge Freshness" | "Analyst Calibration",
+      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan" | "Communications" | "Investigation Autopilot" | "Signal Contradictions" | "Knowledge Freshness" | "Analyst Calibration" | "Dead Letter Queue" | "Schema Validation",
       "severity": "critical" | "warning" | "info",
       "title": "Short title",
       "analysis": "What you observed and WHY it matters (2-3 sentences). Reference learnings if relevant.",
@@ -197,10 +197,26 @@ Respond with ONLY valid JSON (no markdown):
 
 ## What is NORMAL (suppress):
 - Briefing suppressed due to no new intel
-- Travel E2E tests failing (known RLS limitation)
+- Travel E2E tests failing due to RLS context limitations (read-only scan failures are known)
+- BUT: Travel function 401 Unauthorized errors in DLQ are NOT normal — these indicate broken auth headers
 - 1-2 open bugs (normal volume)
 - CORS errors on OPTIONS (means function is deployed)
 - Seasonal monitoring sources with no recent scans
+
+## DLQ & Error Monitoring (NEW)
+- dead_letter_queue: entries with status 'exhausted' mean a function permanently failed after max retries
+- EXPECTED: Zero 'exhausted' entries. Any exhausted entry = critical gap the pipeline silently dropped
+- TELEMETRY: exhaustedDlqCount, exhaustedFunctions (which functions are failing)
+- Pattern: Repeated 401 Unauthorized = auth header misconfiguration, not transient failure
+- Pattern: Repeated Gateway Timeout on social monitors = need longer execution ceiling or circuit breaker tuning
+- REMEDIATION: Flag for human attention (auth issues require code fixes)
+
+## Schema Validation (NEW)
+- Frontend code may reference columns/enum values that don't exist in the database
+- TELEMETRY: recentSchemaErrors (from edge_function_errors and postgres error logs)
+- Common patterns: "column X does not exist", "invalid input value for enum Y"
+- EXPECTED: Zero schema mismatch errors
+- REMEDIATION: Flag for human attention (requires migration)
 
 Set shouldAlert=false if only minor info-level observations. Alert for warning+ findings.
 `;
@@ -312,6 +328,15 @@ interface TelemetryData {
   };
   historicalBaseline: { avgDailySignals: number; avgWeeklyBugs: number };
   adaptiveThresholds: AdaptiveThresholds;
+  deadLetterQueue: {
+    exhaustedCount: number;
+    exhaustedFunctions: string[];
+    pendingCount: number;
+  };
+  schemaErrors: {
+    recentMismatchCount: number;
+    errorDetails: string[];
+  };
 }
 
 interface Finding {
@@ -814,6 +839,45 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     },
     historicalBaseline: { avgDailySignals, avgWeeklyBugs },
     adaptiveThresholds,
+    deadLetterQueue: await collectDlqTelemetry(supabase),
+    schemaErrors: await collectSchemaErrorTelemetry(supabase),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+//              DLQ & SCHEMA ERROR TELEMETRY
+// ═══════════════════════════════════════════════════════════════
+
+async function collectDlqTelemetry(supabase: any): Promise<TelemetryData['deadLetterQueue']> {
+  const [exhaustedResult, pendingResult] = await Promise.all([
+    supabase.from('dead_letter_queue').select('function_name').eq('status', 'exhausted'),
+    supabase.from('dead_letter_queue').select('*', { count: 'exact', head: true }).in('status', ['pending', 'retrying']),
+  ]);
+
+  const exhaustedFunctions = [...new Set((exhaustedResult.data || []).map((d: any) => d.function_name))];
+
+  return {
+    exhaustedCount: exhaustedResult.data?.length || 0,
+    exhaustedFunctions,
+    pendingCount: pendingResult.count || 0,
+  };
+}
+
+async function collectSchemaErrorTelemetry(supabase: any): Promise<TelemetryData['schemaErrors']> {
+  const fortyEightHoursAgo = new Date(Date.now() - 48 * 3600000).toISOString();
+
+  const { data: schemaErrors } = await supabase
+    .from('edge_function_errors')
+    .select('error_message')
+    .gte('created_at', fortyEightHoursAgo)
+    .or('error_message.ilike.%does not exist%,error_message.ilike.%invalid input value for enum%')
+    .limit(20);
+
+  const errorDetails = [...new Set((schemaErrors || []).map((e: any) => e.error_message))];
+
+  return {
+    recentMismatchCount: errorDetails.length,
+    errorDetails: errorDetails.slice(0, 5),
   };
 }
 
