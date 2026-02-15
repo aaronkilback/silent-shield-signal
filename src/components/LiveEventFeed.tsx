@@ -1,12 +1,13 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { AlertTriangle, Shield, Activity, Zap, Link as LinkIcon } from "lucide-react";
+import { AlertTriangle, Shield, Activity, Zap, Link as LinkIcon, History } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { SignalAgeIndicator } from "@/components/signals/SignalAgeBadge";
 import { extractHttpUrl } from "@/lib/extractHttpUrl";
 import { SignalFeedback } from "@/components/SignalFeedback";
+import { differenceInDays } from "date-fns";
 
 
 
@@ -119,18 +120,18 @@ export const LiveEventFeed = () => {
 
     // Fetch initial signals
     const fetchSignals = async () => {
-      // Calculate the cutoff for historical signals (90 days ago)
-      const historicalCutoff = new Date();
-      historicalCutoff.setDate(historicalCutoff.getDate() - 90);
-      const cutoffISO = historicalCutoff.toISOString();
+      // Calculate date window for feed (default 7 days for created_at)
+      const feedWindow = new Date();
+      feedWindow.setDate(feedWindow.getDate() - 30); // Fetch up to 30 days of signals
+      const feedWindowISO = feedWindow.toISOString();
 
       let query = supabase
         .from('signals')
         .select('*')
-        .neq('status', 'false_positive') // Exclude false positives
-        .or(`event_date.is.null,event_date.gte.${cutoffISO}`) // Exclude historical signals
+        .neq('status', 'false_positive')
+        .gte('created_at', feedWindowISO) // Only signals ingested in last 30 days
         .order('received_at', { ascending: false })
-        .limit(10);
+        .limit(20);
 
       // Only filter by client_id if a specific client is selected
       if (selectedClientId) {
@@ -237,6 +238,12 @@ export const LiveEventFeed = () => {
     );
   }
 
+  // Helper: is this signal historic? (event_date > 90 days old)
+  const isHistoric = (signal: Signal): boolean => {
+    if (!signal.event_date) return false;
+    return differenceInDays(new Date(), new Date(signal.event_date)) > 90;
+  };
+
   // Filter signals by date range
   const filteredSignals = signals.filter(signal => {
     if (dateFilter === 'all') return true;
@@ -247,8 +254,13 @@ export const LiveEventFeed = () => {
     return signalDate >= cutoff;
   });
 
-  // Sort: signals with recent updates float to top, then by received_at
+  // Sort: current signals first (with recent updates floating up), then historic at the bottom
   const sortedSignals = [...filteredSignals].sort((a, b) => {
+    const aHistoric = isHistoric(a);
+    const bHistoric = isHistoric(b);
+    // Historic signals sink to bottom
+    if (aHistoric !== bHistoric) return aHistoric ? 1 : -1;
+    // Within same group, recently updated float up
     const aUpdate = lastUpdateTime[a.id] || 0;
     const bUpdate = lastUpdateTime[b.id] || 0;
     if (aUpdate || bUpdate) {
@@ -294,11 +306,19 @@ export const LiveEventFeed = () => {
             <div
               key={signal.id}
               className={`p-4 rounded-lg border transition-all duration-500 ${
-                isRecentlyUpdated
-                  ? 'bg-primary/5 border-primary/40 ring-1 ring-primary/20 shadow-md shadow-primary/10'
-                  : 'bg-secondary/50 border-border hover:border-primary/50'
+                isHistoric(signal)
+                  ? 'bg-muted/30 border-muted opacity-70'
+                  : isRecentlyUpdated
+                    ? 'bg-primary/5 border-primary/40 ring-1 ring-primary/20 shadow-md shadow-primary/10'
+                    : 'bg-secondary/50 border-border hover:border-primary/50'
               } animate-fade-in`}
             >
+              {isHistoric(signal) && (
+                <div className="flex items-center gap-2 mb-2 px-2 py-1 rounded bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-mono">
+                  <History className="w-3.5 h-3.5" />
+                  HISTORICAL — Event from {signal.event_date ? new Date(signal.event_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'unknown date'}
+                </div>
+              )}
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 space-y-2">
                   <div className="flex items-center gap-2 flex-wrap">
