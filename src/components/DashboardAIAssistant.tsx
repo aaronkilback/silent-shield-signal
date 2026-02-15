@@ -74,6 +74,16 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
     voiceAgentResponseRef.current = voiceAgentResponse;
   }, [voiceAgentResponse]);
   
+  // Pick up deep-dive prompts passed via navigation state
+  useEffect(() => {
+    const state = location.state as { aegisPrompt?: string } | null;
+    if (state?.aegisPrompt) {
+      setInput(state.aegisPrompt);
+      // Clear the state so it doesn't re-trigger
+      window.history.replaceState({}, '');
+    }
+  }, [location.state]);
+
   // Limit context sent to AI to prevent confusion between topics
   const MAX_CONTEXT_MESSAGES = 20;
 
