@@ -97,7 +97,7 @@ Deno.serve(async (req) => {
       const { data: webhooks, error } = await serviceClient
         .from('webhooks')
         .select(`
-          id, name, description, url, secret, auth_type,
+          id, name, description, url, auth_type,
           trigger_events, filter_conditions, output_format,
           is_active, last_triggered_at, created_at, updated_at
         `)
@@ -105,14 +105,8 @@ Deno.serve(async (req) => {
 
       if (error) throw error;
 
-      // Mask secrets in response
-      const maskedWebhooks = webhooks?.map(wh => ({
-        ...wh,
-        secret: wh.secret ? wh.secret.substring(0, 10) + '...' : null,
-      }));
-
       return new Response(
-        JSON.stringify({ data: maskedWebhooks }),
+        JSON.stringify({ data: webhooks }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
 
@@ -227,10 +221,12 @@ Deno.serve(async (req) => {
 
       if (error) throw error;
 
+      // Strip sensitive fields from response
+      const { secret: _s, auth_credentials: _ac, ...safeCreated } = created;
       return new Response(
         JSON.stringify({ 
-          data: created,
-          message: 'Webhook created. Save the signing secret - it can be used to verify payloads.'
+          data: { ...safeCreated, secret_preview: created.secret ? created.secret.substring(0, 10) + '...' : null },
+          message: 'Webhook created. The signing secret is stored securely and used for payload verification.'
         }),
         { status: 201, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -272,8 +268,10 @@ Deno.serve(async (req) => {
 
       if (error) throw error;
 
+      // Strip sensitive fields from response
+      const { secret: _sec, auth_credentials: _creds, ...safeUpdated } = updated;
       return new Response(
-        JSON.stringify({ data: updated }),
+        JSON.stringify({ data: safeUpdated }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
 
@@ -309,7 +307,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('Webhook management error:', error);
     return new Response(
-      JSON.stringify({ error: 'Internal server error', details: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ error: 'Internal server error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
