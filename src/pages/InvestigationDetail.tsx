@@ -49,6 +49,7 @@ const InvestigationDetail = () => {
   const [isAiGenerating, setIsAiGenerating] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [newEntry, setNewEntry] = useState("");
+  const [newEntryEventTime, setNewEntryEventTime] = useState("");
   const [newPersonName, setNewPersonName] = useState("");
   const [newPersonStatus, setNewPersonStatus] = useState("witness");
   const [newPersonPhone, setNewPersonPhone] = useState("");
@@ -266,18 +267,24 @@ const InvestigationDetail = () => {
         .eq('id', user.id)
         .single();
 
+      const insertData: any = {
+        investigation_id: id,
+        entry_text: newEntry,
+        created_by: user.id,
+        created_by_name: profile?.name || user.email || 'Unknown',
+      };
+      if (newEntryEventTime) {
+        insertData.event_time = new Date(newEntryEventTime).toISOString();
+      }
+
       const { error } = await supabase
         .from('investigation_entries')
-        .insert({
-          investigation_id: id,
-          entry_text: newEntry,
-          created_by: user.id,
-          created_by_name: profile?.name || user.email || 'Unknown'
-        });
+        .insert(insertData);
 
       if (error) throw error;
 
       setNewEntry("");
+      setNewEntryEventTime("");
       queryClient.invalidateQueries({ queryKey: ['investigation-entries', id] });
       toast.success("Entry added");
     } catch (error: any) {
@@ -1524,10 +1531,21 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     placeholder="Document investigative steps, findings, evidence..."
                     className="min-h-[100px]"
                   />
-                  <Button onClick={addEntry} disabled={!newEntry.trim()}>
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add Entry
-                  </Button>
+                  <div className="flex items-end gap-3">
+                    <div className="flex-1 space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">Event occurred at (optional)</label>
+                      <Input
+                        type="datetime-local"
+                        value={newEntryEventTime}
+                        onChange={(e) => setNewEntryEventTime(e.target.value)}
+                        className="w-auto"
+                      />
+                    </div>
+                    <Button onClick={addEntry} disabled={!newEntry.trim()}>
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add Entry
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="space-y-3">
@@ -1537,7 +1555,10 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                         <div className="flex justify-between items-start mb-2">
                           <div className="text-xs text-muted-foreground">
                             <p className="font-medium">{entry.created_by_name}</p>
-                            <p>{format(new Date(entry.entry_timestamp), 'MMM dd, yyyy HH:mm')}</p>
+                            {(entry as any).event_time && (
+                              <p className="text-foreground/80">Event: {format(new Date((entry as any).event_time), 'MMM dd, yyyy HH:mm')}</p>
+                            )}
+                            <p>Logged: {format(new Date(entry.entry_timestamp), 'MMM dd, yyyy HH:mm')}</p>
                           </div>
                           <div className="flex items-center gap-2">
                             {entry.is_ai_generated && (
