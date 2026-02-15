@@ -2,17 +2,21 @@
  * System Operations — Consolidated Domain Service
  * 
  * Single entry point for all platform health, maintenance, and operations functions.
- * Replaces 8 individual edge functions with action-based routing.
+ * Replaces individual edge functions with action-based routing.
  * 
  * Actions:
- *   health-check         — System health probes (DB, auth, storage, AI gateway)
- *   data-integrity-fix   — Backfill titles, clean orphaned feedback
- *   retry-dead-letters   — Process DLQ items with exponential backoff
- *   data-quality         — Delegates to data-quality-monitor
- *   orchestrate          — Delegates to auto-orchestrator
- *   ooda-loop            — Delegates to autonomous-operations-loop
- *   pipeline-tests       — Delegates to scheduled-pipeline-tests
- *   watchdog             — Delegates to system-watchdog
+ *   health-check                — System health probes (DB, auth, storage, AI gateway)
+ *   data-integrity-fix          — Backfill titles, clean orphaned feedback
+ *   retry-dead-letters          — Process DLQ items with exponential backoff
+ *   cleanup-false-positives     — Purge false positive signals + save hashes
+ *   aggregate-implicit-feedback — Process implicit events into learning profiles
+ *   detect-contradictions       — AI-powered cross-signal contradiction detection
+ *   audit-knowledge-freshness   — Decay stale expert knowledge entries
+ *   data-quality                — Delegates to data-quality-monitor
+ *   orchestrate                 — Delegates to auto-orchestrator
+ *   ooda-loop                   — Delegates to autonomous-operations-loop
+ *   pipeline-tests              — Delegates to scheduled-pipeline-tests
+ *   watchdog                    — Delegates to system-watchdog
  */
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
@@ -44,6 +48,14 @@ Deno.serve(async (req) => {
       case 'cleanup-false-positives':
         return await handleCleanupFalsePositives();
 
+      // ── Consolidated intelligence operations ──
+      case 'aggregate-implicit-feedback':
+        return await handleAggregateImplicitFeedback();
+      case 'detect-contradictions':
+        return await handleDetectContradictions(body);
+      case 'audit-knowledge-freshness':
+        return await handleAuditKnowledgeFreshness(body);
+
       // ── Delegated handlers (large functions, will be inlined in future) ──
       case 'data-quality':
         return await delegateToFunction('data-quality-monitor', body);
@@ -57,7 +69,7 @@ Deno.serve(async (req) => {
         return await delegateToFunction('system-watchdog', body);
 
       default:
-        return errorResponse(`Unknown action: ${action}. Valid actions: health-check, data-integrity-fix, retry-dead-letters, cleanup-false-positives, data-quality, orchestrate, ooda-loop, pipeline-tests, watchdog`, 400);
+        return errorResponse(`Unknown action: ${action}. Valid actions: health-check, data-integrity-fix, retry-dead-letters, cleanup-false-positives, aggregate-implicit-feedback, detect-contradictions, audit-knowledge-freshness, data-quality, orchestrate, ooda-loop, pipeline-tests, watchdog`, 400);
     }
   } catch (error) {
     console.error('[SystemOps] Router error:', error);
@@ -451,4 +463,358 @@ async function handleCleanupFalsePositives(): Promise<Response> {
 
   console.log(`[SystemOps:cleanup-false-positives] Purged ${signalsToClean.length} signals, saved ${hashesSaved} hashes`);
   return successResponse({ purged: signalsToClean.length, hashes_saved: hashesSaved });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//      HANDLER: aggregate-implicit-feedback (inlined)
+// ═══════════════════════════════════════════════════════════════
+
+async function handleAggregateImplicitFeedback(): Promise<Response> {
+  const supabase = createServiceClient();
+
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: events, error } = await supabase
+    .from('implicit_feedback_events')
+    .select('id, signal_id, event_type, event_value, created_at')
+    .gte('created_at', cutoff)
+    .order('created_at', { ascending: true })
+    .limit(500);
+
+  if (error) throw error;
+  if (!events || events.length === 0) {
+    return successResponse({ processed: 0, message: 'No implicit events to process' });
+  }
+
+  console.log(`[SystemOps:implicit-feedback] Processing ${events.length} events`);
+
+  // Aggregate by signal_id
+  const signalStats = new Map<string, {
+    totalViewTime: number; viewCount: number; dismissals: number;
+    escalations: number; reportInclusions: number; investigations: number; shares: number;
+  }>();
+
+  for (const event of events) {
+    if (!signalStats.has(event.signal_id)) {
+      signalStats.set(event.signal_id, {
+        totalViewTime: 0, viewCount: 0, dismissals: 0,
+        escalations: 0, reportInclusions: 0, investigations: 0, shares: 0,
+      });
+    }
+    const stats = signalStats.get(event.signal_id)!;
+    switch (event.event_type) {
+      case 'view_duration': stats.totalViewTime += event.event_value || 0; stats.viewCount++; break;
+      case 'dismissed_quickly': stats.dismissals++; break;
+      case 'escalated': stats.escalations++; break;
+      case 'included_in_report': stats.reportInclusions++; break;
+      case 'investigated': stats.investigations++; break;
+      case 'shared': stats.shares++; break;
+    }
+  }
+
+  // Fetch signal metadata
+  const signalIds = [...signalStats.keys()];
+  const { data: signals } = await supabase
+    .from('signals')
+    .select('id, title, normalized_text, category, source_type, rule_category')
+    .in('id', signalIds);
+
+  const signalMap = new Map((signals || []).map(s => [s.id, s]));
+
+  const engagedFeatures: Record<string, number> = {};
+  const dismissedFeatures: Record<string, number> = {};
+  const behavioralMetrics: Record<string, number> = {
+    total_implicit_events: events.length,
+    signals_analyzed: signalStats.size,
+  };
+
+  for (const [signalId, stats] of signalStats) {
+    const signal = signalMap.get(signalId);
+    if (!signal) continue;
+
+    const text = `${signal.title || ''} ${signal.normalized_text || ''}`.toLowerCase();
+    const words = text.split(/\s+/).filter(w => w.length > 3);
+    const keywords: Record<string, number> = {};
+    [...new Set(words)].slice(0, 20).forEach(kw => { keywords[kw] = 1; });
+    const category = signal.rule_category || signal.category;
+
+    const engagementScore =
+      stats.escalations * 5 + stats.reportInclusions * 4 +
+      stats.investigations * 3 + stats.shares * 3 +
+      (stats.totalViewTime > 30 ? 1 : 0) - stats.dismissals * 2;
+
+    const target = engagementScore > 0 ? engagedFeatures : dismissedFeatures;
+    const weight = Math.abs(engagementScore);
+
+    for (const kw of Object.keys(keywords)) {
+      target[kw] = (target[kw] || 0) + weight;
+    }
+    if (category) target[`category:${category}`] = (target[`category:${category}`] || 0) + weight;
+    if (signal.source_type) target[`source:${signal.source_type}`] = (target[`source:${signal.source_type}`] || 0) + weight;
+
+    if (stats.escalations > 0) behavioralMetrics.total_escalations = (behavioralMetrics.total_escalations || 0) + stats.escalations;
+    if (stats.reportInclusions > 0) behavioralMetrics.total_report_inclusions = (behavioralMetrics.total_report_inclusions || 0) + stats.reportInclusions;
+    if (stats.dismissals > 0) behavioralMetrics.total_quick_dismissals = (behavioralMetrics.total_quick_dismissals || 0) + stats.dismissals;
+    if (stats.investigations > 0) behavioralMetrics.total_investigations = (behavioralMetrics.total_investigations || 0) + stats.investigations;
+    behavioralMetrics.avg_view_time = stats.viewCount > 0
+      ? Math.round(stats.totalViewTime / stats.viewCount)
+      : (behavioralMetrics.avg_view_time || 0);
+  }
+
+  // Upsert learning profiles
+  const upserts: Promise<void>[] = [];
+  if (Object.keys(engagedFeatures).length > 0) upserts.push(upsertLearningProfile(supabase, 'implicit_engaged_patterns', engagedFeatures));
+  if (Object.keys(dismissedFeatures).length > 0) upserts.push(upsertLearningProfile(supabase, 'implicit_dismissed_patterns', dismissedFeatures));
+  upserts.push(upsertLearningProfile(supabase, 'implicit_behavioral_metrics', behavioralMetrics));
+  await Promise.all(upserts);
+
+  console.log(`[SystemOps:implicit-feedback] Aggregated ${events.length} events → ${signalStats.size} signals`);
+  return successResponse({
+    processed: events.length,
+    signals_analyzed: signalStats.size,
+    engaged_keywords: Object.keys(engagedFeatures).length,
+    dismissed_keywords: Object.keys(dismissedFeatures).length,
+  });
+}
+
+async function upsertLearningProfile(supabase: ReturnType<typeof createServiceClient>, profileType: string, newFeatures: Record<string, number>) {
+  try {
+    const { data: existing } = await supabase
+      .from('learning_profiles').select('*').eq('profile_type', profileType).single();
+
+    if (existing) {
+      const currentFeatures = (existing.features as Record<string, number>) || {};
+      Object.entries(newFeatures).forEach(([key, value]) => {
+        currentFeatures[key] = (currentFeatures[key] || 0) + value;
+      });
+      await supabase.from('learning_profiles').update({
+        features: currentFeatures,
+        sample_count: ((existing.sample_count as number) || 0) + 1,
+        last_updated: new Date().toISOString(),
+      }).eq('id', existing.id);
+    } else {
+      await supabase.from('learning_profiles').insert({
+        profile_type: profileType, features: newFeatures, sample_count: 1,
+      });
+    }
+  } catch (err) {
+    console.error(`[SystemOps] Error upserting profile ${profileType}:`, err);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//      HANDLER: detect-contradictions (inlined)
+// ═══════════════════════════════════════════════════════════════
+
+async function handleDetectContradictions(body: Record<string, unknown>): Promise<Response> {
+  const supabase = createServiceClient();
+  const lookbackDays = (body.lookback_days as number) || 7;
+  const maxPairs = (body.max_pairs as number) || 50;
+
+  console.log(`[SystemOps:contradictions] Scanning signals from last ${lookbackDays} days...`);
+
+  const cutoff = new Date(Date.now() - lookbackDays * 86400000).toISOString();
+  const { data: signals, error: sigError } = await supabase
+    .from('signals')
+    .select('id, title, normalized_text, entity_tags, severity, category, confidence, client_id, received_at')
+    .not('entity_tags', 'is', null)
+    .gte('received_at', cutoff)
+    .order('received_at', { ascending: false })
+    .limit(300);
+
+  if (sigError) throw sigError;
+  if (!signals || signals.length < 2) {
+    return successResponse({ success: true, contradictions: 0, message: 'Not enough tagged signals to compare' });
+  }
+
+  // Build entity → signals index
+  const entityIndex = new Map<string, typeof signals>();
+  for (const sig of signals) {
+    if (!sig.entity_tags || !Array.isArray(sig.entity_tags)) continue;
+    for (const tag of sig.entity_tags) {
+      const normalized = tag.toLowerCase().trim();
+      if (normalized.length < 3) continue;
+      if (!entityIndex.has(normalized)) entityIndex.set(normalized, []);
+      entityIndex.get(normalized)!.push(sig);
+    }
+  }
+
+  // Find candidate pairs with severity/category mismatches
+  const candidatePairs: Array<{ entity: string; signalA: typeof signals[0]; signalB: typeof signals[0] }> = [];
+  for (const [entity, entitySignals] of entityIndex) {
+    if (entitySignals.length < 2) continue;
+    for (let i = 0; i < entitySignals.length && candidatePairs.length < maxPairs; i++) {
+      for (let j = i + 1; j < entitySignals.length && candidatePairs.length < maxPairs; j++) {
+        const a = entitySignals[i], b = entitySignals[j];
+        if ((a.severity !== b.severity && a.severity && b.severity) ||
+            (a.category !== b.category && a.category && b.category) ||
+            (a.client_id !== b.client_id)) {
+          candidatePairs.push({ entity, signalA: a, signalB: b });
+        }
+      }
+    }
+  }
+
+  if (candidatePairs.length === 0) {
+    return successResponse({ success: true, contradictions: 0, message: 'No potential contradictions found' });
+  }
+
+  const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+  if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY not configured');
+
+  const chunks: typeof candidatePairs[] = [];
+  for (let i = 0; i < candidatePairs.length; i += 10) {
+    chunks.push(candidatePairs.slice(i, i + 10));
+  }
+
+  let totalContradictions = 0;
+
+  for (const chunk of chunks) {
+    const prompt = `You are an intelligence analyst reviewing signal pairs about the same entity. For each pair, determine if they present CONTRADICTORY assessments.
+
+A contradiction means: opposite threat assessments, conflicting status claims, incompatible severity with contradictory content, or opposing conclusions about the same event.
+NOT contradictions: same event from different angles, complementary info, different aspects of the same entity, updates that supersede older info.
+
+Respond with JSON: { "pairs": [{ "index": 0, "is_contradiction": true/false, "contradiction_type": "conflicting_assessment"|"status_conflict"|"severity_mismatch"|"temporal_contradiction", "severity": "high"|"medium"|"low", "confidence": 0.0-1.0, "explanation": "brief reason" }] }
+
+Signal pairs:
+${chunk.map((p, idx) => `--- Pair ${idx} (Entity: "${p.entity}") ---
+Signal A [${p.signalA.severity}/${p.signalA.category}]: ${(p.signalA.normalized_text || p.signalA.title || '').substring(0, 300)}
+Signal B [${p.signalB.severity}/${p.signalB.category}]: ${(p.signalB.normalized_text || p.signalB.title || '').substring(0, 300)}`).join('\n')}`;
+
+    try {
+      const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${LOVABLE_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'google/gemini-2.5-flash', messages: [{ role: 'user', content: prompt }], temperature: 0.1 }),
+      });
+
+      if (!response.ok) { console.error(`[SystemOps:contradictions] AI call failed: ${response.status}`); await response.text(); continue; }
+
+      const data = await response.json();
+      let content = (data.choices?.[0]?.message?.content || '').trim();
+      if (content.startsWith('```')) content = content.replace(/```json?\n?/g, '').replace(/```$/g, '').trim();
+
+      const result = JSON.parse(content);
+      const contradictions = (result.pairs || []).filter((p: any) => p.is_contradiction && p.confidence >= 0.6);
+
+      for (const c of contradictions) {
+        const pair = chunk[c.index];
+        if (!pair) continue;
+
+        const { data: existing } = await supabase
+          .from('signal_contradictions').select('id')
+          .eq('signal_a_id', pair.signalA.id).eq('signal_b_id', pair.signalB.id).limit(1);
+        if (existing && existing.length > 0) continue;
+
+        const { error: insertErr } = await supabase.from('signal_contradictions').insert({
+          entity_name: pair.entity,
+          signal_a_id: pair.signalA.id, signal_b_id: pair.signalB.id,
+          signal_a_summary: (pair.signalA.normalized_text || pair.signalA.title || '').substring(0, 500),
+          signal_b_summary: (pair.signalB.normalized_text || pair.signalB.title || '').substring(0, 500),
+          contradiction_type: c.contradiction_type || 'conflicting_assessment',
+          severity: c.severity || 'medium', confidence: c.confidence || 0.6,
+        });
+        if (!insertErr) totalContradictions++;
+      }
+    } catch (err) {
+      console.error('[SystemOps:contradictions] Chunk analysis failed:', err);
+    }
+  }
+
+  console.log(`[SystemOps:contradictions] Detected ${totalContradictions} new contradictions`);
+  return successResponse({
+    success: true, contradictions: totalContradictions,
+    candidates_analyzed: candidatePairs.length, entities_scanned: entityIndex.size,
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//      HANDLER: audit-knowledge-freshness (inlined)
+// ═══════════════════════════════════════════════════════════════
+
+const HALF_LIFE_DAYS = 180;
+const DEACTIVATION_THRESHOLD = 0.3;
+const STALE_THRESHOLD = 0.5;
+
+async function handleAuditKnowledgeFreshness(body: Record<string, unknown>): Promise<Response> {
+  const supabase = createServiceClient();
+  const dryRun = body.dry_run === true;
+
+  console.log(`[SystemOps:knowledge-freshness] Starting audit (dry_run=${dryRun})...`);
+
+  const { data: entries, error } = await supabase
+    .from('expert_knowledge')
+    .select('id, title, domain, subdomain, confidence_score, last_validated_at, created_at, updated_at')
+    .eq('is_active', true);
+
+  if (error) throw error;
+  if (!entries || entries.length === 0) {
+    return successResponse({ success: true, message: 'No active knowledge entries' });
+  }
+
+  const now = Date.now();
+  const staleEntries: Array<{ id: string; title: string; domain: string; decayedConfidence: number; daysSinceValidation: number }> = [];
+  const decayedEntries: Array<{ id: string; title: string; domain: string; decayedConfidence: number }> = [];
+  const deactivationCandidates: string[] = [];
+  const domainStats = new Map<string, { total: number; stale: number; scores: number[] }>();
+  let totalDecayedConfidence = 0, totalOriginalConfidence = 0;
+
+  for (const entry of entries) {
+    const refDate = new Date(entry.last_validated_at || entry.created_at).getTime();
+    const daysSince = (now - refDate) / 86400000;
+    const decayFactor = Math.pow(2, -(daysSince / HALF_LIFE_DAYS));
+    const originalConfidence = entry.confidence_score || 0.5;
+    const decayedConfidence = Math.max(0.1, originalConfidence * decayFactor);
+    totalDecayedConfidence += decayedConfidence;
+    totalOriginalConfidence += originalConfidence;
+
+    const domain = entry.domain || 'unknown';
+    if (!domainStats.has(domain)) domainStats.set(domain, { total: 0, stale: 0, scores: [] });
+    const ds = domainStats.get(domain)!;
+    ds.total++; ds.scores.push(decayedConfidence);
+
+    if (decayedConfidence < STALE_THRESHOLD) {
+      ds.stale++;
+      staleEntries.push({ id: entry.id, title: entry.title, domain, decayedConfidence, daysSinceValidation: Math.round(daysSince) });
+    }
+    if (decayedConfidence < DEACTIVATION_THRESHOLD) {
+      decayedEntries.push({ id: entry.id, title: entry.title, domain, decayedConfidence });
+      deactivationCandidates.push(entry.id);
+    }
+  }
+
+  const staleDomains = [...domainStats.entries()]
+    .filter(([_, s]) => s.stale > 0)
+    .map(([domain, s]) => ({ domain, total: s.total, stale: s.stale, avgDecayed: Math.round((s.scores.reduce((a, b) => a + b, 0) / s.scores.length) * 100) / 100 }))
+    .sort((a, b) => b.stale - a.stale);
+
+  const actionsTaken: string[] = [];
+  if (!dryRun && deactivationCandidates.length > 0) {
+    const { error: deactivateErr } = await supabase
+      .from('expert_knowledge').update({ is_active: false }).in('id', deactivationCandidates);
+    if (deactivateErr) {
+      actionsTaken.push(`FAILED: Deactivate ${deactivationCandidates.length} entries`);
+    } else {
+      actionsTaken.push(`Deactivated ${deactivationCandidates.length} entries below ${DEACTIVATION_THRESHOLD} confidence`);
+    }
+  }
+
+  await supabase.from('knowledge_freshness_audits').insert({
+    total_entries: entries.length, stale_entries: staleEntries.length,
+    decayed_entries: decayedEntries.length,
+    avg_confidence: totalOriginalConfidence / entries.length,
+    avg_decayed_confidence: totalDecayedConfidence / entries.length,
+    stale_domains: staleDomains, actions_taken: actionsTaken,
+  });
+
+  console.log(`[SystemOps:knowledge-freshness] ${staleEntries.length}/${entries.length} stale, ${decayedEntries.length} below threshold`);
+  return successResponse({
+    success: true, dry_run: dryRun, total_entries: entries.length,
+    stale_entries: staleEntries.length, decayed_below_threshold: decayedEntries.length,
+    deactivated: dryRun ? 0 : deactivationCandidates.length,
+    avg_original_confidence: Math.round((totalOriginalConfidence / entries.length) * 100) / 100,
+    avg_decayed_confidence: Math.round((totalDecayedConfidence / entries.length) * 100) / 100,
+    stale_domains: staleDomains.slice(0, 10), actions_taken: actionsTaken,
+    top_stale: staleEntries.slice(0, 10).map(e => ({ title: e.title, domain: e.domain, decayed: Math.round(e.decayedConfidence * 100) / 100, days_since_validation: e.daysSinceValidation })),
+  });
 }

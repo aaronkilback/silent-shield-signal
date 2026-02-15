@@ -1308,10 +1308,10 @@ This correction was triggered because compliance score dropped below threshold. 
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 60000);
-          const resp = await fetch(`${supabaseUrl}/functions/v1/detect-signal-contradictions`, {
+          const resp = await fetch(`${supabaseUrl}/functions/v1/system-ops`, {
             method: 'POST',
             headers: { 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lookback_days: 7, max_pairs: 30 }),
+            body: JSON.stringify({ action: 'detect-contradictions', lookback_days: 7, max_pairs: 30 }),
             signal: controller.signal,
           });
           clearTimeout(timeout);
@@ -1330,10 +1330,10 @@ This correction was triggered because compliance score dropped below threshold. 
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 30000);
-          const resp = await fetch(`${supabaseUrl}/functions/v1/audit-knowledge-freshness`, {
+          const resp = await fetch(`${supabaseUrl}/functions/v1/system-ops`, {
             method: 'POST',
             headers: { 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dry_run: false }),
+            body: JSON.stringify({ action: 'audit-knowledge-freshness', dry_run: false }),
             signal: controller.signal,
           });
           clearTimeout(timeout);
