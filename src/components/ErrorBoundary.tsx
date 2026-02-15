@@ -88,10 +88,10 @@ export class ErrorBoundary extends Component<Props, State> {
           });
         
         if (!uploadError) {
-          const { data: { publicUrl } } = supabase.storage
+          const { data: signedData } = await supabase.storage
             .from('bug-screenshots')
-            .getPublicUrl(filename);
-          screenshotUrl = publicUrl;
+            .createSignedUrl(filename, 86400); // 24h for bug reports
+          screenshotUrl = signedData?.signedUrl || '';
         }
       } catch (screenshotError) {
         console.error('Failed to capture screenshot:', screenshotError);

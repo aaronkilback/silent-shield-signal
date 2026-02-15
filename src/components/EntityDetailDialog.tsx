@@ -91,6 +91,21 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
         .eq('entity_id', entityId)
         .order('created_at', { ascending: false });
       if (error) throw error;
+      
+      // Pre-fetch signed URLs for all photos
+      if (data && data.length > 0) {
+        const paths = data.map(p => p.storage_path);
+        const { data: signedData } = await supabase.storage
+          .from('entity-photos')
+          .createSignedUrls(paths, 3600);
+        
+        const urlMap: Record<string, string> = {};
+        signedData?.forEach(item => {
+          if (item.path && item.signedUrl) urlMap[item.path] = item.signedUrl;
+        });
+        
+        return data.map(p => ({ ...p, _signedUrl: urlMap[p.storage_path] || '' }));
+      }
       return data;
     },
     enabled: !!entityId
@@ -1278,9 +1293,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
             ) : (
               <div className="grid grid-cols-3 gap-4">
                 {photos.map((photo) => {
-                  const { data } = supabase.storage
-                    .from('entity-photos')
-                    .getPublicUrl(photo.storage_path);
+                  const photoUrl = (photo as any)._signedUrl || '';
                   const isSelected = selectedPhotos.includes(photo.id);
                   
                   return (
@@ -1299,13 +1312,13 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                         />
                       </div>
                       <img
-                        src={data.publicUrl}
+                        src={photoUrl}
                         alt={photo.caption || 'Entity photo'}
                         className="w-full h-40 object-contain bg-muted"
                       />
                       <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <ImageLightboxTrigger 
-                          src={data.publicUrl} 
+                          src={photoUrl} 
                           alt={photo.caption || 'Entity photo'}
                         />
                         <Button

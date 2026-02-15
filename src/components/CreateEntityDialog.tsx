@@ -345,11 +345,11 @@ export const CreateEntityDialog = ({
 
       if (uploadError) throw uploadError;
 
-      const { data: { publicUrl } } = supabase.storage
+      const { data: signedData } = await supabase.storage
         .from('entity-photos')
-        .getPublicUrl(filePath);
+        .createSignedUrl(filePath, 3600);
 
-      setUploadedImage(publicUrl);
+      setUploadedImage(signedData?.signedUrl || '');
       toast({
         title: "Image Uploaded",
         description: "Vehicle image uploaded successfully"
