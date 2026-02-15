@@ -249,11 +249,13 @@ const InvestigationDetail = () => {
 
       if (error) throw error;
 
-      // Update cache without refetching to avoid losing user input
+      // Update detail cache without refetching to avoid losing user input
       queryClient.setQueryData(['investigation', id], (old: any) => ({
         ...old,
         [field]: value
       }));
+      // Invalidate the overview list so it picks up the change
+      queryClient.invalidateQueries({ queryKey: ['investigations'] });
     } catch (error: any) {
       toast.error(error.message || "Failed to save");
       console.error('Save error:', error);
