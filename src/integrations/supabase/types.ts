@@ -7458,6 +7458,65 @@ export type Database = {
           },
         ]
       }
+      saved_knowledge_nuggets: {
+        Row: {
+          citation: string | null
+          confidence_score: number | null
+          content: string
+          created_at: string
+          domain: string
+          id: string
+          is_operationalized: boolean | null
+          knowledge_id: string
+          notes: string | null
+          saved_from_route: string | null
+          subdomain: string | null
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          citation?: string | null
+          confidence_score?: number | null
+          content: string
+          created_at?: string
+          domain: string
+          id?: string
+          is_operationalized?: boolean | null
+          knowledge_id: string
+          notes?: string | null
+          saved_from_route?: string | null
+          subdomain?: string | null
+          title: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          citation?: string | null
+          confidence_score?: number | null
+          content?: string
+          created_at?: string
+          domain?: string
+          id?: string
+          is_operationalized?: boolean | null
+          knowledge_id?: string
+          notes?: string | null
+          saved_from_route?: string | null
+          subdomain?: string | null
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "saved_knowledge_nuggets_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       scheduled_briefings: {
         Row: {
           briefing_type: string
