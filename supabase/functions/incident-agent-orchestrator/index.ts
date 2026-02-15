@@ -4,7 +4,7 @@ import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { getAntiHallucinationPrompt, getCriticalDateContext, calculateIncidentAge } from "../_shared/anti-hallucination.ts";
 import { buildMemoryContext, storeAgentMemory } from "../_shared/agent-memory.ts";
 import { buildGraphContext, discoverIncidentConnections } from "../_shared/knowledge-graph.ts";
-import { getIntelligenceUpgradePrompt, buildCrossAgentContext, runAdversarialReview } from "../_shared/agent-intelligence.ts";
+import { getIntelligenceUpgradePrompt, buildCrossAgentContext, runAdversarialReview, generateHypothesisTree, recordAgentPrediction, getAgentCalibration, getAnalystPreferences, buildPersonalizationPrompt } from "../_shared/agent-intelligence.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -246,12 +246,24 @@ serve(async (req) => {
     const incidentAge = calculateIncidentAge({ id: incident.id, opened_at: incident.opened_at });
     const antiHallucinationBlock = getAntiHallucinationPrompt();
 
-    // Tier 2: Retrieve agent memory, knowledge graph, and cross-agent insights in parallel
-    const [memoryContext, graphContext, graphEdges, crossAgentContext] = await Promise.all([
+    // Extract requesting user ID from auth header for preference learning
+    const authHeader = req.headers.get('Authorization');
+    let requestingUserId: string | null = null;
+    if (authHeader) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''));
+        requestingUserId = user?.id || null;
+      } catch { /* service call, no user */ }
+    }
+
+    // Tier 2: Retrieve agent memory, knowledge graph, cross-agent insights, calibration, and preferences in parallel
+    const [memoryContext, graphContext, graphEdges, crossAgentContext, agentCalibration, analystPrefs] = await Promise.all([
       buildMemoryContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || ''),
       buildGraphContext(supabase, incident_id),
       discoverIncidentConnections(supabase, incident_id, selectedAgent),
       buildCrossAgentContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || ''),
+      getAgentCalibration(supabase, selectedAgent),
+      requestingUserId ? getAnalystPreferences(supabase, requestingUserId) : Promise.resolve({}),
     ]);
     
     if (graphEdges.length > 0) {
@@ -291,6 +303,13 @@ ${incident.timeline_json?.map((t: any) => `[${t.timestamp}] ${t.event}: ${t.deta
 ${memoryContext}
 ${graphContext}
 ${crossAgentContext}
+
+=== AGENT CALIBRATION ===
+${selectedAgent} historical accuracy: ${(agentCalibration.accuracy * 100).toFixed(0)}% (${agentCalibration.totalPredictions} predictions tracked)
+Confidence calibration factor: ${agentCalibration.calibration.toFixed(2)}x
+${agentCalibration.totalPredictions > 10 ? `IMPORTANT: Adjust your confidence levels by factor ${agentCalibration.calibration.toFixed(2)} based on your track record.` : ''}
+
+${buildPersonalizationPrompt(analystPrefs)}
 `;
 
     // Tier 1: Use upgraded models based on agent specialization
@@ -388,6 +407,40 @@ Provide your specialized analysis following the output format specified.`;
     analysisContent = reviewedAnalysis;
     console.log(`[Orchestrator] ${selectedAgent} self-review: ${weaknessesFound} weaknesses found and addressed`);
 
+    // ─── HYPOTHESIS TREE (for ambiguous cases) ───
+    // Detect ambiguity markers in the analysis and generate competing hypotheses
+    let hypothesisData: { treeId: string; branches: any[] } = { treeId: '', branches: [] };
+    const ambiguityIndicators = ['unclear', 'ambiguous', 'multiple possible', 'could be', 'alternatively', 'uncertain'];
+    const hasAmbiguity = ambiguityIndicators.some(ind => analysisContent.toLowerCase().includes(ind));
+    
+    if (hasAmbiguity && incident.signals) {
+      const ambiguityQuestion = `What is the most likely explanation for: ${incident.signals.normalized_text?.substring(0, 200) || incident.title}?`;
+      hypothesisData = await generateHypothesisTree(
+        supabase, selectedAgent, ambiguityQuestion, investigationContext,
+        incident_id, incident.signal_id, agentModel
+      );
+    }
+
+    // ─── AGENT ACCURACY: Record predictions for later calibration ───
+    // Extract severity/priority predictions from analysis to track accuracy
+    const predictionPromises: Promise<any>[] = [];
+    if (incident.signals?.severity) {
+      predictionPromises.push(
+        recordAgentPrediction(supabase, selectedAgent, 'threat_assessment',
+          incident.priority || 'p3', agentCalibration.calibration * 0.7,
+          incident_id, incident.signal_id)
+      );
+    }
+    if (hypothesisData.branches.length > 0) {
+      const topHypothesis = hypothesisData.branches.sort((a: any, b: any) => b.probability - a.probability)[0];
+      predictionPromises.push(
+        recordAgentPrediction(supabase, selectedAgent, 'hypothesis',
+          topHypothesis.hypothesis.substring(0, 200), topHypothesis.probability,
+          incident_id, incident.signal_id)
+      );
+    }
+    await Promise.all(predictionPromises);
+
     // Create analysis log entry
     const analysisEntry = {
       timestamp: new Date().toISOString(),
@@ -401,7 +454,17 @@ Provide your specialized analysis following the output format specified.`;
         weaknesses_found: weaknessesFound,
         review_notes: reviewNotes,
         review_applied: weaknessesFound > 0,
-      }
+      },
+      hypothesis_tree: hypothesisData.treeId ? {
+        tree_id: hypothesisData.treeId,
+        branch_count: hypothesisData.branches.length,
+        top_hypothesis: hypothesisData.branches[0]?.hypothesis || null,
+      } : null,
+      agent_calibration: {
+        accuracy: agentCalibration.accuracy,
+        calibration_factor: agentCalibration.calibration,
+        total_tracked: agentCalibration.totalPredictions,
+      },
     };
 
     // Tier 2: Store agent memory from this investigation

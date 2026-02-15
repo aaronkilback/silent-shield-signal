@@ -14,6 +14,108 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_accuracy_metrics: {
+        Row: {
+          accuracy_score: number
+          agent_call_sign: string
+          category_accuracy: Json
+          confidence_calibration: number
+          correct_predictions: number
+          created_at: string
+          id: string
+          last_calibrated: string
+          strongest_category: string | null
+          total_predictions: number
+          updated_at: string
+          weakest_category: string | null
+        }
+        Insert: {
+          accuracy_score?: number
+          agent_call_sign: string
+          category_accuracy?: Json
+          confidence_calibration?: number
+          correct_predictions?: number
+          created_at?: string
+          id?: string
+          last_calibrated?: string
+          strongest_category?: string | null
+          total_predictions?: number
+          updated_at?: string
+          weakest_category?: string | null
+        }
+        Update: {
+          accuracy_score?: number
+          agent_call_sign?: string
+          category_accuracy?: Json
+          confidence_calibration?: number
+          correct_predictions?: number
+          created_at?: string
+          id?: string
+          last_calibrated?: string
+          strongest_category?: string | null
+          total_predictions?: number
+          updated_at?: string
+          weakest_category?: string | null
+        }
+        Relationships: []
+      }
+      agent_accuracy_tracking: {
+        Row: {
+          actual_outcome: string | null
+          agent_call_sign: string
+          confidence_at_prediction: number | null
+          created_at: string
+          id: string
+          incident_id: string | null
+          prediction_type: string
+          prediction_value: string
+          resolved_at: string | null
+          signal_id: string | null
+          was_correct: boolean | null
+        }
+        Insert: {
+          actual_outcome?: string | null
+          agent_call_sign: string
+          confidence_at_prediction?: number | null
+          created_at?: string
+          id?: string
+          incident_id?: string | null
+          prediction_type: string
+          prediction_value: string
+          resolved_at?: string | null
+          signal_id?: string | null
+          was_correct?: boolean | null
+        }
+        Update: {
+          actual_outcome?: string | null
+          agent_call_sign?: string
+          confidence_at_prediction?: number | null
+          created_at?: string
+          id?: string
+          incident_id?: string | null
+          prediction_type?: string
+          prediction_value?: string
+          resolved_at?: string | null
+          signal_id?: string | null
+          was_correct?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_accuracy_tracking_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_accuracy_tracking_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_conversations: {
         Row: {
           agent_id: string
@@ -616,6 +718,53 @@ export type Database = {
             foreignKeyName: "analyst_accuracy_metrics_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      analyst_preferences: {
+        Row: {
+          confidence: number
+          created_at: string
+          id: string
+          learned_from: string
+          preference_key: string
+          preference_type: string
+          preference_value: Json
+          sample_count: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          confidence?: number
+          created_at?: string
+          id?: string
+          learned_from?: string
+          preference_key: string
+          preference_type: string
+          preference_value?: Json
+          sample_count?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          confidence?: number
+          created_at?: string
+          id?: string
+          learned_from?: string
+          preference_key?: string
+          preference_type?: string
+          preference_value?: Json
+          sample_count?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "analyst_preferences_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
@@ -4259,6 +4408,98 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      hypothesis_branches: {
+        Row: {
+          confirmed_at: string | null
+          contradicting_evidence: Json
+          created_at: string
+          hypothesis: string
+          id: string
+          missing_evidence: Json
+          probability: number
+          status: string
+          supporting_evidence: Json
+          tree_id: string
+          updated_at: string
+        }
+        Insert: {
+          confirmed_at?: string | null
+          contradicting_evidence?: Json
+          created_at?: string
+          hypothesis: string
+          id?: string
+          missing_evidence?: Json
+          probability?: number
+          status?: string
+          supporting_evidence?: Json
+          tree_id: string
+          updated_at?: string
+        }
+        Update: {
+          confirmed_at?: string | null
+          contradicting_evidence?: Json
+          created_at?: string
+          hypothesis?: string
+          id?: string
+          missing_evidence?: Json
+          probability?: number
+          status?: string
+          supporting_evidence?: Json
+          tree_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hypothesis_branches_tree_id_fkey"
+            columns: ["tree_id"]
+            isOneToOne: false
+            referencedRelation: "hypothesis_trees"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      hypothesis_trees: {
+        Row: {
+          agent_call_sign: string
+          created_at: string
+          id: string
+          incident_id: string | null
+          question: string
+          signal_id: string | null
+        }
+        Insert: {
+          agent_call_sign: string
+          created_at?: string
+          id?: string
+          incident_id?: string | null
+          question: string
+          signal_id?: string | null
+        }
+        Update: {
+          agent_call_sign?: string
+          created_at?: string
+          id?: string
+          incident_id?: string | null
+          question?: string
+          signal_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hypothesis_trees_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hypothesis_trees_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       implicit_feedback_events: {
         Row: {
@@ -10816,6 +11057,7 @@ export type Database = {
     }
     Functions: {
       calculate_signal_hash: { Args: { text_content: string }; Returns: string }
+      calibrate_agent_accuracy: { Args: never; Returns: number }
       calibrate_analyst_accuracy: { Args: never; Returns: number }
       can_add_analysis: {
         Args: { _user_id: string; _workspace_id: string }

@@ -338,12 +338,306 @@ Do NOT blindly trust — apply your own specialty lens and cite supporting/contr
 }
 
 
+// ─── 5. HYPOTHESIS TREE GENERATION ───────────────────────────────────────────
+
+/**
+ * Generates competing hypotheses for ambiguous signals/incidents.
+ * Stores structured hypothesis trees in the database.
+ */
+export async function generateHypothesisTree(
+  supabase: SupabaseClient,
+  agentCallSign: string,
+  question: string,
+  evidenceContext: string,
+  incidentId: string | null,
+  signalId: string | null,
+  model: string
+): Promise<{ treeId: string; branches: any[] }> {
+  try {
+    const result = await callAiGateway({
+      model,
+      messages: [
+        {
+          role: 'system',
+          content: `You are ${agentCallSign}, generating COMPETING HYPOTHESES for an ambiguous intelligence question.
+For each hypothesis, assign a probability (0.0-1.0, must sum to ~1.0), list supporting evidence, contradicting evidence, and what evidence is missing.
+Output EXACTLY as JSON array:
+[
+  {
+    "hypothesis": "Clear statement of what could be happening",
+    "probability": 0.45,
+    "supporting_evidence": ["specific fact 1", "specific fact 2"],
+    "contradicting_evidence": ["fact against this"],
+    "missing_evidence": ["what would confirm/deny this"]
+  }
+]
+Generate 2-4 hypotheses. Be specific, not generic.`
+        },
+        {
+          role: 'user',
+          content: `QUESTION: ${question}\n\nAVAILABLE EVIDENCE:\n${evidenceContext.substring(0, 4000)}`
+        }
+      ],
+      functionName: 'agent-hypothesis-tree',
+      extraBody: {
+        ...(model.startsWith('openai/') ? { max_completion_tokens: 2000 } : { max_tokens: 2000 }),
+        temperature: 0.8, // Higher temp for diverse hypotheses
+      },
+    });
+
+    if (!result.content) {
+      return { treeId: '', branches: [] };
+    }
+
+    // Parse JSON from response
+    const jsonMatch = result.content.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return { treeId: '', branches: [] };
+
+    const hypotheses = JSON.parse(jsonMatch[0]);
+
+    // Store tree
+    const { data: tree } = await supabase.from('hypothesis_trees').insert({
+      incident_id: incidentId,
+      signal_id: signalId,
+      agent_call_sign: agentCallSign,
+      question,
+    }).select('id').single();
+
+    if (!tree) return { treeId: '', branches: [] };
+
+    // Store branches
+    const branchInserts = hypotheses.map((h: any) => ({
+      tree_id: tree.id,
+      hypothesis: h.hypothesis,
+      probability: Math.max(0, Math.min(1, h.probability || 0.5)),
+      supporting_evidence: h.supporting_evidence || [],
+      contradicting_evidence: h.contradicting_evidence || [],
+      missing_evidence: h.missing_evidence || [],
+    }));
+
+    const { data: branches } = await supabase.from('hypothesis_branches').insert(branchInserts).select('*');
+
+    console.log(`[HypothesisTree] ${agentCallSign} generated ${branchInserts.length} competing hypotheses for: ${question.substring(0, 60)}`);
+    return { treeId: tree.id, branches: branches || [] };
+  } catch (err) {
+    console.error('[HypothesisTree] Error:', err);
+    return { treeId: '', branches: [] };
+  }
+}
+
+/**
+ * Format hypothesis tree for inclusion in agent prompts
+ */
+export function getHypothesisTreePrompt(): string {
+  return `
+┌─────────────────────────────────────────────────────────────────────────────┐
+│              HYPOTHESIS TREE PROTOCOL (FOR AMBIGUOUS SIGNALS)               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+When the evidence is AMBIGUOUS (multiple plausible explanations exist):
+1. IDENTIFY the core ambiguity as a question
+2. Generate 2-4 COMPETING hypotheses, each with:
+   - Clear statement of what could be happening
+   - Probability estimate (must sum to ~1.0)
+   - Supporting evidence from the data
+   - Contradicting evidence
+   - What evidence would confirm or deny it
+3. DO NOT commit to a single narrative prematurely
+4. Flag which hypothesis has the highest probability and WHY
+5. Recommend investigative actions that would DIFFERENTIATE between hypotheses
+
+CRITICAL: Single-narrative analysis on ambiguous data = intelligence failure.
+`;
+}
+
+
+// ─── 6. ANALYST PREFERENCE LEARNING ─────────────────────────────────────────
+
+/**
+ * Retrieve analyst preferences to personalize output.
+ */
+export async function getAnalystPreferences(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<Record<string, any>> {
+  try {
+    const { data } = await supabase
+      .from('analyst_preferences')
+      .select('preference_type, preference_key, preference_value, confidence')
+      .eq('user_id', userId)
+      .gte('confidence', 0.4)
+      .order('confidence', { ascending: false });
+
+    if (!data || data.length === 0) return {};
+
+    const prefs: Record<string, any> = {};
+    for (const p of data) {
+      if (!prefs[p.preference_type]) prefs[p.preference_type] = {};
+      prefs[p.preference_type][p.preference_key] = p.preference_value;
+    }
+    return prefs;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Learn analyst preferences from implicit behavior signals.
+ */
+export async function learnAnalystPreference(
+  supabase: SupabaseClient,
+  userId: string,
+  preferenceType: string,
+  preferenceKey: string,
+  preferenceValue: any,
+  source: string = 'implicit'
+): Promise<void> {
+  try {
+    const { data: existing } = await supabase
+      .from('analyst_preferences')
+      .select('id, confidence, sample_count, preference_value')
+      .eq('user_id', userId)
+      .eq('preference_type', preferenceType)
+      .eq('preference_key', preferenceKey)
+      .single();
+
+    if (existing) {
+      // Weighted update: new observation strengthens or weakens preference
+      const newCount = existing.sample_count + 1;
+      const newConfidence = Math.min(0.95, existing.confidence + (1 / (newCount + 5)));
+      
+      await supabase.from('analyst_preferences').update({
+        preference_value: preferenceValue,
+        confidence: newConfidence,
+        sample_count: newCount,
+        updated_at: new Date().toISOString(),
+      }).eq('id', existing.id);
+    } else {
+      await supabase.from('analyst_preferences').insert({
+        user_id: userId,
+        preference_type: preferenceType,
+        preference_key: preferenceKey,
+        preference_value: preferenceValue,
+        learned_from: source,
+        confidence: 0.3, // Start low, build with observations
+        sample_count: 1,
+      });
+    }
+  } catch (err) {
+    console.error('[AnalystPreference] Error:', err);
+  }
+}
+
+/**
+ * Build a personalization prompt block from analyst preferences.
+ */
+export function buildPersonalizationPrompt(preferences: Record<string, any>): string {
+  if (Object.keys(preferences).length === 0) return '';
+
+  const lines: string[] = ['\n=== ANALYST PERSONALIZATION (learned from behavior) ==='];
+  
+  if (preferences.detail_level) {
+    lines.push(`Preferred detail level: ${JSON.stringify(preferences.detail_level)}`);
+  }
+  if (preferences.focus_areas) {
+    lines.push(`Priority focus areas: ${JSON.stringify(preferences.focus_areas)}`);
+  }
+  if (preferences.communication_style) {
+    lines.push(`Communication style: ${JSON.stringify(preferences.communication_style)}`);
+  }
+  if (preferences.categories_of_interest) {
+    lines.push(`Categories of highest interest: ${JSON.stringify(preferences.categories_of_interest)}`);
+  }
+  
+  lines.push('Adapt your analysis style to match these learned preferences where appropriate.');
+  return lines.join('\n');
+}
+
+
+// ─── 7. AGENT ACCURACY TRACKING ─────────────────────────────────────────────
+
+/**
+ * Record a prediction made by an agent for later accuracy tracking.
+ */
+export async function recordAgentPrediction(
+  supabase: SupabaseClient,
+  agentCallSign: string,
+  predictionType: string,
+  predictionValue: string,
+  confidence: number,
+  incidentId?: string,
+  signalId?: string
+): Promise<string | null> {
+  try {
+    const { data } = await supabase.from('agent_accuracy_tracking').insert({
+      agent_call_sign: agentCallSign,
+      prediction_type: predictionType,
+      prediction_value: predictionValue,
+      confidence_at_prediction: confidence,
+      incident_id: incidentId || null,
+      signal_id: signalId || null,
+    }).select('id').single();
+    return data?.id || null;
+  } catch (err) {
+    console.error('[AgentAccuracy] Record error:', err);
+    return null;
+  }
+}
+
+/**
+ * Resolve a prediction with the actual outcome.
+ */
+export async function resolveAgentPrediction(
+  supabase: SupabaseClient,
+  predictionId: string,
+  actualOutcome: string,
+  wasCorrect: boolean
+): Promise<void> {
+  try {
+    await supabase.from('agent_accuracy_tracking').update({
+      actual_outcome: actualOutcome,
+      was_correct: wasCorrect,
+      resolved_at: new Date().toISOString(),
+    }).eq('id', predictionId);
+  } catch (err) {
+    console.error('[AgentAccuracy] Resolve error:', err);
+  }
+}
+
+/**
+ * Get an agent's accuracy calibration factor.
+ * Returns a multiplier (0.5-1.5) to adjust confidence scores.
+ */
+export async function getAgentCalibration(
+  supabase: SupabaseClient,
+  agentCallSign: string
+): Promise<{ calibration: number; accuracy: number; totalPredictions: number }> {
+  try {
+    const { data } = await supabase
+      .from('agent_accuracy_metrics')
+      .select('confidence_calibration, accuracy_score, total_predictions')
+      .eq('agent_call_sign', agentCallSign)
+      .single();
+
+    if (data) {
+      return {
+        calibration: data.confidence_calibration,
+        accuracy: data.accuracy_score,
+        totalPredictions: data.total_predictions,
+      };
+    }
+  } catch { /* no metrics yet */ }
+  
+  return { calibration: 1.0, accuracy: 0.5, totalPredictions: 0 };
+}
+
+
 // ─── COMBINED INTELLIGENCE PROMPT ────────────────────────────────────────────
 
 /**
- * Returns the full intelligence upgrade prompt combining all four capabilities.
+ * Returns the full intelligence upgrade prompt combining all capabilities.
  * Inject this into the agent's system prompt.
  */
 export function getIntelligenceUpgradePrompt(): string {
-  return `${getChainOfThoughtPrompt()}\n${getEvidenceCitationPrompt()}`;
+  return `${getChainOfThoughtPrompt()}\n${getEvidenceCitationPrompt()}\n${getHypothesisTreePrompt()}`;
 }
