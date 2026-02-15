@@ -535,4 +535,91 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
       total_duplicate_signals: issues.duplicate_signals.reduce((sum: number, g: any) => sum + g.count, 0),
     };
   },
+
+  // ═══ Signal Contradictions ═══
+  get_signal_contradictions: async (args, supabaseClient) => {
+    const { entity_name, status = 'unresolved', limit = 10 } = args;
+
+    let query = supabaseClient
+      .from('signal_contradictions')
+      .select('id, entity_name, signal_a_summary, signal_b_summary, contradiction_type, severity, ai_analysis, resolution_status, detected_at')
+      .order('detected_at', { ascending: false })
+      .limit(limit);
+
+    if (entity_name) {
+      query = query.ilike('entity_name', `%${entity_name}%`);
+    }
+    if (status !== 'all') {
+      query = query.eq('resolution_status', status);
+    }
+
+    const { data, error } = await query;
+    if (error) return { error: error.message };
+
+    return {
+      contradictions: data || [],
+      count: data?.length || 0,
+      summary: data && data.length > 0
+        ? `Found ${data.length} ${status} contradictions${entity_name ? ` for "${entity_name}"` : ''}. ${data.filter((c: any) => c.severity === 'high').length} high-severity conflicts.`
+        : `No ${status} contradictions found${entity_name ? ` for "${entity_name}"` : ''}.`,
+    };
+  },
+
+  // ═══ Analyst Accuracy Metrics ═══
+  get_analyst_accuracy: async (_args, supabaseClient) => {
+    const { data: metrics, error } = await supabaseClient
+      .from('analyst_accuracy_metrics')
+      .select('user_id, accuracy_score, weight_multiplier, total_feedback, last_calibrated')
+      .order('total_feedback', { ascending: false })
+      .limit(20);
+
+    if (error) return { error: error.message };
+
+    // Get profile names
+    const userIds = (metrics || []).map((m: any) => m.user_id);
+    const { data: profiles } = await supabaseClient
+      .from('profiles')
+      .select('id, full_name, email')
+      .in('id', userIds);
+
+    const profileMap = new Map((profiles || []).map((p: any) => [p.id, p]));
+
+    return {
+      analysts: (metrics || []).map((m: any) => ({
+        ...m,
+        name: profileMap.get(m.user_id)?.full_name || 'Unknown',
+        email: profileMap.get(m.user_id)?.email,
+      })),
+      count: metrics?.length || 0,
+      summary: `${metrics?.length || 0} analysts calibrated. Average accuracy: ${metrics && metrics.length > 0 ? Math.round((metrics.reduce((s: number, m: any) => s + m.accuracy_score, 0) / metrics.length) * 100) : 0}%.`,
+    };
+  },
+
+  // ═══ Knowledge Freshness ═══
+  get_knowledge_freshness: async (_args, supabaseClient) => {
+    const { data: audits, error } = await supabaseClient
+      .from('knowledge_freshness_audits')
+      .select('*')
+      .order('audited_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) return { error: error.message };
+    if (!audits) return { summary: 'No freshness audits have run yet.' };
+
+    // Get stale knowledge entries
+    const { data: stale } = await supabaseClient
+      .from('expert_knowledge')
+      .select('domain, topic, confidence_score, last_validated_at, created_at')
+      .eq('is_active', true)
+      .lt('confidence_score', 0.5)
+      .order('confidence_score', { ascending: true })
+      .limit(10);
+
+    return {
+      last_audit: audits,
+      stale_entries: stale || [],
+      summary: `Last audit: ${audits.audited_at}. ${stale?.length || 0} knowledge entries below 50% confidence due to decay.`,
+    };
+  },
 };

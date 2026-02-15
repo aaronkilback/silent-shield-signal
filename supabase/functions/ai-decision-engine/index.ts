@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { getLearningPromptBlock } from "../_shared/learning-context-builder.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -260,6 +261,26 @@ Deno.serve(async (req) => {
     }
 
     console.log(`Using AI analysis for high-priority signal ${signal_id}`);
+
+    // Fetch adaptive learning context and contradiction data in parallel
+    const [learningContext, contradictionData] = await Promise.all([
+      getLearningPromptBlock(supabase, 'compact'),
+      (async () => {
+        const entityTags = signal.entity_tags || [];
+        if (entityTags.length === 0) return '';
+        const { data: contradictions } = await supabase
+          .from('signal_contradictions')
+          .select('entity_name, signal_a_summary, signal_b_summary, contradiction_type, ai_analysis')
+          .in('entity_name', entityTags)
+          .eq('resolution_status', 'unresolved')
+          .order('detected_at', { ascending: false })
+          .limit(5);
+        if (!contradictions || contradictions.length === 0) return '';
+        return `\n\n⚠️ KNOWN CONTRADICTIONS for entities in this signal:\n${contradictions.map(c => 
+          `• ${c.entity_name}: "${c.signal_a_summary}" vs "${c.signal_b_summary}" (${c.contradiction_type})`
+        ).join('\n')}\nFactor these conflicts into your confidence assessment.`;
+      })(),
+    ]);
     
     console.log('Calling AI with signal:', {
       id: signal.id,
@@ -274,6 +295,8 @@ Deno.serve(async (req) => {
         {
           role: 'system',
           content: `You are a strategic threat intelligence analyst and autonomous SOC decision engine.
+
+${learningContext}${contradictionData}
 
 Your responsibilities:
 1. Assess threat severity and strategic impact of the CURRENT signal

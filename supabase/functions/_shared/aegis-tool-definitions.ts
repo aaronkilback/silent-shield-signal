@@ -1653,4 +1653,57 @@ Use when users ask about system health, learning status, neural net performance,
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "get_signal_contradictions",
+      description: `Find unresolved contradictions between signals about the same entity. Use when:
+- User asks about conflicting intelligence or contradictory reports
+- Analyzing an entity with multiple signals that may disagree
+- Assessing confidence on a topic where conflicting information exists
+Returns contradiction details, severity, and AI analysis of the conflict.`,
+      parameters: {
+        type: "object",
+        properties: {
+          entity_name: {
+            type: "string",
+            description: "Filter contradictions by entity name (partial match supported)",
+          },
+          status: {
+            type: "string",
+            enum: ["unresolved", "resolved", "all"],
+            description: "Filter by resolution status (default: unresolved)",
+          },
+          limit: {
+            type: "number",
+            description: "Max results to return (default: 10)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_analyst_accuracy",
+      description: `Get analyst accuracy calibration metrics. Shows how accurate each analyst's feedback has been when compared to actual incident outcomes. Analysts with higher accuracy get more weight in signal scoring. Use when users ask about team performance, feedback quality, or analyst reliability.`,
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_knowledge_freshness",
+      description: `Check the freshness of the expert knowledge base. Shows entries with decayed confidence scores and the last freshness audit results. Use when users ask about knowledge currency, stale intelligence, or knowledge base health.`,
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
 ];
