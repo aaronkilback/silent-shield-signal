@@ -101,11 +101,15 @@ export function SecurityReportUpload() {
 
       if (uploadError) throw uploadError;
 
-      // Get file content as base64
+      // Get file content as base64 using chunked encoding to avoid corruption
       const arrayBuffer = await file.arrayBuffer();
-      const base64 = btoa(
-        new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
-      );
+      const bytes = new Uint8Array(arrayBuffer);
+      const CHUNK = 8192;
+      let binaryStr = "";
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        binaryStr += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+      }
+      const base64 = btoa(binaryStr);
 
       // Call backend function to parse and extract intelligence
       const { data, error } = await supabase.functions.invoke("parse-travel-security-report", {
