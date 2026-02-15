@@ -516,7 +516,7 @@ function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, o
   const [hovered, setHovered] = useState(false);
 
   const color = new THREE.Color(agent.color);
-  const size = agent.tier === "primary" ? 0.5 : agent.tier === "secondary" ? 0.35 : 0.22;
+  const size = agent.tier === "primary" ? 0.6 : agent.tier === "secondary" ? 0.38 : 0.22;
 
   // Activity drives pulse speed: more active = faster pulse
   const basePulseSpeed = 1.2 + activityScore * 3.5;
@@ -580,15 +580,34 @@ function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, o
       </mesh>
       <pointLight
         color={isInDebate ? "#f59e0b" : agent.color}
-        intensity={isInDebate ? 2.0 : (agent.tier === "primary" ? 0.8 : 0.3) + activityScore * 1.0}
-        distance={isInDebate ? 12 : (agent.tier === "primary" ? 8 : 4) + activityScore * 4}
+        intensity={isInDebate ? 2.0 : (agent.tier === "primary" ? 1.2 : agent.tier === "secondary" ? 0.5 : 0.2) + activityScore * 1.0}
+        distance={isInDebate ? 12 : (agent.tier === "primary" ? 10 : agent.tier === "secondary" ? 6 : 3) + activityScore * 4}
       />
+      {/* Tier label */}
+      <Html center distanceFactor={22} style={{ pointerEvents: "none" }}>
+        <div className="text-center" style={{ transform: "translateY(22px)" }}>
+          <div className="text-[9px] font-bold tracking-[0.15em] uppercase" style={{
+            color: agent.color,
+            textShadow: `0 0 8px ${agent.color}`,
+            opacity: 0.85,
+          }}>
+            {agent.callSign}
+          </div>
+        </div>
+      </Html>
       {/* Hover tooltip */}
       {hovered && (
         <Html center distanceFactor={18} style={{ pointerEvents: "none" }}>
           <div className="bg-card/95 backdrop-blur-xl border border-border rounded-lg px-3 py-2 min-w-[160px] shadow-2xl" style={{ transform: "translateY(-40px)" }}>
             <div className="text-xs font-bold text-foreground tracking-wider">{agent.callSign}</div>
             <div className="text-[10px] text-muted-foreground">{agent.codename}</div>
+            <div className="text-[9px] mt-1 px-1.5 py-0.5 rounded-full inline-block" style={{
+              backgroundColor: agent.tier === "primary" ? "rgba(59,130,246,0.2)" : agent.tier === "secondary" ? "rgba(139,92,246,0.2)" : "rgba(100,116,139,0.2)",
+              color: agent.tier === "primary" ? "#60a5fa" : agent.tier === "secondary" ? "#a78bfa" : "#94a3b8",
+              border: `1px solid ${agent.tier === "primary" ? "rgba(59,130,246,0.3)" : agent.tier === "secondary" ? "rgba(139,92,246,0.3)" : "rgba(100,116,139,0.3)"}`,
+            }}>
+              {agent.tier === "primary" ? "CORE" : agent.tier === "secondary" ? "SPECIALIST" : "SUPPORT"}
+            </div>
             <div className="flex items-center gap-2 mt-1.5">
               <div className="flex-1">
                 <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Activity</div>
@@ -655,7 +674,7 @@ function ConnectionLines({ agents, commLinks = [] }: { agents: AgentNode[]; comm
       if (idx === aegisIdx) return;
       const key = [Math.min(idx, aegisIdx ?? 0), Math.max(idx, aegisIdx ?? 0)].join("-");
       if (!realPairs.has(key) && aegisIdx !== undefined) {
-        conns.push({ a: idx, b: aegisIdx, isReal: true, strength: 0.4 });
+        conns.push({ a: idx, b: aegisIdx, isReal: true, strength: 0.6 });
         realPairs.add(key);
       }
     });
@@ -2024,6 +2043,20 @@ export function ConstellationScene({
         <MoonBody earthPosition={earthPosition} />
         
 
+        {/* Tier orbital ring guides */}
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[5, 0.015, 8, 96]} />
+          <meshBasicMaterial color="#3b82f6" transparent opacity={0.12} />
+        </mesh>
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[9, 0.01, 8, 96]} />
+          <meshBasicMaterial color="#8b5cf6" transparent opacity={0.08} />
+        </mesh>
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[13, 0.008, 8, 96]} />
+          <meshBasicMaterial color="#64748b" transparent opacity={0.05} />
+        </mesh>
+
         <ConnectionLines agents={visibleAgents} commLinks={commLinks} />
         <SignalParticles agents={visibleAgents} commLinks={commLinks} />
 
@@ -2043,7 +2076,7 @@ export function ConstellationScene({
         {/* Performance halos */}
         {visibleAgents.map((agent) => {
           const score = activityMap.get(agent.callSign) || 0;
-          const size = agent.tier === "primary" ? 0.5 : agent.tier === "secondary" ? 0.35 : 0.22;
+          const size = agent.tier === "primary" ? 0.6 : agent.tier === "secondary" ? 0.38 : 0.22;
           return (
             <PerformanceHalo
               key={`halo-${agent.id}`}
