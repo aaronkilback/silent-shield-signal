@@ -89,17 +89,49 @@ export function ContextualKnowledgeWidget() {
 
     const { data, error } = await supabase
       .from('expert_knowledge')
-      .select('id, title, content, domain, subdomain, citation, confidence_score')
+      .select('id, title, content, domain, subdomain, citation, confidence_score, last_validated_at, created_at')
       .eq('is_active', true)
       .in('domain', domains)
       .or(keywordFilter)
       .gte('confidence_score', 0.8)
       .order('confidence_score', { ascending: false })
-      .limit(5);
+      .limit(10);
 
     if (error || !data || data.length === 0) return null;
-    const idx = Math.floor(Math.random() * Math.min(data.length, 3));
-    return data[idx] as KnowledgeNugget;
+
+    // Apply confidence decay: penalize stale entries
+    const HALF_LIFE_DAYS = 180;
+    const now = Date.now();
+    const scored = data.map(entry => {
+      const refDate = new Date(entry.last_validated_at || entry.created_at).getTime();
+      const daysSince = (now - refDate) / 86400000;
+      const decayFactor = Math.pow(2, -(daysSince / HALF_LIFE_DAYS));
+      const decayedConfidence = Math.max(0.3, entry.confidence_score * decayFactor);
+      return { ...entry, decayedConfidence };
+    });
+
+    // Filter out entries that decay below threshold
+    const viable = scored.filter(e => e.decayedConfidence >= 0.6);
+    if (viable.length === 0) return null;
+
+    // Weighted random selection favoring higher decayed confidence
+    const totalWeight = viable.reduce((sum, e) => sum + e.decayedConfidence, 0);
+    let roll = Math.random() * totalWeight;
+    for (const entry of viable) {
+      roll -= entry.decayedConfidence;
+      if (roll <= 0) {
+        return {
+          id: entry.id,
+          title: entry.title,
+          content: entry.content,
+          domain: entry.domain,
+          subdomain: entry.subdomain,
+          citation: entry.citation,
+          confidence_score: entry.decayedConfidence,
+        } as KnowledgeNugget;
+      }
+    }
+    return viable[0] as unknown as KnowledgeNugget;
   }, [getRouteContext]);
 
   useEffect(() => {
