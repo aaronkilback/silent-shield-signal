@@ -184,7 +184,7 @@ Respond with ONLY valid JSON (no markdown):
       "analysis": "What you observed and WHY it matters (2-3 sentences). Reference learnings if relevant.",
       "recommendation": "What action to take. If past remediations failed, suggest alternatives.",
       "canAutoRemediate": true/false,
-      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "fix_orphaned_feedback" | "fix_stale_source_timestamps" | "fix_orphaned_comms" | "fix_stalled_autopilot_tasks" | "fix_orphaned_autopilot_tasks" | "run_contradiction_scan" | "run_knowledge_freshness_audit" | "calibrate_analyst_accuracy" | "none",
+      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "fix_orphaned_feedback" | "fix_stale_source_timestamps" | "fix_orphaned_comms" | "fix_stalled_autopilot_tasks" | "fix_orphaned_autopilot_tasks" | "run_contradiction_scan" | "run_knowledge_freshness_audit" | "calibrate_analyst_accuracy" | "retry_exhausted_dlq" | "cleanup_exhausted_dlq" | "reset_circuit_breakers" | "none",
       "isRecurring": true/false,
       "learningNote": "What you learned about this issue from history (or 'First occurrence')",
       "thresholdAdjustment": null | { "metric": "string", "currentValue": number, "suggestedValue": number, "reason": "string" }
@@ -203,20 +203,29 @@ Respond with ONLY valid JSON (no markdown):
 - CORS errors on OPTIONS (means function is deployed)
 - Seasonal monitoring sources with no recent scans
 
-## DLQ & Error Monitoring (NEW)
+## DLQ & Error Monitoring (SELF-HEALING)
 - dead_letter_queue: entries with status 'exhausted' mean a function permanently failed after max retries
 - EXPECTED: Zero 'exhausted' entries. Any exhausted entry = critical gap the pipeline silently dropped
 - TELEMETRY: exhaustedDlqCount, exhaustedFunctions (which functions are failing)
 - Pattern: Repeated 401 Unauthorized = auth header misconfiguration, not transient failure
 - Pattern: Repeated Gateway Timeout on social monitors = need longer execution ceiling or circuit breaker tuning
-- REMEDIATION: Flag for human attention (auth issues require code fixes)
+- REMEDIATION OPTIONS:
+  - retry_exhausted_dlq: Reset exhausted entries back to 'pending' with retry_count=0 for another attempt. USE when the root cause was transient (timeout, rate limit) or has been fixed. DO NOT USE for auth failures (401) unless you know the code was patched.
+  - cleanup_exhausted_dlq: Cancel permanently failed entries to clear the queue. USE for auth failures or issues that require code changes.
+  - Flag for human attention when pattern indicates code-level fix needed.
 
-## Schema Validation (NEW)
+## Circuit Breaker Management (SELF-HEALING)
+- Circuit breakers track monitor failure rates; 3+ failures in 2 hours = circuit OPEN (monitor skipped)
+- TELEMETRY: Check monitoring_circuit_breakers for open circuits
+- EXPECTED: All circuits closed. Open circuit = monitor not running
+- REMEDIATION: reset_circuit_breakers — Reset open circuit breakers to closed state. USE when underlying issue (rate limit, timeout) has passed.
+
+## Schema Validation (DETECT-ONLY)
 - Frontend code may reference columns/enum values that don't exist in the database
 - TELEMETRY: recentSchemaErrors (from edge_function_errors and postgres error logs)
 - Common patterns: "column X does not exist", "invalid input value for enum Y"
 - EXPECTED: Zero schema mismatch errors
-- REMEDIATION: Flag for human attention (requires migration)
+- REMEDIATION: Cannot auto-fix (requires migration). Flag as critical for human attention.
 
 Set shouldAlert=false if only minor info-level observations. Alert for warning+ findings.
 `;
@@ -336,6 +345,10 @@ interface TelemetryData {
   schemaErrors: {
     recentMismatchCount: number;
     errorDetails: string[];
+  };
+  circuitBreakers: {
+    openCount: number;
+    openMonitors: string[];
   };
 }
 
@@ -841,6 +854,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     adaptiveThresholds,
     deadLetterQueue: await collectDlqTelemetry(supabase),
     schemaErrors: await collectSchemaErrorTelemetry(supabase),
+    circuitBreakers: await collectCircuitBreakerTelemetry(supabase),
   };
 }
 
@@ -878,6 +892,18 @@ async function collectSchemaErrorTelemetry(supabase: any): Promise<TelemetryData
   return {
     recentMismatchCount: errorDetails.length,
     errorDetails: errorDetails.slice(0, 5),
+  };
+}
+
+async function collectCircuitBreakerTelemetry(supabase: any): Promise<TelemetryData['circuitBreakers']> {
+  const { data: openBreakers } = await supabase
+    .from('monitoring_circuit_breakers')
+    .select('monitor_name')
+    .eq('circuit_state', 'open');
+
+  return {
+    openCount: openBreakers?.length || 0,
+    openMonitors: (openBreakers || []).map((b: any) => b.monitor_name),
   };
 }
 
@@ -1424,6 +1450,104 @@ This correction was triggered because compliance score dropped below threshold. 
         } catch (err) {
           return { action, finding, success: false, details: `Analyst calibration error: ${err instanceof Error ? err.message : err}` };
         }
+      }
+
+      case 'retry_exhausted_dlq': {
+        // Reset exhausted DLQ entries back to pending for retry
+        const { data: exhausted } = await supabase
+          .from('dead_letter_queue')
+          .select('id, function_name, error_message, retry_count')
+          .eq('status', 'exhausted')
+          .limit(20);
+
+        if (!exhausted || exhausted.length === 0) {
+          return { action, finding, success: true, details: 'No exhausted DLQ entries to retry' };
+        }
+
+        // Filter out auth failures (401) — those need code fixes, not retries
+        const retryable = exhausted.filter((d: any) => {
+          const msg = (d.error_message || '').toLowerCase();
+          return !msg.includes('401') && !msg.includes('unauthorized') && !msg.includes('forbidden');
+        });
+        const nonRetryable = exhausted.length - retryable.length;
+
+        if (retryable.length === 0) {
+          return { action, finding, success: false, details: `All ${exhausted.length} exhausted entries are auth failures (401/403) — need code fix, not retry` };
+        }
+
+        const ids = retryable.map((d: any) => d.id);
+        const { error: updateErr } = await supabase
+          .from('dead_letter_queue')
+          .update({ 
+            status: 'pending', 
+            retry_count: 0, 
+            next_retry_at: new Date(Date.now() + 60000).toISOString(),
+            error_message: `[Watchdog] Reset for retry at ${new Date().toISOString()}. Previous error: ${retryable[0]?.error_message?.substring(0, 100) || 'unknown'}`,
+          })
+          .in('id', ids);
+
+        return {
+          action, finding, success: !updateErr,
+          details: updateErr
+            ? `DLQ retry reset failed: ${updateErr.message}`
+            : `Reset ${retryable.length} DLQ entries for retry (${nonRetryable} auth failures skipped): ${[...new Set(retryable.map((d: any) => d.function_name))].join(', ')}`,
+        };
+      }
+
+      case 'cleanup_exhausted_dlq': {
+        // Cancel permanently failed DLQ entries that can't be auto-fixed
+        const { data: exhausted } = await supabase
+          .from('dead_letter_queue')
+          .select('id, function_name')
+          .eq('status', 'exhausted')
+          .limit(50);
+
+        if (!exhausted || exhausted.length === 0) {
+          return { action, finding, success: true, details: 'No exhausted DLQ entries to clean up' };
+        }
+
+        const ids = exhausted.map((d: any) => d.id);
+        const { error: updateErr } = await supabase
+          .from('dead_letter_queue')
+          .update({ status: 'cancelled', error_message: `[Watchdog] Cancelled — requires code-level fix. Cleaned at ${new Date().toISOString()}` })
+          .in('id', ids);
+
+        return {
+          action, finding, success: !updateErr,
+          details: updateErr
+            ? `DLQ cleanup failed: ${updateErr.message}`
+            : `Cancelled ${exhausted.length} permanently failed DLQ entries: ${[...new Set(exhausted.map((d: any) => d.function_name))].join(', ')}`,
+        };
+      }
+
+      case 'reset_circuit_breakers': {
+        // Reset open circuit breakers back to closed
+        const { data: openBreakers } = await supabase
+          .from('monitoring_circuit_breakers')
+          .select('id, monitor_name, failure_count')
+          .eq('circuit_state', 'open')
+          .limit(20);
+
+        if (!openBreakers || openBreakers.length === 0) {
+          return { action, finding, success: true, details: 'No open circuit breakers — all monitors healthy' };
+        }
+
+        const ids = openBreakers.map((b: any) => b.id);
+        const { error: updateErr } = await supabase
+          .from('monitoring_circuit_breakers')
+          .update({ 
+            circuit_state: 'closed', 
+            failure_count: 0,
+            last_failure_at: null,
+          })
+          .in('id', ids);
+
+        return {
+          action, finding, success: !updateErr,
+          details: updateErr
+            ? `Circuit breaker reset failed: ${updateErr.message}`
+            : `Reset ${openBreakers.length} open circuit breakers: ${openBreakers.map((b: any) => `${b.monitor_name} (${b.failure_count} failures)`).join(', ')}`,
+        };
       }
 
       default:
