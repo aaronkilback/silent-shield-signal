@@ -4,6 +4,7 @@ import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { getAntiHallucinationPrompt, getCriticalDateContext, calculateIncidentAge } from "../_shared/anti-hallucination.ts";
 import { buildMemoryContext, storeAgentMemory } from "../_shared/agent-memory.ts";
 import { buildGraphContext, discoverIncidentConnections } from "../_shared/knowledge-graph.ts";
+import { getIntelligenceUpgradePrompt, buildCrossAgentContext, runAdversarialReview } from "../_shared/agent-intelligence.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -245,11 +246,12 @@ serve(async (req) => {
     const incidentAge = calculateIncidentAge({ id: incident.id, opened_at: incident.opened_at });
     const antiHallucinationBlock = getAntiHallucinationPrompt();
 
-    // Tier 2: Retrieve agent memory and knowledge graph context in parallel
-    const [memoryContext, graphContext, graphEdges] = await Promise.all([
+    // Tier 2: Retrieve agent memory, knowledge graph, and cross-agent insights in parallel
+    const [memoryContext, graphContext, graphEdges, crossAgentContext] = await Promise.all([
       buildMemoryContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || ''),
       buildGraphContext(supabase, incident_id),
       discoverIncidentConnections(supabase, incident_id, selectedAgent),
+      buildCrossAgentContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || ''),
     ]);
     
     if (graphEdges.length > 0) {
@@ -288,6 +290,7 @@ ${incident.timeline_json?.map((t: any) => `[${t.timestamp}] ${t.event}: ${t.deta
 
 ${memoryContext}
 ${graphContext}
+${crossAgentContext}
 `;
 
     // Tier 1: Use upgraded models based on agent specialization
@@ -302,33 +305,41 @@ ${graphContext}
     };
     const agentModel = AGENT_MODELS[selectedAgent] || 'google/gemini-3-flash-preview';
 
+    // Intelligence upgrades: CoT + Evidence Citations
+    const intelligenceUpgrade = getIntelligenceUpgradePrompt();
+
     const systemPrompt = `You are ${selectedAgent}, a specialized AI security analyst within the Fortress AI Task Force.
 Your specialty: ${agentConfig.specialty}
 Investigation focus areas: ${agentConfig.investigationFocus.join(', ')}
 
 ${antiHallucinationBlock}
 
+${intelligenceUpgrade}
+
 ${agentConfig.promptTemplate}
 
 CRITICAL RULES:
 1. Base all findings on provided evidence only - NEVER fabricate data
-2. Clearly label assumptions vs. confirmed facts
+2. Clearly label assumptions vs. confirmed facts using [EVD:] citations
 3. Use conditional language for uncertain conclusions
-4. Provide specific, actionable recommendations
-5. Include confidence levels for each finding
+4. Provide specific, actionable recommendations traced to findings
+5. Include confidence levels for each finding (backed by citation density)
 6. Identify gaps in information that need human follow-up
 7. ALWAYS use exact dates from the data (e.g., "opened on ${incident.opened_at}")
 8. NEVER claim the incident is "new" if it is stale (${incidentAge.ageDays} days old)
 9. Reference actual field values, not approximations
+10. Follow the Chain-of-Thought reasoning protocol — show ALL steps
+11. When cross-agent intelligence is available, corroborate or challenge it
 
 OUTPUT FORMAT:
-Structure your analysis with:
-- **Key Findings**: List major discoveries with evidence levels (cite specific data)
-- **Assessment**: Your professional evaluation
-- **Recommendations**: Prioritized action items with owners
-- **Assumptions**: What you assumed (to be validated)
-- **Unknowns**: Information gaps requiring investigation
-- **Confidence Level**: Overall confidence (LOW/MEDIUM/HIGH)`;
+Structure your analysis with the Chain-of-Thought steps:
+- **Step 1 — Observations**: Raw data points with [EVD:] citations
+- **Step 2 — Decomposition**: Sub-questions raised
+- **Step 3 — Hypotheses**: Competing explanations
+- **Step 4 — Evidence Mapping**: Supporting/contradicting evidence per hypothesis
+- **Step 5 — Assessment**: Synthesized findings with confidence levels
+- **Step 6 — Recommendations**: Actions traced to specific findings
+- **Unknowns**: Information gaps requiring investigation`;
 
     const userPrompt = prompt || `Conduct a thorough investigation of this incident within your specialty area:
 
@@ -359,11 +370,23 @@ Provide your specialized analysis following the output format specified.`;
       throw new Error(`AI API error: ${aiResult.error}`);
     }
 
-    const analysisContent = aiResult.content;
+    let analysisContent = aiResult.content;
 
     if (!analysisContent) {
       throw new Error('No analysis content received from AI');
     }
+
+    // ─── ADVERSARIAL SELF-REVIEW ───
+    // Agent re-reads its own output as a critic and strengthens weak reasoning
+    const { reviewedAnalysis, weaknessesFound, reviewNotes } = await runAdversarialReview(
+      analysisContent,
+      selectedAgent,
+      agentConfig.specialty,
+      investigationContext,
+      agentModel
+    );
+    analysisContent = reviewedAnalysis;
+    console.log(`[Orchestrator] ${selectedAgent} self-review: ${weaknessesFound} weaknesses found and addressed`);
 
     // Create analysis log entry
     const analysisEntry = {
@@ -373,7 +396,12 @@ Provide your specialized analysis following the output format specified.`;
       agent_specialty: agentConfig.specialty,
       analysis: analysisContent,
       investigation_focus: agentConfig.investigationFocus,
-      prompt_used: userPrompt.substring(0, 500) + '...'
+      prompt_used: userPrompt.substring(0, 500) + '...',
+      self_review: {
+        weaknesses_found: weaknessesFound,
+        review_notes: reviewNotes,
+        review_applied: weaknessesFound > 0,
+      }
     };
 
     // Tier 2: Store agent memory from this investigation

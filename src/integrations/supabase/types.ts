@@ -10952,6 +10952,24 @@ export type Database = {
           similarity: number
         }[]
       }
+      match_cross_agent_memories: {
+        Args: {
+          p_exclude_agent: string
+          p_match_count?: number
+          p_match_threshold?: number
+          p_query_embedding: string
+        }
+        Returns: {
+          agent_call_sign: string
+          confidence: number
+          content: string
+          entities: string[]
+          id: string
+          incident_id: string
+          memory_type: string
+          similarity: number
+        }[]
+      }
       match_documents: {
         Args: {
           match_count?: number
