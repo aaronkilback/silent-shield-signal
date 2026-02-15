@@ -20,7 +20,7 @@ interface SignalRecord {
   entity_tags: string[] | null;
   created_at: string;
   client_id: string | null;
-  source_type?: string | null;
+  signal_type?: string | null;
 }
 
 interface ClusterAlert {
