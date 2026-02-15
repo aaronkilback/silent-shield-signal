@@ -57,14 +57,16 @@ export const Header = () => {
           .eq('status', 'pending'),
         supabase
           .from('intelligence_config')
-          .select('*', { count: 'exact', head: true })
+          .select('key, value')
           .like('key', 'signal_categorization_rules_proposal_%')
       ]);
       
       const monitoringCount = monitoringRes.count || 0;
-      // Filter rule proposals that are actually pending (status check done client-side since it's in JSONB)
-      const rulesCount = rulesRes.count || 0;
-      return monitoringCount + rulesCount;
+      // Filter rule proposals that are actually pending_review (status is inside JSONB value)
+      const pendingRules = (rulesRes.data || []).filter(
+        (r: any) => r.value?.status === 'pending_review'
+      );
+      return monitoringCount + pendingRules.length;
     },
     refetchInterval: 30000
   });
