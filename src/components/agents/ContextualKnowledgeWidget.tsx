@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
-import { BookOpen, X, ChevronDown, ChevronUp, ArrowRight, Lightbulb } from 'lucide-react';
+import { BookOpen, X, ChevronDown, ChevronUp, ArrowRight, Lightbulb, Bookmark, BookmarkCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -57,6 +57,7 @@ export function ContextualKnowledgeWidget() {
   const [expanded, setExpanded] = useState(false);
   const [visible, setVisible] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const [saved, setSaved] = useState(false);
   const cooldownRef = useRef<Record<string, number>>({});
   const lastRouteRef = useRef<string>('');
 
@@ -122,6 +123,7 @@ export function ContextualKnowledgeWidget() {
         setNugget(result);
         setExpanded(false);
         setDismissed(false);
+        setSaved(false);
         setVisible(true);
         cooldownRef.current[pathname] = Date.now();
       }
@@ -139,9 +141,30 @@ export function ContextualKnowledgeWidget() {
   const handleDeepDive = () => {
     if (!nugget) return;
     const prompt = `Explain the concept "${nugget.title}" in the context of ${nugget.domain.replace(/_/g, ' ')}. What is it, why does it matter for my current operations, and how should I apply it? Reference: ${nugget.citation}`;
-    // Navigate to home with the prompt as state so AEGIS picks it up
     navigate('/', { state: { aegisPrompt: prompt } });
     handleDismiss();
+  };
+
+  const handleSave = async () => {
+    if (!nugget || !user) return;
+    const { error } = await supabase.from('saved_knowledge_nuggets').upsert({
+      user_id: user.id,
+      knowledge_id: nugget.id,
+      title: nugget.title,
+      content: nugget.content,
+      domain: nugget.domain,
+      subdomain: nugget.subdomain,
+      citation: nugget.citation,
+      confidence_score: nugget.confidence_score,
+      saved_from_route: location.pathname,
+    }, { onConflict: 'user_id,knowledge_id' });
+    if (!error) {
+      setSaved(true);
+      const { toast } = await import('sonner');
+      toast.success('Saved to Knowledge Bank', {
+        action: { label: 'View Bank', onClick: () => navigate('/knowledge-bank') },
+      });
+    }
   };
 
   const getRouteLabel = (pathname: string): string => {
@@ -194,6 +217,15 @@ export function ContextualKnowledgeWidget() {
             </p>
           </div>
           <div className="flex items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={handleSave}
+              title={saved ? "Saved to Knowledge Bank" : "Save to Knowledge Bank"}
+            >
+              {saved ? <BookmarkCheck className="h-3 w-3 text-primary" /> : <Bookmark className="h-3 w-3" />}
+            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -269,6 +301,26 @@ export function ContextualKnowledgeWidget() {
               <ArrowRight className="h-3 w-3" />
               Deep Dive with AEGIS
             </Button>
+            <div className="flex gap-2 mt-2">
+              <Button
+                variant={saved ? "secondary" : "outline"}
+                size="sm"
+                className="flex-1 h-7 text-xs gap-1.5"
+                onClick={handleSave}
+                disabled={saved}
+              >
+                {saved ? <BookmarkCheck className="h-3 w-3" /> : <Bookmark className="h-3 w-3" />}
+                {saved ? 'Saved' : 'Save to Knowledge Bank'}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs gap-1 text-muted-foreground"
+                onClick={() => navigate('/knowledge-bank')}
+              >
+                <BookOpen className="h-3 w-3" /> View Bank
+              </Button>
+            </div>
           </div>
         )}
       </div>
