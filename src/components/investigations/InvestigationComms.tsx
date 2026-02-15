@@ -9,12 +9,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import {
-  MessageSquare, Send, Phone, User, Loader2, ChevronLeft, Plus, ArrowUpRight, ArrowDownLeft
+  MessageSquare, Send, Phone, User, Loader2, ChevronLeft, Plus, ArrowUpRight, ArrowDownLeft, Mail, Copy, Check
 } from "lucide-react";
 
 interface InvestigationCommsProps {
   investigationId: string;
   fileNumber: string;
+  intakeEmailTag?: string | null;
 }
 
 interface Contact {
@@ -39,7 +40,7 @@ interface Communication {
   provider_status: string | null;
 }
 
-export const InvestigationComms = ({ investigationId, fileNumber }: InvestigationCommsProps) => {
+export const InvestigationComms = ({ investigationId, fileNumber, intakeEmailTag }: InvestigationCommsProps) => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
@@ -48,7 +49,18 @@ export const InvestigationComms = ({ investigationId, fileNumber }: Investigatio
   const [showNewThread, setShowNewThread] = useState(false);
   const [newContactNumber, setNewContactNumber] = useState("");
   const [newContactName, setNewContactName] = useState("");
+  const [copiedEmail, setCopiedEmail] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const intakeEmail = intakeEmailTag ? `${intakeEmailTag}@intake.yourdomain.com` : null;
+
+  const handleCopyEmail = () => {
+    if (intakeEmail) {
+      navigator.clipboard.writeText(intakeEmail);
+      setCopiedEmail(true);
+      setTimeout(() => setCopiedEmail(false), 2000);
+    }
+  };
 
   // Fetch all communications for this investigation
   const { data: commsData, isLoading } = useQuery({
@@ -334,12 +346,25 @@ export const InvestigationComms = ({ investigationId, fileNumber }: Investigatio
           </Button>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
+        {intakeEmail && (
+          <div className="flex items-center gap-3 p-3 rounded-lg bg-accent/30 border border-border">
+            <Mail className="w-5 h-5 text-primary shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-muted-foreground">Email Intake Address</p>
+              <p className="text-sm font-mono truncate text-foreground">{intakeEmail}</p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Forward emails here to auto-log as entries</p>
+            </div>
+            <Button variant="ghost" size="icon" onClick={handleCopyEmail} className="shrink-0">
+              {copiedEmail ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+            </Button>
+          </div>
+        )}
         {contacts.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <MessageSquare className="w-10 h-10 mx-auto mb-3 opacity-40" />
             <p className="font-medium">No communications yet</p>
-            <p className="text-sm mt-1">Start an SMS thread with a contact to begin tracking conversations</p>
+            <p className="text-sm mt-1">Start an SMS thread or forward emails to the intake address above</p>
           </div>
         ) : (
           <div className="space-y-2">

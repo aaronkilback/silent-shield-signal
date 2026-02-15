@@ -1568,6 +1568,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
               <InvestigationComms
                 investigationId={investigation.id}
                 fileNumber={investigation.file_number}
+                intakeEmailTag={(investigation as any).intake_email_tag}
               />
             )}
           </TabsContent>
