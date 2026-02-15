@@ -66,18 +66,21 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
       if (error) throw error;
       
       // Get public URLs for the photos
-      const photosWithUrls = await Promise.all(
-        data.map(async (photo) => {
-          const { data: urlData } = supabase.storage
-            .from('entity-photos')
-            .getPublicUrl(photo.storage_path);
-          
-          return {
-            ...photo,
-            url: urlData.publicUrl
-          };
-        })
-      );
+      // Get signed URLs for private bucket
+      const paths = data.map(p => p.storage_path);
+      const { data: signedData } = await supabase.storage
+        .from('entity-photos')
+        .createSignedUrls(paths, 3600);
+      
+      const urlMap: Record<string, string> = {};
+      signedData?.forEach(item => {
+        if (item.path && item.signedUrl) urlMap[item.path] = item.signedUrl;
+      });
+      
+      const photosWithUrls = data.map(photo => ({
+        ...photo,
+        url: urlMap[photo.storage_path] || ''
+      }));
       
       return photosWithUrls;
     },

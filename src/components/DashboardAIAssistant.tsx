@@ -649,11 +649,11 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         
         if (!storageData) continue;
         
-        const { data: { publicUrl } } = supabase.storage
+        const { data: signedData } = await supabase.storage
           .from('ai-chat-attachments')
-          .getPublicUrl(storageData.path);
+          .createSignedUrl(storageData.path, 3600);
         
-        uploadedUrls.push(publicUrl);
+        uploadedUrls.push(signedData?.signedUrl || '');
         toast.success(`Uploaded ${file.name}`);
         
         // Create archival document record for AI analysis

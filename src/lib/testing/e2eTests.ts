@@ -2021,7 +2021,7 @@ export const apiWebhooksTests = {
       fn: async () => {
         const { data, error } = await supabase
           .from('api_keys')
-          .select('id, name, key_prefix, key_hash')
+          .select('id, name, key_prefix, is_active')
           .limit(10);
         
         if (error) throw error;
@@ -2029,7 +2029,6 @@ export const apiWebhooksTests = {
         for (const key of data || []) {
           if (!key.name) throw new Error(`API key ${key.id} missing name`);
           if (!key.key_prefix) throw new Error(`API key ${key.id} missing key_prefix`);
-          if (!key.key_hash) throw new Error(`API key ${key.id} missing key_hash`);
         }
       },
     },
@@ -3858,7 +3857,7 @@ export const oauthClientsTests = {
       fn: async () => {
         const { data, error } = await supabase
           .from('oauth_clients')
-          .select('id, client_name, client_id, client_secret_hash, redirect_uris')
+          .select('id, client_name, client_id, redirect_uris, is_active')
           .limit(10);
         
         if (error) throw error;

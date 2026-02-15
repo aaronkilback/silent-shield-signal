@@ -131,12 +131,12 @@ export const BugReportDialog = ({ open, onOpenChange }: BugReportDialogProps) =>
       
       if (uploadError) throw uploadError;
       
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage
+      // Get signed URL for private bucket
+      const { data: signedData } = await supabase.storage
         .from('bug-screenshots')
-        .getPublicUrl(filename);
+        .createSignedUrl(filename, 86400); // 24h for bug reports
       
-      setScreenshots([...screenshots, publicUrl]);
+      setScreenshots([...screenshots, signedData?.signedUrl || '']);
       toast.success("Screenshot captured");
     } catch (error) {
       console.error("Error capturing screenshot:", error);
