@@ -543,3 +543,6 @@ verify_jwt = false
 
 [functions.retry-dead-letters]
 verify_jwt = false
+
+[functions.investigation-autopilot]
+verify_jwt = false

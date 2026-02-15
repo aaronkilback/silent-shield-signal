@@ -5044,6 +5044,181 @@ export type Database = {
           },
         ]
       }
+      investigation_autopilot_sessions: {
+        Row: {
+          completed_at: string | null
+          completed_tasks: number | null
+          created_at: string
+          id: string
+          initiated_by: string
+          investigation_id: string
+          key_findings: Json | null
+          overall_summary: string | null
+          recommendations: Json | null
+          risk_score: number | null
+          started_at: string | null
+          status: string
+          task_plan: Json | null
+          total_tasks: number | null
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          completed_tasks?: number | null
+          created_at?: string
+          id?: string
+          initiated_by: string
+          investigation_id: string
+          key_findings?: Json | null
+          overall_summary?: string | null
+          recommendations?: Json | null
+          risk_score?: number | null
+          started_at?: string | null
+          status?: string
+          task_plan?: Json | null
+          total_tasks?: number | null
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          completed_tasks?: number | null
+          created_at?: string
+          id?: string
+          initiated_by?: string
+          investigation_id?: string
+          key_findings?: Json | null
+          overall_summary?: string | null
+          recommendations?: Json | null
+          risk_score?: number | null
+          started_at?: string | null
+          status?: string
+          task_plan?: Json | null
+          total_tasks?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investigation_autopilot_sessions_initiated_by_fkey"
+            columns: ["initiated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investigation_autopilot_sessions_investigation_id_fkey"
+            columns: ["investigation_id"]
+            isOneToOne: false
+            referencedRelation: "investigations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      investigation_autopilot_tasks: {
+        Row: {
+          agent_call_sign: string | null
+          completed_at: string | null
+          confidence_score: number | null
+          created_at: string
+          duration_ms: number | null
+          entities_found: string[] | null
+          error_message: string | null
+          findings: Json | null
+          id: string
+          input_context: Json | null
+          investigation_id: string
+          priority: number
+          review_status: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          reviewer_notes: string | null
+          session_id: string | null
+          signals_correlated: string[] | null
+          sort_order: number
+          started_at: string | null
+          status: string
+          summary: string | null
+          task_label: string
+          task_type: string
+          updated_at: string
+        }
+        Insert: {
+          agent_call_sign?: string | null
+          completed_at?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          duration_ms?: number | null
+          entities_found?: string[] | null
+          error_message?: string | null
+          findings?: Json | null
+          id?: string
+          input_context?: Json | null
+          investigation_id: string
+          priority?: number
+          review_status?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          reviewer_notes?: string | null
+          session_id?: string | null
+          signals_correlated?: string[] | null
+          sort_order?: number
+          started_at?: string | null
+          status?: string
+          summary?: string | null
+          task_label: string
+          task_type: string
+          updated_at?: string
+        }
+        Update: {
+          agent_call_sign?: string | null
+          completed_at?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          duration_ms?: number | null
+          entities_found?: string[] | null
+          error_message?: string | null
+          findings?: Json | null
+          id?: string
+          input_context?: Json | null
+          investigation_id?: string
+          priority?: number
+          review_status?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          reviewer_notes?: string | null
+          session_id?: string | null
+          signals_correlated?: string[] | null
+          sort_order?: number
+          started_at?: string | null
+          status?: string
+          summary?: string | null
+          task_label?: string
+          task_type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investigation_autopilot_tasks_investigation_id_fkey"
+            columns: ["investigation_id"]
+            isOneToOne: false
+            referencedRelation: "investigations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investigation_autopilot_tasks_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investigation_autopilot_tasks_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "investigation_autopilot_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       investigation_communications: {
         Row: {
           channel: string

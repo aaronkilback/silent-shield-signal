@@ -14,8 +14,9 @@ import { toast } from "sonner";
 import { 
   ArrowLeft, Save, Plus, Trash2, Upload, Download, 
   FileText, Image as ImageIcon, Video, Music, File,
-  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X, MapPin, Map, Building2, MessageSquare
+  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X, MapPin, Map, Building2, MessageSquare, Zap
 } from "lucide-react";
+import { AutopilotPanel } from "@/components/investigations/AutopilotPanel";
 import { WorkspaceButton } from "@/components/workspace";
 import { format } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
@@ -1060,6 +1061,10 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
             </TabsTrigger>
             <TabsTrigger value="attachments">Attachments</TabsTrigger>
             <TabsTrigger value="references">Cross-References</TabsTrigger>
+            <TabsTrigger value="autopilot" className="gap-1.5">
+              <Zap className="w-4 h-4" />
+              Autopilot
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
@@ -1744,6 +1749,10 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="autopilot" className="space-y-6">
+            {id && <AutopilotPanel investigationId={id} />}
           </TabsContent>
         </Tabs>
       </main>
