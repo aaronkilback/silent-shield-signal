@@ -117,6 +117,11 @@ Deno.serve(async (req: Request) => {
       bodyText,
     ].filter(Boolean).join('\n');
 
+    // Determine event time from email metadata or use current time
+    const emailTimestamp = metadata.timestamp 
+      ? new Date(Number(metadata.timestamp) * 1000).toISOString() 
+      : timestamp;
+
     // Create investigation entry
     const { data: entry, error: entryError } = await supabase
       .from("investigation_entries")
@@ -124,6 +129,7 @@ Deno.serve(async (req: Request) => {
         investigation_id: investigation.id,
         entry_text: entryText,
         created_by_name: `Email Ingest (${sender || "unknown"})`,
+        event_time: emailTimestamp,
       })
       .select("id, created_at")
       .single();

@@ -5359,6 +5359,7 @@ export type Database = {
           created_by_name: string | null
           entry_text: string
           entry_timestamp: string | null
+          event_time: string | null
           id: string
           investigation_id: string | null
           is_ai_generated: boolean | null
@@ -5372,6 +5373,7 @@ export type Database = {
           created_by_name?: string | null
           entry_text: string
           entry_timestamp?: string | null
+          event_time?: string | null
           id?: string
           investigation_id?: string | null
           is_ai_generated?: boolean | null
@@ -5385,6 +5387,7 @@ export type Database = {
           created_by_name?: string | null
           entry_text?: string
           entry_timestamp?: string | null
+          event_time?: string | null
           id?: string
           investigation_id?: string | null
           is_ai_generated?: boolean | null

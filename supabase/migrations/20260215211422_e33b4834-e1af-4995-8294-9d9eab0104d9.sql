@@ -1,0 +1,1 @@
+ALTER TABLE public.investigation_entries ADD COLUMN event_time TIMESTAMPTZ;
