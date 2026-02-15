@@ -6,7 +6,61 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
  * Analyzes recent agent learnings, signal patterns, and knowledge gaps
  * to propose keyword/source additions for client monitoring configs.
  * Proposals queue for analyst approval — never auto-applied.
+ * 
+ * QUALITY GATES:
+ * - Minimum confidence: 0.7
+ * - Minimum keyword length: 2 words (single generic words blocked)
+ * - Generic term blocklist prevents noise-generating keywords
+ * - Country names require compound phrases (e.g. "Iran sanctions" not "Iran")
  */
+
+// Generic terms that generate massive noise when used as standalone keywords
+const GENERIC_TERM_BLOCKLIST = new Set([
+  // Single-word geopolitical noise
+  'iran', 'russia', 'china', 'ukraine', 'syria', 'iraq', 'afghanistan',
+  'north korea', 'pakistan', 'india', 'turkey', 'israel', 'palestine',
+  // Overly broad threat categories
+  'murder', 'suicide', 'shooting', 'stabbing', 'assault', 'robbery',
+  'theft', 'fraud', 'corruption', 'violence', 'crime', 'attack',
+  'terrorism', 'extremism', 'radicalization',
+  // Generic tech/media terms
+  'ai', 'social media', 'cyber', 'hacking', 'malware', 'ransomware',
+  'data breach', 'phishing',
+  // Broad geopolitical concepts
+  'war', 'conflict', 'sanctions', 'embargo', 'coup', 'revolution',
+  'unrest', 'protest', 'riot', 'crisis', 'recession', 'inflation',
+  // Weapons (too broad without context)
+  'icbms', 'missile', 'nuclear', 'weapon', 'bomb', 'drone',
+  // Generic industry terms
+  'fossil fuels', 'oil', 'gas', 'energy', 'mining',
+  'economic crisis', 'social unrest', 'middle east tensions',
+  'ballistic missile', 'nuclear capability', 'cyber warfare',
+  'human trafficking',
+]);
+
+// Check if a proposed keyword is too generic to be useful
+function isGenericKeyword(value: string): { blocked: boolean; reason?: string } {
+  const lower = value.toLowerCase().trim();
+  
+  // Direct blocklist match
+  if (GENERIC_TERM_BLOCKLIST.has(lower)) {
+    return { blocked: true, reason: `"${value}" is too generic and will generate excessive noise` };
+  }
+  
+  // Single words under 6 chars are almost always too broad
+  const wordCount = lower.split(/\s+/).length;
+  if (wordCount === 1 && lower.length < 6) {
+    return { blocked: true, reason: `Single short keyword "${value}" is too broad for monitoring` };
+  }
+  
+  // Country names as standalone keywords (need compound phrase)
+  const countryNames = ['iran', 'russia', 'china', 'ukraine', 'syria', 'iraq', 'turkey', 'israel', 'india', 'pakistan', 'brazil', 'mexico'];
+  if (countryNames.includes(lower)) {
+    return { blocked: true, reason: `Country name "${value}" alone will match all news. Use compound phrase (e.g., "${value} energy sanctions")` };
+  }
+  
+  return { blocked: false };
+}
 
 interface ProposalRequest {
   client_id?: string;
@@ -63,6 +117,7 @@ Deno.serve(async (req) => {
     }
 
     let totalProposals = 0;
+    let rejectedProposals = 0;
 
     for (const client of clients) {
       const currentKeywords = client.monitoring_keywords || [];
@@ -75,7 +130,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Build analysis prompt
+      // Build analysis prompt — with stricter instructions
       const prompt = `You are CRUCIBLE, the Data Quality Auditor for a security intelligence platform.
 
 Analyze the following data and propose monitoring keyword or entity additions for client "${client.name}".
@@ -94,7 +149,15 @@ Based on signal patterns and learned knowledge, identify:
 2. Keywords that should be REMOVED (no longer relevant, too noisy)
 3. New entities to monitor (organizations, threat actors, infrastructure mentioned in signals)
 
-IMPORTANT: Only propose changes with clear evidence from the data above. Do not propose generic security terms already likely monitored.`;
+STRICT RULES — VIOLATIONS WILL BE REJECTED:
+- NEVER propose single generic words (e.g., "murder", "Iran", "AI", "unrest"). These match millions of irrelevant articles.
+- Keywords MUST be specific compound phrases (2+ words minimum) that relate DIRECTLY to the client's operations, geography, or supply chain.
+- Country names are ONLY acceptable as part of a compound phrase (e.g., "Iran energy sanctions" not "Iran").
+- Crime categories (murder, suicide, arson) are ONLY acceptable with geographic qualifiers (e.g., "Fort St. John homicide").
+- Broad threat categories (cyber warfare, social unrest, economic crisis) are NEVER acceptable as keywords.
+- Each proposal MUST cite a specific signal or learning as evidence.
+- Confidence scores MUST be honest: 0.9+ only for keywords directly naming client assets, operations, or known threats.
+- If no high-quality proposals exist, return an EMPTY array. Do not pad with generic terms.`;
 
       const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
         method: 'POST',
@@ -105,7 +168,7 @@ IMPORTANT: Only propose changes with clear evidence from the data above. Do not 
         body: JSON.stringify({
           model: 'google/gemini-2.5-flash',
           messages: [
-            { role: 'system', content: 'You are a security intelligence analyst. Return structured proposals only.' },
+            { role: 'system', content: 'You are a security intelligence analyst. Return structured proposals only. Quality over quantity — an empty proposal list is better than noisy suggestions.' },
             { role: 'user', content: prompt }
           ],
           tools: [{
@@ -122,9 +185,9 @@ IMPORTANT: Only propose changes with clear evidence from the data above. Do not 
                       type: 'object',
                       properties: {
                         type: { type: 'string', enum: ['add_keyword', 'remove_keyword', 'add_entity'] },
-                        value: { type: 'string', description: 'The keyword or entity name' },
-                        reasoning: { type: 'string', description: 'Why this change should be made, citing specific signals or learnings' },
-                        confidence: { type: 'number', description: '0.0-1.0 confidence score' }
+                        value: { type: 'string', description: 'The keyword or entity name — must be a specific compound phrase, not a generic term' },
+                        reasoning: { type: 'string', description: 'Why this change should be made, citing specific signals or learnings by title' },
+                        confidence: { type: 'number', description: '0.0-1.0 confidence score. 0.9+ reserved for direct client asset/operation matches only.' }
                       },
                       required: ['type', 'value', 'reasoning', 'confidence']
                     }
@@ -160,10 +223,40 @@ IMPORTANT: Only propose changes with clear evidence from the data above. Do not 
         continue;
       }
 
-      // Filter out low-confidence and duplicate proposals
+      // === QUALITY GATE: Multi-layer filtering ===
       const validProposals = proposals.filter(p => {
-        if (p.confidence < 0.4) return false;
-        if (p.type === 'add_keyword' && currentKeywords.includes(p.value.toLowerCase())) return false;
+        // Gate 1: Minimum confidence threshold (raised from 0.4 to 0.7)
+        if (p.confidence < 0.7) {
+          console.log(`[REJECTED] "${p.value}" — confidence ${p.confidence} below 0.7 threshold`);
+          rejectedProposals++;
+          return false;
+        }
+        
+        // Gate 2: Generic term blocklist
+        const genericCheck = isGenericKeyword(p.value);
+        if (genericCheck.blocked) {
+          console.log(`[REJECTED] ${genericCheck.reason}`);
+          rejectedProposals++;
+          return false;
+        }
+        
+        // Gate 3: Already exists in current keywords (case-insensitive)
+        if (p.type === 'add_keyword') {
+          const lowerValue = p.value.toLowerCase();
+          if (currentKeywords.some((k: string) => k.toLowerCase() === lowerValue)) {
+            console.log(`[REJECTED] "${p.value}" — already in monitoring keywords`);
+            rejectedProposals++;
+            return false;
+          }
+        }
+        
+        // Gate 4: Reasoning must reference specific evidence (not just generic justification)
+        if (!p.reasoning || p.reasoning.length < 20) {
+          console.log(`[REJECTED] "${p.value}" — insufficient reasoning`);
+          rejectedProposals++;
+          return false;
+        }
+        
         return true;
       });
 
@@ -199,20 +292,25 @@ IMPORTANT: Only propose changes with clear evidence from the data above. Do not 
         totalProposals++;
       }
 
-      console.log(`Generated ${validProposals.length} proposals for client ${client.name}`);
+      console.log(`[${client.name}] Accepted: ${validProposals.length}, Rejected: ${rejectedProposals}`);
     }
 
     // Log autonomous action
     await supabase.from('autonomous_actions_log').insert({
       action_type: 'monitoring_proposal_generation',
       trigger_source: 'generate-monitoring-proposals',
-      action_details: { total_proposals: totalProposals, clients_analyzed: clients.length },
+      action_details: { 
+        total_proposals: totalProposals, 
+        rejected_proposals: rejectedProposals,
+        clients_analyzed: clients.length 
+      },
       status: 'completed'
     });
 
     return successResponse({
       success: true,
       proposals_created: totalProposals,
+      proposals_rejected: rejectedProposals,
       clients_analyzed: clients.length
     });
 
