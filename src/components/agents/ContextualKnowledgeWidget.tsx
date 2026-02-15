@@ -204,7 +204,7 @@ export function ContextualKnowledgeWidget() {
       <div className={cn(
         "rounded-xl border border-border/60 bg-card/95 backdrop-blur-md shadow-lg",
         "overflow-hidden transition-all duration-300",
-        expanded ? "max-h-[520px]" : "max-h-[140px]"
+        expanded ? "max-h-[520px]" : "max-h-[200px]"
       )}>
         {/* Header */}
         <div className="flex items-center gap-2 px-3 py-2.5 bg-primary/5 border-b border-border/40">
@@ -254,12 +254,33 @@ export function ContextualKnowledgeWidget() {
             {getMicroBriefing(nugget.content)}
           </p>
           {!expanded && (
-            <button
-              onClick={() => setExpanded(true)}
-              className="text-[10px] text-primary hover:text-primary/80 mt-1 font-medium transition-colors"
-            >
-              Read more & deep dive ↓
-            </button>
+            <div className="flex items-center gap-2 mt-1.5">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 text-[10px] gap-1 border-primary/30 text-primary hover:bg-primary/10"
+                onClick={handleDeepDive}
+              >
+                <ArrowRight className="h-2.5 w-2.5" />
+                Deep Dive
+              </Button>
+              <Button
+                variant={saved ? "secondary" : "ghost"}
+                size="sm"
+                className="h-6 text-[10px] gap-1"
+                onClick={handleSave}
+                disabled={saved}
+              >
+                {saved ? <BookmarkCheck className="h-2.5 w-2.5" /> : <Bookmark className="h-2.5 w-2.5" />}
+                {saved ? 'Saved' : 'Save'}
+              </Button>
+              <button
+                onClick={() => setExpanded(true)}
+                className="text-[10px] text-muted-foreground hover:text-foreground ml-auto font-medium transition-colors"
+              >
+                More ↓
+              </button>
+            </div>
           )}
         </div>
 
