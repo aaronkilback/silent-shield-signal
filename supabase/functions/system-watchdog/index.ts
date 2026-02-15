@@ -135,6 +135,28 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - EXPECTED: Bugs progress through stages. 5+ stale >7 days = backlog
 - REMEDIATION: Can auto-close very old resolved bugs, add watchdog notes
 
+### Signal Contradiction Detection (NEW)
+- Signals sharing entity_tags may present conflicting assessments about the same entity
+- AI analyzes pairs with severity/category mismatches to identify true contradictions
+- EXPECTED: Unresolved contradictions should be < 10 at any time
+- TELEMETRY: Count unresolved contradictions, age of oldest
+- REMEDIATION: run_contradiction_scan (triggers detect-signal-contradictions function)
+
+### Knowledge Freshness (CRUCIBLE) (NEW)
+- expert_knowledge entries decay over time via 180-day half-life
+- Entries below 0.3 decayed confidence are auto-deactivated
+- Stale domains indicate gaps in knowledge maintenance
+- EXPECTED: avg decayed confidence > 0.5, stale entries < 30% of total
+- TELEMETRY: Stale entry count, avg decayed confidence, stale domains
+- REMEDIATION: run_knowledge_freshness_audit (triggers audit-knowledge-freshness function)
+
+### Analyst Accuracy Calibration (NEW)
+- analyst_accuracy_metrics tracks how often each analyst's feedback matches incident outcomes
+- Weight multiplier (0.5-1.5) adjusts influence of analyst feedback on signal scores
+- EXPECTED: Calibration runs periodically. Analysts with < 5 feedback events are uncalibrated.
+- TELEMETRY: Calibrated analyst count, avg accuracy, uncalibrated analysts with 5+ feedback
+- REMEDIATION: calibrate_analyst_accuracy (calls DB function)
+
 ### Edge Functions (150+)
 - 5 CRITICAL: get-user-tenants, agent-chat, dashboard-ai-assistant, system-health-check, ingest-signal
 - REMEDIATION: Cannot redeploy — flag for human attention
@@ -156,13 +178,13 @@ Respond with ONLY valid JSON (no markdown):
   "severity": "healthy" | "monitoring" | "degraded" | "critical",
   "findings": [
     {
-      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan" | "Communications" | "Investigation Autopilot",
+      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan" | "Communications" | "Investigation Autopilot" | "Signal Contradictions" | "Knowledge Freshness" | "Analyst Calibration",
       "severity": "critical" | "warning" | "info",
       "title": "Short title",
       "analysis": "What you observed and WHY it matters (2-3 sentences). Reference learnings if relevant.",
       "recommendation": "What action to take. If past remediations failed, suggest alternatives.",
       "canAutoRemediate": true/false,
-      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "fix_orphaned_feedback" | "fix_stale_source_timestamps" | "fix_orphaned_comms" | "fix_stalled_autopilot_tasks" | "fix_orphaned_autopilot_tasks" | "none",
+      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "fix_orphaned_feedback" | "fix_stale_source_timestamps" | "fix_orphaned_comms" | "fix_stalled_autopilot_tasks" | "fix_orphaned_autopilot_tasks" | "run_contradiction_scan" | "run_knowledge_freshness_audit" | "calibrate_analyst_accuracy" | "none",
       "isRecurring": true/false,
       "learningNote": "What you learned about this issue from history (or 'First occurrence')",
       "thresholdAdjustment": null | { "metric": "string", "currentValue": number, "suggestedValue": number, "reason": "string" }
@@ -264,6 +286,22 @@ interface TelemetryData {
     orphanedComms: number;
     failedDeliveries: number;
     activeInvestigatorThreads: number;
+  };
+  signalContradictions: {
+    unresolvedCount: number;
+    oldestUnresolvedDays: number;
+    totalDetected: number;
+  };
+  knowledgeFreshness: {
+    totalEntries: number;
+    staleEntries: number;
+    avgDecayedConfidence: number;
+    staleDomains: string[];
+  };
+  analystCalibration: {
+    calibratedAnalysts: number;
+    uncalibratedWithFeedback: number;
+    avgAccuracy: number;
   };
   autopilot: {
     totalSessions: number;
@@ -672,13 +710,59 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
   const [
     autopilotSessionsResult, activeAutopilotResult, stalledAutopilotResult,
     orphanedAutopilotResult, recentCompletedAutopilotResult,
+    // ═══ SIGNAL CONTRADICTIONS TELEMETRY ═══
+    unresolvedContradictionsResult, oldestContradictionResult, totalContradictionsResult,
+    // ═══ KNOWLEDGE FRESHNESS TELEMETRY ═══
+    activeKnowledgeResult, staleKnowledgeResult,
+    // ═══ ANALYST CALIBRATION TELEMETRY ═══
+    calibratedAnalystsResult, uncalibratedAnalystsResult,
   ] = await Promise.all([
     supabase.from('investigation_autopilot_sessions').select('*', { count: 'exact', head: true }),
     supabase.from('investigation_autopilot_sessions').select('*', { count: 'exact', head: true }).in('status', ['planning', 'running']),
     supabase.from('investigation_autopilot_tasks').select('*', { count: 'exact', head: true }).eq('status', 'running').lt('started_at', thirtyMinAgo),
     supabase.from('investigation_autopilot_tasks').select('*', { count: 'exact', head: true }).is('session_id', null),
     supabase.from('investigation_autopilot_sessions').select('*', { count: 'exact', head: true }).eq('status', 'completed').gte('created_at', twentyFourHoursAgo),
+    // Contradictions
+    supabase.from('signal_contradictions').select('*', { count: 'exact', head: true }).eq('resolution_status', 'unresolved'),
+    supabase.from('signal_contradictions').select('detected_at').eq('resolution_status', 'unresolved').order('detected_at', { ascending: true }).limit(1),
+    supabase.from('signal_contradictions').select('*', { count: 'exact', head: true }),
+    // Knowledge freshness
+    supabase.from('expert_knowledge').select('confidence_score, last_validated_at, created_at, domain').eq('is_active', true),
+    supabase.from('expert_knowledge').select('*', { count: 'exact', head: true }).eq('is_active', true).lt('last_validated_at', new Date(now.getTime() - 180 * 86400000).toISOString()),
+    // Analyst calibration
+    supabase.from('analyst_accuracy_metrics').select('accuracy_score, weight_multiplier'),
+    supabase.from('feedback_events').select('user_id').not('user_id', 'is', null).limit(500),
   ]);
+
+  // Process knowledge freshness telemetry
+  let avgDecayedConfidence = 0;
+  const staleDomainSet = new Set<string>();
+  const knowledgeEntries = activeKnowledgeResult.data || [];
+  if (knowledgeEntries.length > 0) {
+    let totalDecayed = 0;
+    const HALF_LIFE = 180;
+    for (const entry of knowledgeEntries) {
+      const refDate = new Date(entry.last_validated_at || entry.created_at).getTime();
+      const daysSince = (now.getTime() - refDate) / 86400000;
+      const decayed = Math.max(0.1, (entry.confidence_score || 0.5) * Math.pow(2, -(daysSince / HALF_LIFE)));
+      totalDecayed += decayed;
+      if (decayed < 0.5) staleDomainSet.add(entry.domain || 'unknown');
+    }
+    avgDecayedConfidence = totalDecayed / knowledgeEntries.length;
+  }
+
+  // Process analyst calibration telemetry
+  const calibratedData = calibratedAnalystsResult.data || [];
+  const avgAccuracy = calibratedData.length > 0 ? calibratedData.reduce((sum: number, a: any) => sum + (a.accuracy_score || 0), 0) / calibratedData.length : 0;
+  const feedbackUsers = new Set((uncalibratedAnalystsResult.data || []).map((f: any) => f.user_id));
+  const calibratedUserCount = calibratedData.length;
+  const uncalibratedWithFeedback = Math.max(0, feedbackUsers.size - calibratedUserCount);
+
+  // Oldest unresolved contradiction
+  let oldestContradictionDays = 0;
+  if (oldestContradictionResult.data?.[0]?.detected_at) {
+    oldestContradictionDays = Math.floor((now.getTime() - new Date(oldestContradictionResult.data[0].detected_at).getTime()) / 86400000);
+  }
 
   return {
     timestamp: now.toISOString(),
@@ -704,6 +788,22 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
       orphanedComms: orphanedCommsCount,
       failedDeliveries: failedCommsResult.count || 0,
       activeInvestigatorThreads: activeThreadsResult.count || 0,
+    },
+    signalContradictions: {
+      unresolvedCount: unresolvedContradictionsResult.count || 0,
+      oldestUnresolvedDays: oldestContradictionDays,
+      totalDetected: totalContradictionsResult.count || 0,
+    },
+    knowledgeFreshness: {
+      totalEntries: knowledgeEntries.length,
+      staleEntries: staleKnowledgeResult.count || 0,
+      avgDecayedConfidence: Math.round(avgDecayedConfidence * 100) / 100,
+      staleDomains: [...staleDomainSet].slice(0, 10),
+    },
+    analystCalibration: {
+      calibratedAnalysts: calibratedUserCount,
+      uncalibratedWithFeedback,
+      avgAccuracy: Math.round(avgAccuracy * 100) / 100,
     },
     autopilot: {
       totalSessions: autopilotSessionsResult.count || 0,
@@ -1201,6 +1301,65 @@ This correction was triggered because compliance score dropped below threshold. 
         }
 
         return { action, finding, success: deleted > 0, details: `Cleaned ${deleted}/${orphaned.length} orphaned autopilot tasks` };
+      }
+
+      case 'run_contradiction_scan': {
+        // Trigger the detect-signal-contradictions edge function
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 60000);
+          const resp = await fetch(`${supabaseUrl}/functions/v1/detect-signal-contradictions`, {
+            method: 'POST',
+            headers: { 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lookback_days: 7, max_pairs: 30 }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          if (resp.ok) {
+            const result = await resp.json();
+            return { action, finding, success: true, details: `Contradiction scan complete: ${result.contradictions || 0} new contradictions from ${result.candidates_analyzed || 0} pairs` };
+          }
+          return { action, finding, success: false, details: `Contradiction scan returned ${resp.status}` };
+        } catch (err) {
+          return { action, finding, success: false, details: `Contradiction scan failed: ${err instanceof Error ? err.message : err}` };
+        }
+      }
+
+      case 'run_knowledge_freshness_audit': {
+        // Trigger the audit-knowledge-freshness edge function
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 30000);
+          const resp = await fetch(`${supabaseUrl}/functions/v1/audit-knowledge-freshness`, {
+            method: 'POST',
+            headers: { 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dry_run: false }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          if (resp.ok) {
+            const result = await resp.json();
+            return { action, finding, success: true, details: `Knowledge freshness audit: ${result.stale_entries || 0}/${result.total_entries || 0} stale, ${result.deactivated || 0} deactivated, avg decayed confidence: ${result.avg_decayed_confidence || 'N/A'}` };
+          }
+          return { action, finding, success: false, details: `Knowledge freshness audit returned ${resp.status}` };
+        } catch (err) {
+          return { action, finding, success: false, details: `Knowledge freshness audit failed: ${err instanceof Error ? err.message : err}` };
+        }
+      }
+
+      case 'calibrate_analyst_accuracy': {
+        // Call the DB function to recalculate analyst accuracy metrics
+        try {
+          const { data: result, error: rpcErr } = await supabase.rpc('calibrate_analyst_accuracy');
+          return {
+            action, finding, success: !rpcErr,
+            details: rpcErr
+              ? `Analyst calibration failed: ${rpcErr.message}`
+              : `Calibrated ${result || 0} analyst accuracy scores. Feedback scores now weighted by analyst track record.`,
+          };
+        } catch (err) {
+          return { action, finding, success: false, details: `Analyst calibration error: ${err instanceof Error ? err.message : err}` };
+        }
       }
 
       default:
