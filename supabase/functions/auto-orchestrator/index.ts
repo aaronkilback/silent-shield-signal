@@ -101,16 +101,16 @@ async function processSignalsInBackground(supabase: any) {
           })
           .eq('id', queueItem.id);
 
-        // Process the signal
+        // Process the signal via intelligence-engine domain service
         const response = await fetch(
-          `${Deno.env.get('SUPABASE_URL')}/functions/v1/ai-decision-engine`,
+          `${Deno.env.get('SUPABASE_URL')}/functions/v1/intelligence-engine`,
           {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
             },
-            body: JSON.stringify({ signal_id: queueItem.entity_id })
+            body: JSON.stringify({ action: 'decision-engine', signal_id: queueItem.entity_id })
           }
         );
 
@@ -297,7 +297,8 @@ async function runOSINTMonitorsInBackground(supabase: any) {
   try {
     console.log('Starting OSINT monitors...');
     
-    const monitors = [
+    // OSINT actions routed through osint-collector domain service
+    const monitorActions = [
       'monitor-weather',
       'monitor-wildfires', 
       'monitor-earthquakes',
@@ -310,7 +311,7 @@ async function runOSINTMonitorsInBackground(supabase: any) {
       'monitor-domains',
       'monitor-facebook',
       'monitor-instagram',
-      'monitor-community-outreach'
+      'monitor-community',
     ];
 
     // ═══ CIRCUIT BREAKER ═══
@@ -333,7 +334,7 @@ async function runOSINTMonitorsInBackground(supabase: any) {
     }
 
     const CIRCUIT_BREAKER_THRESHOLD = 3;
-    const activeMonitors = monitors.filter(m => {
+    const activeMonitorActions = monitorActions.filter(m => {
       const failures = failureCounts[m] || 0;
       if (failures >= CIRCUIT_BREAKER_THRESHOLD) {
         console.log(`⚡ Circuit breaker OPEN for ${m} (${failures} recent failures) — skipping`);
@@ -342,90 +343,86 @@ async function runOSINTMonitorsInBackground(supabase: any) {
       return true;
     });
 
-    console.log(`Running ${activeMonitors.length}/${monitors.length} monitors (${monitors.length - activeMonitors.length} circuit-broken)`);
+    console.log(`Running ${activeMonitorActions.length}/${monitorActions.length} monitors (${monitorActions.length - activeMonitorActions.length} circuit-broken)`);
 
     let monitorsRun = 0;
 
-    // Run monitors in batches to control concurrency
-    for (let i = 0; i < activeMonitors.length; i += MAX_CONCURRENT_OSINT) {
-      const batch = activeMonitors.slice(i, i + MAX_CONCURRENT_OSINT);
+    // Run monitors via osint-collector domain service in batches
+    for (let i = 0; i < activeMonitorActions.length; i += MAX_CONCURRENT_OSINT) {
+      const batch = activeMonitorActions.slice(i, i + MAX_CONCURRENT_OSINT);
       
-      const promises = batch.map(async (monitor) => {
+      const promises = batch.map(async (monitorAction) => {
         try {
           // 60-second timeout per monitor to prevent gateway timeouts
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 60000);
           
           const response = await fetch(
-            `${Deno.env.get('SUPABASE_URL')}/functions/v1/${monitor}`,
+            `${Deno.env.get('SUPABASE_URL')}/functions/v1/osint-collector`,
             {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
               },
-              body: JSON.stringify({}),
+              body: JSON.stringify({ action: monitorAction }),
               signal: controller.signal
             }
           ).finally(() => clearTimeout(timeout));
 
           if (response.ok) {
             monitorsRun++;
-            console.log(`Executed ${monitor}`);
+            console.log(`Executed ${monitorAction} via osint-collector`);
           } else {
             const status = response.status;
-            // Silently handle rate limits — not a real error
             if (status === 429) {
-              console.log(`${monitor}: rate limited (expected), skipping`);
+              console.log(`${monitorAction}: rate limited (expected), skipping`);
             } else {
-              console.error(`Failed to execute ${monitor}: ${response.statusText}`);
-              await logError(new Error(`Monitor ${monitor} failed: ${response.statusText}`), {
+              console.error(`Failed to execute ${monitorAction}: ${response.statusText}`);
+              await logError(new Error(`Monitor ${monitorAction} failed: ${response.statusText}`), {
                 functionName: 'auto-orchestrator',
                 severity: 'warning',
-                requestContext: { monitor, status },
+                requestContext: { monitor: monitorAction, status },
               });
             }
           }
         } catch (error) {
           if (error instanceof Error && error.name === 'AbortError') {
-            console.log(`${monitor}: timed out after 60s, skipping`);
-            // Log timeout as error so circuit breaker catches it
-            await logError(new Error(`Monitor ${monitor} failed: Timeout after 60s`), {
+            console.log(`${monitorAction}: timed out after 60s, skipping`);
+            await logError(new Error(`Monitor ${monitorAction} failed: Timeout after 60s`), {
               functionName: 'auto-orchestrator',
               severity: 'warning',
-              requestContext: { monitor },
+              requestContext: { monitor: monitorAction },
             });
           } else {
-            console.error(`Error running ${monitor}:`, error);
+            console.error(`Error running ${monitorAction}:`, error);
             await logError(error, {
               functionName: 'auto-orchestrator',
               severity: 'error',
-              requestContext: { monitor },
+              requestContext: { monitor: monitorAction },
             });
           }
         }
       });
 
-      // Wait for this batch to complete before starting next batch
       await Promise.allSettled(promises);
       
-      // Small delay between batches to avoid overwhelming the system
-      if (i + MAX_CONCURRENT_OSINT < activeMonitors.length) {
+      if (i + MAX_CONCURRENT_OSINT < activeMonitorActions.length) {
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
 
-    // After all monitors, run signal consolidation to merge cross-source duplicates
+    // After all monitors, run signal consolidation via signal-processor domain service
     try {
       const consolidateResponse = await fetch(
-        `${Deno.env.get('SUPABASE_URL')}/functions/v1/consolidate-signals`,
+        `${Deno.env.get('SUPABASE_URL')}/functions/v1/signal-processor`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
           },
-          body: JSON.stringify({ hours_back: 24 })
+          body: JSON.stringify({ action: 'consolidate', hours_back: 24 })
         }
       );
       if (consolidateResponse.ok) {
