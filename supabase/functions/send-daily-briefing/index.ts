@@ -188,7 +188,51 @@ Tone: Calm, authoritative, zero jargon.`,
       status: errors.length === 0 ? 'completed' : 'partial',
     });
 
-    return successResponse({ success: true, sent: sentCount, errors: errors.length > 0 ? errors : undefined, date: dateContext.currentDateISO });
+    // Generate audio version of the daily briefing
+    let audioUrl: string | null = null;
+    try {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+      const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+      const audioResponse = await fetch(`${supabaseUrl}/functions/v1/generate-briefing-audio`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${serviceRoleKey}`,
+        },
+        body: JSON.stringify({
+          content: briefingText,
+          title: `Daily Briefing ${dateContext.currentDateFormatted}`,
+          user_id: 'system',
+        }),
+      });
+
+      if (audioResponse.ok) {
+        const audioResult = await audioResponse.json();
+        audioUrl = audioResult.audio_url;
+
+        // Record in audio_briefings table
+        await supabase.from('audio_briefings').insert({
+          title: `Daily Intelligence Briefing — ${dateContext.currentDateFormatted}`,
+          content_text: briefingText,
+          audio_url: audioUrl,
+          source_type: 'daily_briefing',
+          source_id: dateContext.currentDateISO,
+          status: 'completed',
+          chunks_processed: audioResult.chunks_processed || 1,
+          duration_seconds: audioResult.duration_estimate || null,
+          user_id: briefingConfigs[0]?.created_by || '00000000-0000-0000-0000-000000000000',
+        });
+
+        console.log(`[DailyBriefing] Audio briefing generated: ${audioUrl}`);
+      } else {
+        const errText = await audioResponse.text();
+        console.error(`[DailyBriefing] Audio generation failed: ${errText}`);
+      }
+    } catch (audioErr) {
+      console.error('[DailyBriefing] Audio generation error (non-blocking):', audioErr);
+    }
+
+    return successResponse({ success: true, sent: sentCount, audio_url: audioUrl, errors: errors.length > 0 ? errors : undefined, date: dateContext.currentDateISO });
   } catch (error) {
     console.error('[DailyBriefing] Error:', error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
