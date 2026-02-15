@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
-import { BookOpen, X, ChevronDown, ChevronUp, Volume2 } from 'lucide-react';
+import { BookOpen, X, ChevronDown, ChevronUp, ArrowRight, Lightbulb } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -31,13 +31,28 @@ const ROUTE_CONTEXT_MAP: Record<string, { domains: string[]; keywords: string[] 
   '/consortia': { domains: ['compliance', 'threat_intelligence'], keywords: ['sharing', 'consortium', 'intelligence'] },
 };
 
-// Cooldown: don't show again for same route within this many ms
-const ROUTE_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
-const DISMISS_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour after manual dismiss
+// Route-friendly labels for context
+const ROUTE_LABELS: Record<string, string> = {
+  '/incidents': 'Incidents',
+  '/signals': 'Signals',
+  '/investigations': 'Investigations',
+  '/entities': 'Entities',
+  '/travel': 'Travel Security',
+  '/threat-radar': 'Threat Radar',
+  '/reports': 'Reports',
+  '/clients': 'Clients',
+  '/vip-deep-scan': 'VIP Deep Scan',
+  '/matching-dashboard': 'Matching',
+  '/consortia': 'Consortia',
+};
+
+const ROUTE_COOLDOWN_MS = 30 * 60 * 1000;
+const DISMISS_COOLDOWN_MS = 60 * 60 * 1000;
 
 export function ContextualKnowledgeWidget() {
   const { user } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [nugget, setNugget] = useState<KnowledgeNugget | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [visible, setVisible] = useState(false);
@@ -46,37 +61,26 @@ export function ContextualKnowledgeWidget() {
   const lastRouteRef = useRef<string>('');
 
   const getRouteContext = useCallback((pathname: string) => {
-    // Direct match
     if (ROUTE_CONTEXT_MAP[pathname]) return ROUTE_CONTEXT_MAP[pathname];
-    
-    // Prefix match for detail pages
     for (const [route, ctx] of Object.entries(ROUTE_CONTEXT_MAP)) {
       if (pathname.startsWith(route)) return ctx;
     }
-
-    // Investigation detail
     if (pathname.startsWith('/investigation/')) {
       return { domains: ['investigations', 'financial_crime', 'forensic_accounting'], keywords: ['investigation', 'evidence', 'forensic', 'timeline'] };
     }
-    // Workspace
     if (pathname.startsWith('/workspace/')) {
       return { domains: ['investigations', 'crisis_management'], keywords: ['collaboration', 'briefing', 'workspace'] };
     }
-    // Client detail
     if (pathname.startsWith('/client/')) {
       return { domains: ['executive_protection', 'physical_security', 'threat_intelligence'], keywords: ['client', 'risk', 'protection'] };
     }
-
     return null;
   }, []);
 
   const fetchRelevantKnowledge = useCallback(async (pathname: string) => {
     const ctx = getRouteContext(pathname);
     if (!ctx) return null;
-
     const { domains, keywords } = ctx;
-
-    // Build query — get entries matching domain with keyword relevance
     const keywordFilter = keywords
       .slice(0, 3)
       .map(k => `title.ilike.%${k}%,content.ilike.%${k}%`)
@@ -93,37 +97,25 @@ export function ContextualKnowledgeWidget() {
       .limit(5);
 
     if (error || !data || data.length === 0) return null;
-
-    // Pick a random one from top results to avoid showing the same one every time
     const idx = Math.floor(Math.random() * Math.min(data.length, 3));
     return data[idx] as KnowledgeNugget;
   }, [getRouteContext]);
 
   useEffect(() => {
     if (!user) return;
-
     const pathname = location.pathname;
-    
-    // Skip home/auth pages
     if (pathname === '/' || pathname === '/auth' || pathname === '/welcome') {
       setVisible(false);
       return;
     }
-
-    // Don't re-trigger for same route
     if (pathname === lastRouteRef.current) return;
     lastRouteRef.current = pathname;
-
-    // Check cooldown
     const now = Date.now();
     const lastShown = cooldownRef.current[pathname] || 0;
     if (now - lastShown < ROUTE_COOLDOWN_MS) return;
-
-    // Check dismiss cooldown
     const lastDismiss = cooldownRef.current['__dismissed'] || 0;
     if (now - lastDismiss < DISMISS_COOLDOWN_MS) return;
 
-    // Delay before showing — let the page settle
     const timer = setTimeout(async () => {
       const result = await fetchRelevantKnowledge(pathname);
       if (result) {
@@ -144,15 +136,37 @@ export function ContextualKnowledgeWidget() {
     cooldownRef.current['__dismissed'] = Date.now();
   };
 
-  // Extract a 2-3 sentence micro-briefing from the content
+  const handleDeepDive = () => {
+    if (!nugget) return;
+    const prompt = `Explain the concept "${nugget.title}" in the context of ${nugget.domain.replace(/_/g, ' ')}. What is it, why does it matter for my current operations, and how should I apply it? Reference: ${nugget.citation}`;
+    // Navigate to home with the prompt as state so AEGIS picks it up
+    navigate('/', { state: { aegisPrompt: prompt } });
+    handleDismiss();
+  };
+
+  const getRouteLabel = (pathname: string): string => {
+    if (ROUTE_LABELS[pathname]) return ROUTE_LABELS[pathname];
+    for (const [route, label] of Object.entries(ROUTE_LABELS)) {
+      if (pathname.startsWith(route)) return label;
+    }
+    return 'current context';
+  };
+
+  // Plain-language summary: first 2 actionable sentences
   const getMicroBriefing = (content: string): string => {
     const sentences = content.split(/(?<=[.!?])\s+/).filter(s => s.length > 20);
-    // Find the most actionable sentences (containing thresholds, procedures, etc.)
-    const actionable = sentences.filter(s => 
+    const actionable = sentences.filter(s =>
       /\d+%|\d+\s*(hour|day|minute)|threshold|procedure|step|criteria|must|should|deploy|implement/i.test(s)
     );
     const selected = actionable.length >= 2 ? actionable.slice(0, 2) : sentences.slice(0, 2);
     return selected.join(' ');
+  };
+
+  // Generate a plain-language "why this matters" blurb
+  const getRelevanceExplanation = (nugget: KnowledgeNugget, pathname: string): string => {
+    const routeLabel = getRouteLabel(pathname);
+    const domain = nugget.domain.replace(/_/g, ' ');
+    return `This ${domain} concept is surfaced because it's directly relevant to your work in ${routeLabel}. Understanding it helps you make faster, more informed decisions on this page.`;
   };
 
   if (!visible || !nugget || dismissed) return null;
@@ -167,9 +181,9 @@ export function ContextualKnowledgeWidget() {
       <div className={cn(
         "rounded-xl border border-border/60 bg-card/95 backdrop-blur-md shadow-lg",
         "overflow-hidden transition-all duration-300",
-        expanded ? "max-h-[400px]" : "max-h-[120px]"
+        expanded ? "max-h-[520px]" : "max-h-[140px]"
       )}>
-        {/* Header — always visible */}
+        {/* Header */}
         <div className="flex items-center gap-2 px-3 py-2.5 bg-primary/5 border-b border-border/40">
           <div className="w-6 h-6 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
             <BookOpen className="h-3.5 w-3.5 text-primary" />
@@ -207,16 +221,35 @@ export function ContextualKnowledgeWidget() {
           <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
             {getMicroBriefing(nugget.content)}
           </p>
+          {!expanded && (
+            <button
+              onClick={() => setExpanded(true)}
+              className="text-[10px] text-primary hover:text-primary/80 mt-1 font-medium transition-colors"
+            >
+              Read more & deep dive ↓
+            </button>
+          )}
         </div>
 
         {/* Expanded content */}
         {expanded && (
           <div className="px-3 pb-3 border-t border-border/30">
-            <div className="mt-2 max-h-[240px] overflow-y-auto scrollbar-thin">
+            {/* Why this matters */}
+            <div className="mt-2 flex gap-2 items-start bg-accent/30 rounded-lg px-2.5 py-2">
+              <Lightbulb className="h-3.5 w-3.5 text-primary mt-0.5 flex-shrink-0" />
+              <p className="text-[11px] text-foreground/80 leading-relaxed">
+                {getRelevanceExplanation(nugget, location.pathname)}
+              </p>
+            </div>
+
+            {/* Full content */}
+            <div className="mt-2 max-h-[200px] overflow-y-auto scrollbar-thin">
               <p className="text-xs text-foreground/90 leading-relaxed whitespace-pre-line">
                 {nugget.content.length > 800 ? nugget.content.substring(0, 800) + '...' : nugget.content}
               </p>
             </div>
+
+            {/* Citation & confidence */}
             <div className="mt-2 flex items-center justify-between">
               <p className="text-[10px] text-muted-foreground/60 italic truncate max-w-[200px]">
                 {nugget.citation}
@@ -225,6 +258,17 @@ export function ContextualKnowledgeWidget() {
                 {(nugget.confidence_score * 100).toFixed(0)}% conf
               </span>
             </div>
+
+            {/* Deep Dive CTA */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full mt-3 h-8 text-xs gap-1.5 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary"
+              onClick={handleDeepDive}
+            >
+              <ArrowRight className="h-3 w-3" />
+              Deep Dive with AEGIS
+            </Button>
           </div>
         )}
       </div>
