@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
-import { History, AlertCircle, Trash2, ExternalLink, Clock, Calendar, Archive } from "lucide-react";
+import { History, AlertCircle, Trash2, ExternalLink, Clock, Calendar, Archive, ShieldCheck } from "lucide-react";
 import { formatDistanceToNow, isToday, isThisWeek, isThisMonth, differenceInDays } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
@@ -17,6 +17,7 @@ import { SignalScoreExplainer } from "./SignalScoreExplainer";
 import { toast } from "sonner";
 import { extractHttpUrl } from "@/lib/extractHttpUrl";
 import { useImplicitFeedback } from "@/hooks/useImplicitFeedback";
+import { getQualityInfo } from "@/hooks/useSignalQuality";
 
 
 // Helper to decode HTML entities and clean text
@@ -79,6 +80,9 @@ interface Signal {
   relevance_score?: number | null;
   media_urls?: string[];
   thumbnail_url?: string;
+  // Quality & feedback scores
+  quality_score?: number | null;
+  feedback_score?: number | null;
   sources?: {
     name: string;
     type: string;
@@ -201,6 +205,8 @@ export const SignalHistory = () => {
           engagement_metrics,
           media_urls,
           thumbnail_url,
+          quality_score,
+          feedback_score,
           clients (
             name
           )
@@ -630,6 +636,11 @@ export const SignalHistory = () => {
                 {updateCounts[signal.id] > 0 && (
                   <Badge variant="secondary" className="h-5 px-2 text-xs">
                     Updated · {updateCounts[signal.id]}
+                  </Badge>
+                )}
+                {signal.quality_score != null && signal.quality_score < 0.4 && (
+                  <Badge variant="outline" className="h-5 px-2 text-xs text-orange-500 border-orange-500/30" title={getQualityInfo(signal.quality_score).tooltip}>
+                    ⚠ Low Quality
                   </Badge>
                 )}
               </div>

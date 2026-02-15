@@ -8314,6 +8314,7 @@ export type Database = {
           entity_tags: string[] | null
           event_date: string | null
           expert_context: Json | null
+          feedback_score: number | null
           hashtags: string[] | null
           id: string
           information_accuracy: string | null
@@ -8327,6 +8328,7 @@ export type Database = {
           normalized_text: string | null
           post_caption: string | null
           proximity: number | null
+          quality_score: number | null
           raw_json: Json | null
           received_at: string
           relevance_score: number | null
@@ -8363,6 +8365,7 @@ export type Database = {
           entity_tags?: string[] | null
           event_date?: string | null
           expert_context?: Json | null
+          feedback_score?: number | null
           hashtags?: string[] | null
           id?: string
           information_accuracy?: string | null
@@ -8376,6 +8379,7 @@ export type Database = {
           normalized_text?: string | null
           post_caption?: string | null
           proximity?: number | null
+          quality_score?: number | null
           raw_json?: Json | null
           received_at?: string
           relevance_score?: number | null
@@ -8412,6 +8416,7 @@ export type Database = {
           entity_tags?: string[] | null
           event_date?: string | null
           expert_context?: Json | null
+          feedback_score?: number | null
           hashtags?: string[] | null
           id?: string
           information_accuracy?: string | null
@@ -8425,6 +8430,7 @@ export type Database = {
           normalized_text?: string | null
           post_caption?: string | null
           proximity?: number | null
+          quality_score?: number | null
           raw_json?: Json | null
           received_at?: string
           relevance_score?: number | null
@@ -10734,9 +10740,21 @@ export type Database = {
       }
       cleanup_old_errors: { Args: never; Returns: number }
       cleanup_processing_queue: { Args: never; Returns: number }
+      compute_signal_feedback_score: {
+        Args: { p_signal_id: string }
+        Returns: number
+      }
       enqueue_signal_processing: {
         Args: { priority_level?: number; signal_id: string }
         Returns: string
+      }
+      get_decayed_confidence: {
+        Args: {
+          p_base_confidence: number
+          p_created_at: string
+          p_last_validated_at: string
+        }
+        Returns: number
       }
       get_user_consortium_ids: { Args: { _user_id: string }; Returns: string[] }
       get_user_tenant_ids: { Args: { _user_id: string }; Returns: string[] }
@@ -10845,6 +10863,7 @@ export type Database = {
         }
         Returns: string
       }
+      refresh_signal_feedback_scores: { Args: never; Returns: number }
       restore_ai_messages: {
         Args: { message_ids: string[] }
         Returns: undefined

@@ -1084,6 +1084,21 @@ This correction was triggered because compliance score dropped below threshold. 
         return { action, finding, success: deleted > 0, details: `Cleaned ${deleted}/${orphaned.length} orphaned feedback events` };
       }
 
+      case 'refresh_feedback_scores': {
+        // Batch-refresh signal feedback scores from implicit_feedback_events
+        try {
+          const { data: result, error } = await supabase.rpc('refresh_signal_feedback_scores');
+          return {
+            action, finding, success: !error,
+            details: error
+              ? `Failed to refresh feedback scores: ${error.message}`
+              : `Refreshed feedback scores for ${result || 0} signals`,
+          };
+        } catch (err) {
+          return { action, finding, success: false, details: `Error: ${err instanceof Error ? err.message : err}` };
+        }
+      }
+
       case 'fix_stale_source_timestamps': {
         // Reset last_ingested_at for active sources that haven't ingested in over 7 days
         const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
