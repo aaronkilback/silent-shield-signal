@@ -14,8 +14,11 @@ import { toast } from "sonner";
 import { 
   ArrowLeft, Save, Plus, Trash2, Upload, Download, 
   FileText, Image as ImageIcon, Video, Music, File,
-  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X, MapPin, Map, Building2, MessageSquare, Zap
+  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X, MapPin, Map, Building2, MessageSquare, Zap, CalendarIcon, Clock
 } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 import { AutopilotPanel } from "@/components/investigations/AutopilotPanel";
 import { WorkspaceButton } from "@/components/workspace";
 import { format } from "date-fns";
@@ -49,7 +52,9 @@ const InvestigationDetail = () => {
   const [isAiGenerating, setIsAiGenerating] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [newEntry, setNewEntry] = useState("");
-  const [newEntryEventTime, setNewEntryEventTime] = useState("");
+  const [newEntryEventDate, setNewEntryEventDate] = useState<Date | undefined>();
+  const [newEntryEventHour, setNewEntryEventHour] = useState("12");
+  const [newEntryEventMinute, setNewEntryEventMinute] = useState("00");
   const [newPersonName, setNewPersonName] = useState("");
   const [newPersonStatus, setNewPersonStatus] = useState("witness");
   const [newPersonPhone, setNewPersonPhone] = useState("");
@@ -273,8 +278,10 @@ const InvestigationDetail = () => {
         created_by: user.id,
         created_by_name: profile?.name || user.email || 'Unknown',
       };
-      if (newEntryEventTime) {
-        insertData.event_time = new Date(newEntryEventTime).toISOString();
+      if (newEntryEventDate) {
+        const eventDate = new Date(newEntryEventDate);
+        eventDate.setHours(parseInt(newEntryEventHour), parseInt(newEntryEventMinute), 0, 0);
+        insertData.event_time = eventDate.toISOString();
       }
 
       const { error } = await supabase
@@ -284,7 +291,9 @@ const InvestigationDetail = () => {
       if (error) throw error;
 
       setNewEntry("");
-      setNewEntryEventTime("");
+      setNewEntryEventDate(undefined);
+      setNewEntryEventHour("12");
+      setNewEntryEventMinute("00");
       queryClient.invalidateQueries({ queryKey: ['investigation-entries', id] });
       toast.success("Entry added");
     } catch (error: any) {
@@ -1531,15 +1540,67 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     placeholder="Document investigative steps, findings, evidence..."
                     className="min-h-[100px]"
                   />
-                  <div className="flex items-end gap-3">
-                    <div className="flex-1 space-y-1">
+                  <div className="flex items-end gap-3 flex-wrap">
+                    <div className="space-y-1">
                       <label className="text-xs font-medium text-muted-foreground">Event occurred at (optional)</label>
-                      <Input
-                        type="datetime-local"
-                        value={newEntryEventTime}
-                        onChange={(e) => setNewEntryEventTime(e.target.value)}
-                        className="w-auto"
-                      />
+                      <div className="flex items-center gap-2">
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                "w-[180px] justify-start text-left font-normal",
+                                !newEntryEventDate && "text-muted-foreground"
+                              )}
+                            >
+                              <CalendarIcon className="mr-2 h-4 w-4" />
+                              {newEntryEventDate ? format(newEntryEventDate, "MMM dd, yyyy") : "Pick date"}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={newEntryEventDate}
+                              onSelect={setNewEntryEventDate}
+                              initialFocus
+                              className={cn("p-3 pointer-events-auto")}
+                            />
+                          </PopoverContent>
+                        </Popover>
+                        <div className="flex items-center gap-1">
+                          <Clock className="h-4 w-4 text-muted-foreground" />
+                          <Select value={newEntryEventHour} onValueChange={setNewEntryEventHour}>
+                            <SelectTrigger className="w-[70px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Array.from({ length: 24 }, (_, i) => (
+                                <SelectItem key={i} value={String(i).padStart(2, '0')}>
+                                  {String(i).padStart(2, '0')}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <span className="text-muted-foreground font-bold">:</span>
+                          <Select value={newEntryEventMinute} onValueChange={setNewEntryEventMinute}>
+                            <SelectTrigger className="w-[70px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Array.from({ length: 60 }, (_, i) => (
+                                <SelectItem key={i} value={String(i).padStart(2, '0')}>
+                                  {String(i).padStart(2, '0')}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {newEntryEventDate && (
+                          <Button variant="ghost" size="icon" onClick={() => { setNewEntryEventDate(undefined); setNewEntryEventHour("12"); setNewEntryEventMinute("00"); }}>
+                            <X className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
                     </div>
                     <Button onClick={addEntry} disabled={!newEntry.trim()}>
                       <Plus className="w-4 h-4 mr-2" />
