@@ -228,8 +228,8 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
       if (action === "mark_as_duplicate") {
         // Use the detect-duplicates function
         try {
-          const { error: detectError } = await supabaseClient.functions.invoke("detect-duplicates", {
-            body: { signal_ids }
+          const { error: detectError } = await supabaseClient.functions.invoke("signal-processor", {
+            body: { action: 'deduplicate', signal_ids }
           });
 
           if (detectError) {
@@ -3786,9 +3786,9 @@ serve(async (req) => {
       console.log(`Calling perform-impact-analysis for signal: ${signal_id}`);
       
       const { data: analysisResult, error: analysisError } = await supabaseClient.functions.invoke(
-        "perform-impact-analysis",
+        "intelligence-engine",
         {
-          body: { signal_id, threat_actor_id },
+          body: { action: 'impact-analysis', signal_id, threat_actor_id },
         }
       );
 
@@ -3839,9 +3839,10 @@ serve(async (req) => {
       console.log(`Proposing merge for primary signal: ${primary_signal_id} with ${duplicate_signal_ids.length} duplicates`);
       
       const { data: mergeProposal, error: mergeError } = await supabaseClient.functions.invoke(
-        "propose-signal-merge",
+        "signal-processor",
         {
           body: {
+            action: 'merge',
             primary_signal_id,
             duplicate_signal_ids,
             similarity_scores: similarity_scores || [],
@@ -3972,7 +3973,7 @@ serve(async (req) => {
       const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
       
       const ingestResponse = await fetch(
-        `${SUPABASE_URL}/functions/v1/ingest-signal`,
+        `${SUPABASE_URL}/functions/v1/signal-processor`,
         {
           method: "POST",
           headers: {
@@ -3980,6 +3981,7 @@ serve(async (req) => {
             "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
           },
           body: JSON.stringify({
+            action: 'ingest',
             text,
             client_id: resolvedClientId,
             severity,
@@ -4197,9 +4199,10 @@ The signal is now in the database with status 'triaged' and rules have been appl
       console.log(`Identifying failure points in: ${client_operation_flow} under scenario: ${threat_scenario}`);
       
       const { data: analysisResult, error: analysisError } = await supabaseClient.functions.invoke(
-        "identify-critical-failure-points",
+        "intelligence-engine",
         {
           body: {
+            action: 'critical-failure-points',
             client_operation_flow,
             threat_scenario,
           },
@@ -4231,9 +4234,10 @@ The signal is now in the database with status 'triaged' and rules have been appl
       console.log(`Generating ${format} briefing for incident: ${incident_id}`);
       
       const { data: briefingResult, error: briefingError } = await supabaseClient.functions.invoke(
-        "generate-incident-briefing",
+        "incident-manager",
         {
           body: {
+            action: 'generate-briefing',
             incident_id,
             format,
           },
@@ -4499,8 +4503,8 @@ The signal is now in the database with status 'triaged' and rules have been appl
       console.log(`Monitoring regulatory changes for ${jurisdiction}, ${industry_sector}`);
       
       const { data: regulatoryResult, error: regulatoryError } = await supabaseClient.functions.invoke(
-        "monitor-regulatory-changes",
-        { body: { jurisdiction, industry_sector } }
+        "osint-collector",
+        { body: { action: 'monitor-regulatory', jurisdiction, industry_sector } }
       );
 
       if (regulatoryError) {
@@ -6176,8 +6180,8 @@ The signal is now in the database with status 'triaged' and rules have been appl
     }
 
     case "auto_summarize_incidents": {
-      const { data, error } = await supabaseClient.functions.invoke('auto-summarize-incident', {
-        body: { incident_id: args.incident_id, batch_mode: args.batch_mode || false, limit: args.limit || 20 }
+      const { data, error } = await supabaseClient.functions.invoke('incident-manager', {
+        body: { action: 'summarize', incident_id: args.incident_id, batch_mode: args.batch_mode || false, limit: args.limit || 20 }
       });
       if (error) throw error;
       return data;
@@ -6192,8 +6196,8 @@ The signal is now in the database with status 'triaged' and rules have been appl
     }
 
     case "extract_signal_insights": {
-      const { data, error } = await supabaseClient.functions.invoke('extract-signal-insights', {
-        body: { signal_id: args.signal_id, batch_mode: args.batch_mode || false, limit: args.limit || 10 }
+      const { data, error } = await supabaseClient.functions.invoke('signal-processor', {
+        body: { action: 'extract-insights', signal_id: args.signal_id, batch_mode: args.batch_mode || false, limit: args.limit || 10 }
       });
       if (error) throw error;
       return data;
@@ -6563,7 +6567,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
     }
 
     case "analyze_sentiment_drift": {
-      const response = await supabaseClient.functions.invoke("analyze-sentiment-drift", { body: args });
+      const response = await supabaseClient.functions.invoke("intelligence-engine", { body: { action: 'sentiment-drift', ...args } });
       if (response.error) return { error: response.error.message };
       return response.data;
     }
