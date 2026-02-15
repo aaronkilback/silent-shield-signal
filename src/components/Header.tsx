@@ -46,6 +46,29 @@ export const Header = () => {
     refetchInterval: 30000
   });
 
+  // Get pending approvals count (monitoring proposals + rule proposals)
+  const { data: pendingApprovals } = useQuery({
+    queryKey: ['pending-approvals-count'],
+    queryFn: async () => {
+      const [monitoringRes, rulesRes] = await Promise.all([
+        supabase
+          .from('monitoring_proposals')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'pending'),
+        supabase
+          .from('intelligence_config')
+          .select('*', { count: 'exact', head: true })
+          .like('key', 'signal_categorization_rules_proposal_%')
+      ]);
+      
+      const monitoringCount = monitoringRes.count || 0;
+      // Filter rule proposals that are actually pending (status check done client-side since it's in JSONB)
+      const rulesCount = rulesRes.count || 0;
+      return monitoringCount + rulesCount;
+    },
+    refetchInterval: 30000
+  });
+
   // Primary nav items (always visible)
   const primaryItems = [
     { path: "/", icon: Home, label: "Dashboard" },
@@ -77,7 +100,7 @@ export const Header = () => {
   // Admin dropdown items (consolidated)
   const adminItems = [
     { path: "/integrations", icon: Plug, label: "Integrations" },
-    { path: "/rule-approvals", icon: CheckCircle, label: "Rules" },
+    { path: "/rule-approvals", icon: CheckCircle, label: "Rules", badge: pendingApprovals },
     { path: "/bug-reports", icon: Bug, label: "Bugs" },
     ...((isSuperAdmin || isAdmin) ? [{ path: "/user-management", icon: UserCog, label: "Users" }] : []),
     ...(isSuperAdmin ? [
