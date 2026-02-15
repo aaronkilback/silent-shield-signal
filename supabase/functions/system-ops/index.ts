@@ -16,6 +16,7 @@
  */
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import type { SystemOpsAction, HealthCheckResult as SharedHealthCheckResult, HealthStatus, DomainRequest } from "../_shared/types.ts";
 
 // ═══════════════════════════════════════════════════════════════
 //                      ACTION ROUTER
