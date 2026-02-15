@@ -449,7 +449,7 @@ async function taskSignalCrossref(supabase: any, investigation: any) {
   if (investigation.client_id) {
     const { data: clientSignals } = await supabase
       .from("signals")
-      .select("id, title, severity, category, created_at, source_type")
+      .select("id, title, severity, category, created_at, signal_type")
       .eq("client_id", investigation.client_id)
       .gte("created_at", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString())
       .order("created_at", { ascending: false })
@@ -463,7 +463,7 @@ async function taskSignalCrossref(supabase: any, investigation: any) {
     const keywordFilter = keywords.slice(0, 5).map((k: string) => `title.ilike.%${k}%`).join(",");
     const { data: keywordSignals } = await supabase
       .from("signals")
-      .select("id, title, severity, category, created_at, source_type")
+      .select("id, title, severity, category, created_at, signal_type")
       .or(keywordFilter)
       .gte("created_at", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString())
       .order("severity", { ascending: false })
@@ -489,7 +489,7 @@ async function taskSignalCrossref(supabase: any, investigation: any) {
     ...relatedSignals.slice(0, 15).map((s: any) => ({
       type: "related_signal",
       title: s.title || "Untitled signal",
-      detail: `Severity: ${s.severity || "unknown"} | Category: ${s.category || "uncategorized"} | Source: ${s.source_type || "unknown"} | ${new Date(s.created_at).toLocaleDateString()}`,
+      detail: `Severity: ${s.severity || "unknown"} | Category: ${s.category || "uncategorized"} | Source: ${s.signal_type || "unknown"} | ${new Date(s.created_at).toLocaleDateString()}`,
       severity: s.severity === "critical" || s.severity === "high" ? "high" : s.severity === "medium" ? "medium" : "low",
       signal_id: s.id,
     })),
@@ -636,7 +636,7 @@ async function taskTimelineConstruction(supabase: any, investigation: any) {
   if (investigation.client_id) {
     const { data: signals } = await supabase
       .from("signals")
-      .select("title, created_at, severity, source_type")
+      .select("title, created_at, severity, signal_type")
       .eq("client_id", investigation.client_id)
       .gte("created_at", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString())
       .order("created_at", { ascending: true })
@@ -646,7 +646,7 @@ async function taskTimelineConstruction(supabase: any, investigation: any) {
       events.push({
         timestamp: s.created_at,
         type: "signal",
-        content: `[${s.severity || "unknown"}] ${s.title || "Signal detected"} (${s.source_type})`,
+        content: `[${s.severity || "unknown"}] ${s.title || "Signal detected"} (${s.signal_type || "unknown"})`,
       });
     }
   }

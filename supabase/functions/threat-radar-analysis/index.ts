@@ -368,7 +368,7 @@ Provide concise, actionable intelligence assessments focused on proactive threat
           type: 'radical_signal',
           title: s.normalized_text?.substring(0, 100),
           severity: s.severity,
-          source: s.source_type
+          source: s.signal_type
         })),
         ...existingPrecursors.slice(0, 5).map((p: any) => ({
           type: 'precursor',

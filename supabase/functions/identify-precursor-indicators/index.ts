@@ -17,7 +17,7 @@ Deno.serve(async (req) => {
     // Gather multi-source intelligence
     const { data: recentSignals } = await supabaseClient
       .from('signals')
-      .select('id, normalized_text, rule_category, rule_tags, source_type, priority, created_at')
+      .select('id, normalized_text, rule_category, rule_tags, signal_type, priority, created_at')
       .eq('client_id', client_id)
       .gte('created_at', timeframeCutoff)
       .order('created_at', { ascending: false })
@@ -38,7 +38,7 @@ Deno.serve(async (req) => {
     // Categorize signals by source type
     const signalsBySource: Record<string, any[]> = {};
     recentSignals?.forEach(signal => {
-      const source = signal.source_type || 'unknown';
+      const source = signal.signal_type || 'unknown';
       if (!signalsBySource[source]) signalsBySource[source] = [];
       signalsBySource[source].push(signal);
     });
@@ -61,7 +61,7 @@ Recent Intelligence (${timeframe_hours} hours):
 
 High-priority signals sample:
 ${recentSignals?.filter(s => s.priority === 'high' || s.priority === 'critical').slice(0, 10).map(s => 
-  `- [${s.source_type}] ${s.rule_category}: ${s.normalized_text?.substring(0, 150)}`
+  `- [${s.signal_type}] ${s.rule_category}: ${s.normalized_text?.substring(0, 150)}`
 ).join('\n')}
 
 Identify:
