@@ -7,6 +7,7 @@ import { logError } from "../_shared/error-logger.ts";
 import { AEGIS_CORE_IDENTITY, AEGIS_CHAT_MODIFIERS, ANTI_FABRICATION_RULES, TOOL_USAGE_GUIDANCE, AEGIS_CAPABILITY_MANIFEST, getTimeContext } from "../_shared/aegis-persona.ts";
 import { getLearningPromptBlock, getSystemHealthMetrics } from "../_shared/learning-context-builder.ts";
 import { FORTRESS_PLATFORM_OVERVIEW, FORTRESS_AEGIS_CAPABILITIES, FORTRESS_WORKFLOW_INSTRUCTIONS, AEGIS_TOOL_SUMMARIZER_PROMPT, AEGIS_REPORT_PRESENTER_PROMPT, AEGIS_AGENT_CREATION_PROMPT, AEGIS_DATA_PRESENTER_PROMPT } from "../_shared/fortress-operational-prompt.ts";
+import { FORTRESS_CORE_DIRECTIVE } from "../_shared/fortress-core-directive.ts";
 import { aegisToolDefinitions } from "../_shared/aegis-tool-definitions.ts";
 import { extractPlannedTestSignalFromText, extractPlannedFortressQueryFromText, extractPlannedAgentFromText } from "../_shared/aegis-forced-execution.ts";
 import { signalsAndIncidentsHandlers } from "../_shared/handlers-signals-incidents.ts";
@@ -149,6 +150,8 @@ function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavior
   const timeContext = getTimeContext();
   
   return `${AEGIS_CORE_IDENTITY}
+
+${FORTRESS_CORE_DIRECTIVE}
 
 ${AEGIS_CAPABILITY_MANIFEST}
 
