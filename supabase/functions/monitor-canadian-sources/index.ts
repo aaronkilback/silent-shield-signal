@@ -370,6 +370,17 @@ async function createSignal(supabaseClient: any, data: {
   relevance_reasons: string[];
 }) {
   try {
+    // Extract event_date from published_date
+    let eventDate: string | null = null;
+    if (data.published_date) {
+      try {
+        const parsed = new Date(data.published_date);
+        if (!isNaN(parsed.getTime())) {
+          eventDate = parsed.toISOString();
+        }
+      } catch { /* ignore */ }
+    }
+
     const { error } = await supabaseClient
       .from('signals')
       .insert({
@@ -390,7 +401,8 @@ async function createSignal(supabaseClient: any, data: {
           relevance_reasons: data.relevance_reasons
         },
         confidence: data.relevance_score,
-        received_at: new Date().toISOString()
+        received_at: new Date().toISOString(),
+        event_date: eventDate
       });
 
     if (error) {

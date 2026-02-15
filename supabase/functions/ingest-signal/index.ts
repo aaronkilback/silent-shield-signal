@@ -788,6 +788,18 @@ Is this signal actionable intelligence for this specific client?`
       ? 'low_confidence' 
       : 'new';
     
+    // Extract event_date from raw metadata if available
+    let eventDate: string | null = null;
+    const rawPubDate = signalRaw?.pubDate || signalRaw?.published_date || signalRaw?.published || signalRaw?.date;
+    if (rawPubDate) {
+      try {
+        const parsed = new Date(rawPubDate);
+        if (!isNaN(parsed.getTime())) {
+          eventDate = parsed.toISOString();
+        }
+      } catch { /* ignore */ }
+    }
+
     // Insert signal WITH content_hash and title from the start
     // Include match metadata for audit trail and potential re-assignment
     const { data: signal, error: insertError } = await supabase
@@ -814,7 +826,8 @@ Is this signal actionable intelligence for this specific client?`
         relevance_score: relevanceResult.score,
         status: signalStatus,
         is_test: is_test || false,
-        content_hash: contentHash
+        content_hash: contentHash,
+        event_date: eventDate
       })
       .select()
       .single();
