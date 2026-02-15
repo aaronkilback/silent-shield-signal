@@ -711,9 +711,13 @@ Extract all entities, signals, and their relationships.`
         // Extract event date from document content, with AI-extracted date as fallback
         const sourceUrl = document.source_url || document.metadata?.url || '';
         const contentText = `${document.raw_text || ''} ${document.post_caption || ''}`;
+        // Check post_date, then metadata.published_date (from RSS pubDate), then content extraction
+        const metaPubDate = document.metadata?.published_date || document.metadata?.pubDate;
         let eventDate = document.post_date 
           ? new Date(document.post_date)
-          : extractPublicationDate(contentText, sourceUrl);
+          : metaPubDate
+            ? (() => { try { const d = new Date(metaPubDate); return isNaN(d.getTime()) ? null : d; } catch { return null; } })()
+            : extractPublicationDate(contentText, sourceUrl);
         
         // If no date extracted from text, use AI-estimated event date
         if (!eventDate && signal.estimated_event_date) {

@@ -135,6 +135,20 @@ Deno.serve(async (req) => {
               severity = 'low';
             }
 
+            // Extract event_date from snippet date patterns (e.g., "Jan 15, 2025", "2025-03-01")
+            let eventDate: string | null = null;
+            const snippetText = item.snippet || '';
+            const dateMatch = snippetText.match(/(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}\b)/i)
+              || snippetText.match(/(\d{4}-\d{2}-\d{2})/);
+            if (dateMatch) {
+              try {
+                const parsed = new Date(dateMatch[1]);
+                if (!isNaN(parsed.getTime())) {
+                  eventDate = parsed.toISOString();
+                }
+              } catch { /* ignore */ }
+            }
+
             // Create signal
             const { error: signalError } = await supabase
               .from('signals')
@@ -154,7 +168,8 @@ Deno.serve(async (req) => {
                   matched_client: client.name
                 },
                 status: 'new',
-                confidence: 0.85
+                confidence: 0.85,
+                event_date: eventDate
               });
 
             if (!signalError) {
