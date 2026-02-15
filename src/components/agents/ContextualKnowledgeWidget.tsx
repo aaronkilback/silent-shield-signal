@@ -18,13 +18,13 @@ interface KnowledgeNugget {
 
 // Map routes to relevant knowledge domains/keywords
 const ROUTE_CONTEXT_MAP: Record<string, { domains: string[]; keywords: string[] }> = {
-  '/incidents': { domains: ['crisis_management', 'cyber'], keywords: ['incident', 'response', 'escalation', 'triage'] },
-  '/signals': { domains: ['threat_intelligence', 'osint', 'cyber'], keywords: ['signal', 'threat', 'detection', 'anomaly'] },
+  '/incidents': { domains: ['crisis_management', 'physical_security'], keywords: ['incident', 'response', 'escalation', 'triage'] },
+  '/signals': { domains: ['threat_intelligence', 'osint'], keywords: ['signal', 'threat', 'detection', 'anomaly'] },
   '/investigations': { domains: ['investigations', 'financial_crime', 'counterintelligence'], keywords: ['investigation', 'forensic', 'evidence'] },
   '/entities': { domains: ['osint', 'counterintelligence'], keywords: ['entity', 'surveillance', 'profile'] },
   '/travel': { domains: ['travel_security', 'executive_protection'], keywords: ['travel', 'route', 'protection', 'surveillance'] },
-  '/threat-radar': { domains: ['threat_intelligence', 'geopolitical', 'cyber'], keywords: ['threat', 'forecast', 'risk', 'trend'] },
-  '/reports': { domains: ['compliance', 'threat_intelligence'], keywords: ['report', 'briefing', 'assessment'] },
+  '/threat-radar': { domains: ['threat_intelligence', 'crisis_management'], keywords: ['threat', 'forecast', 'risk', 'trend'] },
+  '/reports': { domains: ['compliance', 'corporate_security'], keywords: ['report', 'briefing', 'assessment'] },
   '/clients': { domains: ['executive_protection', 'physical_security'], keywords: ['client', 'protection', 'risk'] },
   '/vip-deep-scan': { domains: ['osint', 'executive_protection', 'counterintelligence'], keywords: ['osint', 'scan', 'exposure', 'surveillance'] },
   '/matching-dashboard': { domains: ['investigations', 'financial_crime'], keywords: ['matching', 'correlation', 'pattern'] },
