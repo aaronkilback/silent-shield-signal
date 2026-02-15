@@ -241,82 +241,8 @@ Deno.serve(async (req) => {
     }
 
     // ========== SCHEDULED BRIEFINGS ==========
-    for (const briefing of (scheduledBriefings || [])) {
-      // Check if it's time to run (simple: check if last_run was > 23h ago for daily)
-      if (briefing.last_run_at) {
-        const hoursSinceLastRun = (Date.now() - new Date(briefing.last_run_at).getTime()) / 3600000;
-        if (hoursSinceLastRun < 23) continue;
-      }
-
-      console.log(`[AutonomousLoop] Generating scheduled briefing: ${briefing.title}`);
-
-      try {
-        const scheduledResult = await callAiGateway({
-          model: 'google/gemini-3-flash-preview',
-          messages: [
-            {
-              role: 'system',
-              content: `You are AEGIS, generating a scheduled ${briefing.briefing_type} briefing. Use the Silent Shield Executive Briefing format: Core Signal, Key Observations, Analytical Assessment, Recommended Actions. Keep it under 300 words. Professional, measured tone. Current date: ${dateContext.currentDateISO}.`,
-            },
-            {
-              role: 'user',
-              content: `Generate a ${briefing.briefing_type} briefing.\n\n24-HOUR METRICS:\n${JSON.stringify(metrics, null, 2)}\n\nLATEST SCAN:\n${JSON.stringify(latestScan?.findings || {}, null, 2)}\n\nHIGH-RISK SIGNALS:\n${JSON.stringify((highRiskScores || []).slice(0, 10), null, 2)}`,
-            },
-          ],
-          functionName: 'autonomous-operations-loop',
-          extraBody: { max_tokens: 1000, temperature: 0.3 },
-        });
-
-        if (scheduledResult.content) {
-          const briefingContent = scheduledResult.content;
-
-          // Store as audio briefing record for playback
-          for (const userId of briefing.recipient_user_ids || []) {
-            await supabase.from('audio_briefings').insert({
-              title: `${briefing.title} - ${dateContext.currentDateISO}`,
-              source_type: 'scheduled_briefing',
-              content_text: briefingContent,
-              user_id: userId,
-              status: 'text_ready',
-            });
-          }
-
-          // Send email if configured
-          for (const email of briefing.recipient_emails || []) {
-            await supabase.functions.invoke('send-notification-email', {
-              body: {
-                to: email,
-                type: 'scheduled_briefing',
-                data: {
-                  title: briefing.title,
-                  briefing: briefingContent,
-                  metrics,
-                  date: dateContext.currentDateISO,
-                },
-              },
-            });
-          }
-
-          await supabase.from('scheduled_briefings').update({
-            last_run_at: new Date().toISOString(),
-          }).eq('id', briefing.id);
-
-          actionsLog.push({
-            action_type: 'scheduled_briefing_generated',
-            trigger_source: 'cron',
-            trigger_id: briefing.id,
-            action_details: {
-              title: briefing.title,
-              recipients: briefing.recipient_user_ids?.length || 0,
-              content_length: briefingContent.length,
-            },
-            status: 'completed',
-          });
-        }
-      } catch (err) {
-        console.error(`[AutonomousLoop] Scheduled briefing error:`, err);
-      }
-    }
+    // Briefings are handled exclusively by the dedicated `send-daily-briefing` cron job
+    // to prevent duplicate delivery. See cron: daily-email-briefing (0 13 * * *).
 
     // ========== PHASE 4: LOG ALL ACTIONS ==========
     if (actionsLog.length > 0) {
