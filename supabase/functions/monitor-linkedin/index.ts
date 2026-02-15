@@ -1,6 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-// Activism and protest-related keywords
 const ACTIVISM_KEYWORDS = [
   'protest', 'pipeline', 'activist', 'demonstration', 'blockade',
   'environmental', 'climate', 'indigenous rights', 'first nation',
@@ -8,102 +7,105 @@ const ACTIVISM_KEYWORDS = [
   'campaign', 'PRGT', 'LNG', 'Coastal GasLink', 'CGL'
 ];
 
+const MAX_SEARCHES = 12;
+const FUNCTION_TIMEOUT_MS = 50000; // 50s hard ceiling (gateway is 60s)
+
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
+  const globalDeadline = Date.now() + FUNCTION_TIMEOUT_MS;
+
   try {
     const supabase = createServiceClient();
-
     console.log('Starting LinkedIn monitoring scan...');
 
-    // Fetch clients with monitoring keywords
-    const { data: clients, error: clientsError } = await supabase
-      .from('clients')
-      .select('id, name, organization, industry, monitoring_keywords, locations');
+    const [{ data: clients, error: clientsError }, { data: watchedEntities, error: entitiesError }] = await Promise.all([
+      supabase.from('clients').select('id, name, organization, industry, monitoring_keywords, locations'),
+      supabase.from('entities')
+        .select('id, name, type, aliases, risk_level, active_monitoring_enabled')
+        .or('risk_level.eq.high,risk_level.eq.critical,active_monitoring_enabled.eq.true')
+        .in('type', ['organization', 'person']),
+    ]);
 
     if (clientsError) throw clientsError;
+    if (entitiesError) console.error('Error fetching entities:', entitiesError);
 
-    // Fetch high-risk/monitored entities (activist groups, threat actors, etc.)
-    const { data: watchedEntities, error: entitiesError } = await supabase
-      .from('entities')
-      .select('id, name, type, aliases, risk_level, active_monitoring_enabled')
-      .or('risk_level.eq.high,risk_level.eq.critical,active_monitoring_enabled.eq.true')
-      .in('type', ['organization', 'person']);
-
-    if (entitiesError) {
-      console.error('Error fetching entities:', entitiesError);
-    }
-
-    console.log(`Monitoring LinkedIn for ${clients?.length || 0} clients and ${watchedEntities?.length || 0} watched entities`);
+    console.log(`Monitoring LinkedIn for ${clients?.length || 0} clients, ${watchedEntities?.length || 0} watched entities`);
 
     let signalsCreated = 0;
     let totalSearches = 0;
+    let rateLimited = false;
     const processedUrls = new Set<string>();
 
     // PART 1: Client-focused searches
     for (const client of clients || []) {
+      if (rateLimited || totalSearches >= MAX_SEARCHES || Date.now() > globalDeadline) break;
+
       try {
-        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
-        
-        const searchQueries: string[] = [];
-        
-        // Build search query with client keywords
-        const keywords = client.monitoring_keywords && client.monitoring_keywords.length > 0
+        await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 1000));
+
+        const keywords = client.monitoring_keywords?.length > 0
           ? client.monitoring_keywords.slice(0, 3).join(' OR ')
           : '(pipeline OR LNG OR energy)';
-        
-        searchQueries.push(`site:linkedin.com "${client.name}" ${keywords}`);
-        
-        // Client name + activism/protest terms
-        searchQueries.push(`site:linkedin.com "${client.name}" (protest OR activist OR opposition OR blockade)`);
+
+        const searchQueries = [
+          `site:linkedin.com "${client.name}" ${keywords}`,
+          `site:linkedin.com "${client.name}" (protest OR activist OR opposition OR blockade)`,
+        ];
 
         for (const query of searchQueries) {
+          if (rateLimited || totalSearches >= MAX_SEARCHES || Date.now() > globalDeadline) break;
           totalSearches++;
-          await processSearch(supabase, query, client.id, client.name, 'client', processedUrls, client.monitoring_keywords || [], (count) => signalsCreated += count);
+          const result = await processSearch(supabase, query, client.id, client.name, 'client', processedUrls, client.monitoring_keywords || [], entityId => signalsCreated += entityId);
+          if (result === 'rate_limited') {
+            rateLimited = true;
+            console.log('Rate limited — stopping all LinkedIn searches');
+            break;
+          }
         }
 
-        console.log(`Processed LinkedIn mentions for ${client.name}`);
-
+        if (!rateLimited) console.log(`Processed LinkedIn mentions for ${client.name}`);
       } catch (error) {
-        if (error instanceof Error && error.name === 'AbortError') {
-          console.log(`LinkedIn search timeout for ${client.name}`);
-        } else {
-          console.error(`Error monitoring LinkedIn for ${client.name}:`, error);
-        }
+        console.error(`Error monitoring LinkedIn for ${client.name}:`, error);
       }
     }
 
-    // PART 2: Entity-focused searches (activist groups, threat actors, etc.)
+    // PART 2: Entity-focused searches
     for (const entity of watchedEntities || []) {
+      if (rateLimited || totalSearches >= MAX_SEARCHES || Date.now() > globalDeadline) break;
+
       try {
-        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
-        
-        const searchQueries: string[] = [];
-        
-        // Entity name + pipeline/energy project terms
-        searchQueries.push(`site:linkedin.com "${entity.name}" (pipeline OR LNG OR "Coastal GasLink" OR PRGT OR energy)`);
-        
-        // Include aliases
-        if (entity.aliases && entity.aliases.length > 0) {
+        await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 1000));
+
+        const searchQueries = [
+          `site:linkedin.com "${entity.name}" (pipeline OR LNG OR "Coastal GasLink" OR PRGT OR energy)`,
+        ];
+
+        if (entity.aliases?.length > 0) {
           for (const alias of entity.aliases.slice(0, 2)) {
             searchQueries.push(`site:linkedin.com "${alias}" (pipeline OR protest)`);
           }
         }
 
         for (const query of searchQueries) {
+          if (rateLimited || totalSearches >= MAX_SEARCHES || Date.now() > globalDeadline) break;
           totalSearches++;
-          await processSearch(supabase, query, null, entity.name, 'entity', processedUrls, [], (count) => signalsCreated += count, entity.id);
+          const result = await processSearch(supabase, query, null, entity.name, 'entity', processedUrls, [], count => signalsCreated += count, entity.id);
+          if (result === 'rate_limited') {
+            rateLimited = true;
+            console.log('Rate limited — stopping all LinkedIn searches');
+            break;
+          }
         }
 
-        console.log(`Processed LinkedIn mentions for entity: ${entity.name}`);
-
+        if (!rateLimited) console.log(`Processed LinkedIn mentions for entity: ${entity.name}`);
       } catch (error) {
         console.error(`Error monitoring LinkedIn for entity ${entity.name}:`, error);
       }
     }
 
-    console.log(`LinkedIn monitoring complete. Ran ${totalSearches} searches. Created ${signalsCreated} signals.`);
+    console.log(`LinkedIn monitoring complete. Ran ${totalSearches} searches. Created ${signalsCreated} signals.${rateLimited ? ' (ended early: rate limited)' : ''}${Date.now() > globalDeadline ? ' (ended early: timeout)' : ''}`);
 
     return successResponse({
       success: true,
@@ -111,6 +113,7 @@ Deno.serve(async (req) => {
       entities_scanned: watchedEntities?.length || 0,
       searches_executed: totalSearches,
       signals_created: signalsCreated,
+      rate_limited: rateLimited,
       source: 'linkedin'
     });
 
@@ -130,13 +133,13 @@ async function processSearch(
   monitoringKeywords: string[],
   onSignalCreated: (count: number) => void,
   entityId?: string
-) {
+): Promise<'ok' | 'rate_limited'> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 12000);
 
   try {
     console.log(`LinkedIn search: ${query.substring(0, 80)}...`);
-    
+
     const response = await fetch(
       `https://www.google.com/search?q=${encodeURIComponent(query)}&num=10`,
       {
@@ -152,23 +155,22 @@ async function processSearch(
     if (!response.ok) {
       console.log(`LinkedIn search failed: ${response.status}`);
       if (response.status === 429) {
-        await new Promise(resolve => setTimeout(resolve, 30000));
+        console.log('Google API rate limited — ending LinkedIn scan early');
+        return 'rate_limited';
       }
-      return;
+      return 'ok';
     }
 
     const html = await response.text();
     const textLower = html.toLowerCase();
 
-    // Check for keyword matches
     let foundKeywords: string[] = [];
     if (monitoringKeywords.length > 0) {
-      foundKeywords = monitoringKeywords.filter((kw: string) => 
+      foundKeywords = monitoringKeywords.filter((kw: string) =>
         textLower.includes(kw.toLowerCase())
       );
     }
 
-    // Also check activism keywords
     const foundActivismKeywords = ACTIVISM_KEYWORDS.filter(k => textLower.includes(k.toLowerCase()));
 
     if (foundKeywords.length > 0 || foundActivismKeywords.length > 0 || textLower.includes(sourceName.toLowerCase())) {
@@ -176,23 +178,20 @@ async function processSearch(
 
       const resultMatches = html.matchAll(/<div class="g"[^>]*>(.*?)<\/div>/gs);
 
-      for (const match of Array.from(resultMatches).slice(0, 5)) {
+      for (const match of Array.from(resultMatches).slice(0, 3)) {
         const text = match[1]
           .replace(/<[^>]+>/g, ' ')
           .replace(/&[^;]+;/g, ' ')
           .replace(/\s+/g, ' ')
           .trim();
 
-        // Extract LinkedIn URL
         const urlMatch = text.match(/linkedin\.com\/[^\s"'<>]+/);
         const linkedinUrl = urlMatch ? `https://${urlMatch[0]}` : null;
 
-        // Skip duplicates
         if (linkedinUrl && processedUrls.has(linkedinUrl)) continue;
         if (linkedinUrl) processedUrls.add(linkedinUrl);
 
         if (text.length > 30) {
-          // Check for DB duplicates
           const { data: existing } = await supabase
             .from('ingested_documents')
             .select('id')
@@ -200,12 +199,8 @@ async function processSearch(
             .ilike('raw_text', `%${text.substring(0, 50)}%`)
             .limit(1);
 
-          if (existing && existing.length > 0) {
-            console.log('Skipping duplicate LinkedIn content');
-            continue;
-          }
+          if (existing && existing.length > 0) continue;
 
-          // Determine category
           const lowerText = text.toLowerCase();
           let category = 'social_media';
           if (lowerText.includes('protest') || lowerText.includes('blockade') || lowerText.includes('demonstration')) {
@@ -214,7 +209,6 @@ async function processSearch(
             category = 'activism';
           }
 
-          // Create ingested document
           const { data: doc, error: docError } = await supabase
             .from('ingested_documents')
             .insert({
@@ -229,7 +223,7 @@ async function processSearch(
                 source_name: sourceName,
                 search_type: sourceType,
                 search_query: query,
-                category: category,
+                category,
                 matched_keywords: [...foundKeywords, ...foundActivismKeywords]
               }
             })
@@ -237,35 +231,29 @@ async function processSearch(
             .single();
 
           if (!docError && doc) {
-            // Link to entity if applicable
             if (entityId) {
-              await supabase
-                .from('document_entity_mentions')
-                .insert({
-                  document_id: doc.id,
-                  entity_id: entityId,
-                  confidence: 0.85,
-                  mention_text: sourceName
-                });
+              await supabase.from('document_entity_mentions').insert({
+                document_id: doc.id, entity_id: entityId,
+                confidence: 0.85, mention_text: sourceName
+              });
             }
-
-            // Invoke intelligence processing
             await supabase.functions.invoke('process-intelligence-document', {
               body: { documentId: doc.id }
             });
             onSignalCreated(1);
-            console.log(`✓ Ingested LinkedIn ${category} content: ${sourceName} (keywords: ${[...foundKeywords, ...foundActivismKeywords].join(', ')})`);
+            console.log(`✓ Ingested LinkedIn ${category} content: ${sourceName}`);
           }
         }
       }
-    } else {
-      console.log(`- No keyword matches found for ${sourceName}`);
     }
+
+    return 'ok';
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      console.log(`LinkedIn search timeout`);
+      console.log('LinkedIn search timeout');
     } else {
       throw error;
     }
+    return 'ok';
   }
 }
