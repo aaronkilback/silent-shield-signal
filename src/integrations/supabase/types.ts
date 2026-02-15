@@ -5691,6 +5691,7 @@ export type Database = {
           id: string
           incident_id: string | null
           information: string | null
+          intake_email_tag: string | null
           maximo_number: string | null
           police_file_number: string | null
           prepared_by: string | null
@@ -5709,6 +5710,7 @@ export type Database = {
           id?: string
           incident_id?: string | null
           information?: string | null
+          intake_email_tag?: string | null
           maximo_number?: string | null
           police_file_number?: string | null
           prepared_by?: string | null
@@ -5727,6 +5729,7 @@ export type Database = {
           id?: string
           incident_id?: string | null
           information?: string | null
+          intake_email_tag?: string | null
           maximo_number?: string | null
           police_file_number?: string | null
           prepared_by?: string | null
