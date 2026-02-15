@@ -108,6 +108,14 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - TELEMETRY: Check function deployment, orphaned communication records, message delivery failures
 - REMEDIATION: fix_orphaned_comms (clean comms referencing deleted investigations)
 
+### Investigation Autopilot (NEW)
+- AI-driven autonomous investigation workflow: entity extraction, signal cross-ref, pattern matching, timeline, risk assessment
+- Sessions track overall autopilot runs; tasks track individual steps
+- Tasks use signal_type (NOT source_type) when querying signals table
+- EXPECTED: No tasks stuck in 'running' for >30 min. No orphaned tasks without session_id. Session completed_tasks <= total_tasks.
+- TELEMETRY: Check for stalled tasks, orphaned tasks, session integrity
+- REMEDIATION: fix_stalled_autopilot_tasks (mark stalled tasks as 'failed'), fix_orphaned_autopilot_tasks (delete tasks with no session)
+
 ### Bug Scan Integration
 - The E2E test suite runs periodic scans covering 200+ tests
 - Bug reports created from scan failures contain recurring patterns
@@ -116,6 +124,8 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
   - "stale sources" → fix_stale_source_timestamps + stale_sources_rescan
   - "missing relationship type" → info only (requires code fix)
   - "invalid investigator references" → fix_orphaned_comms
+  - "stalled autopilot" → fix_stalled_autopilot_tasks
+  - "orphaned autopilot" → fix_orphaned_autopilot_tasks
 - EXPECTED: Bug count trends downward as self-healing improves
 - REMEDIATION: Auto-fix data issues, log code-level issues for human review
 
@@ -146,13 +156,13 @@ Respond with ONLY valid JSON (no markdown):
   "severity": "healthy" | "monitoring" | "degraded" | "critical",
   "findings": [
     {
-      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan" | "Communications",
+      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan" | "Communications" | "Investigation Autopilot",
       "severity": "critical" | "warning" | "info",
       "title": "Short title",
       "analysis": "What you observed and WHY it matters (2-3 sentences). Reference learnings if relevant.",
       "recommendation": "What action to take. If past remediations failed, suggest alternatives.",
       "canAutoRemediate": true/false,
-      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "fix_orphaned_feedback" | "fix_stale_source_timestamps" | "fix_orphaned_comms" | "none",
+      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "fix_orphaned_feedback" | "fix_stale_source_timestamps" | "fix_orphaned_comms" | "fix_stalled_autopilot_tasks" | "fix_orphaned_autopilot_tasks" | "none",
       "isRecurring": true/false,
       "learningNote": "What you learned about this issue from history (or 'First occurrence')",
       "thresholdAdjustment": null | { "metric": "string", "currentValue": number, "suggestedValue": number, "reason": "string" }
@@ -254,6 +264,13 @@ interface TelemetryData {
     orphanedComms: number;
     failedDeliveries: number;
     activeInvestigatorThreads: number;
+  };
+  autopilot: {
+    totalSessions: number;
+    activeSessions: number;
+    stalledTasks: number;
+    orphanedTasks: number;
+    recentCompletedSessions: number;
   };
   historicalBaseline: { avgDailySignals: number; avgWeeklyBugs: number };
   adaptiveThresholds: AdaptiveThresholds;
@@ -566,6 +583,8 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     if (title.includes('relationship') || title.includes('schema')) recurringPatterns.push('schema_mismatch');
     if (title.includes('itinerar')) recurringPatterns.push('itinerary_test');
     if (title.includes('integrity')) recurringPatterns.push('data_integrity');
+    if (title.includes('autopilot') && title.includes('stall')) recurringPatterns.push('stalled_autopilot');
+    if (title.includes('autopilot') && title.includes('orphan')) recurringPatterns.push('orphaned_autopilot');
   }
 
   const categoryBreakdown: Record<string, number> = {};
@@ -648,6 +667,19 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     }
   }
 
+  // ═══ INVESTIGATION AUTOPILOT TELEMETRY ═══
+  const thirtyMinAgo = new Date(now.getTime() - 30 * 60000).toISOString();
+  const [
+    autopilotSessionsResult, activeAutopilotResult, stalledAutopilotResult,
+    orphanedAutopilotResult, recentCompletedAutopilotResult,
+  ] = await Promise.all([
+    supabase.from('investigation_autopilot_sessions').select('*', { count: 'exact', head: true }),
+    supabase.from('investigation_autopilot_sessions').select('*', { count: 'exact', head: true }).in('status', ['planning', 'running']),
+    supabase.from('investigation_autopilot_tasks').select('*', { count: 'exact', head: true }).eq('status', 'running').lt('started_at', thirtyMinAgo),
+    supabase.from('investigation_autopilot_tasks').select('*', { count: 'exact', head: true }).is('session_id', null),
+    supabase.from('investigation_autopilot_sessions').select('*', { count: 'exact', head: true }).eq('status', 'completed').gte('created_at', twentyFourHoursAgo),
+  ]);
+
   return {
     timestamp: now.toISOString(),
     edgeFunctions,
@@ -672,6 +704,13 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
       orphanedComms: orphanedCommsCount,
       failedDeliveries: failedCommsResult.count || 0,
       activeInvestigatorThreads: activeThreadsResult.count || 0,
+    },
+    autopilot: {
+      totalSessions: autopilotSessionsResult.count || 0,
+      activeSessions: activeAutopilotResult.count || 0,
+      stalledTasks: stalledAutopilotResult.count || 0,
+      orphanedTasks: orphanedAutopilotResult.count || 0,
+      recentCompletedSessions: recentCompletedAutopilotResult.count || 0,
     },
     historicalBaseline: { avgDailySignals, avgWeeklyBugs },
     adaptiveThresholds,
@@ -1101,6 +1140,53 @@ This correction was triggered because compliance score dropped below threshold. 
         }
 
         return { action, finding, success: deleted > 0, details: `Cleaned ${deleted}/${orphaned.length} orphaned communication records` };
+      }
+
+      case 'fix_stalled_autopilot_tasks': {
+        const thirtyMinAgo = new Date(Date.now() - 30 * 60000).toISOString();
+        const { data: stalled } = await supabase
+          .from('investigation_autopilot_tasks')
+          .select('id, task_label')
+          .eq('status', 'running')
+          .lt('started_at', thirtyMinAgo)
+          .limit(20);
+
+        if (!stalled || stalled.length === 0) {
+          return { action, finding, success: true, details: 'No stalled autopilot tasks found' };
+        }
+
+        const ids = stalled.map((t: any) => t.id);
+        const { error: updateErr } = await supabase
+          .from('investigation_autopilot_tasks')
+          .update({ status: 'failed', error_message: 'Marked as failed by watchdog — exceeded 30 min running time', completed_at: new Date().toISOString() })
+          .in('id', ids);
+
+        return {
+          action, finding, success: !updateErr,
+          details: updateErr
+            ? `Failed to reset stalled tasks: ${updateErr.message}`
+            : `Marked ${stalled.length} stalled autopilot tasks as failed: ${stalled.map((t: any) => t.task_label).join(', ')}`,
+        };
+      }
+
+      case 'fix_orphaned_autopilot_tasks': {
+        const { data: orphaned } = await supabase
+          .from('investigation_autopilot_tasks')
+          .select('id, task_label')
+          .is('session_id', null)
+          .limit(50);
+
+        if (!orphaned || orphaned.length === 0) {
+          return { action, finding, success: true, details: 'No orphaned autopilot tasks found' };
+        }
+
+        let deleted = 0;
+        for (const t of orphaned) {
+          const { error: delErr } = await supabase.from('investigation_autopilot_tasks').delete().eq('id', t.id);
+          if (!delErr) deleted++;
+        }
+
+        return { action, finding, success: deleted > 0, details: `Cleaned ${deleted}/${orphaned.length} orphaned autopilot tasks` };
       }
 
       default:

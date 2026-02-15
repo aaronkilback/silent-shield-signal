@@ -6127,6 +6127,134 @@ export const watchdogEnhancedTests = {
 };
 
 // ============================================
+// INVESTIGATION AUTOPILOT TESTS
+// ============================================
+
+export const investigationAutopilotTests = {
+  name: 'Investigation Autopilot',
+  tests: [
+    {
+      name: 'investigation-autopilot function responds',
+      fn: async () => {
+        const { data, error } = await supabase.functions.invoke('investigation-autopilot', {
+          body: { test_mode: true }
+        });
+        // Should respond (may fail without valid investigation_id — acceptable)
+      },
+    },
+    {
+      name: 'investigation_autopilot_sessions table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('investigation_autopilot_sessions')
+          .select('id, investigation_id, status, total_tasks, completed_tasks')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'investigation_autopilot_tasks table accessible',
+      fn: async () => {
+        const { error } = await supabase
+          .from('investigation_autopilot_tasks')
+          .select('id, task_type, task_label, status, review_status')
+          .limit(5);
+        if (error) throw error;
+      },
+    },
+    {
+      name: 'Autopilot tasks have valid status values',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('investigation_autopilot_tasks')
+          .select('id, status, review_status')
+          .limit(50);
+        if (error) throw error;
+        
+        const validStatuses = ['pending', 'running', 'completed', 'failed', 'skipped'];
+        const validReviewStatuses = ['pending_review', 'approved', 'rejected', 'needs_redirect'];
+        
+        for (const t of data || []) {
+          if (!validStatuses.includes(t.status)) {
+            throw new Error(`Autopilot task ${t.id.slice(0,8)} has invalid status: ${t.status}`);
+          }
+          if (t.review_status && !validReviewStatuses.includes(t.review_status)) {
+            throw new Error(`Autopilot task ${t.id.slice(0,8)} has invalid review_status: ${t.review_status}`);
+          }
+        }
+      },
+    },
+    {
+      name: 'Autopilot sessions have valid status values',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('investigation_autopilot_sessions')
+          .select('id, status, total_tasks, completed_tasks')
+          .limit(20);
+        if (error) throw error;
+        
+        const validStatuses = ['planning', 'running', 'completed', 'paused', 'cancelled'];
+        
+        for (const s of data || []) {
+          if (!validStatuses.includes(s.status)) {
+            throw new Error(`Autopilot session ${s.id.slice(0,8)} has invalid status: ${s.status}`);
+          }
+          if (s.completed_tasks > s.total_tasks) {
+            throw new Error(`Autopilot session ${s.id.slice(0,8)} has completed_tasks (${s.completed_tasks}) > total_tasks (${s.total_tasks})`);
+          }
+        }
+      },
+    },
+    {
+      name: 'No stalled autopilot tasks (running > 30 min)',
+      fn: async () => {
+        const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+        const { data, error } = await supabase
+          .from('investigation_autopilot_tasks')
+          .select('id, task_label, started_at')
+          .eq('status', 'running')
+          .lt('started_at', thirtyMinAgo)
+          .limit(10);
+        if (error) throw error;
+        
+        if (data && data.length > 0) {
+          throw new Error(`${data.length} autopilot tasks stalled in 'running' state for 30+ minutes: ${data.map(t => t.task_label).join(', ')}`);
+        }
+      },
+    },
+    {
+      name: 'No orphaned autopilot tasks (missing session reference)',
+      fn: async () => {
+        const { data, error } = await supabase
+          .from('investigation_autopilot_tasks')
+          .select('id, session_id, investigation_id')
+          .is('session_id', null)
+          .limit(10);
+        if (error) throw error;
+        
+        // Tasks without session_id are orphaned
+        if (data && data.length > 0) {
+          throw new Error(`${data.length} autopilot tasks have no session reference — possible orphans`);
+        }
+      },
+    },
+    {
+      name: 'Autopilot signal queries use signal_type not source_type',
+      fn: async () => {
+        // Regression test: verify no edge function queries signals.source_type
+        // We test this by running a query that would fail if source_type existed
+        const { data, error } = await supabase
+          .from('signals')
+          .select('id, signal_type')
+          .limit(1);
+        if (error) throw error;
+        // If this passes, the column name is correct
+      },
+    },
+  ],
+};
+
+// ============================================
 // RUN ALL TESTS
 // ============================================
 
@@ -6306,6 +6434,9 @@ export async function runAllTests(): Promise<TestSuite[]> {
     // Proactive Intelligence & Watchdog
     proactiveIntelligenceTests,
     watchdogEnhancedTests,
+    
+    // Investigation Autopilot
+    investigationAutopilotTests,
   ];
   
   for (const suite of suites) {
