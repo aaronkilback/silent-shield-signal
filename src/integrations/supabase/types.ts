@@ -4820,6 +4820,7 @@ export type Database = {
           ai_analysis_log: Json | null
           assigned_agent_ids: string[] | null
           client_id: string | null
+          closed_at: string | null
           contained_at: string | null
           created_at: string
           deleted_at: string | null
@@ -4851,6 +4852,7 @@ export type Database = {
           ai_analysis_log?: Json | null
           assigned_agent_ids?: string[] | null
           client_id?: string | null
+          closed_at?: string | null
           contained_at?: string | null
           created_at?: string
           deleted_at?: string | null
@@ -4882,6 +4884,7 @@ export type Database = {
           ai_analysis_log?: Json | null
           assigned_agent_ids?: string[] | null
           client_id?: string | null
+          closed_at?: string | null
           contained_at?: string | null
           created_at?: string
           deleted_at?: string | null
@@ -11289,6 +11292,7 @@ export type Database = {
         | "contained"
         | "resolved"
         | "closed"
+        | "mitigated"
       intel_product_type:
         | "blof"
         | "intel_briefing"
@@ -11535,6 +11539,7 @@ export const Constants = {
         "contained",
         "resolved",
         "closed",
+        "mitigated",
       ],
       intel_product_type: [
         "blof",
