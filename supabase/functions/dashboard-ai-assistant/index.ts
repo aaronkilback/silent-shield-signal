@@ -2308,47 +2308,88 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "submit_ai_feedback": {
-      const { object_id, object_type, feedback, notes, correction } = args;
+      const { object_id, object_type, feedback, notes, correction, reason } = args;
 
-      // Create feedback record
-      const { data: feedbackRecord, error } = await supabaseClient
-        .from("feedback_events")
-        .insert({
-          object_id,
-          object_type,
-          feedback,
-          notes: notes || correction || null
-        })
-        .select()
-        .single();
+      // ── Call process-feedback edge function for full learning pipeline ──
+      const supabaseUrl = Deno.env.get("SUPABASE_URL");
+      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-      if (error) {
-        console.error("Failed to submit feedback:", error);
+      const feedbackPayload = {
+        objectType: object_type,
+        objectId: object_id,
+        feedback,
+        notes: notes || correction || null,
+        correction: correction || null,
+        userId: null, // System-initiated via AEGIS
+        sourceFunction: 'dashboard-ai-assistant',
+        feedbackContext: {
+          reason: reason || null,
+          submitted_by: 'aegis',
+          timestamp: new Date().toISOString(),
+        },
+      };
+
+      let processFeedbackResult: Record<string, unknown> | null = null;
+      let processFeedbackError: string | null = null;
+
+      try {
+        const pfResponse = await fetch(`${supabaseUrl}/functions/v1/process-feedback`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${serviceKey}`,
+          },
+          body: JSON.stringify(feedbackPayload),
+        });
+
+        if (pfResponse.ok) {
+          processFeedbackResult = await pfResponse.json();
+        } else {
+          processFeedbackError = `process-feedback returned ${pfResponse.status}: ${await pfResponse.text()}`;
+          console.error(`[submit_ai_feedback] ${processFeedbackError}`);
+        }
+      } catch (pfErr) {
+        processFeedbackError = `process-feedback call failed: ${pfErr instanceof Error ? pfErr.message : String(pfErr)}`;
+        console.error(`[submit_ai_feedback] ${processFeedbackError}`);
+      }
+
+      // ── Audit log: record what actually happened ──
+      const auditRecord = {
+        tool: 'submit_ai_feedback',
+        object_id,
+        object_type,
+        feedback,
+        reason: reason || null,
+        process_feedback_success: processFeedbackResult !== null,
+        process_feedback_error: processFeedbackError,
+        learning_actions: processFeedbackResult?.learning_actions || [],
+        timestamp: new Date().toISOString(),
+      };
+
+      await supabaseClient.from('autonomous_actions_log').insert({
+        action_type: 'feedback_submission',
+        trigger_source: 'aegis_chat',
+        action_details: auditRecord,
+        result: processFeedbackResult || { error: processFeedbackError },
+        status: processFeedbackResult ? 'completed' : 'error',
+        error_message: processFeedbackError,
+      });
+
+      if (processFeedbackError) {
         return {
           success: false,
-          message: `Failed to submit feedback: ${error.message}`
+          verified: false,
+          message: `Feedback submission FAILED: ${processFeedbackError}. The signal was NOT updated.`,
         };
       }
 
-      // Update the object's feedback rating if applicable
-      if (object_type === "entity_content") {
-        const rating = feedback === "positive" ? 1 : (feedback === "negative" ? -1 : 0);
-        await supabaseClient
-          .from("entity_content")
-          .update({ 
-            feedback_rating: rating,
-            feedback_at: new Date().toISOString()
-          })
-          .eq("id", object_id);
-      } else if (object_type === "entity") {
-        // Could update entity threat_score based on feedback
-        console.log(`Feedback recorded for entity ${object_id}: ${feedback}`);
-      }
-
+      const learningActions = (processFeedbackResult?.learning_actions as string[]) || [];
       return {
         success: true,
-        message: `Feedback recorded successfully. ${feedback === "negative" && correction ? "Your correction will be used to improve future AI responses." : "Thank you for helping improve the system!"}`,
-        feedback_id: feedbackRecord.id
+        verified: true,
+        message: `Feedback recorded and verified. Signal ${object_id} marked as '${feedback}'. ${learningActions.length} learning profiles updated: ${learningActions.join(', ')}.`,
+        feedback_result: processFeedbackResult,
+        audit_id: auditRecord.timestamp,
       };
     }
 
