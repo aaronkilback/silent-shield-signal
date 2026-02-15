@@ -318,7 +318,7 @@ interface LearningHistory {
 }
 
 const CRITICAL_FUNCTIONS = ['get-user-tenants', 'agent-chat', 'dashboard-ai-assistant', 'system-health-check', 'ingest-signal'];
-const OPERATIONAL_FUNCTIONS = ['send-daily-briefing', 'support-chat', 'ai-decision-engine', 'autonomous-operations-loop', 'monitor-travel-risks', 'send-sms', 'ingest-communication', 'list-communications'];
+const OPERATIONAL_FUNCTIONS = ['send-daily-briefing', 'support-chat', 'ai-decision-engine', 'autonomous-operations-loop', 'monitor-travel-risks', 'send-sms', 'ingest-communication', 'list-communications', 'system-ops', 'signal-processor', 'entity-manager', 'incident-manager', 'intelligence-engine', 'osint-collector'];
 
 // ═══════════════════════════════════════════════════════════════
 //                 SELF-IMPROVEMENT: LEARNING HISTORY
@@ -902,20 +902,19 @@ async function executeRemediation(
   try {
     switch (action) {
       case 'stale_sources_rescan': {
-        // Fire-and-forget: trigger monitoring functions without waiting for completion
-        // RSS scanner takes 2+ minutes, so we just confirm the function accepts the request
-        const scanFunctions = ['monitor-news', 'monitor-threat-intel', 'monitor-rss-sources'];
+        // Route through osint-collector domain service instead of calling individual monitors
+        const scanActions = ['monitor-news', 'monitor-threat-intel', 'monitor-rss'];
         let triggered = 0;
-        for (const fn of scanFunctions) {
+        for (const monitorAction of scanActions) {
           try {
             const controller = new AbortController();
             // RSS sources needs longer — it scans 400+ items across dozens of feeds
-            const timeoutMs = fn === 'monitor-rss-sources' ? 60000 : 20000;
+            const timeoutMs = monitorAction === 'monitor-rss' ? 60000 : 20000;
             const timeout = setTimeout(() => controller.abort(), timeoutMs);
-            const resp = await fetch(`${supabaseUrl}/functions/v1/${fn}`, {
+            const resp = await fetch(`${supabaseUrl}/functions/v1/osint-collector`, {
               method: 'POST',
               headers: { 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ triggered_by: 'watchdog', reason: 'stale_source_remediation' }),
+              body: JSON.stringify({ action: monitorAction, triggered_by: 'watchdog', reason: 'stale_source_remediation' }),
               signal: controller.signal,
             });
             clearTimeout(timeout);
@@ -923,10 +922,10 @@ async function executeRemediation(
             if (resp.ok || resp.status === 200) triggered++;
             else triggered++; // Even non-200 means function is deployed and responding
           } catch (e) {
-            console.warn(`[Watchdog] Failed to trigger ${fn}:`, e);
+            console.warn(`[Watchdog] Failed to trigger ${monitorAction} via osint-collector:`, e);
           }
         }
-        return { action, finding, success: triggered > 0, details: `Triggered ${triggered}/${scanFunctions.length} monitoring functions` };
+        return { action, finding, success: triggered > 0, details: `Triggered ${triggered}/${scanActions.length} monitors via osint-collector` };
       }
 
       case 'trigger_briefing': {
