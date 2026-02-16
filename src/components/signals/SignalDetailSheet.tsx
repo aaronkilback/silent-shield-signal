@@ -154,6 +154,19 @@ export function SignalDetailSheet({
               )}
             </div>
 
+            {/* Manual Override — positioned prominently */}
+            <SignalManualOverride
+              signal={{
+                id: signal.primary_signal_id || signal.id,
+                category: signal.category,
+                severity: signal.severity,
+                entity_tags: (signal as any).entity_tags,
+                rule_priority: (signal as any).rule_priority,
+                normalized_text: signal.normalized_text,
+              }}
+              onUpdated={onAssign}
+            />
+
             {/* Date Information - Enhanced with Event Date */}
             <div className="space-y-3">
               {signal.event_date && (
@@ -390,20 +403,6 @@ export function SignalDetailSheet({
                 </div>
               </>
             )}
-
-            {/* Manual Override */}
-            <Separator />
-            <SignalManualOverride
-              signal={{
-                id: signal.primary_signal_id || signal.id,
-                category: signal.category,
-                severity: signal.severity,
-                entity_tags: (signal as any).entity_tags,
-                rule_priority: (signal as any).rule_priority,
-                normalized_text: signal.normalized_text,
-              }}
-              onUpdated={onAssign} // triggers parent refetch
-            />
 
             {/* Live Updates Timeline */}
             <Separator />
