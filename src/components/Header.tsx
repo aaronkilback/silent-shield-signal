@@ -97,6 +97,7 @@ export const Header = () => {
     ...(isSuperAdmin ? [{ path: "/vip-deep-scan", icon: ScanEye, label: "VIP Deep Scan" }] : []),
     { path: "/travel", icon: Plane, label: "Travel" },
     { path: "/clients", icon: Building2, label: "Clients" },
+    { path: "/security-advisor", icon: Shield, label: "Security Advisor" },
   ];
 
   // Admin dropdown items (consolidated)

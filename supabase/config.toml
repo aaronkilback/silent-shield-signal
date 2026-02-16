@@ -546,3 +546,6 @@ verify_jwt = false
 
 [functions.investigation-autopilot]
 verify_jwt = false
+
+[functions.wraith-security-advisor]
+verify_jwt = false
