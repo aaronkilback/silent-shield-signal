@@ -832,12 +832,66 @@ Extract entities, threat signals, risk assessments, and any incidents requiring 
           }
         }
 
+        // Generate content hash for dedup
+        const signalText = signal.description || '';
+        const hashData = new TextEncoder().encode(signalText);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', hashData);
+        const contentHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+        // Check for duplicate
+        const { data: existingSignal } = await supabase
+          .from('signals')
+          .select('id')
+          .eq('content_hash', contentHash)
+          .limit(1)
+          .maybeSingle();
+
+        if (existingSignal) {
+          console.log(`Skipping duplicate signal: ${signal.description?.substring(0, 60)}`);
+          continue;
+        }
+
+        // Check rejected hashes
+        const { data: rejectedHash } = await supabase
+          .from('rejected_content_hashes')
+          .select('id')
+          .eq('content_hash', contentHash)
+          .limit(1)
+          .maybeSingle();
+
+        if (rejectedHash) {
+          console.log(`Skipping rejected signal: ${signal.description?.substring(0, 60)}`);
+          continue;
+        }
+
+        // Resolve source_id for "News Monitor" or fallback
+        let resolvedSourceId: string | null = null;
+        const { data: srcRow } = await supabase
+          .from('sources')
+          .select('id')
+          .eq('name', 'News Monitor')
+          .limit(1)
+          .maybeSingle();
+        if (srcRow) resolvedSourceId = srcRow.id;
+
+        // Generate a proper title from description
+        const signalTitle = (() => {
+          if (!signalText || signalText.length === 0) return 'Security Report Signal';
+          const dotPos = signalText.indexOf('.');
+          if (dotPos > 0 && dotPos <= 120) return signalText.substring(0, dotPos + 1);
+          if (signalText.length > 120) return signalText.substring(0, 117) + '...';
+          return signalText;
+        })();
+
         const { data: newSignal, error: signalError } = await supabase
           .from('signals')
           .insert({
+            title: signalTitle,
+            source_id: resolvedSourceId,
             category: signal.category,
             severity: signal.severity || 'medium',
             normalized_text: signal.description,
+            content_hash: contentHash,
             location: signal.location,
             confidence: signal.confidence,
             client_id: clientId,
@@ -846,7 +900,9 @@ Extract entities, threat signals, risk assessments, and any incidents requiring 
               source: 'security_report',
               context: signal.context,
               entity_names: signal.entity_names,
-              document_id: documentId
+              document_id: documentId,
+              url: null,
+              source_url: null,
             },
             status: 'new',
             is_test: false
