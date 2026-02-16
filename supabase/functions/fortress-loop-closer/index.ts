@@ -305,7 +305,7 @@ Deno.serve(async (req) => {
 
         // Also check if agent has any expert_knowledge at all in their domain
         const domainMap: Record<string, string> = {
-          '0DAY': 'offensive_security',
+          '0DAY': 'cyber',
           'NEO': 'cyber',
           'CERBERUS': 'financial_crime',
           'SPECTER': 'counterintelligence',
