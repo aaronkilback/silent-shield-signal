@@ -10,6 +10,8 @@ import { ConstellationLegend } from "@/components/neural-constellation/Constella
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMetrics, useKnowledgeGraphEdges, useOperatorDevices, useOperatorMessageActivity, useKnowledgeGrowthData } from "@/hooks/useConstellationData";
+import { useFortressHealth } from "@/hooks/useFortressHealth";
+import { FortressHUD } from "@/components/neural-constellation/FortressHUD";
 
 // Map agents to 3D positions in a constellation layout
 function assignPositions(agents: any[]): AgentNode[] {
@@ -134,6 +136,7 @@ const NeuralConstellation = () => {
   const { data: operatorDevices = [] } = useOperatorDevices(!!user);
   const { data: operatorMessageActivity } = useOperatorMessageActivity(!!user);
   const { data: knowledgeGrowth } = useKnowledgeGrowthData(!!user);
+  const { data: fortressHealth, isLoading: fortressLoading } = useFortressHealth(!!user);
 
   const agentNodes = useMemo(() => {
     if (!agents) return [];
@@ -192,6 +195,7 @@ const NeuralConstellation = () => {
             operatorMessageActivity={operatorMessageActivity}
             signalLocations={signalLocations}
             knowledgeGrowth={knowledgeGrowth}
+            fortressHealth={fortressHealth}
           />
         </div>
 
@@ -236,6 +240,8 @@ const NeuralConstellation = () => {
           knowledgeEdgeCount={knowledgeGraphEdges.length}
           activeAgentCount={activityMetrics.filter((m) => m.activityScore > 0.3).length}
         />
+
+        <FortressHUD health={fortressHealth} isLoading={fortressLoading} />
 
         <NodeDetailPanel
           agent={selectedAgent}
