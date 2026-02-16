@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
-import { History, AlertCircle, Trash2, ExternalLink, Clock, Calendar, Archive, ShieldCheck } from "lucide-react";
+import { History, AlertCircle, Trash2, ExternalLink, Clock, Calendar, Archive, ShieldCheck, Globe, AlertTriangle } from "lucide-react";
 import { formatDistanceToNow, isToday, isThisWeek, isThisMonth, differenceInDays } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
@@ -107,7 +107,7 @@ export const SignalHistory = () => {
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [dateRangeFilter, setDateRangeFilter] = useState<string>('30d');
-  const [activeTab, setActiveTab] = useState<string>('recent'); // 'recent' | 'all' | 'historical'
+  const [activeTab, setActiveTab] = useState<string>('recent'); // 'recent' | 'all' | 'historical' | 'international' | 'review'
 
   useEffect(() => {
     // Load signals regardless of client selection - show all if none selected
@@ -349,6 +349,52 @@ export const SignalHistory = () => {
 
   // Removed early return for no client - now shows all signals when none selected
 
+  // Helper to detect non-Canadian / international signals
+  const isInternationalSignal = (signal: Signal): boolean => {
+    const sourceUrl = signal.raw_json?.source_url || signal.raw_json?.url || '';
+    const text = `${signal.normalized_text || ''} ${signal.title || ''} ${signal.description || ''}`.toLowerCase();
+    const urlLower = sourceUrl.toLowerCase();
+    
+    // URL-based: non-Canadian domains/locales
+    const internationalUrlPatterns = [
+      /locale=(?!en_CA|en_US)[a-z]{2}_[A-Z]{2}/i,
+      /otagodailytimes/i, /maribyrnong/i, /netflixuk/i,
+      /\.com\.au\b/, /\.co\.uk\b/, /\.co\.nz\b/, /\.de\b/, /\.fr\b/, /\.at\b/,
+    ];
+    if (internationalUrlPatterns.some(p => p.test(urlLower))) return true;
+    
+    // Content-based: explicitly international events
+    const internationalPatterns = [
+      /extinction rebellion\s+(austria|germany|uk|cape town|australia|netherlands|sweden|norway|france|italy|spain|japan)/i,
+      /\b(new zealand|fonterra|melbourne|sydney|london|berlin|paris|tokyo)\b/i,
+    ];
+    if (internationalPatterns.some(p => p.test(text))) return true;
+    
+    return false;
+  };
+
+  // Helper to detect questionable/low-confidence signals
+  const isQuestionableSignal = (signal: Signal): boolean => {
+    // Low quality score
+    if (signal.quality_score != null && signal.quality_score < 0.4) return true;
+    // Very low relevance
+    if (signal.relevance_score != null && signal.relevance_score < 0.4) return true;
+    // Low confidence
+    if (signal.confidence != null && signal.confidence < 30) return true;
+    
+    const text = `${signal.normalized_text || ''} ${signal.title || ''} ${signal.description || ''}`.toLowerCase();
+    const sourceUrl = signal.raw_json?.source_url || signal.raw_json?.url || '';
+    
+    // Netflix/entertainment/webinar sources
+    if (/netflix|webinar|documentary|book launch|podcast/i.test(text)) return true;
+    if (/netflix|spotify|youtube\.com\/watch/i.test(sourceUrl)) return true;
+    
+    // Source text is suspiciously short (likely search snippet)
+    if (signal.normalized_text && signal.normalized_text.length < 60) return true;
+    
+    return false;
+  };
+
   // Helper to categorize signals by recency
   const categorizeByRecency = (signal: Signal) => {
     const signalDate = new Date(signal.event_date || signal.created_at);
@@ -361,6 +407,15 @@ export const SignalHistory = () => {
     return 'historical';
   };
 
+  // Classify each signal into a primary bucket
+  const classifySignal = (signal: Signal): 'international' | 'review' | 'historical' | 'recent' => {
+    if (isInternationalSignal(signal)) return 'international';
+    if (isQuestionableSignal(signal)) return 'review';
+    const recency = categorizeByRecency(signal);
+    if (recency === 'historical') return 'historical';
+    return 'recent';
+  };
+
   // Apply filters including date range
   const filteredSignals = signals.filter(signal => {
     if (categoryFilter !== 'all' && signal.rule_category !== categoryFilter && signal.category !== categoryFilter) {
@@ -370,17 +425,18 @@ export const SignalHistory = () => {
       return false;
     }
     
-    // Tab-based filtering
-    const recency = categorizeByRecency(signal);
+    const classification = classifySignal(signal);
+    
     if (activeTab === 'recent') {
-      // Show everything except 90+ day historical
-      if (!['today', 'thisWeek', 'thisMonth', 'recent'].includes(recency)) return false;
+      return classification === 'recent';
     } else if (activeTab === 'historical') {
-      // Show only historical (90+ days old)
-      if (recency !== 'historical') return false;
+      return classification === 'historical';
+    } else if (activeTab === 'international') {
+      return classification === 'international';
+    } else if (activeTab === 'review') {
+      return classification === 'review';
     }
     // 'all' tab shows everything
-    
     return true;
   });
 
@@ -393,9 +449,11 @@ export const SignalHistory = () => {
     historical: filteredSignals.filter(s => categorizeByRecency(s) === 'historical'),
   };
 
-  // Counts for tabs
-  const recentCount = groupedSignals.today.length + groupedSignals.thisWeek.length + groupedSignals.thisMonth.length;
-  const historicalCount = groupedSignals.historical.length;
+  // Counts for tabs (based on classification, not just recency)
+  const recentCount = signals.filter(s => classifySignal(s) === 'recent').length;
+  const historicalCount = signals.filter(s => classifySignal(s) === 'historical').length;
+  const internationalCount = signals.filter(s => classifySignal(s) === 'international').length;
+  const reviewCount = signals.filter(s => classifySignal(s) === 'review').length;
 
   // Get unique categories and priorities for filters
   const uniqueCategories = Array.from(new Set(signals.map(s => s.rule_category || s.category).filter(Boolean)));
@@ -439,25 +497,39 @@ export const SignalHistory = () => {
         </div>
         {/* Tabs for Recent vs Historical */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-4">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="recent" className="flex items-center gap-2">
-              <Clock className="w-4 h-4" />
+          <TabsList className="grid w-full grid-cols-5">
+            <TabsTrigger value="recent" className="flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5" />
               Recent
               {recentCount > 0 && (
                 <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">{recentCount}</Badge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="all" className="flex items-center gap-2">
-              <Calendar className="w-4 h-4" />
-              All
-              <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs">{signals.length}</Badge>
-            </TabsTrigger>
-            <TabsTrigger value="historical" className="flex items-center gap-2">
-              <Archive className="w-4 h-4" />
+            <TabsTrigger value="historical" className="flex items-center gap-1.5">
+              <Archive className="w-3.5 h-3.5" />
               Historical
               {historicalCount > 0 && (
                 <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs">{historicalCount}</Badge>
               )}
+            </TabsTrigger>
+            <TabsTrigger value="international" className="flex items-center gap-1.5">
+              <Globe className="w-3.5 h-3.5" />
+              International
+              {internationalCount > 0 && (
+                <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs">{internationalCount}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="review" className="flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Review
+              {reviewCount > 0 && (
+                <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs text-amber-500 border-amber-500/30">{reviewCount}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="all" className="flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5" />
+              All
+              <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs">{signals.length}</Badge>
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -508,13 +580,45 @@ export const SignalHistory = () => {
         {filteredSignals.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <AlertCircle className="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p>{signals.length === 0 ? 'No signals found. Use the Test Signal Generator to create demo signals.' : `No ${activeTab === 'historical' ? 'historical' : 'recent'} signals match the filters.`}</p>
+            <p>{signals.length === 0 ? 'No signals found. Use the Test Signal Generator to create demo signals.' : `No ${activeTab === 'review' ? 'questionable' : activeTab === 'international' ? 'international' : activeTab === 'historical' ? 'historical' : 'recent'} signals match the filters.`}</p>
           </div>
         ) : (
           <ScrollArea className="h-[400px] pr-4">
             <div className="space-y-4">
+              {/* International tab - flat list with globe marker */}
+              {activeTab === 'international' && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
+                    <Badge variant="outline" className="border-blue-500 text-blue-400">
+                      <Globe className="w-3 h-3 mr-1" />
+                      Non-Canadian Sources
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">{filteredSignals.length} signals — may not be relevant to operations</span>
+                  </div>
+                  <div className="space-y-2 pl-2 border-l-2 border-blue-500/30 opacity-80">
+                    {filteredSignals.map((signal) => renderSignalCard(signal, false))}
+                  </div>
+                </div>
+              )}
+
+              {/* Review tab - flat list with warning marker */}
+              {activeTab === 'review' && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
+                    <Badge variant="outline" className="border-amber-500 text-amber-500">
+                      <AlertTriangle className="w-3 h-3 mr-1" />
+                      Needs Review
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">{filteredSignals.length} signals — low confidence, entertainment, or fragmentary sources</span>
+                  </div>
+                  <div className="space-y-2 pl-2 border-l-2 border-amber-500/30 opacity-80">
+                    {filteredSignals.map((signal) => renderSignalCard(signal, false))}
+                  </div>
+                </div>
+              )}
+
               {/* Today's signals - highlighted */}
-              {activeTab !== 'historical' && groupedSignals.today.length > 0 && (
+              {!['historical', 'international', 'review'].includes(activeTab) && groupedSignals.today.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="default" className="bg-green-600">Today</Badge>
@@ -527,7 +631,7 @@ export const SignalHistory = () => {
               )}
 
               {/* This week's signals */}
-              {activeTab !== 'historical' && groupedSignals.thisWeek.length > 0 && (
+              {!['historical', 'international', 'review'].includes(activeTab) && groupedSignals.thisWeek.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="secondary">This Week</Badge>
@@ -540,7 +644,7 @@ export const SignalHistory = () => {
               )}
 
               {/* This month's signals */}
-              {activeTab !== 'historical' && groupedSignals.thisMonth.length > 0 && (
+              {!['historical', 'international', 'review'].includes(activeTab) && groupedSignals.thisMonth.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="outline">This Month</Badge>
@@ -553,7 +657,7 @@ export const SignalHistory = () => {
               )}
 
               {/* Older but not historical (Last 90 Days) */}
-              {activeTab !== 'historical' && groupedSignals.recent.length > 0 && (
+              {!['historical', 'international', 'review'].includes(activeTab) && groupedSignals.recent.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="outline" className="opacity-70">Last 90 Days</Badge>
@@ -566,7 +670,7 @@ export const SignalHistory = () => {
               )}
 
               {/* Historical signals */}
-              {(activeTab === 'all' || activeTab === 'historical') && groupedSignals.historical.length > 0 && (
+              {['all', 'historical'].includes(activeTab) && groupedSignals.historical.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="outline" className="opacity-60 border-amber-500 text-amber-600">
