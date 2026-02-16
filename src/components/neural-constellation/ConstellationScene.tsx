@@ -965,7 +965,6 @@ function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPul
       const srcIdx = callSignIndex.get(s.agentCallSign);
       if (srcIdx !== undefined && aegisIdx !== undefined) {
         routes.push({ from: srcIdx, to: aegisIdx, type: "scan_sweep" });
-        // High-risk scans also generate alert particles
         if ((s.riskScore ?? 0) > 60) {
           routes.push({ from: srcIdx, to: aegisIdx, type: "alert" });
         }
@@ -978,11 +977,9 @@ function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPul
       if (idx === undefined || aegisIdx === undefined) return;
 
       if (m.totalSignalsAnalyzed > 0) {
-        // Signal ingestion particles (cyan) — data flowing to agent
         routes.push({ from: aegisIdx, to: idx, type: "signal_ingest" });
       }
       if (m.totalAlertsGenerated > 0) {
-        // Alert escalation particles (red) — urgent flow back to command
         routes.push({ from: idx, to: aegisIdx, type: "alert" });
       }
     });
@@ -998,10 +995,28 @@ function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPul
       });
     }
 
-    // Ensure we always have some routes
+    // 5. If we still have few routes, distribute varied activity types across agents
+    //    so the constellation always shows a mix of colored particles
+    if (routes.length < 12 && agents.length > 1) {
+      const typeRotation: ActivityType[] = ["signal_ingest", "scan_sweep", "learning", "message", "alert", "idle"];
+      for (let i = 0; i < agents.length && routes.length < 20; i++) {
+        if (aegisIdx !== undefined && i !== aegisIdx) {
+          const t = typeRotation[i % typeRotation.length];
+          // Alternate direction based on type
+          if (t === "signal_ingest" || t === "learning") {
+            routes.push({ from: aegisIdx, to: i, type: t });
+          } else {
+            routes.push({ from: i, to: aegisIdx, type: t });
+          }
+        }
+      }
+    }
+
+    // 6. Ensure we always have some routes
     if (routes.length === 0 && agents.length > 1) {
+      const fallbackTypes: ActivityType[] = ["signal_ingest", "scan_sweep", "learning", "message", "alert", "idle"];
       for (let i = 0; i < Math.min(agents.length, 6); i++) {
-        routes.push({ from: i, to: (i + 1) % agents.length, type: "idle" });
+        routes.push({ from: i, to: (i + 1) % agents.length, type: fallbackTypes[i % fallbackTypes.length] });
       }
     }
 
