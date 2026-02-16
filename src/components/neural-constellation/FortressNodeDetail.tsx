@@ -1,5 +1,6 @@
 import { X, CheckCircle2, AlertCircle, XCircle, Shield, GripHorizontal } from "lucide-react";
 import { DraggablePanel } from "./DraggablePanel";
+import { NodeAgentChat } from "./NodeAgentChat";
 import type { AgentNode } from "./ConstellationScene";
 import type { AgentActivityMetrics, ScanPulse } from "@/hooks/useConstellationData";
 import type { FortressHealth, LoopStatus } from "@/hooks/useFortressHealth";
@@ -163,12 +164,8 @@ export function FortressNodeDetail({ agent, onClose, activityMetrics = [], scanP
           </div>
         </div>
 
-        {/* Close button */}
-        <div className="px-3 py-2 border-t border-border/50 flex-shrink-0">
-          <button onClick={onClose} className="w-full text-center text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors py-1">
-            Close
-          </button>
-        </div>
+        {/* Agent Chat */}
+        <NodeAgentChat agent={agent} />
       </div>
     </DraggablePanel>
   );
