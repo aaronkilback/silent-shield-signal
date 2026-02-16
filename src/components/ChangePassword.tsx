@@ -15,6 +15,9 @@ export const ChangePassword = () => {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [mfaStep, setMfaStep] = useState(false);
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaFactorId, setMfaFactorId] = useState("");
 
   const { data: passwordAge } = useQuery({
     queryKey: ['password-age', user?.id],
@@ -24,7 +27,7 @@ export const ChangePassword = () => {
         .from('profiles')
         .select('last_password_changed_at')
         .eq('id', user.id)
-        .single();
+        .maybeSingle();
       if (!data?.last_password_changed_at) return null;
       const lastChanged = new Date(data.last_password_changed_at);
       const now = new Date();
@@ -63,11 +66,59 @@ export const ChangePassword = () => {
         return;
       }
 
-      // Update the password
+      // Check if MFA is enrolled — if so, we need AAL2
+      const { data: factorsData } = await supabase.auth.mfa.listFactors();
+      const verifiedFactors = factorsData?.totp?.filter(f => f.status === 'verified') || [];
+
+      if (verifiedFactors.length > 0) {
+        // MFA is active — need to verify before updating password
+        setMfaFactorId(verifiedFactors[0].id);
+        setMfaStep(true);
+        setLoading(false);
+        return;
+      }
+
+      // No MFA — update directly
+      await performPasswordUpdate();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update password");
+      setLoading(false);
+    }
+  };
+
+  const handleMfaVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
+        factorId: mfaFactorId,
+      });
+      if (challengeError) throw challengeError;
+
+      const { error: verifyError } = await supabase.auth.mfa.verify({
+        factorId: mfaFactorId,
+        challengeId: challengeData.id,
+        code: mfaCode,
+      });
+      if (verifyError) {
+        toast.error("Invalid MFA code. Please try again.");
+        setLoading(false);
+        return;
+      }
+
+      // Now we have AAL2 — update password
+      await performPasswordUpdate();
+    } catch (err: any) {
+      toast.error(err.message || "MFA verification failed");
+      setLoading(false);
+    }
+  };
+
+  const performPasswordUpdate = async () => {
+    try {
       const { error } = await supabase.auth.updateUser({ password: newPassword });
       if (error) throw error;
 
-      // Update last_password_changed_at
       await supabase
         .from('profiles')
         .update({ last_password_changed_at: new Date().toISOString() })
@@ -77,6 +128,8 @@ export const ChangePassword = () => {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
+      setMfaCode("");
+      setMfaStep(false);
     } catch (err: any) {
       toast.error(err.message || "Failed to update password");
     } finally {
@@ -116,44 +169,76 @@ export const ChangePassword = () => {
           </div>
         )}
 
-        <form onSubmit={handleChangePassword} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="current-password">Current Password</Label>
-            <Input
-              id="current-password"
-              type="password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              required
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="new-password">New Password</Label>
-            <Input
-              id="new-password"
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              required
-              minLength={8}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="confirm-password">Confirm New Password</Label>
-            <Input
-              id="confirm-password"
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              required
-              minLength={8}
-            />
-          </div>
-          <Button type="submit" disabled={loading} className="w-full">
-            {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Key className="w-4 h-4 mr-2" />}
-            Update Password
-          </Button>
-        </form>
+        {mfaStep ? (
+          <form onSubmit={handleMfaVerify} className="space-y-4">
+            <div className="p-3 rounded-lg bg-muted text-sm text-muted-foreground">
+              MFA is enabled on your account. Enter your authenticator code to confirm the password change.
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="mfa-code">Authenticator Code</Label>
+              <Input
+                id="mfa-code"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value)}
+                placeholder="Enter 6-digit code"
+                required
+                autoFocus
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={() => { setMfaStep(false); setMfaCode(""); }} disabled={loading} className="flex-1">
+                Back
+              </Button>
+              <Button type="submit" disabled={loading || mfaCode.length < 6} className="flex-1">
+                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Key className="w-4 h-4 mr-2" />}
+                Confirm Update
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={handleChangePassword} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="current-password">Current Password</Label>
+              <Input
+                id="current-password"
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-password">New Password</Label>
+              <Input
+                id="new-password"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                required
+                minLength={8}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirm-password">Confirm New Password</Label>
+              <Input
+                id="confirm-password"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                minLength={8}
+              />
+            </div>
+            <Button type="submit" disabled={loading} className="w-full">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Key className="w-4 h-4 mr-2" />}
+              Update Password
+            </Button>
+          </form>
+        )}
       </CardContent>
     </Card>
   );
