@@ -944,69 +944,68 @@ function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPul
 
   const callSignIndex = useMemo(() => new Map(agents.map((a, i) => [a.callSign, i])), [agents]);
 
-  // Build activity-typed routes from real operational data
+  // Build activity-typed routes purely from real operational data
   const typedRoutes = useMemo(() => {
     const routes: { from: number; to: number; type: ActivityType }[] = [];
     const metricsMap = new Map(activityMetrics.map(m => [m.callSign, m]));
     const aegisIdx = callSignIndex.get("AEGIS-CMD");
+    const activeAgents = new Set<number>();
 
-    // 1. Comm links → message particles (green, fast)
+    // 1. Comm links → message particles (green) — real agent-to-agent conversations/debates
     commLinks.forEach((link) => {
       const src = callSignIndex.get(link.sourceCallSign);
       const tgt = callSignIndex.get(link.targetCallSign);
       if (src !== undefined && tgt !== undefined) {
-        const weight = Math.min(Math.ceil(link.messageCount / 3), 4);
+        const weight = Math.min(Math.ceil(link.messageCount / 3), 3);
         for (let w = 0; w < weight; w++) routes.push({ from: src, to: tgt, type: "message" });
+        activeAgents.add(src);
+        activeAgents.add(tgt);
       }
     });
 
-    // 2. Scan pulses → scan_sweep particles (blue, slow/methodical) flowing to AEGIS
+    // 2. Scan pulses → scan_sweep particles (blue) — real autonomous scan results
     scanPulses.forEach((s) => {
       const srcIdx = callSignIndex.get(s.agentCallSign);
       if (srcIdx !== undefined && aegisIdx !== undefined) {
         routes.push({ from: srcIdx, to: aegisIdx, type: "scan_sweep" });
+        activeAgents.add(srcIdx);
+        // High-risk scans also generate alert particles
         if ((s.riskScore ?? 0) > 60) {
           routes.push({ from: srcIdx, to: aegisIdx, type: "alert" });
         }
       }
     });
 
-    // 3. Per-agent: classify dominant activity from metrics
+    // 3. Per-agent metrics → signal_ingest (cyan) and alert (red) particles
     activityMetrics.forEach((m) => {
       const idx = callSignIndex.get(m.callSign);
       if (idx === undefined || aegisIdx === undefined) return;
 
       if (m.totalSignalsAnalyzed > 0) {
+        // Cyan particles: signals being routed from command to this agent for analysis
         routes.push({ from: aegisIdx, to: idx, type: "signal_ingest" });
+        activeAgents.add(idx);
       }
       if (m.totalAlertsGenerated > 0) {
+        // Red particles: alerts escalated back to command
         routes.push({ from: idx, to: aegisIdx, type: "alert" });
+        activeAgents.add(idx);
       }
     });
 
-    // 4. Always distribute a balanced mix of activity types across the network
-    //    This ensures every color from the legend is always represented
-    {
-      const typeRotation: ActivityType[] = ["signal_ingest", "scan_sweep", "learning", "message", "alert", "idle"];
-      const nonAegis = agents.map((_, i) => i).filter(i => i !== aegisIdx);
-      // We want at least 2 routes per type = 12 minimum varied routes
-      const targetRoutes = Math.max(18, nonAegis.length * 2);
-      let typeIdx = 0;
-      for (let pass = 0; routes.length < targetRoutes && pass < nonAegis.length * 2; pass++) {
-        const agentIdx = nonAegis[pass % nonAegis.length];
-        const t = typeRotation[typeIdx % typeRotation.length];
-        typeIdx++;
-        if (aegisIdx === undefined) continue;
-        // Direction based on type semantics
-        if (t === "signal_ingest" || t === "learning") {
-          routes.push({ from: aegisIdx, to: agentIdx, type: t });
-        } else if (t === "message") {
-          // Messages between agents
-          const otherIdx = nonAegis[(pass + 1) % nonAegis.length];
-          routes.push({ from: agentIdx, to: otherIdx, type: t });
-        } else {
-          routes.push({ from: agentIdx, to: aegisIdx, type: t });
+    // 4. Idle agents — agents with no recent activity get slow slate particles
+    if (aegisIdx !== undefined) {
+      agents.forEach((_, idx) => {
+        if (idx !== aegisIdx && !activeAgents.has(idx)) {
+          routes.push({ from: idx, to: aegisIdx, type: "idle" });
         }
+      });
+    }
+
+    // 5. Minimum fallback — if absolutely no data, show idle heartbeat
+    if (routes.length === 0 && agents.length > 1) {
+      for (let i = 0; i < Math.min(agents.length, 6); i++) {
+        routes.push({ from: i, to: (i + 1) % agents.length, type: "idle" });
       }
     }
 
