@@ -130,9 +130,19 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Record learning session
+    // Record learning session — link to actual agent record
+    let resolvedAgentId: string | null = null;
+    if (agent_call_sign) {
+      const { data: agentRow } = await supabase
+        .from('ai_agents')
+        .select('id')
+        .eq('call_sign', agent_call_sign)
+        .maybeSingle();
+      resolvedAgentId = agentRow?.id || null;
+    }
+
     await supabase.from('agent_learning_sessions').insert({
-      agent_id: null,
+      agent_id: resolvedAgentId,
       session_type: mode,
       learnings: results,
       source_count: results.topics_researched.length,
@@ -262,7 +272,7 @@ Return ONLY the JSON array.`;
             title: entry.title,
             content: entry.content,
             applicability_tags: entry.tags || [],
-            citation: entry.citation || citations.join(', '),
+            citation: `[${agentCallSign}] ${entry.citation || citations.join(', ')}`,
             confidence_score: 0.85,
           });
         results.entries_created++;
@@ -422,9 +432,9 @@ Return ONLY the JSON array.`;
             title: entry.title,
             content: entry.content,
             applicability_tags: entry.tags || [],
-            citation: entry.citation || citations.join(', '),
+            citation: `[${agentCallSign}] ${entry.citation || citations.join(', ')}`,
             source_type: entry.source_authority || 'textbook',
-            confidence_score: 0.92, // Higher confidence for published expert sources
+            confidence_score: 0.92,
           });
         results.entries_created++;
       }

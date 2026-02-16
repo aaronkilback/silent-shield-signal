@@ -277,51 +277,153 @@ Deno.serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // LOOP 5: AGENT SCAN RESULTS — Ensure all agents have recent scan data
+    // LOOP 5: SPECIALIST AGENT LEARNING — Trigger real learning for agents
+    // with no recent knowledge acquisition (replaces fake scan seeding)
     // ═══════════════════════════════════════════════════════════════════
     try {
+      // Agents that should autonomously learn via literature review
+      const learningAgents = ['0DAY', 'NEO', 'CERBERUS', 'SPECTER', 'MERIDIAN', 'ARGUS'];
+      let learningTriggered = 0;
+
+      for (const callSign of learningAgents) {
+        // Check if this agent has learned anything in the last 24h
+        const { data: agentRow } = await supabase
+          .from('ai_agents')
+          .select('id')
+          .eq('call_sign', callSign)
+          .maybeSingle();
+
+        if (!agentRow) continue;
+
+        const { count: recentSessions } = await supabase
+          .from('agent_learning_sessions')
+          .select('id', { count: 'exact', head: true })
+          .eq('agent_id', agentRow.id)
+          .gte('created_at', new Date(Date.now() - 86400000).toISOString());
+
+        if ((recentSessions || 0) > 0) continue;
+
+        // Also check if agent has any expert_knowledge at all in their domain
+        const domainMap: Record<string, string> = {
+          '0DAY': 'offensive_security',
+          'NEO': 'cyber',
+          'CERBERUS': 'financial_crime',
+          'SPECTER': 'counterintelligence',
+          'MERIDIAN': 'geopolitical',
+          'ARGUS': 'physical_security',
+        };
+
+        const { count: knowledgeCount } = await supabase
+          .from('expert_knowledge')
+          .select('id', { count: 'exact', head: true })
+          .eq('domain', domainMap[callSign] || 'general')
+          .eq('is_active', true);
+
+        // Trigger real learning if knowledge is sparse (< 10 entries)
+        if ((knowledgeCount || 0) < 10) {
+          console.log(`[LoopCloser] Triggering literature_review for ${callSign} (${knowledgeCount || 0} knowledge entries)`);
+          
+          // Fire and don't await — the learning function handles its own lifecycle
+          supabase.functions.invoke('agent-self-learning', {
+            body: {
+              mode: 'literature_review',
+              agent_call_sign: callSign,
+              max_queries: 3, // Cap to avoid excessive API usage
+            }
+          }).catch((err: Error) => console.error(`[LoopCloser] ${callSign} learning trigger failed:`, err));
+
+          learningTriggered++;
+          
+          // Small delay between triggers to avoid overwhelming Perplexity
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+
+      // Also ensure real scan data exists — run actual signal analysis for agents without scans
       const { data: activeAgents } = await supabase
         .from('ai_agents')
         .select('call_sign')
         .eq('is_active', true);
 
-      if (activeAgents && activeAgents.length > 0) {
-        const scanTypes = ['threat_landscape_scan', 'entity_monitoring', 'pattern_analysis'];
-        let seeded = 0;
-
+      let scansCreated = 0;
+      if (activeAgents) {
         for (const agent of activeAgents) {
-          // Check if agent has a scan in the last 24h
-          const { count } = await supabase
+          const { count: scanCount } = await supabase
             .from('autonomous_scan_results')
             .select('id', { count: 'exact', head: true })
             .eq('agent_call_sign', agent.call_sign)
             .gte('created_at', new Date(Date.now() - 86400000).toISOString());
 
-          if ((count || 0) > 0) continue;
+          if ((scanCount || 0) > 0) continue;
 
-          // Seed a scan for this agent
-          const scanType = scanTypes[Math.floor(Math.random() * scanTypes.length)];
-          const signalsAnalyzed = 5 + Math.floor(Math.random() * 40);
-          const alertsGenerated = Math.floor(Math.random() * 5);
+          // Create a REAL scan based on actual signal data
+          const agentDomainMap: Record<string, string[]> = {
+            '0DAY': ['cyber', 'data_exposure', 'vulnerability', 'exploit', 'phishing', 'ransomware'],
+            'NEO': ['cyber', 'data_exposure'],
+            'CERBERUS': ['theft', 'fraud', 'financial'],
+            'SPECTER': ['threat', 'insider'],
+            'MERIDIAN': ['protest', 'geopolitical', 'wildfire', 'weather'],
+            'ARGUS': ['surveillance', 'sabotage', 'physical'],
+            'VIPER': ['narcotics', 'trafficking'],
+          };
+
+          const relevantCategories = agentDomainMap[agent.call_sign] || [];
+          let signalsAnalyzed = 0;
+          let alertsGenerated = 0;
+          let riskScore = 0;
+
+          if (relevantCategories.length > 0) {
+            // Count actual signals in this agent's domain from last 24h
+            for (const cat of relevantCategories) {
+              const { count } = await supabase
+                .from('signals')
+                .select('id', { count: 'exact', head: true })
+                .ilike('category', `%${cat}%`)
+                .gte('created_at', new Date(Date.now() - 86400000).toISOString());
+              signalsAnalyzed += (count || 0);
+            }
+
+            // Count high-severity signals as alerts
+            for (const cat of relevantCategories) {
+              const { count } = await supabase
+                .from('signals')
+                .select('id', { count: 'exact', head: true })
+                .ilike('category', `%${cat}%`)
+                .in('severity', ['critical', 'high'])
+                .gte('created_at', new Date(Date.now() - 86400000).toISOString());
+              alertsGenerated += (count || 0);
+            }
+
+            // Risk score based on signal density and severity
+            riskScore = Math.min(100, Math.round(
+              (signalsAnalyzed > 0 ? 30 : 10) +
+              (alertsGenerated * 10) +
+              (signalsAnalyzed > 20 ? 20 : signalsAnalyzed)
+            ));
+          }
 
           await supabase.from('autonomous_scan_results').insert({
             agent_call_sign: agent.call_sign,
-            scan_type: scanType,
+            scan_type: 'domain_signal_analysis',
             signals_analyzed: signalsAnalyzed,
             alerts_generated: alertsGenerated,
-            risk_score: 20 + Math.floor(Math.random() * 60),
+            risk_score: riskScore,
             status: 'completed',
-            findings: { summary: `Automated ${scanType.replace(/_/g, ' ')} completed`, signals_reviewed: signalsAnalyzed },
+            findings: {
+              summary: `Domain signal analysis: ${signalsAnalyzed} signals reviewed, ${alertsGenerated} high-severity alerts in scope`,
+              categories_scanned: relevantCategories,
+              data_driven: true,
+            },
           });
-          seeded++;
+          scansCreated++;
         }
-
-        results.agent_scans = { seeded, total_agents: activeAgents.length };
-        if (seeded > 0) console.log(`[LoopCloser] Agent Scans: Seeded ${seeded} agents with scan data`);
       }
+
+      results.specialist_learning = { learning_triggered: learningTriggered, scans_created: scansCreated };
+      console.log(`[LoopCloser] Specialist Learning: ${learningTriggered} agents triggered, ${scansCreated} real scans created`);
     } catch (err) {
-      console.error('[LoopCloser] Agent Scans error:', err);
-      results.agent_scans = { error: String(err) };
+      console.error('[LoopCloser] Specialist Learning error:', err);
+      results.specialist_learning = { error: String(err) };
     }
 
     console.log(`[LoopCloser] Complete:`, JSON.stringify(results));
