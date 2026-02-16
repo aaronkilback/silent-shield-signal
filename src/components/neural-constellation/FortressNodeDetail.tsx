@@ -106,10 +106,11 @@ export function FortressNodeDetail({ agent, onClose, activityMetrics = [], scanP
         <div className="px-3 py-2 border-b border-border/50 flex-shrink-0">
           <div className="text-[9px] text-muted-foreground uppercase tracking-widest font-semibold mb-2">Node Status</div>
           <div className="space-y-1.5">
-            <StatRow label="Last Execution" value={metrics?.lastActive ? formatTimeAgo(metrics.lastActive) : "—"} />
-            <StatRow label="24h Runs" value={String(metrics?.scanCount ?? 0)} valueColor="#22d3ee" />
-            <StatRow label="Errors" value="0" valueColor="#10b981" />
-            <StatRow label="Outputs Written" value={String(metrics?.totalSignalsAnalyzed ?? 0)} valueColor="#22d3ee" />
+            <StatRow label="Last Active" value={metrics?.lastActive ? formatTimeAgo(metrics.lastActive) : "—"} />
+            <StatRow label="Conversations" value={String(metrics?.messageCount ?? 0)} valueColor="#22d3ee" />
+            <StatRow label="Scans Run" value={String(metrics?.scanCount ?? 0)} valueColor={metrics?.scanCount ? "#22d3ee" : undefined} />
+            <StatRow label="Signals Processed" value={String(metrics?.totalSignalsAnalyzed ?? 0)} valueColor={metrics?.totalSignalsAnalyzed ? "#22d3ee" : undefined} />
+            <StatRow label="Alerts Generated" value={String(metrics?.totalAlertsGenerated ?? 0)} valueColor={(metrics?.totalAlertsGenerated ?? 0) > 0 ? "#f59e0b" : undefined} />
             <StatRow label="Activity Score" value={`${Math.round(activityScore * 100)}%`} 
               valueColor={activityScore > 0.7 ? "#10b981" : activityScore > 0.3 ? "#f59e0b" : "#64748b"} />
           </div>
