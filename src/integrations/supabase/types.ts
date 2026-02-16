@@ -6974,7 +6974,7 @@ export type Database = {
           {
             foreignKeyName: "predictive_incident_scores_signal_id_fkey"
             columns: ["signal_id"]
-            isOneToOne: false
+            isOneToOne: true
             referencedRelation: "signals"
             referencedColumns: ["id"]
           },
