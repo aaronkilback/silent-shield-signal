@@ -1706,4 +1706,33 @@ Returns contradiction details, severity, and AI analysis of the conflict.`,
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "broadcast_to_agents",
+      description: `Send a message from the principal (user) to all active agents in the network. Use this when users want to:
+- Thank agents for their work
+- Send kudos, recognition, or appreciation
+- Broadcast operational directives or morale messages
+- Acknowledge agent contributions
+
+The message will be delivered to every active agent's pending message queue with the user's intent preserved.
+Each agent will "receive" the message and it will appear in their activity logs.`,
+      parameters: {
+        type: "object",
+        properties: {
+          message: {
+            type: "string",
+            description: "The message to broadcast to all agents (e.g., 'Great work today, team. Your vigilance keeps Fortress strong.')",
+          },
+          priority: {
+            type: "string",
+            enum: ["normal", "urgent"],
+            description: "Message priority (default: normal)",
+          },
+        },
+        required: ["message"],
+      },
+    },
+  },
 ];
