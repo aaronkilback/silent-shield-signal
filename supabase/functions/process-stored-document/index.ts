@@ -1313,11 +1313,107 @@ Think like a professional intelligence analyst reading an opposition research do
 
     console.log(`Successfully processed document: ${document.filename}`);
 
+    // ═══ DISSEMINATION: Share key findings with specialist agents ═══
+    let disseminatedTo: string[] = [];
+    if (textContent && textContent.length > 100) {
+      try {
+        console.log('Disseminating document findings to agent network...');
+        
+        // Build a concise summary for agent memory (max 2000 chars)
+        const summaryForAgents = textContent.substring(0, 2000);
+        const docSummary = document.summary || `Document: ${document.filename}`;
+        const entityList = entityNames.length > 0 ? ` | Entities: ${entityNames.slice(0, 10).join(', ')}` : '';
+        const memoryContent = `DOCUMENT INTAKE: "${document.filename}" (${document.file_type}, ${(document.file_size / 1024).toFixed(0)}KB). ${docSummary}${entityList}\n\nKey content: ${summaryForAgents}`;
+        
+        // Determine which agents should receive this based on content keywords
+        const contentLower = textContent.toLowerCase();
+        const agentTargets: { callSign: string; reason: string }[] = [];
+        
+        // Always notify AEGIS-CMD (command hub)
+        agentTargets.push({ callSign: 'AEGIS-CMD', reason: 'command_hub' });
+        
+        // Route to specialists based on content
+        if (/cyber|malware|apt|phish|ransomware|breach|cve|exploit|zero.day/i.test(contentLower)) {
+          agentTargets.push({ callSign: 'NEO', reason: 'cyber_content' });
+        }
+        if (/financ|launder|fraud|aml|sanction|crypto|money/i.test(contentLower)) {
+          agentTargets.push({ callSign: 'CERBERUS', reason: 'financial_crime' });
+        }
+        if (/extremis|terror|radicali|violen|ideology|threat actor/i.test(contentLower)) {
+          agentTargets.push({ callSign: 'MERIDIAN', reason: 'threat_content' });
+        }
+        if (/supply.chain|vendor|third.party|procurement|logistics/i.test(contentLower)) {
+          agentTargets.push({ callSign: 'OUROBOROS', reason: 'supply_chain' });
+        }
+        if (/physical|security|patrol|surveillance|access.control|perimeter/i.test(contentLower)) {
+          agentTargets.push({ callSign: 'ARGUS', reason: 'physical_security' });
+        }
+        if (/investig|case|evidence|witness|suspect|forensic/i.test(contentLower)) {
+          agentTargets.push({ callSign: 'BIRD-DOG', reason: 'investigation' });
+        }
+        if (/geopolit|nation.state|sanction|embassy|diplomatic|conflict/i.test(contentLower)) {
+          agentTargets.push({ callSign: 'MERIDIAN', reason: 'geopolitical' });
+        }
+        if (/vuln|pentest|red.team|offensive|exploit|attack.surface/i.test(contentLower)) {
+          agentTargets.push({ callSign: 'WRAITH', reason: 'offensive_security' });
+        }
+        
+        // Deduplicate
+        const seen = new Set<string>();
+        const uniqueTargets = agentTargets.filter(t => {
+          if (seen.has(t.callSign)) return false;
+          seen.add(t.callSign);
+          return true;
+        });
+        
+        // Write memory entries for each targeted agent
+        const memoryInserts = uniqueTargets.map(target => ({
+          agent_call_sign: target.callSign,
+          content: memoryContent,
+          memory_type: 'document_intake',
+          entities: entityNames.slice(0, 20),
+          tags: ['document_upload', document.file_type.split('/').pop() || 'unknown', target.reason],
+          confidence: 0.8,
+          client_id: document.client_id || null,
+        }));
+        
+        const { error: memError } = await supabase
+          .from('agent_investigation_memory')
+          .insert(memoryInserts);
+        
+        if (memError) {
+          console.error('Failed to disseminate to agent memory:', memError);
+        } else {
+          disseminatedTo = uniqueTargets.map(t => t.callSign);
+          console.log(`Disseminated document findings to ${disseminatedTo.length} agents: ${disseminatedTo.join(', ')}`);
+        }
+        
+        // Log the dissemination action for audit trail
+        await supabase.from('autonomous_actions_log').insert({
+          trigger_source: 'process-stored-document',
+          action_type: 'document_dissemination',
+          status: memError ? 'failed' : 'completed',
+          action_details: {
+            document_id: documentId,
+            filename: document.filename,
+            agents_targeted: uniqueTargets,
+            entities_count: entityNames.length,
+            text_length: textContent.length,
+          },
+          error_message: memError?.message || null,
+        });
+        
+      } catch (dissemError) {
+        console.error('Dissemination error (non-fatal):', dissemError);
+      }
+    }
+
     return new Response(
       JSON.stringify({ 
         success: true,
         documentId,
-        entitiesFound: entitySuggestions.length
+        entitiesFound: entitySuggestions.length,
+        disseminatedTo,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
