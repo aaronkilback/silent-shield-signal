@@ -922,8 +922,10 @@ const ACTIVITY_VISUALS: Record<ActivityType, { color: [number, number, number]; 
   idle:          { color: [0.4, 0.5, 0.65],    size: 0.25, speed: 0.03, label: "Standby" },              // Slate
 };
 
-// Programmatic circular glow texture for particles
-function createGlowTexture(): THREE.Texture {
+// Programmatic circular glow texture for particles — created lazily
+let _glowTexture: THREE.Texture | null = null;
+function getGlowTexture(): THREE.Texture {
+  if (_glowTexture) return _glowTexture;
   const size = 64;
   const canvas = document.createElement("canvas");
   canvas.width = size;
@@ -937,12 +939,10 @@ function createGlowTexture(): THREE.Texture {
   gradient.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, size, size);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.needsUpdate = true;
-  return tex;
+  _glowTexture = new THREE.CanvasTexture(canvas);
+  _glowTexture.needsUpdate = true;
+  return _glowTexture;
 }
-
-const glowTexture = createGlowTexture();
 
 function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPulses = [] }: {
   agents: AgentNode[];
@@ -1097,7 +1097,7 @@ function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPul
         <bufferAttribute attach="attributes-position" count={particleCount} array={positions} itemSize={3} />
         <bufferAttribute attach="attributes-color" count={particleCount} array={colors} itemSize={3} />
       </bufferGeometry>
-      <pointsMaterial map={glowTexture} size={0.7} vertexColors transparent opacity={0.95} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
+      <pointsMaterial map={getGlowTexture()} size={0.7} vertexColors transparent opacity={0.95} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
     </points>
   );
 }
@@ -1163,7 +1163,7 @@ function OperatorDataFlow({ operatorPos, aegisPos, isActive, messageCount = 0 }:
         <bufferAttribute attach="attributes-position" count={particleCount} array={positions} itemSize={3} />
         <bufferAttribute attach="attributes-color" count={particleCount} array={colors} itemSize={3} />
       </bufferGeometry>
-      <pointsMaterial map={glowTexture} size={0.4} vertexColors transparent opacity={0.9} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
+      <pointsMaterial map={getGlowTexture()} size={0.4} vertexColors transparent opacity={0.9} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
     </points>
   );
 }
