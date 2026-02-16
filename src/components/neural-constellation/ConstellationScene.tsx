@@ -1965,7 +1965,7 @@ function LearningParticleStreams({ agents, activelyLearningAgents = [] }: {
         <bufferAttribute attach="attributes-position" count={particleCount} array={positions} itemSize={3} />
         <bufferAttribute attach="attributes-color" count={particleCount} array={colors} itemSize={3} />
       </bufferGeometry>
-      <pointsMaterial size={0.18} vertexColors transparent opacity={0.9} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
+      <pointsMaterial map={getGlowTexture()} size={0.5} vertexColors transparent opacity={0.9} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
     </points>
   );
 }

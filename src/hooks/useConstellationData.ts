@@ -506,10 +506,10 @@ export function useKnowledgeGrowthData(enabled: boolean) {
         };
       });
 
-      // Agents that learned in the last 2 hours (for active visual effects)
-      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      // Agents that learned in the last 6 hours (matches proactive learning cycle)
+      const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
       const activelyLearningAgents = recentLearningSessions
-        .filter(s => s.createdAt >= twoHoursAgo && s.entriesCreated > 0)
+        .filter(s => s.createdAt >= sixHoursAgo && s.entriesCreated > 0)
         .map(s => s.agentCallSign);
 
       return {
