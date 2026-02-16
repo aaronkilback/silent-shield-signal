@@ -836,16 +836,7 @@ function IncidentHeatTrails({ agents, activeDebates = [], scanPulses = [] }: {
       }
     });
 
-    // If no hot routes, create ambient ones
-    if (routes.length === 0 && agents.length > 2) {
-      for (let i = 0; i < 3; i++) {
-        routes.push({
-          from: i % agents.length,
-          to: (i + 2) % agents.length,
-          severity: "medium",
-        });
-      }
-    }
+    // No ambient fallback — only show heat trails when real incidents/debates exist
 
     return routes;
   }, [agents, activeDebates, scanPulses, callSignIndex]);
@@ -904,13 +895,15 @@ function IncidentHeatTrails({ agents, activeDebates = [], scanPulses = [] }: {
     ref.current.geometry.attributes.position.needsUpdate = true;
   });
 
+  if (hotRoutes.length === 0) return null;
+
   return (
     <points ref={ref}>
       <bufferGeometry>
         <bufferAttribute attach="attributes-position" count={particleCount} array={positions} itemSize={3} />
         <bufferAttribute attach="attributes-color" count={particleCount} array={colors} itemSize={3} />
       </bufferGeometry>
-      <pointsMaterial size={0.2} vertexColors transparent opacity={0.85} sizeAttenuation />
+      <pointsMaterial size={0.2} vertexColors transparent opacity={0.85} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
     </points>
   );
 }
@@ -1079,7 +1072,7 @@ function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPul
         <bufferAttribute attach="attributes-position" count={particleCount} array={positions} itemSize={3} />
         <bufferAttribute attach="attributes-color" count={particleCount} array={colors} itemSize={3} />
       </bufferGeometry>
-      <pointsMaterial size={0.18} vertexColors transparent opacity={0.92} sizeAttenuation />
+      <pointsMaterial size={0.22} vertexColors transparent opacity={0.92} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
     </points>
   );
 }
@@ -1894,15 +1887,7 @@ function LearningParticleStreams({ agents, activelyLearningAgents = [] }: {
     const indices = agents
       .map((a, i) => activelyLearningAgents.includes(a.callSign) ? i : -1)
       .filter(i => i >= 0);
-    // If no agents are actively learning, show ambient flow to a spread of agents (skip index 0 which is AEGIS)
-    if (indices.length === 0 && agents.length > 2) {
-      const spread: number[] = [];
-      const step = Math.max(1, Math.floor(agents.length / 5));
-      for (let i = 1; i < agents.length && spread.length < 5; i += step) {
-        spread.push(i);
-      }
-      return spread;
-    }
+    // No ambient fallback — only stream particles when agents are actively learning
     return indices;
   }, [agents, activelyLearningAgents]);
 
@@ -1949,13 +1934,15 @@ function LearningParticleStreams({ agents, activelyLearningAgents = [] }: {
     ref.current.geometry.attributes.position.needsUpdate = true;
   });
 
+  if (learningAgentIndices.length === 0) return null;
+
   return (
     <points ref={ref}>
       <bufferGeometry>
         <bufferAttribute attach="attributes-position" count={particleCount} array={positions} itemSize={3} />
         <bufferAttribute attach="attributes-color" count={particleCount} array={colors} itemSize={3} />
       </bufferGeometry>
-      <pointsMaterial size={0.18} vertexColors transparent opacity={activelyLearningAgents.length > 0 ? 0.9 : 0.4} sizeAttenuation />
+      <pointsMaterial size={0.18} vertexColors transparent opacity={0.9} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
     </points>
   );
 }
