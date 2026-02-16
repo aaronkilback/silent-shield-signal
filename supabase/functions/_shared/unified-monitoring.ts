@@ -107,6 +107,8 @@ export interface SignalData {
   category: string;
   severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
   content: string;
+  title?: string;
+  signal_type?: string;
   raw_content?: string;
   source_url?: string;
   location?: string;
@@ -143,8 +145,21 @@ export async function createSignal(
     }
   } catch { /* non-critical */ }
 
+  // Resolve source_id from source name
+  let sourceId: string | null = null;
+  if (signalData.source) {
+    try {
+      const { data: sourceRecord } = await supabase
+        .from('sources')
+        .select('id')
+        .eq('name', signalData.source)
+        .single();
+      sourceId = sourceRecord?.id || null;
+    } catch { /* source may not exist */ }
+  }
+
   // Map signal_type (if provided in metadata) to category for consistent categorization
-  const signalType = signalData.metadata?.signal_type;
+  const signalType = signalData.signal_type || signalData.metadata?.signal_type;
   const categoryFromType: Record<string, string> = {
     theft: 'active_threat', protest: 'protest', threat: 'active_threat',
     surveillance: 'cybersecurity', sabotage: 'active_threat', violence: 'active_threat',
@@ -159,6 +174,9 @@ export async function createSignal(
   const { data, error } = await supabase
     .from('signals')
     .insert({
+      source_id: sourceId,
+      title: signalData.title || signalData.content.substring(0, 120),
+      signal_type: signalType || null,
       normalized_text: signalData.content,
       category: finalCategory,
       severity: signalData.severity,

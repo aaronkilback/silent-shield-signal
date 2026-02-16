@@ -120,6 +120,38 @@ Deno.serve(async (req) => {
       throw new Error('Document not found');
     }
 
+    // Resolve source_id: use document's source_id, or resolve from metadata
+    let resolvedSourceId: string | null = document.source_id || null;
+    if (!resolvedSourceId) {
+      // For social media docs without source_id, resolve from source type
+      const sourceType = document.metadata?.source_type;
+      if (sourceType === 'social_media') {
+        const { data: socialSource } = await supabase
+          .from('sources')
+          .select('id')
+          .eq('name', 'Social Media Monitoring')
+          .single();
+        resolvedSourceId = socialSource?.id || null;
+      } else if (sourceType === 'rss') {
+        const { data: rssSource } = await supabase
+          .from('sources')
+          .select('id')
+          .eq('name', 'RSS Sources (Aggregated)')
+          .single();
+        resolvedSourceId = rssSource?.id || null;
+      } else if (sourceType === 'news') {
+        const { data: newsSource } = await supabase
+          .from('sources')
+          .select('id')
+          .eq('name', 'News Monitor')
+          .single();
+        resolvedSourceId = newsSource?.id || null;
+      }
+      if (resolvedSourceId) {
+        console.log(`[SourceResolve] Resolved source_id from metadata: ${resolvedSourceId} (${sourceType})`);
+      }
+    }
+
     // Fetch existing entities for context
     const { data: existingEntities } = await supabase
       .from('entities')
@@ -745,6 +777,7 @@ Extract all entities, signals, and their relationships.`
         const { data: newSignal, error: signalError } = await supabase
           .from('signals')
           .insert({
+            source_id: resolvedSourceId,
             title: signal.title,
             description: signal.description,
             signal_type: signal.signal_type,
