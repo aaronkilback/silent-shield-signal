@@ -111,10 +111,28 @@ Deno.serve(async (req) => {
       return text;
     })();
 
+    // Generate content hash for dedup
+    const hashData = new TextEncoder().encode(text);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', hashData);
+    const contentHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+    // Check for duplicate
+    const { data: existingSignal } = await supabase
+      .from('signals')
+      .select('id')
+      .eq('content_hash', contentHash)
+      .limit(1)
+      .maybeSingle();
+
+    if (existingSignal) {
+      return successResponse({ success: true, message: 'Duplicate signal detected', signalId: existingSignal.id, duplicate: true });
+    }
+
     const { data: signal, error: signalError } = await supabase.from('signals').insert({
       title: docTitle,
       normalized_text: text, location: location || null, category: 'document_upload',
       severity: rulesResult.severity || 'low', confidence: 0.7, client_id: matchedClientId,
+      content_hash: contentHash,
       raw_json: { source: 'document_upload', filename, mimeType, rulesMatched: rulesResult.matchedRule, matchedKeyword: rulesResult.matchedKeyword },
       status: 'new', is_test: false
     }).select().single();
