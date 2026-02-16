@@ -83,6 +83,7 @@ interface Signal {
   // Quality & feedback scores
   quality_score?: number | null;
   feedback_score?: number | null;
+  triage_override?: string | null;
   sources?: {
     name: string;
     type: string;
@@ -207,6 +208,7 @@ export const SignalHistory = () => {
           thumbnail_url,
           quality_score,
           feedback_score,
+          triage_override,
           clients (
             name
           )
@@ -410,8 +412,8 @@ export const SignalHistory = () => {
   // Classify each signal into a primary bucket
   const classifySignal = (signal: Signal): 'international' | 'review' | 'historical' | 'recent' => {
     // Manual override takes precedence
-    if ((signal as any).triage_override) {
-      return (signal as any).triage_override as 'international' | 'review' | 'historical' | 'recent';
+    if (signal.triage_override) {
+      return signal.triage_override as 'international' | 'review' | 'historical' | 'recent';
     }
     if (isInternationalSignal(signal)) return 'international';
     if (isQuestionableSignal(signal)) return 'review';
