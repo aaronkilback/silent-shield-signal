@@ -915,75 +915,146 @@ function IncidentHeatTrails({ agents, activeDebates = [], scanPulses = [] }: {
   );
 }
 
-// Real signal particles — travel along actual comm links
-function SignalParticles({ agents, commLinks = [] }: { agents: AgentNode[]; commLinks?: AgentCommLink[] }) {
-  const particleCount = 50;
+// Activity-typed particles — visually represent what's actually happening across the network
+// Each particle type has distinct color, size, and speed signatures
+type ActivityType = "signal_ingest" | "scan_sweep" | "learning" | "message" | "alert" | "idle";
+
+const ACTIVITY_VISUALS: Record<ActivityType, { color: [number, number, number]; size: number; speed: number; label: string }> = {
+  signal_ingest: { color: [0.13, 0.83, 0.93], size: 0.18, speed: 0.14, label: "Signal Ingestion" },    // Cyan — data flowing in
+  scan_sweep:    { color: [0.39, 0.53, 1.0],  size: 0.22, speed: 0.08, label: "OSINT Scan" },           // Blue — methodical sweeps
+  learning:      { color: [0.58, 0.29, 0.95], size: 0.14, speed: 0.06, label: "Knowledge Acquisition" },// Violet — learning flows
+  message:       { color: [0.13, 0.93, 0.55], size: 0.16, speed: 0.18, label: "Agent Comms" },          // Green — fast messages
+  alert:         { color: [1.0, 0.35, 0.15],  size: 0.28, speed: 0.22, label: "Alert Escalation" },     // Red — urgent, large, fast
+  idle:          { color: [0.25, 0.35, 0.50], size: 0.10, speed: 0.03, label: "Standby" },              // Dim slate — barely moving
+};
+
+function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPulses = [] }: {
+  agents: AgentNode[];
+  commLinks?: AgentCommLink[];
+  activityMetrics?: AgentActivityMetrics[];
+  scanPulses?: ScanPulse[];
+}) {
+  const particleCount = 60;
   const ref = useRef<THREE.Points>(null);
+  const sizeRef = useRef<THREE.BufferAttribute | null>(null);
   const velocities = useRef(new Float32Array(particleCount));
+  const speeds = useRef(new Float32Array(particleCount));
   const targets = useRef<number[]>([]);
   const sources = useRef<number[]>([]);
 
   const callSignIndex = useMemo(() => new Map(agents.map((a, i) => [a.callSign, i])), [agents]);
 
-  const routePairs = useMemo(() => {
-    const pairs: [number, number][] = [];
+  // Build activity-typed routes from real operational data
+  const typedRoutes = useMemo(() => {
+    const routes: { from: number; to: number; type: ActivityType }[] = [];
+    const metricsMap = new Map(activityMetrics.map(m => [m.callSign, m]));
+    const aegisIdx = callSignIndex.get("AEGIS-CMD");
+
+    // 1. Comm links → message particles (green, fast)
     commLinks.forEach((link) => {
       const src = callSignIndex.get(link.sourceCallSign);
       const tgt = callSignIndex.get(link.targetCallSign);
       if (src !== undefined && tgt !== undefined) {
-        const weight = Math.min(Math.ceil(link.messageCount / 5), 5);
-        for (let w = 0; w < weight; w++) pairs.push([src, tgt]);
+        const weight = Math.min(Math.ceil(link.messageCount / 3), 4);
+        for (let w = 0; w < weight; w++) routes.push({ from: src, to: tgt, type: "message" });
       }
     });
-    if (pairs.length === 0) {
-      const primaries = agents.map((a, i) => (a.tier === "primary" ? i : -1)).filter((i) => i >= 0);
-      agents.forEach((_, idx) => {
-        const pi = primaries[Math.floor(Math.random() * primaries.length)];
-        if (pi !== undefined) pairs.push([idx, pi]);
+
+    // 2. Scan pulses → scan_sweep particles (blue, slow/methodical) flowing to AEGIS
+    scanPulses.forEach((s) => {
+      const srcIdx = callSignIndex.get(s.agentCallSign);
+      if (srcIdx !== undefined && aegisIdx !== undefined) {
+        routes.push({ from: srcIdx, to: aegisIdx, type: "scan_sweep" });
+        // High-risk scans also generate alert particles
+        if ((s.riskScore ?? 0) > 60) {
+          routes.push({ from: srcIdx, to: aegisIdx, type: "alert" });
+        }
+      }
+    });
+
+    // 3. Per-agent: classify dominant activity from metrics
+    activityMetrics.forEach((m) => {
+      const idx = callSignIndex.get(m.callSign);
+      if (idx === undefined || aegisIdx === undefined) return;
+
+      if (m.totalSignalsAnalyzed > 0) {
+        // Signal ingestion particles (cyan) — data flowing to agent
+        routes.push({ from: aegisIdx, to: idx, type: "signal_ingest" });
+      }
+      if (m.totalAlertsGenerated > 0) {
+        // Alert escalation particles (red) — urgent flow back to command
+        routes.push({ from: idx, to: aegisIdx, type: "alert" });
+      }
+    });
+
+    // 4. Fill remaining slots with idle standby particles for low-activity agents
+    if (routes.length < 10 && agents.length > 2) {
+      agents.forEach((a, idx) => {
+        const m = metricsMap.get(a.callSign);
+        const score = m?.activityScore ?? 0;
+        if (score < 0.1 && aegisIdx !== undefined && idx !== aegisIdx) {
+          routes.push({ from: idx, to: aegisIdx, type: "idle" });
+        }
       });
     }
-    return pairs;
-  }, [agents, commLinks, callSignIndex]);
 
-  const { positions, colors } = useMemo(() => {
+    // Ensure we always have some routes
+    if (routes.length === 0 && agents.length > 1) {
+      for (let i = 0; i < Math.min(agents.length, 6); i++) {
+        routes.push({ from: i, to: (i + 1) % agents.length, type: "idle" });
+      }
+    }
+
+    return routes;
+  }, [agents, commLinks, activityMetrics, scanPulses, callSignIndex]);
+
+  const { positions, colors, sizes } = useMemo(() => {
     const pos = new Float32Array(particleCount * 3);
     const col = new Float32Array(particleCount * 3);
+    const sz = new Float32Array(particleCount);
 
     for (let i = 0; i < particleCount; i++) {
-      const pair = routePairs[i % routePairs.length] || [0, Math.min(1, agents.length - 1)];
-      sources.current[i] = pair[0];
-      targets.current[i] = pair[1];
+      const route = typedRoutes[i % Math.max(typedRoutes.length, 1)] || { from: 0, to: 1, type: "idle" as ActivityType };
+      sources.current[i] = route.from;
+      targets.current[i] = route.to;
       velocities.current[i] = Math.random();
 
-      const src = agents[pair[0]]?.position || [0, 0, 0];
-      const tgt = agents[pair[1]]?.position || [0, 0, 0];
+      const visual = ACTIVITY_VISUALS[route.type];
+      speeds.current[i] = visual.speed;
+
+      const src = agents[route.from]?.position || [0, 0, 0];
+      const tgt = agents[route.to]?.position || [0, 0, 0];
       const t = velocities.current[i];
       pos[i * 3] = src[0] + (tgt[0] - src[0]) * t;
       pos[i * 3 + 1] = src[1] + (tgt[1] - src[1]) * t;
       pos[i * 3 + 2] = src[2] + (tgt[2] - src[2]) * t;
 
-      const isReal = commLinks.length > 0;
-      if (isReal) {
-        col[i * 3] = 0.13; col[i * 3 + 1] = 0.83; col[i * 3 + 2] = 0.93;
-      } else {
-        col[i * 3] = 0.3; col[i * 3 + 1] = 0.5; col[i * 3 + 2] = 0.9;
-      }
+      col[i * 3] = visual.color[0];
+      col[i * 3 + 1] = visual.color[1];
+      col[i * 3 + 2] = visual.color[2];
+      sz[i] = visual.size;
     }
-    return { positions: pos, colors: col };
-  }, [agents, routePairs, commLinks.length]);
+    return { positions: pos, colors: col, sizes: sz };
+  }, [agents, typedRoutes]);
 
   useFrame((_, delta) => {
-    if (!ref.current || agents.length === 0) return;
+    if (!ref.current || agents.length === 0 || typedRoutes.length === 0) return;
     const posArr = ref.current.geometry.attributes.position.array as Float32Array;
+    const colArr = ref.current.geometry.attributes.color.array as Float32Array;
 
     for (let i = 0; i < particleCount; i++) {
-      velocities.current[i] += delta * (0.12 + Math.random() * 0.08);
+      velocities.current[i] += delta * (speeds.current[i] + Math.random() * 0.02);
 
       if (velocities.current[i] >= 1) {
         velocities.current[i] = 0;
-        const pair = routePairs[Math.floor(Math.random() * routePairs.length)] || [0, 0];
-        sources.current[i] = pair[0];
-        targets.current[i] = pair[1];
+        const route = typedRoutes[Math.floor(Math.random() * typedRoutes.length)];
+        sources.current[i] = route.from;
+        targets.current[i] = route.to;
+        const visual = ACTIVITY_VISUALS[route.type];
+        speeds.current[i] = visual.speed;
+        colArr[i * 3] = visual.color[0];
+        colArr[i * 3 + 1] = visual.color[1];
+        colArr[i * 3 + 2] = visual.color[2];
       }
 
       const src = agents[sources.current[i]]?.position || [0, 0, 0];
@@ -995,6 +1066,7 @@ function SignalParticles({ agents, commLinks = [] }: { agents: AgentNode[]; comm
     }
 
     ref.current.geometry.attributes.position.needsUpdate = true;
+    ref.current.geometry.attributes.color.needsUpdate = true;
   });
 
   return (
@@ -1003,7 +1075,7 @@ function SignalParticles({ agents, commLinks = [] }: { agents: AgentNode[]; comm
         <bufferAttribute attach="attributes-position" count={particleCount} array={positions} itemSize={3} />
         <bufferAttribute attach="attributes-color" count={particleCount} array={colors} itemSize={3} />
       </bufferGeometry>
-      <pointsMaterial size={0.15} vertexColors transparent opacity={0.95} sizeAttenuation />
+      <pointsMaterial size={0.18} vertexColors transparent opacity={0.92} sizeAttenuation />
     </points>
   );
 }
@@ -2105,7 +2177,7 @@ export function ConstellationScene({
 
 
         <ConnectionLines agents={visibleAgents} commLinks={commLinks} activityMetrics={activityMetrics} />
-        <SignalParticles agents={visibleAgents} commLinks={commLinks} />
+        <SignalParticles agents={visibleAgents} commLinks={commLinks} activityMetrics={activityMetrics} scanPulses={scanPulses} />
 
         {/* Knowledge graph overlay — dashed colored arcs */}
         {!isExecutiveMode && knowledgeGraphEdges.length > 0 && (
