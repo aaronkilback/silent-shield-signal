@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Shield, AlertTriangle, Search, RefreshCw, Wifi, Smartphone, Key, Globe, Mail, Link, CheckCircle, XCircle, Clock } from "lucide-react";
+import { Shield, AlertTriangle, Search, RefreshCw, Wifi, Smartphone, Key, Globe, Mail, Link, CheckCircle, XCircle, Clock, Radar, Lock, Eye } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +34,9 @@ export default function SecurityAdvisor() {
   const [emailInput, setEmailInput] = useState('');
   const [emailContentInput, setEmailContentInput] = useState('');
   const [breachEmail, setBreachEmail] = useState('');
+  const [sslDomain, setSslDomain] = useState('');
+  const [networkResults, setNetworkResults] = useState<any>(null);
+  const [webrtcLeaks, setWebrtcLeaks] = useState<any>(null);
 
   useEffect(() => {
     loadSecurityScore();
@@ -92,6 +95,65 @@ export default function SecurityAdvisor() {
     if (!emailInput.trim()) { toast.error('Enter an email to check'); return; }
     const data = await callWraith('check_breaches', { email: emailInput });
     if (data) setAnalysisResult({ type: 'breach', data });
+  };
+
+  const scanIpExposure = async () => {
+    const data = await callWraith('scan_ip_exposure');
+    if (data) setNetworkResults({ type: 'ip', data });
+  };
+
+  const checkDnsLeaks = async () => {
+    const data = await callWraith('check_dns_leaks');
+    if (data) setNetworkResults({ type: 'dns', data });
+  };
+
+  const checkSsl = async () => {
+    if (!sslDomain.trim()) { toast.error('Enter a domain to check'); return; }
+    const data = await callWraith('check_ssl', { input: sslDomain });
+    if (data) setNetworkResults({ type: 'ssl', data });
+  };
+
+  const detectWebRtcLeaks = async () => {
+    // Client-side WebRTC leak detection
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      const ips: string[] = [];
+      
+      pc.createDataChannel('');
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => resolve(), 3000);
+        pc.onicecandidate = (e) => {
+          if (!e.candidate) { clearTimeout(timeout); resolve(); return; }
+          const match = e.candidate.candidate.match(/(\d+\.\d+\.\d+\.\d+)/);
+          if (match && !ips.includes(match[1])) ips.push(match[1]);
+        };
+      });
+
+      pc.close();
+
+      const localIps = ips.filter(ip => /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(ip));
+      const publicIps = ips.filter(ip => !localIps.includes(ip));
+
+      setWebrtcLeaks({
+        detected_ips: ips,
+        local_ips: localIps,
+        public_ips: publicIps,
+        leak_detected: publicIps.length > 0,
+        risk_level: publicIps.length > 0 ? 'high' : 'low',
+        scanned_at: new Date().toISOString(),
+      });
+
+      if (publicIps.length > 0) {
+        toast.error(`WebRTC leak detected: ${publicIps.length} public IP(s) exposed`);
+      } else {
+        toast.success('No WebRTC IP leaks detected');
+      }
+    } catch {
+      toast.error('WebRTC detection not supported in this browser');
+    }
   };
 
   const scoreColor = (score: number | null) => {
@@ -160,8 +222,9 @@ export default function SecurityAdvisor() {
 
       {/* Main Tabs */}
       <Tabs defaultValue="analyze" className="space-y-4">
-        <TabsList className="grid grid-cols-4 w-full max-w-xl">
+        <TabsList className="grid grid-cols-5 w-full max-w-2xl">
           <TabsTrigger value="analyze" className="text-xs sm:text-sm"><Search className="h-3 w-3 mr-1" />Analyze</TabsTrigger>
+          <TabsTrigger value="network" className="text-xs sm:text-sm"><Radar className="h-3 w-3 mr-1" />Network</TabsTrigger>
           <TabsTrigger value="threats" className="text-xs sm:text-sm"><AlertTriangle className="h-3 w-3 mr-1" />Threats</TabsTrigger>
           <TabsTrigger value="hardening" className="text-xs sm:text-sm"><Key className="h-3 w-3 mr-1" />Harden</TabsTrigger>
           <TabsTrigger value="mobile" className="text-xs sm:text-sm"><Smartphone className="h-3 w-3 mr-1" />Mobile</TabsTrigger>
@@ -238,6 +301,95 @@ export default function SecurityAdvisor() {
               </CardHeader>
               <CardContent>
                 <AnalysisResultView result={analysisResult} />
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* Network Scanning */}
+        <TabsContent value="network" className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* IP Exposure */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center gap-2"><Radar className="h-4 w-4" /> IP Exposure Scan</CardTitle>
+                <CardDescription className="text-xs">Check your public IP against threat databases</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button onClick={scanIpExposure} disabled={loading['scan_ip_exposure']} className="w-full" size="sm">
+                  {loading['scan_ip_exposure'] ? 'Scanning...' : 'Scan My IP'}
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* DNS Leak */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center gap-2"><Globe className="h-4 w-4" /> DNS Leak Test</CardTitle>
+                <CardDescription className="text-xs">Check if your VPN is leaking DNS queries</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button onClick={checkDnsLeaks} disabled={loading['check_dns_leaks']} className="w-full" size="sm">
+                  {loading['check_dns_leaks'] ? 'Checking...' : 'Test DNS Leaks'}
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* WebRTC Leak */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center gap-2"><Eye className="h-4 w-4" /> WebRTC Leak Detection</CardTitle>
+                <CardDescription className="text-xs">Detect if WebRTC exposes your real IP</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button onClick={detectWebRtcLeaks} className="w-full" size="sm">
+                  Detect WebRTC Leaks
+                </Button>
+                {webrtcLeaks && (
+                  <div className="mt-3 space-y-2">
+                    <div className={`p-2 rounded border text-xs ${webrtcLeaks.leak_detected ? 'border-destructive/30 bg-destructive/5' : 'border-green-500/30 bg-green-500/5'}`}>
+                      <p className="font-medium">{webrtcLeaks.leak_detected ? '⚠️ Leak Detected' : '✅ No Leak'}</p>
+                      {webrtcLeaks.public_ips?.length > 0 && <p className="text-muted-foreground mt-1">Exposed IPs: {webrtcLeaks.public_ips.join(', ')}</p>}
+                      {webrtcLeaks.local_ips?.length > 0 && <p className="text-muted-foreground">Local IPs: {webrtcLeaks.local_ips.join(', ')}</p>}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* SSL/TLS Check */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center gap-2"><Lock className="h-4 w-4" /> SSL/TLS Checker</CardTitle>
+                <CardDescription className="text-xs">Analyze certificate & security headers</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <Input placeholder="example.com" value={sslDomain} onChange={e => setSslDomain(e.target.value)} className="text-sm" />
+                <Button onClick={checkSsl} disabled={loading['check_ssl']} className="w-full" size="sm">
+                  {loading['check_ssl'] ? 'Checking...' : 'Check SSL/TLS'}
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Network Results */}
+          {networkResults && (
+            <Card className="border-primary/30">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Radar className="h-4 w-4" /> Network Scan Results
+                  {networkResults.data?.risk_level && (
+                    <Badge variant="outline" className={riskColors[networkResults.data.risk_level]}>
+                      {networkResults.data.risk_level?.toUpperCase()}
+                    </Badge>
+                  )}
+                  {networkResults.data?.grade && (
+                    <Badge variant="outline" className="text-primary">{networkResults.data.grade}</Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <NetworkResultView result={networkResults} />
               </CardContent>
             </Card>
           )}
@@ -422,6 +574,101 @@ function AnalysisResultView({ result }: { result: any }) {
             <p className="text-sm font-medium mb-1">Priority Actions:</p>
             <ul className="space-y-1">{data.recommendations.slice(0, 5).map((r: string, i: number) => (
               <li key={i} className="text-xs flex items-start gap-1.5"><AlertTriangle className="h-3 w-3 text-orange-400 mt-0.5 shrink-0" />{r}</li>
+            ))}</ul>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return <pre className="text-xs overflow-auto max-h-48">{JSON.stringify(data, null, 2)}</pre>;
+}
+
+function NetworkResultView({ result }: { result: any }) {
+  const { type, data } = result;
+
+  if (type === 'ip') {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm"><strong>Public IP:</strong> {data.ip}</p>
+        {data.findings?.length > 0 && (
+          <div className="space-y-1">
+            {data.findings.map((f: any, i: number) => (
+              <div key={i} className="text-xs flex items-start gap-1.5">
+                {f.severity === 'good' || f.severity === 'info' ? <CheckCircle className="h-3 w-3 text-green-500 mt-0.5 shrink-0" /> : <AlertTriangle className="h-3 w-3 text-orange-400 mt-0.5 shrink-0" />}
+                <span><strong>{f.source || f.type}:</strong> {f.detail}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {data.ai_analysis?.exposure_summary && <p className="text-sm text-muted-foreground">{data.ai_analysis.exposure_summary}</p>}
+        {data.recommendations?.length > 0 && (
+          <div>
+            <p className="text-sm font-medium mb-1">Recommendations:</p>
+            <ul className="space-y-1">{data.recommendations.slice(0, 5).map((r: string, i: number) => (
+              <li key={i} className="text-xs flex items-start gap-1.5"><CheckCircle className="h-3 w-3 text-green-500 mt-0.5 shrink-0" />{r}</li>
+            ))}</ul>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (type === 'dns') {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm"><strong>Public IP:</strong> {data.public_ip}</p>
+        <p className="text-sm"><strong>DNS Resolver:</strong> {data.dns_resolver_ip}</p>
+        <p className={`text-sm font-medium ${data.possible_dns_leak ? 'text-orange-400' : 'text-green-500'}`}>
+          {data.possible_dns_leak ? '⚠️ Possible DNS leak detected' : '✅ No DNS leak detected'}
+        </p>
+        {data.findings?.length > 0 && (
+          <div className="space-y-1">
+            {data.findings.map((f: any, i: number) => (
+              <div key={i} className="text-xs flex items-start gap-1.5">
+                <span className="text-muted-foreground"><strong>{f.type}:</strong> {f.detail}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {data.recommendations?.length > 0 && (
+          <div>
+            <p className="text-sm font-medium mb-1">Recommendations:</p>
+            <ul className="space-y-1">{data.recommendations.map((r: string, i: number) => (
+              <li key={i} className="text-xs flex items-start gap-1.5"><CheckCircle className="h-3 w-3 text-green-500 mt-0.5 shrink-0" />{r}</li>
+            ))}</ul>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (type === 'ssl') {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-3">
+          <p className="text-sm"><strong>Domain:</strong> {data.domain}</p>
+          {data.grade && <Badge variant="outline" className="text-primary font-bold">{data.grade}</Badge>}
+          {data.ssl_valid ? <Badge variant="outline" className="text-green-500">SSL Valid</Badge> : <Badge variant="outline" className="text-destructive">SSL Invalid</Badge>}
+        </div>
+        {data.present_headers?.length > 0 && (
+          <div>
+            <p className="text-sm font-medium mb-1 text-green-500">Present Headers:</p>
+            <div className="flex flex-wrap gap-1">{data.present_headers.map((h: string, i: number) => <Badge key={i} variant="outline" className="text-xs text-green-500">{h}</Badge>)}</div>
+          </div>
+        )}
+        {data.missing_headers?.length > 0 && (
+          <div>
+            <p className="text-sm font-medium mb-1 text-orange-400">Missing Headers:</p>
+            <div className="flex flex-wrap gap-1">{data.missing_headers.map((h: string, i: number) => <Badge key={i} variant="outline" className="text-xs text-orange-400">{h}</Badge>)}</div>
+          </div>
+        )}
+        {data.ai_analysis?.certificate_analysis && <p className="text-xs text-muted-foreground">{data.ai_analysis.certificate_analysis}</p>}
+        {data.recommendations?.length > 0 && (
+          <div>
+            <p className="text-sm font-medium mb-1">Recommendations:</p>
+            <ul className="space-y-1">{data.recommendations.slice(0, 5).map((r: string, i: number) => (
+              <li key={i} className="text-xs flex items-start gap-1.5"><CheckCircle className="h-3 w-3 text-green-500 mt-0.5 shrink-0" />{r}</li>
             ))}</ul>
           </div>
         )}
