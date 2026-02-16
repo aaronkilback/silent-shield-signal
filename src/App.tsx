@@ -45,6 +45,7 @@ import IntelligenceHub from "./pages/IntelligenceHub";
 import BriefingFeedback from "./pages/BriefingFeedback";
 import NeuralConstellation from "./pages/NeuralConstellation";
 import KnowledgeBank from "./pages/KnowledgeBank";
+import SecurityAdvisor from "./pages/SecurityAdvisor";
 import { EnsureDefaultRole } from "@/components/EnsureDefaultRole";
 import { TenantProvider } from "@/hooks/useTenant";
 
@@ -99,6 +100,7 @@ const App = () => (
                 <Route path="/neural-constellation" element={<NeuralConstellation />} />
                 <Route path="/knowledge-bank" element={<KnowledgeBank />} />
                 <Route path="/briefing-feedback" element={<BriefingFeedback />} />
+                <Route path="/security-advisor" element={<SecurityAdvisor />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

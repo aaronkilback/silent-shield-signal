@@ -9699,6 +9699,42 @@ export type Database = {
         }
         Relationships: []
       }
+      threat_analysis_requests: {
+        Row: {
+          analysis_type: string
+          completed_at: string | null
+          created_at: string
+          id: string
+          input_value: string
+          result: Json | null
+          risk_level: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          analysis_type: string
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          input_value: string
+          result?: Json | null
+          risk_level?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          analysis_type?: string
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          input_value?: string
+          result?: Json | null
+          risk_level?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       threat_precursor_indicators: {
         Row: {
           activity_trend: string | null
@@ -10319,6 +10355,54 @@ export type Database = {
           created_by?: string | null
           id?: string
           role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_security_audits: {
+        Row: {
+          audit_type: string
+          breach_count: number | null
+          completed_at: string | null
+          created_at: string
+          digital_footprint_findings: number | null
+          exposed_passwords: number | null
+          findings: Json | null
+          id: string
+          network_risks: string[] | null
+          overall_score: number
+          recommendations: Json | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          audit_type?: string
+          breach_count?: number | null
+          completed_at?: string | null
+          created_at?: string
+          digital_footprint_findings?: number | null
+          exposed_passwords?: number | null
+          findings?: Json | null
+          id?: string
+          network_risks?: string[] | null
+          overall_score?: number
+          recommendations?: Json | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          audit_type?: string
+          breach_count?: number | null
+          completed_at?: string | null
+          created_at?: string
+          digital_footprint_findings?: number | null
+          exposed_passwords?: number | null
+          findings?: Json | null
+          id?: string
+          network_risks?: string[] | null
+          overall_score?: number
+          recommendations?: Json | null
+          status?: string
           user_id?: string
         }
         Relationships: []

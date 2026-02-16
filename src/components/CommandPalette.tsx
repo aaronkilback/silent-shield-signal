@@ -60,6 +60,7 @@ export const CommandPalette = () => {
     { path: "/travel", label: "Travel Security", icon: Plane, keywords: ["travel", "itineraries", "trips", "security"], group: "operations" },
     { path: "/clients", label: "Clients", icon: UserCheck, keywords: ["clients", "accounts", "organizations"], group: "operations" },
     { path: "/command-center", label: "AI Agents", icon: Zap, keywords: ["agents", "command", "automation", "ai"], group: "operations" },
+    { path: "/security-advisor", label: "Security Advisor", icon: Shield, keywords: ["security", "wraith", "breach", "phishing", "wifi", "bluetooth", "password", "hack"], group: "operations" },
     { path: "/integrations", label: "Integrations", icon: Settings, keywords: ["integrations", "api", "connections"], group: "operations" },
 
     // Admin (conditional)
