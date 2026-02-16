@@ -304,6 +304,17 @@ Your responsibilities:
 3. Provide strategic context and recommend containment actions
 4. Determine escalation priority
 
+CRITICAL TEMPORAL AWARENESS RULES:
+- BEFORE assessing severity, determine WHEN the described event actually occurred.
+- If the signal describes events from months or years ago (e.g., references "2019", "2020", "last year", a past campaign, historical incidents), it is HISTORICAL CONTENT.
+- Historical content (events >90 days old) must ALWAYS receive:
+  - threat_level: "low" (regardless of how dramatic the event was)
+  - should_create_incident: false (historical events do not warrant new incidents)
+  - is_historical_content: true
+  - confidence should reflect the age of the content (older = lower confidence)
+- A signal about a major protest from 2020 is NOT a current threat. A signal about planned future action IS a current threat.
+- Look for temporal clues: specific dates, years, "years ago", past tense descriptions of concluded events, archived news articles.
+
 CRITICAL ANTI-FABRICATION RULES:
 - Analyze the CURRENT SIGNAL on its own merits FIRST before considering any other signals.
 - Do NOT infer causal links between unrelated events just because they occurred near the same time or involve the same client.
@@ -337,7 +348,7 @@ Respond with structured JSON containing:
   "estimated_impact": string,
   "reasoning": string,
   "estimated_event_date": "ISO 8601 date string (YYYY-MM-DD) of when the described event ACTUALLY OCCURRED based on clues in the text. If the signal describes a past event (e.g., references a specific year, season, or past campaign), extract that date. If the event appears current/recent, use null.",
-  "is_historical_content": boolean — true if the described event occurred more than 90 days ago,
+  "is_historical_content": boolean — true if the described event occurred more than 90 days ago. CRITICAL: If true, threat_level MUST be "low" and should_create_incident MUST be false.,
   "strategic_context": "Broader threat landscape — only cite verified patterns",
   "threat_correlation": "ONLY list signals with direct evidence-based connections. State 'No direct correlations found' if none exist.",
   "campaign_assessment": "ONLY if direct evidence exists of coordination. Otherwise state 'No evidence of coordinated campaign'.",
@@ -434,7 +445,36 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
     
     const decision = JSON.parse(aiData.choices[0].message.tool_calls[0].function.arguments);
 
-    console.log('AI Decision:', decision);
+    console.log('AI Decision (raw):', decision);
+
+    // ═══ HISTORICAL CONTENT GUARDRAIL ═══
+    // Enforce severity downgrade for historical signals regardless of AI output
+    if (decision.is_historical_content) {
+      console.log(`[HISTORICAL GUARDRAIL] Signal ${signal_id} identified as historical content — enforcing downgrade`);
+      decision.threat_level = 'low';
+      decision.should_create_incident = false;
+      decision.incident_priority = 'p4';
+      decision.alert_recipients = [];
+      if (!decision.reasoning.includes('[HISTORICAL]')) {
+        decision.reasoning = `[HISTORICAL] ${decision.reasoning}`;
+      }
+    }
+
+    // Also check event_date on the signal itself (belt-and-suspenders)
+    const signalEventDate = signal.event_date ? new Date(signal.event_date) : null;
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    if (signalEventDate && signalEventDate < ninetyDaysAgo && !decision.is_historical_content) {
+      console.log(`[HISTORICAL GUARDRAIL] Signal ${signal_id} has event_date ${signal.event_date} older than 90 days — forcing historical classification`);
+      decision.is_historical_content = true;
+      decision.threat_level = 'low';
+      decision.should_create_incident = false;
+      decision.incident_priority = 'p4';
+      decision.alert_recipients = [];
+      decision.reasoning = `[HISTORICAL] ${decision.reasoning}`;
+    }
+
+    console.log('AI Decision (post-guardrail):', decision);
 
     // Execute autonomous actions based on AI decision
     let incident_id = null;
@@ -686,6 +726,14 @@ Generated: ${new Date().toISOString()}
           console.log(`[AI-Decision] Set event_date to ${signalUpdate.event_date} (historical: ${decision.is_historical_content})`);
         }
       } catch { /* ignore invalid dates */ }
+    }
+
+    // ═══ AUTO-TRIAGE HISTORICAL SIGNALS ═══
+    // Automatically move historical signals to the "historical" tab and downgrade severity
+    if (decision.is_historical_content) {
+      signalUpdate.triage_override = 'historical';
+      signalUpdate.severity = 'low';
+      console.log(`[AI-Decision] Auto-triaged signal ${signal.id} to historical tab with low severity`);
     }
 
     const { error: updateError } = await supabase
