@@ -206,6 +206,7 @@ export const SignalHistory = () => {
           engagement_metrics,
           media_urls,
           thumbnail_url,
+          relevance_score,
           quality_score,
           feedback_score,
           triage_override,
