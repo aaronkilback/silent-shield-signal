@@ -309,6 +309,33 @@ async function executeSearch(
         continue;
       }
 
+      // ═══ HARD TEMPORAL FILTER ═══
+      // Reject URLs or snippets with obvious old dates (pre-2025)
+      const oldYearPattern = /\b(201[0-9]|202[0-3]|2024)\b/;
+      const urlHasOldYear = oldYearPattern.test(url);
+      const snippetDateContext = snippet.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s*(201[0-9]|202[0-4])\b/i);
+      const hasWikipedia = url.includes('wikipedia.org');
+      
+      if (hasWikipedia || (urlHasOldYear && !url.includes('2025') && !url.includes('2026'))) {
+        console.log(`[SocialUnified] ✗ Old content filtered: "${title.substring(0, 50)}" (URL date or Wikipedia)`);
+        rejected++;
+        continue;
+      }
+      if (snippetDateContext) {
+        console.log(`[SocialUnified] ✗ Old snippet date: "${snippetDateContext[0]}" in "${title.substring(0, 50)}"`);
+        rejected++;
+        continue;
+      }
+
+      // ═══ HARD GEOGRAPHIC FILTER ═══
+      // Reject non-Canadian XR chapters explicitly
+      const nonCanadianXR = /(extinction rebellion)\s+(austria|germany|uk|cape town|australia|netherlands|sweden|norway|france|italy|spain|japan)/i;
+      if (nonCanadianXR.test(content)) {
+        console.log(`[SocialUnified] ✗ Non-Canadian XR: "${title.substring(0, 50)}"`);
+        rejected++;
+        continue;
+      }
+
       // Skip generic profile pages (Facebook-specific)
       if (url.includes('facebook.com') && !isSpecificFacebookUrl(url)) {
         console.log(`[SocialUnified] Skipping generic FB page: ${url}`);
@@ -449,17 +476,26 @@ async function aiRelevanceGate(
           content: `You are an intelligence analyst filtering social media search results.
 You must determine if this result is OPERATIONALLY RELEVANT to security monitoring for Canadian energy infrastructure clients (pipelines, LNG facilities, energy companies).
 
+CRITICAL TEMPORAL RULE: Reject any content where the original post or event date is MORE THAN 90 DAYS OLD. Look for date indicators in the snippet, title, or URL (e.g., "2019", "2021", "6 years ago", "posted on December 2019"). Old social media posts resurfacing via search engines are NOT actionable intelligence.
+
+CRITICAL GEOGRAPHIC RULE: Reject content about protests, activism, or events that physically occurred OUTSIDE of Canada, even if the organization name matches (e.g., "Extinction Rebellion Austria", "XR Cape Town", "XR Germany" are NOT relevant). Only Canadian-occurring events qualify.
+
 A result is relevant if it:
-- Describes activism, protests, blockades, or sabotage targeting energy infrastructure
+- Describes RECENT (within 90 days) activism, protests, blockades, or sabotage targeting energy infrastructure
 - Mentions a specific threat, breach, or security incident related to the monitored entity
 - Is a specific social media POST (not a generic profile page, directory listing, or unrelated content)
-- Relates to Canadian geography or Canadian energy companies
+- Physically relates to Canadian geography or Canadian energy companies
+- Has a discernible date that is recent (within the last 90 days)
 
 A result is NOT relevant if it:
 - Is about unrelated topics that happen to match keywords (e.g., "pipeline" in software, unrelated protests)
 - Is a generic page, profile, or directory listing
 - Is international news with no Canadian connection
 - Is entertainment, marketing, or spam content
+- References events from years ago (2019, 2020, 2021, 2022, 2023, early 2024)
+- Is about Extinction Rebellion chapters outside Canada (Austria, Germany, UK, Cape Town, etc.)
+- Is a Wikipedia article, historical reference, or archived content
+- Cannot be dated — if no date is discernible and content appears old, reject it
 
 Return JSON: { "relevant": boolean, "reason": string (1 sentence), "confidence": number (0-1), "category": string, "location": string }`
         },
