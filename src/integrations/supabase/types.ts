@@ -8830,6 +8830,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "signals_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "sources"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "signals_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false

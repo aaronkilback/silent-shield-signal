@@ -212,6 +212,10 @@ export const SignalHistory = () => {
           triage_override,
           clients (
             name
+          ),
+          sources (
+            name,
+            type
           )
         `)
         .order('created_at', { ascending: false })
