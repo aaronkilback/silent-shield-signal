@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, History, Clock, Heart, MessageCircle, Eye, Hash, AtSign, Instagram, Twitter, Facebook, FileText } from "lucide-react";
+import { SignalManualOverride } from "./SignalManualOverride";
 import { format, differenceInDays } from "date-fns";
 import { SignalAgeBadge } from "./SignalAgeBadge";
 import { FacebookVideoEmbed, isFacebookVideoUrl } from "./FacebookVideoEmbed";
@@ -389,6 +390,20 @@ export function SignalDetailSheet({
                 </div>
               </>
             )}
+
+            {/* Manual Override */}
+            <Separator />
+            <SignalManualOverride
+              signal={{
+                id: signal.primary_signal_id || signal.id,
+                category: signal.category,
+                severity: signal.severity,
+                entity_tags: (signal as any).entity_tags,
+                rule_priority: (signal as any).rule_priority,
+                normalized_text: signal.normalized_text,
+              }}
+              onUpdated={onAssign} // triggers parent refetch
+            />
 
             {/* Live Updates Timeline */}
             <Separator />
