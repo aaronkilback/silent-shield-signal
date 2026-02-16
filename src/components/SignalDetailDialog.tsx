@@ -14,6 +14,7 @@ import { SignalScoreExplainer } from "@/components/SignalScoreExplainer";
 import { useImplicitFeedback } from "@/hooks/useImplicitFeedback";
 import { CreateIncidentFromSignalDialog } from "@/components/signals/CreateIncidentFromSignalDialog";
 import { supabase } from "@/integrations/supabase/client";
+import { SignalManualOverride } from "@/components/signals/SignalManualOverride";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
@@ -480,6 +481,20 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
               </div>
             </div>
             
+            {/* Manual Override */}
+            <Separator />
+            <SignalManualOverride
+              signal={{
+                id: signal.id,
+                category: signal.category,
+                severity: signal.severity,
+                entity_tags: signal.entity_tags,
+                rule_priority: signal.rule_priority,
+                normalized_text: signal.normalized_text,
+              }}
+              onUpdated={onSignalUpdated}
+            />
+
             {/* Comments Section */}
             {signal.comments && signal.comments.length > 0 && (
               <>
