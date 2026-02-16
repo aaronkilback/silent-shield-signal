@@ -68,8 +68,12 @@ Deno.serve(async (req) => {
       case 'watchdog':
         return await delegateToFunction('system-watchdog', body);
 
+      // ── Deploy-time smoke test ──
+      case 'smoke-test':
+        return await handleSmokeTest();
+
       default:
-        return errorResponse(`Unknown action: ${action}. Valid actions: health-check, data-integrity-fix, retry-dead-letters, cleanup-false-positives, aggregate-implicit-feedback, detect-contradictions, audit-knowledge-freshness, data-quality, orchestrate, ooda-loop, pipeline-tests, watchdog`, 400);
+        return errorResponse(`Unknown action: ${action}. Valid actions: health-check, data-integrity-fix, retry-dead-letters, cleanup-false-positives, aggregate-implicit-feedback, detect-contradictions, audit-knowledge-freshness, data-quality, orchestrate, ooda-loop, pipeline-tests, watchdog, smoke-test`, 400);
     }
   } catch (error) {
     console.error('[SystemOps] Router error:', error);
@@ -816,5 +820,83 @@ async function handleAuditKnowledgeFreshness(body: Record<string, unknown>): Pro
     avg_decayed_confidence: Math.round((totalDecayedConfidence / entries.length) * 100) / 100,
     stale_domains: staleDomains.slice(0, 10), actions_taken: actionsTaken,
     top_stale: staleEntries.slice(0, 10).map(e => ({ title: e.title, domain: e.domain, decayed: Math.round(e.decayedConfidence * 100) / 100, days_since_validation: e.daysSinceValidation })),
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//           HANDLER: smoke-test (deploy-time validation)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Lightweight smoke test that pings every domain service with a healthcheck
+ * to confirm they boot and respond. Use after deploys to catch immediate crashes.
+ */
+async function handleSmokeTest(): Promise<Response> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const startTime = Date.now();
+
+  const domainServices = [
+    { name: 'system-ops', action: 'health-check', body: { quick: true } },
+    { name: 'signal-processor', action: 'healthcheck', body: {} },
+    { name: 'entity-manager', action: 'healthcheck', body: {} },
+    { name: 'incident-manager', action: 'healthcheck', body: {} },
+    { name: 'intelligence-engine', action: 'healthcheck', body: {} },
+    { name: 'osint-collector', action: 'healthcheck', body: {} },
+  ];
+
+  const results = await Promise.allSettled(
+    domainServices.map(async (svc) => {
+      const svcStart = Date.now();
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000); // 10s per service
+
+        const response = await fetch(`${supabaseUrl}/functions/v1/${svc.name}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${serviceKey}`,
+          },
+          body: JSON.stringify({ action: svc.action, ...svc.body }),
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeout);
+        const body = await response.text();
+        return {
+          name: svc.name,
+          status: response.status < 500 ? 'ok' : 'error',
+          httpStatus: response.status,
+          latencyMs: Date.now() - svcStart,
+          error: response.status >= 500 ? body.substring(0, 200) : undefined,
+        };
+      } catch (err) {
+        return {
+          name: svc.name,
+          status: 'error',
+          httpStatus: 0,
+          latencyMs: Date.now() - svcStart,
+          error: err instanceof Error ? err.message : 'Unknown',
+        };
+      }
+    })
+  );
+
+  const serviceResults = results.map((r) => 
+    r.status === 'fulfilled' ? r.value : { name: 'unknown', status: 'error', httpStatus: 0, latencyMs: 0, error: 'Promise rejected' }
+  );
+
+  const allHealthy = serviceResults.every(r => r.status === 'ok');
+  const failedServices = serviceResults.filter(r => r.status !== 'ok');
+
+  console.log(`[SystemOps:smoke-test] ${allHealthy ? 'ALL PASS' : `${failedServices.length} FAILED`} in ${Date.now() - startTime}ms`);
+
+  return successResponse({
+    allHealthy,
+    totalServices: domainServices.length,
+    failedCount: failedServices.length,
+    services: serviceResults,
+    totalLatencyMs: Date.now() - startTime,
   });
 }

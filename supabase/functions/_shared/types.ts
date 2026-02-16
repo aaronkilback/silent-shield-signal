@@ -83,6 +83,79 @@ export type SignalSourceType =
   | 'vulnerability_scanner';
 
 // ═══════════════════════════════════════════════════════════════
+//                    TABLE NAME CONSTANTS
+// ═══════════════════════════════════════════════════════════════
+/**
+ * Canonical table name constants — import these instead of hardcoding strings.
+ * Prevents schema drift when tables are renamed or refactored.
+ * 
+ * Usage:
+ *   import { Tables } from "../_shared/types.ts";
+ *   const { data } = await supabase.from(Tables.SIGNALS).select('*');
+ */
+export const Tables = {
+  // Core intelligence
+  SIGNALS: 'signals' as const,
+  INCIDENTS: 'incidents' as const,
+  ENTITIES: 'entities' as const,
+  CLIENTS: 'clients' as const,
+  PROFILES: 'profiles' as const,
+  
+  // AI & Agents
+  AI_AGENTS: 'ai_agents' as const,
+  AI_ASSISTANT_MESSAGES: 'ai_assistant_messages' as const,
+  AGENT_MEMORY: 'agent_memory' as const,
+  AGENT_CONVERSATIONS: 'agent_conversations' as const,
+  AGENT_MESSAGES: 'agent_messages' as const,
+  AGENT_PENDING_MESSAGES: 'agent_pending_messages' as const,
+  AGENT_ACCURACY_METRICS: 'agent_accuracy_metrics' as const,
+  AGENT_ACCURACY_TRACKING: 'agent_accuracy_tracking' as const,
+  AGENT_INVESTIGATION_MEMORY: 'agent_investigation_memory' as const,
+  AGENT_DEBATE_RECORDS: 'agent_debate_records' as const,
+  
+  // Operations & Health
+  CIRCUIT_BREAKER_STATE: 'circuit_breaker_state' as const,
+  DEAD_LETTER_QUEUE: 'dead_letter_queue' as const,
+  EDGE_FUNCTION_ERRORS: 'edge_function_errors' as const,
+  PROCESSING_QUEUE: 'processing_queue' as const,
+  AUDIT_EVENTS: 'audit_events' as const,
+  AUTOMATION_METRICS: 'automation_metrics' as const,
+  AUTONOMOUS_ACTIONS_LOG: 'autonomous_actions_log' as const,
+  AUTONOMOUS_SCAN_RESULTS: 'autonomous_scan_results' as const,
+  
+  // Monitoring & OSINT
+  OSINT_SOURCES: 'osint_sources' as const,
+  INTELLIGENCE_DOCUMENTS: 'intelligence_documents' as const,
+  INTELLIGENCE_CONFIG: 'intelligence_config' as const,
+  MONITORING_HISTORY: 'monitoring_history' as const,
+  
+  // Investigations
+  INVESTIGATIONS: 'investigations' as const,
+  INVESTIGATION_WORKSPACES: 'investigation_workspaces' as const,
+  
+  // Alerts & Notifications
+  ALERTS: 'alerts' as const,
+  NOTIFICATION_PREFERENCES: 'notification_preferences' as const,
+  
+  // Feedback & Learning
+  IMPLICIT_FEEDBACK_EVENTS: 'implicit_feedback_events' as const,
+  FEEDBACK_EVENTS: 'feedback_events' as const,
+  ANALYST_ACCURACY_METRICS: 'analyst_accuracy_metrics' as const,
+  ANALYST_PREFERENCES: 'analyst_preferences' as const,
+  
+  // Audio
+  AUDIO_BRIEFINGS: 'audio_briefings' as const,
+  
+  // Multi-tenant
+  TENANTS: 'tenants' as const,
+  TENANT_USERS: 'tenant_users' as const,
+  USER_ROLES: 'user_roles' as const,
+  
+  // Watchdog
+  WATCHDOG_LEARNINGS: 'watchdog_learnings' as const,
+} as const;
+
+// ═══════════════════════════════════════════════════════════════
 //                      TABLE ROW TYPES
 // ═══════════════════════════════════════════════════════════════
 

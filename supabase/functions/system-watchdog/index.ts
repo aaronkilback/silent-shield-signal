@@ -215,10 +215,19 @@ Respond with ONLY valid JSON (no markdown):
   - Flag for human attention when pattern indicates code-level fix needed.
 
 ## Circuit Breaker Management (SELF-HEALING)
+- Table: circuit_breaker_state (columns: service_name, state, failure_count, success_count)
 - Circuit breakers track monitor failure rates; 3+ failures in 2 hours = circuit OPEN (monitor skipped)
-- TELEMETRY: Check monitoring_circuit_breakers for open circuits
+- TELEMETRY: Check circuit_breaker_state for open circuits
 - EXPECTED: All circuits closed. Open circuit = monitor not running
 - REMEDIATION: reset_circuit_breakers — Reset open circuit breakers to closed state. USE when underlying issue (rate limit, timeout) has passed.
+
+## Self-Validation (CRITICAL — META-HEALTH)
+- Before trusting telemetry, the watchdog validates its own data source queries succeeded
+- selfValidation.allProbesHealthy = false means the watchdog itself is broken
+- failedProbes lists which tables returned errors (schema drift, permission issues)
+- If self-validation fails, ALWAYS flag as CRITICAL — the watchdog cannot trust its own data
+- Common causes: table renamed, column removed, RLS blocking service role
+- REMEDIATION: Cannot auto-fix. Flag for immediate human attention.
 
 ## Schema Validation (DETECT-ONLY)
 - Frontend code may reference columns/enum values that don't exist in the database
@@ -349,6 +358,10 @@ interface TelemetryData {
   circuitBreakers: {
     openCount: number;
     openMonitors: string[];
+  };
+  selfValidation: {
+    allProbesHealthy: boolean;
+    failedProbes: string[];
   };
 }
 
@@ -855,6 +868,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     deadLetterQueue: await collectDlqTelemetry(supabase),
     schemaErrors: await collectSchemaErrorTelemetry(supabase),
     circuitBreakers: await collectCircuitBreakerTelemetry(supabase),
+    selfValidation: await collectSelfValidation(supabase),
   };
 }
 
@@ -904,6 +918,47 @@ async function collectCircuitBreakerTelemetry(supabase: any): Promise<TelemetryD
   return {
     openCount: openBreakers?.length || 0,
     openMonitors: (openBreakers || []).map((b: any) => b.service_name),
+  };
+}
+
+/**
+ * Self-Validation Probe — the watchdog validates its own data sources
+ * before reporting health. If any critical table query fails with a
+ * schema/permission error, we surface it immediately rather than
+ * letting it silently produce empty results.
+ */
+async function collectSelfValidation(supabase: any): Promise<TelemetryData['selfValidation']> {
+  const probes: { name: string; query: () => Promise<any> }[] = [
+    { name: 'circuit_breaker_state', query: () => supabase.from('circuit_breaker_state').select('id').limit(1) },
+    { name: 'dead_letter_queue', query: () => supabase.from('dead_letter_queue').select('id').limit(1) },
+    { name: 'edge_function_errors', query: () => supabase.from('edge_function_errors').select('id').limit(1) },
+    { name: 'watchdog_learnings', query: () => supabase.from('watchdog_learnings').select('id').limit(1) },
+    { name: 'signals', query: () => supabase.from('signals').select('id').limit(1) },
+    { name: 'incidents', query: () => supabase.from('incidents').select('id').limit(1) },
+    { name: 'monitoring_history', query: () => supabase.from('monitoring_history').select('id').limit(1) },
+    { name: 'autonomous_actions_log', query: () => supabase.from('autonomous_actions_log').select('id').limit(1) },
+  ];
+
+  const failedProbes: string[] = [];
+
+  const results = await Promise.allSettled(probes.map(async (p) => {
+    try {
+      const { error } = await p.query();
+      if (error) {
+        failedProbes.push(`${p.name}: ${error.message}`);
+      }
+    } catch (e) {
+      failedProbes.push(`${p.name}: ${e instanceof Error ? e.message : 'unknown error'}`);
+    }
+  }));
+
+  if (failedProbes.length > 0) {
+    console.error(`[Watchdog] Self-validation FAILED for: ${failedProbes.join('; ')}`);
+  }
+
+  return {
+    allProbesHealthy: failedProbes.length === 0,
+    failedProbes,
   };
 }
 
