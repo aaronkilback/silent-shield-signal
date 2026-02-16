@@ -11,6 +11,7 @@ import { TestSignalGenerator } from "./TestSignalGenerator";
 import { MFAEnrollment } from "./MFAEnrollment";
 import { MFASetup } from "./MFASetup";
 import { VoiceSettings } from "./VoiceSettings";
+import { ChangePassword } from "./ChangePassword";
 
 export const SettingsSheet = () => {
   const [open, setOpen] = useState(false);
@@ -63,9 +64,12 @@ export const SettingsSheet = () => {
             <div className="space-y-2">
               <h3 className="text-lg font-semibold">Account Security</h3>
               <p className="text-sm text-muted-foreground">
-                Manage your account security settings including two-factor authentication.
+                Manage your account security settings including password and two-factor authentication.
               </p>
             </div>
+            
+            {/* Password Management */}
+            <ChangePassword />
             
             {/* SMS MFA - Primary Option */}
             <MFASetup />

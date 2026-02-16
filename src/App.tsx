@@ -46,8 +46,10 @@ import BriefingFeedback from "./pages/BriefingFeedback";
 import NeuralConstellation from "./pages/NeuralConstellation";
 import KnowledgeBank from "./pages/KnowledgeBank";
 import SecurityAdvisor from "./pages/SecurityAdvisor";
+import ResetPassword from "./pages/ResetPassword";
 import { EnsureDefaultRole } from "@/components/EnsureDefaultRole";
 import { TenantProvider } from "@/hooks/useTenant";
+import { PasswordExpiryGuard } from "@/components/PasswordExpiryGuard";
 
 const queryClient = new QueryClient();
 
@@ -65,9 +67,11 @@ const App = () => (
               <ContextualKnowledgeWidget />
               <EnsureDefaultRole />
               <CommandPalette />
+              <PasswordExpiryGuard />
               <Routes>
                 <Route path="/" element={<Index />} />
                 <Route path="/auth" element={<Auth />} />
+                <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/welcome" element={<Welcome />} />
                 <Route path="/invite/accept" element={<AcceptInvite />} />
                 <Route path="/invite-required" element={<InviteRequired />} />

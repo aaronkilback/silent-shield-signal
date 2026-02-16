@@ -67,6 +67,8 @@ const Auth = () => {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
   const [invitation, setInvitation] = useState<InvitationInfo | null>(null);
   const [loadingInvite, setLoadingInvite] = useState(!!inviteToken);
   const [agreementAccepted, setAgreementAccepted] = useState(false);
@@ -502,7 +504,18 @@ const Auth = () => {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="password">Password (min. 6 characters)</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="password">Password (min. 8 characters)</Label>
+              {isLogin && (
+                <button
+                  type="button"
+                  onClick={() => setShowForgotPassword(true)}
+                  className="text-xs text-primary hover:underline"
+                >
+                  Forgot password?
+                </button>
+              )}
+            </div>
             <Input
               id="password"
               type="password"
@@ -510,7 +523,7 @@ const Auth = () => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              minLength={6}
+              minLength={8}
               className="bg-secondary border-border"
             />
           </div>
@@ -577,6 +590,41 @@ const Auth = () => {
             )}
           </Button>
         </form>
+
+        {/* Forgot Password Dialog */}
+        {showForgotPassword && (
+          <div className="mt-4 p-4 border border-border rounded-lg bg-secondary/50 space-y-3">
+            <p className="text-sm font-medium">Reset your password</p>
+            <Input
+              type="email"
+              placeholder="Enter your email"
+              value={resetEmail}
+              onChange={(e) => setResetEmail(e.target.value)}
+              className="bg-secondary border-border"
+            />
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={async () => {
+                  if (!resetEmail) { toast.error("Enter your email"); return; }
+                  const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+                    redirectTo: `${window.location.origin}/reset-password`,
+                  });
+                  if (error) toast.error(error.message);
+                  else {
+                    toast.success("Password reset email sent. Check your inbox.");
+                    setShowForgotPassword(false);
+                  }
+                }}
+              >
+                <Mail className="w-3 h-3 mr-1" /> Send Reset Link
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setShowForgotPassword(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
 
         <p className="text-xs text-muted-foreground text-center mt-6">
           Secure access to Fortress AI intelligence network

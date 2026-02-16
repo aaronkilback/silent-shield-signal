@@ -7177,6 +7177,7 @@ export type Database = {
           created_at: string
           id: string
           keyboard_shortcuts: Json | null
+          last_password_changed_at: string | null
           name: string
           updated_at: string
         }
@@ -7185,6 +7186,7 @@ export type Database = {
           created_at?: string
           id: string
           keyboard_shortcuts?: Json | null
+          last_password_changed_at?: string | null
           name: string
           updated_at?: string
         }
@@ -7193,6 +7195,7 @@ export type Database = {
           created_at?: string
           id?: string
           keyboard_shortcuts?: Json | null
+          last_password_changed_at?: string | null
           name?: string
           updated_at?: string
         }
