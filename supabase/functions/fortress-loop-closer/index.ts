@@ -229,56 +229,14 @@ Deno.serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // LOOP 4: BRIEFING SESSIONS — Auto-generate daily system briefing
+    // LOOP 4: BRIEFING SESSIONS — Skipped (no synthetic data generation)
+    // Real briefing sessions are created by analysts via the UI.
     // ═══════════════════════════════════════════════════════════════════
-    try {
-      // Check if a briefing was already created today
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const { count: existingBriefings } = await supabase
-        .from('briefing_sessions')
-        .select('id', { count: 'exact', head: true })
-        .gte('created_at', todayStart.toISOString());
-
-      if ((existingBriefings || 0) === 0) {
-        // Get a workspace for the briefing
-        const { data: workspace } = await supabase
-          .from('investigation_workspaces')
-          .select('id, created_by_user_id')
-          .limit(1)
-          .single();
-
-        if (workspace) {
-          const now = new Date();
-          const dateStr = now.toISOString().split('T')[0];
-
-          await supabase.from('briefing_sessions').insert({
-            title: `Daily Threat Briefing — ${dateStr}`,
-            description: `Auto-generated daily threat posture briefing. Covers signal activity, incident status, and emerging patterns over the last 24 hours.`,
-            workspace_id: workspace.id,
-            created_by: workspace.created_by_user_id,
-            status: 'completed',
-            meeting_mode: 'collaborative',
-            actual_start: new Date(now.getTime() - 300000).toISOString(),
-            actual_end: now.toISOString(),
-          });
-
-          results.briefing_sessions = { created: true, title: `Daily Threat Briefing — ${dateStr}` };
-          console.log(`[LoopCloser] Briefing Session: Created daily briefing for ${dateStr}`);
-        } else {
-          results.briefing_sessions = { skipped: 'No workspace found' };
-        }
-      } else {
-        results.briefing_sessions = { skipped: 'Already exists today' };
-      }
-    } catch (err) {
-      console.error('[LoopCloser] Briefing Sessions error:', err);
-      results.briefing_sessions = { error: String(err) };
-    }
+    results.briefing_sessions = { skipped: 'Real briefings only — no synthetic generation' };
 
     // ═══════════════════════════════════════════════════════════════════
     // LOOP 5: SPECIALIST AGENT LEARNING — Trigger real learning for agents
-    // with no recent knowledge acquisition (replaces fake scan seeding)
+    // with no recent knowledge acquisition. No synthetic data is generated.
     // ═══════════════════════════════════════════════════════════════════
     try {
       // Agents that should autonomously learn via literature review
