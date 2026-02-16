@@ -914,13 +914,35 @@ function IncidentHeatTrails({ agents, activeDebates = [], scanPulses = [] }: {
 type ActivityType = "signal_ingest" | "scan_sweep" | "learning" | "message" | "alert" | "idle";
 
 const ACTIVITY_VISUALS: Record<ActivityType, { color: [number, number, number]; size: number; speed: number; label: string }> = {
-  signal_ingest: { color: [0.13, 0.93, 0.97], size: 0.35, speed: 0.14, label: "Signal Ingestion" },    // Bright Cyan
-  scan_sweep:    { color: [0.39, 0.53, 1.0],  size: 0.40, speed: 0.08, label: "OSINT Scan" },           // Blue
-  learning:      { color: [0.58, 0.29, 0.95], size: 0.30, speed: 0.06, label: "Knowledge Acquisition" },// Violet
-  message:       { color: [0.13, 0.93, 0.55], size: 0.35, speed: 0.18, label: "Agent Comms" },          // Green
-  alert:         { color: [1.0, 0.35, 0.15],  size: 0.50, speed: 0.22, label: "Alert Escalation" },     // Red — large + fast
-  idle:          { color: [0.35, 0.45, 0.60], size: 0.15, speed: 0.03, label: "Standby" },              // Slate
+  signal_ingest: { color: [0.0, 1.0, 1.0],   size: 0.6, speed: 0.12, label: "Signal Ingestion" },    // Bright Cyan
+  scan_sweep:    { color: [0.3, 0.5, 1.0],    size: 0.7, speed: 0.07, label: "OSINT Scan" },           // Blue
+  learning:      { color: [0.6, 0.2, 1.0],    size: 0.5, speed: 0.05, label: "Knowledge Acquisition" },// Violet
+  message:       { color: [0.0, 1.0, 0.5],    size: 0.6, speed: 0.15, label: "Agent Comms" },          // Green
+  alert:         { color: [1.0, 0.2, 0.1],    size: 0.9, speed: 0.20, label: "Alert Escalation" },     // Red — large + fast
+  idle:          { color: [0.4, 0.5, 0.65],    size: 0.25, speed: 0.03, label: "Standby" },              // Slate
 };
+
+// Programmatic circular glow texture for particles
+function createGlowTexture(): THREE.Texture {
+  const size = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const center = size / 2;
+  const gradient = ctx.createRadialGradient(center, center, 0, center, center, center);
+  gradient.addColorStop(0, "rgba(255,255,255,1)");
+  gradient.addColorStop(0.3, "rgba(255,255,255,0.8)");
+  gradient.addColorStop(0.7, "rgba(255,255,255,0.15)");
+  gradient.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+const glowTexture = createGlowTexture();
 
 function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPulses = [] }: {
   agents: AgentNode[];
@@ -996,10 +1018,10 @@ function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPul
       });
     }
 
-    // 5. Minimum fallback — if absolutely no data, show idle heartbeat
-    if (routes.length === 0 && agents.length > 1) {
-      for (let i = 0; i < Math.min(agents.length, 6); i++) {
-        routes.push({ from: i, to: (i + 1) % agents.length, type: "idle" });
+    // 5. Minimum fallback — if absolutely no data, show idle heartbeat between random pairs (never index 0)
+    if (routes.length === 0 && agents.length > 2) {
+      for (let i = 1; i < Math.min(agents.length, 6); i++) {
+        routes.push({ from: i, to: (i + 1) % agents.length || 1, type: "idle" });
       }
     }
 
@@ -1011,8 +1033,10 @@ function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPul
     const col = new Float32Array(particleCount * 3);
     const sz = new Float32Array(particleCount);
 
+    if (typedRoutes.length === 0) return { positions: pos, colors: col, sizes: sz };
+
     for (let i = 0; i < particleCount; i++) {
-      const route = typedRoutes[i % Math.max(typedRoutes.length, 1)] || { from: 0, to: 1, type: "idle" as ActivityType };
+      const route = typedRoutes[i % typedRoutes.length];
       sources.current[i] = route.from;
       targets.current[i] = route.to;
       velocities.current[i] = Math.random();
@@ -1073,7 +1097,7 @@ function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPul
         <bufferAttribute attach="attributes-position" count={particleCount} array={positions} itemSize={3} />
         <bufferAttribute attach="attributes-color" count={particleCount} array={colors} itemSize={3} />
       </bufferGeometry>
-      <pointsMaterial size={0.45} vertexColors transparent opacity={0.95} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
+      <pointsMaterial map={glowTexture} size={0.7} vertexColors transparent opacity={0.95} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
     </points>
   );
 }
@@ -1139,7 +1163,7 @@ function OperatorDataFlow({ operatorPos, aegisPos, isActive, messageCount = 0 }:
         <bufferAttribute attach="attributes-position" count={particleCount} array={positions} itemSize={3} />
         <bufferAttribute attach="attributes-color" count={particleCount} array={colors} itemSize={3} />
       </bufferGeometry>
-      <pointsMaterial size={0.18} vertexColors transparent opacity={0.9} sizeAttenuation />
+      <pointsMaterial map={glowTexture} size={0.4} vertexColors transparent opacity={0.9} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
     </points>
   );
 }
