@@ -39,6 +39,7 @@ const AGENT_LEARNING_PROMPTS: Record<string, string> = {
   'WARDEN': 'You are a content moderation and digital safety expert. Research this topic for online threat patterns, radicalization indicators, and platform exploitation.',
   'PRAETOR': 'You are a major case management specialist. Research this topic for investigative methodologies, evidence handling, and case coordination.',
   'CRUCIBLE': 'You are a data quality and intelligence gap analyst. Research this topic to identify coverage blind spots and monitoring improvements.',
+  '0DAY': 'You are an elite offensive security specialist and ethical hacker modeled after Ryan Montgomery (0dayctf). Research this topic for exploitation techniques, vulnerability patterns, attack methodologies, defensive countermeasures, and red team tradecraft. Focus on penetration testing, digital footprint exposure, WiFi/Bluetooth/network vulnerabilities, password security, AI-weaponized attacks, phishing campaigns, mobile device threats, and emerging offensive tooling. Always include detection and mitigation alongside attack vectors.',
 };
 
 Deno.serve(async (req) => {
@@ -298,6 +299,7 @@ function generateLiteratureQueries(topic: string, agent: string): string[] {
     'WARDEN': 'content moderation, online radicalization, digital safety',
     'OUROBOROS': 'supply chain security, vendor risk, logistics threats',
     'CRUCIBLE': 'intelligence analysis methodology, structured analytic techniques',
+    '0DAY': 'offensive security, ethical hacking, penetration testing, red team operations, vulnerability research, digital footprint analysis, WiFi security, Bluetooth security, password security, AI-weaponized attacks, phishing campaigns, mobile device security',
   };
 
   const focus = agentFocus[agent] || 'security and intelligence';
@@ -457,7 +459,7 @@ async function identifyLiteratureGaps(
 
   // 1. Find domains with low knowledge density
   const domains = ['cyber', 'physical_security', 'financial_crime', 'geopolitical', 'counterintelligence', 
-                   'executive_protection', 'investigations', 'crisis_management', 'compliance', 'osint'];
+                   'executive_protection', 'investigations', 'crisis_management', 'compliance', 'osint', 'offensive_security'];
   
   const targetDomains = domainFocus ? [domainFocus] : domains;
 
@@ -526,6 +528,17 @@ async function identifyLiteratureGaps(
       'VIPER': ['narcotics trafficking intelligence and interdiction', 'transnational organized crime networks', 'dark web marketplace operations'],
       'PRAETOR': ['criminal investigation case management', 'digital forensics and evidence preservation', 'complex fraud investigation methodology'],
       'CRUCIBLE': ['structured analytic techniques for intelligence analysis', 'intelligence collection management', 'critical thinking and cognitive bias in analysis'],
+      '0DAY': [
+        'penetration testing methodology and red team operations — PTES, OSSTMM, OWASP Testing Guide',
+        'AI weaponization in cyberattacks — deepfake phishing, LLM-assisted exploitation, prompt injection attacks, AI-generated malware',
+        'advanced phishing campaigns and social engineering — spearphishing, BEC, MFA bypass techniques like Evilginx and AitM attacks',
+        'WiFi and Bluetooth exploitation — Evil Twin, KARMA, WPA3 Dragonblood, BLE GATT attacks, car key relay, Flipper Zero threats',
+        'digital footprint analysis and OPSEC — personal data exposure, breach correlation, dark web credential monitoring, data broker removal',
+        'password security and credential attacks — credential stuffing, password spraying, hashcat techniques, passkey/FIDO2 migration',
+        'mobile device security for field operators — iOS/Android exploitation, SIM swapping, SS7 attacks, juice jacking, baseband attacks',
+        'network vulnerability assessment — zero-trust architecture, VPN exploitation (Fortinet/Citrix/Pulse CVEs), lateral movement techniques',
+        'bug bounty methodology and responsible disclosure — HackerOne, Bugcrowd, vulnerability chaining, CVSS scoring, 0-day market dynamics',
+      ],
     };
 
     const readingList = specialtyReadingLists[agentCallSign] || ['security risk management and threat assessment'];
@@ -546,7 +559,7 @@ function mapDomainToAgent(domain: string): string {
     cyber: 'NEO', financial_crime: 'CERBERUS', geopolitical: 'MERIDIAN',
     physical_security: 'ARGUS', counterintelligence: 'SPECTER', investigations: 'PRAETOR',
     executive_protection: 'ARGUS', crisis_management: 'AEGIS-CMD', compliance: 'CRUCIBLE',
-    osint: 'NEO',
+    osint: 'NEO', offensive_security: '0DAY',
   };
   return mapping[domain] || 'AEGIS-CMD';
 }
@@ -646,7 +659,7 @@ async function identifyKnowledgeGaps(supabase: any): Promise<Array<{ query: stri
 function mapTypeToAgent(signalType: string): string {
   const mapping: Record<string, string> = {
     cyber: 'NEO',
-    data_exposure: 'NEO',
+    data_exposure: '0DAY',
     theft: 'CERBERUS',
     protest: 'MERIDIAN',
     threat: 'SPECTER',
@@ -657,6 +670,11 @@ function mapTypeToAgent(signalType: string): string {
     weather: 'MERIDIAN',
     regulatory: 'CRUCIBLE',
     reputational: 'WARDEN',
+    vulnerability: '0DAY',
+    exploit: '0DAY',
+    phishing: '0DAY',
+    credential_leak: '0DAY',
+    ransomware: '0DAY',
   };
   return mapping[signalType] || 'AEGIS-CMD';
 }
