@@ -897,13 +897,13 @@ async function collectSchemaErrorTelemetry(supabase: any): Promise<TelemetryData
 
 async function collectCircuitBreakerTelemetry(supabase: any): Promise<TelemetryData['circuitBreakers']> {
   const { data: openBreakers } = await supabase
-    .from('monitoring_circuit_breakers')
-    .select('monitor_name')
-    .eq('circuit_state', 'open');
+    .from('circuit_breaker_state')
+    .select('service_name')
+    .in('state', ['open', 'half_open']);
 
   return {
     openCount: openBreakers?.length || 0,
-    openMonitors: (openBreakers || []).map((b: any) => b.monitor_name),
+    openMonitors: (openBreakers || []).map((b: any) => b.service_name),
   };
 }
 
@@ -1522,10 +1522,11 @@ This correction was triggered because compliance score dropped below threshold. 
 
       case 'reset_circuit_breakers': {
         // Reset open circuit breakers back to closed
+        // Table is circuit_breaker_state with columns: service_name, state, failure_count
         const { data: openBreakers } = await supabase
-          .from('monitoring_circuit_breakers')
-          .select('id, monitor_name, failure_count')
-          .eq('circuit_state', 'open')
+          .from('circuit_breaker_state')
+          .select('id, service_name, failure_count')
+          .in('state', ['open', 'half_open'])
           .limit(20);
 
         if (!openBreakers || openBreakers.length === 0) {
@@ -1534,11 +1535,11 @@ This correction was triggered because compliance score dropped below threshold. 
 
         const ids = openBreakers.map((b: any) => b.id);
         const { error: updateErr } = await supabase
-          .from('monitoring_circuit_breakers')
+          .from('circuit_breaker_state')
           .update({ 
-            circuit_state: 'closed', 
+            state: 'closed', 
             failure_count: 0,
-            last_failure_at: null,
+            success_count: 0,
           })
           .in('id', ids);
 
@@ -1546,7 +1547,7 @@ This correction was triggered because compliance score dropped below threshold. 
           action, finding, success: !updateErr,
           details: updateErr
             ? `Circuit breaker reset failed: ${updateErr.message}`
-            : `Reset ${openBreakers.length} open circuit breakers: ${openBreakers.map((b: any) => `${b.monitor_name} (${b.failure_count} failures)`).join(', ')}`,
+            : `Reset ${openBreakers.length} open circuit breakers: ${openBreakers.map((b: any) => `${b.service_name} (${b.failure_count} failures)`).join(', ')}`,
         };
       }
 
