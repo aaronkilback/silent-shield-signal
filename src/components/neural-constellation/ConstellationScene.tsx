@@ -844,6 +844,7 @@ function IncidentHeatTrails({ agents, activeDebates = [], scanPulses = [] }: {
   const { positions, colors } = useMemo(() => {
     const pos = new Float32Array(particleCount * 3);
     const col = new Float32Array(particleCount * 3);
+    if (hotRoutes.length === 0) return { positions: pos, colors: col };
 
     const severityColors = {
       critical: [1.0, 0.2, 0.15],
@@ -852,7 +853,7 @@ function IncidentHeatTrails({ agents, activeDebates = [], scanPulses = [] }: {
     };
 
     for (let i = 0; i < particleCount; i++) {
-      const route = hotRoutes[i % Math.max(hotRoutes.length, 1)] || { from: 0, to: 1, severity: "medium" as const };
+      const route = hotRoutes[i % hotRoutes.length];
       sources.current[i] = route.from;
       targets.current[i] = route.to;
       velocities.current[i] = Math.random();
@@ -1894,8 +1895,9 @@ function LearningParticleStreams({ agents, activelyLearningAgents = [] }: {
   const { positions, colors } = useMemo(() => {
     const pos = new Float32Array(particleCount * 3);
     const col = new Float32Array(particleCount * 3);
+    if (learningAgentIndices.length === 0) return { positions: pos, colors: col };
     for (let i = 0; i < particleCount; i++) {
-      const targetIdx = learningAgentIndices[i % Math.max(learningAgentIndices.length, 1)] || 0;
+      const targetIdx = learningAgentIndices[i % learningAgentIndices.length];
       targetsRef.current[i] = targetIdx;
       progressRef.current[i] = Math.random();
       const t = progressRef.current[i];
@@ -1903,29 +1905,26 @@ function LearningParticleStreams({ agents, activelyLearningAgents = [] }: {
       pos[i * 3] = nebulaPos[0] + (tgt[0] - nebulaPos[0]) * t;
       pos[i * 3 + 1] = nebulaPos[1] + (tgt[1] - nebulaPos[1]) * t;
       pos[i * 3 + 2] = nebulaPos[2] + (tgt[2] - nebulaPos[2]) * t;
-      // Violet/purple gradient with some variation
-      const isActive = activelyLearningAgents.length > 0;
-      col[i * 3] = isActive ? 0.66 : 0.4;
-      col[i * 3 + 1] = isActive ? 0.33 : 0.25;
-      col[i * 3 + 2] = isActive ? 0.97 : 0.6;
+      col[i * 3] = 0.66;
+      col[i * 3 + 1] = 0.33;
+      col[i * 3 + 2] = 0.97;
     }
     return { positions: pos, colors: col };
-  }, [agents, learningAgentIndices, activelyLearningAgents.length]);
+  }, [agents, learningAgentIndices]);
 
   useFrame((_, delta) => {
-    if (!ref.current || agents.length === 0) return;
+    if (!ref.current || agents.length === 0 || learningAgentIndices.length === 0) return;
     const posArr = ref.current.geometry.attributes.position.array as Float32Array;
-    const speed = activelyLearningAgents.length > 0 ? 0.12 : 0.04;
+    const speed = 0.12;
 
     for (let i = 0; i < particleCount; i++) {
       progressRef.current[i] += delta * (speed + Math.random() * 0.04);
       if (progressRef.current[i] >= 1) {
         progressRef.current[i] = 0;
-        targetsRef.current[i] = learningAgentIndices[Math.floor(Math.random() * learningAgentIndices.length)] || 0;
+        targetsRef.current[i] = learningAgentIndices[Math.floor(Math.random() * learningAgentIndices.length)];
       }
       const t = progressRef.current[i];
       const tgt = agents[targetsRef.current[i]]?.position || [0, 0, 0];
-      // Add a gentle arc via sine curve on Y
       const arcHeight = Math.sin(t * Math.PI) * 3;
       posArr[i * 3] = nebulaPos[0] + (tgt[0] - nebulaPos[0]) * t + Math.sin(t * 4 + i) * 0.3;
       posArr[i * 3 + 1] = nebulaPos[1] + (tgt[1] - nebulaPos[1]) * t + arcHeight;
