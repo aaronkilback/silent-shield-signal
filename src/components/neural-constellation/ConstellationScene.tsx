@@ -4,6 +4,7 @@ import { OrbitControls, Line, Html, useTexture } from "@react-three/drei";
 import * as THREE from "three";
 import { MilkyWayBand, PlanetParade, AsteroidBelt, Comets } from "./SolarSystemElements";
 import type { AgentCommLink, ActiveDebate, ScanPulse, AgentActivityMetrics, KnowledgeGraphEdge, OperatorDevice, OperatorMessageActivity, KnowledgeGrowthData } from "@/hooks/useConstellationData";
+import type { FortressHealth } from "@/hooks/useFortressHealth";
 
 interface AgentNode {
   id: string;
@@ -31,6 +32,7 @@ interface ConstellationSceneProps {
   operatorMessageActivity?: OperatorMessageActivity;
   signalLocations?: string[];
   knowledgeGrowth?: KnowledgeGrowthData;
+  fortressHealth?: FortressHealth;
 }
 
 // Camera presets
@@ -1941,6 +1943,65 @@ function SynapseFlashes({ agents, commLinks = [], todayEntries = 0 }: {
   );
 }
 
+// Fortification rings — concentric rings around each agent showing fortress layer depth
+// Ring 1: Observability (cyan) | Ring 2: Safety (amber) | Ring 3: Reliability (green) | Ring 4: Learning (purple)
+function FortificationRings({ agents, fortressHealth }: { agents: AgentNode[]; fortressHealth?: FortressHealth }) {
+  const groupRef = useRef<THREE.Group>(null);
+
+  const layerData = useMemo(() => {
+    if (!fortressHealth) return { obs: 0, saf: 0, rel: 0, lrn: 0 };
+    const loops = fortressHealth.loops;
+    const pct = (layer: string) => {
+      const layerLoops = loops.filter((l) => l.layer === layer);
+      if (layerLoops.length === 0) return 0;
+      return layerLoops.filter((l) => l.status === "closed").length / layerLoops.length;
+    };
+    return {
+      obs: pct("observability"),
+      saf: pct("safety"),
+      rel: pct("reliability"),
+      lrn: pct("learning"),
+    };
+  }, [fortressHealth]);
+
+  useFrame((_, delta) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y += delta * 0.03;
+    }
+  });
+
+  if (!fortressHealth) return null;
+
+  const ringConfigs = [
+    { pct: layerData.obs, color: "#22d3ee", radius: 1.1, label: "OBS" },
+    { pct: layerData.saf, color: "#f59e0b", radius: 1.4, label: "SEC" },
+    { pct: layerData.rel, color: "#10b981", radius: 1.7, label: "REL" },
+    { pct: layerData.lrn, color: "#a855f7", radius: 2.0, label: "LRN" },
+  ];
+
+  return (
+    <group ref={groupRef}>
+      {agents.filter((a) => a.tier === "primary" || a.callSign === "AEGIS-CMD").map((agent) => {
+        const size = agent.callSign === "AEGIS-CMD" ? 1.0 : 0.6;
+        return (
+          <group key={`fort-${agent.id}`} position={agent.position}>
+            {ringConfigs.map((ring, i) => {
+              if (ring.pct <= 0) return null;
+              const opacity = ring.pct * 0.4;
+              const dashRatio = ring.pct; // partial rings for partial closure
+              return (
+                <mesh key={i} rotation={[Math.PI / 2 + (i * 0.15), i * 0.3, 0]}>
+                  <torusGeometry args={[ring.radius * size * 1.8, 0.02, 8, 64, Math.PI * 2 * dashRatio]} />
+                  <meshBasicMaterial color={ring.color} transparent opacity={opacity} />
+                </mesh>
+              );
+            })}
+          </group>
+        );
+      })}
+    </group>
+  );
+}
 export function ConstellationScene({
   agents,
   onNodeClick,
@@ -1955,6 +2016,7 @@ export function ConstellationScene({
   operatorMessageActivity,
   signalLocations = [],
   knowledgeGrowth,
+  fortressHealth,
 }: ConstellationSceneProps) {
   const [cameraView, setCameraView] = useState<CameraView>("constellation");
   const controlsRef = useRef<any>(null);
@@ -2087,6 +2149,11 @@ export function ConstellationScene({
             />
           );
         })}
+
+        {/* Fortification rings — fortress layer depth per node */}
+        {!isExecutiveMode && (
+          <FortificationRings agents={visibleAgents} fortressHealth={fortressHealth} />
+        )}
 
         {/* AEGIS Command Hub — unique central node */}
         {visibleAgents.filter((a) => a.callSign === "AEGIS-CMD").map((agent) => (
