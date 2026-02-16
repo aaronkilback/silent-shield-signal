@@ -914,12 +914,12 @@ function IncidentHeatTrails({ agents, activeDebates = [], scanPulses = [] }: {
 type ActivityType = "signal_ingest" | "scan_sweep" | "learning" | "message" | "alert" | "idle";
 
 const ACTIVITY_VISUALS: Record<ActivityType, { color: [number, number, number]; size: number; speed: number; label: string }> = {
-  signal_ingest: { color: [0.13, 0.83, 0.93], size: 0.18, speed: 0.14, label: "Signal Ingestion" },    // Cyan — data flowing in
-  scan_sweep:    { color: [0.39, 0.53, 1.0],  size: 0.22, speed: 0.08, label: "OSINT Scan" },           // Blue — methodical sweeps
-  learning:      { color: [0.58, 0.29, 0.95], size: 0.14, speed: 0.06, label: "Knowledge Acquisition" },// Violet — learning flows
-  message:       { color: [0.13, 0.93, 0.55], size: 0.16, speed: 0.18, label: "Agent Comms" },          // Green — fast messages
-  alert:         { color: [1.0, 0.35, 0.15],  size: 0.28, speed: 0.22, label: "Alert Escalation" },     // Red — urgent, large, fast
-  idle:          { color: [0.25, 0.35, 0.50], size: 0.10, speed: 0.03, label: "Standby" },              // Dim slate — barely moving
+  signal_ingest: { color: [0.13, 0.93, 0.97], size: 0.35, speed: 0.14, label: "Signal Ingestion" },    // Bright Cyan
+  scan_sweep:    { color: [0.39, 0.53, 1.0],  size: 0.40, speed: 0.08, label: "OSINT Scan" },           // Blue
+  learning:      { color: [0.58, 0.29, 0.95], size: 0.30, speed: 0.06, label: "Knowledge Acquisition" },// Violet
+  message:       { color: [0.13, 0.93, 0.55], size: 0.35, speed: 0.18, label: "Agent Comms" },          // Green
+  alert:         { color: [1.0, 0.35, 0.15],  size: 0.50, speed: 0.22, label: "Alert Escalation" },     // Red — large + fast
+  idle:          { color: [0.35, 0.45, 0.60], size: 0.15, speed: 0.03, label: "Standby" },              // Slate
 };
 
 function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPulses = [] }: {
@@ -928,7 +928,7 @@ function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPul
   activityMetrics?: AgentActivityMetrics[];
   scanPulses?: ScanPulse[];
 }) {
-  const particleCount = 60;
+  const particleCount = 120;
   const ref = useRef<THREE.Points>(null);
   const sizeRef = useRef<THREE.BufferAttribute | null>(null);
   const velocities = useRef(new Float32Array(particleCount));
@@ -1073,7 +1073,7 @@ function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPul
         <bufferAttribute attach="attributes-position" count={particleCount} array={positions} itemSize={3} />
         <bufferAttribute attach="attributes-color" count={particleCount} array={colors} itemSize={3} />
       </bufferGeometry>
-      <pointsMaterial size={0.22} vertexColors transparent opacity={0.92} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
+      <pointsMaterial size={0.45} vertexColors transparent opacity={0.95} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
     </points>
   );
 }
