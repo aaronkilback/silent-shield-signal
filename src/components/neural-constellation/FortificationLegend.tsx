@@ -1,4 +1,5 @@
-import { Shield, Eye, CheckCircle2, Swords, BookOpen } from "lucide-react";
+import { Shield, Eye, CheckCircle2, Swords, BookOpen, GripHorizontal } from "lucide-react";
+import { DraggablePanel } from "./DraggablePanel";
 import type { FortressHealth } from "@/hooks/useFortressHealth";
 
 interface FortificationLegendProps {
@@ -32,13 +33,14 @@ export function FortificationLegend({ health, isLoading }: FortificationLegendPr
   };
 
   return (
-    <div className="absolute left-4 z-10 pointer-events-auto" style={{ top: "52px" }}>
+    <DraggablePanel className="absolute left-4 z-10 pointer-events-auto" style={{ top: "52px" }}>
       <div className="backdrop-blur-xl border rounded-lg bg-card/80 border-border overflow-hidden" style={{ width: "220px" }}>
-        {/* Header */}
-        <div className="px-3 py-2.5 border-b border-border/50">
+        {/* Header — drag handle */}
+        <div data-drag-handle className="px-3 py-2.5 border-b border-border/50 cursor-grab active:cursor-grabbing">
           <div className="flex items-center gap-2">
             <Shield className="w-3.5 h-3.5 text-amber-400" />
-            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-400">Fortification Legend</span>
+            <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-400 flex-1">Fortification Legend</span>
+            <GripHorizontal className="w-3 h-3 text-muted-foreground/40" />
           </div>
         </div>
 
@@ -118,7 +120,7 @@ export function FortificationLegend({ health, isLoading }: FortificationLegendPr
           </div>
         </div>
       </div>
-    </div>
+    </DraggablePanel>
   );
 }
 
