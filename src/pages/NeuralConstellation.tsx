@@ -5,13 +5,14 @@ import { useEffect } from "react";
 import { MinimalHeader } from "@/components/MinimalHeader";
 import { Loader2 } from "lucide-react";
 import { ConstellationScene, type AgentNode } from "@/components/neural-constellation/ConstellationScene";
-import { NodeDetailPanel } from "@/components/neural-constellation/NodeDetailPanel";
-import { ConstellationLegend } from "@/components/neural-constellation/ConstellationLegend";
+import { FortressNodeDetail } from "@/components/neural-constellation/FortressNodeDetail";
+import { FortificationLegend } from "@/components/neural-constellation/FortificationLegend";
+import { FortressStatusBar } from "@/components/neural-constellation/FortressStatusBar";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMetrics, useKnowledgeGraphEdges, useOperatorDevices, useOperatorMessageActivity, useKnowledgeGrowthData } from "@/hooks/useConstellationData";
 import { useFortressHealth } from "@/hooks/useFortressHealth";
-import { FortressHUD } from "@/components/neural-constellation/FortressHUD";
+import { useSystemHealth } from "@/hooks/useSystemHealth";
 
 // Map agents to 3D positions in a constellation layout
 function assignPositions(agents: any[]): AgentNode[] {
@@ -137,6 +138,7 @@ const NeuralConstellation = () => {
   const { data: operatorMessageActivity } = useOperatorMessageActivity(!!user);
   const { data: knowledgeGrowth } = useKnowledgeGrowthData(!!user);
   const { data: fortressHealth, isLoading: fortressLoading } = useFortressHealth(!!user);
+  const { data: systemHealth } = useSystemHealth(!!user);
 
   const agentNodes = useMemo(() => {
     if (!agents) return [];
@@ -164,7 +166,11 @@ const NeuralConstellation = () => {
     <div className="min-h-screen bg-background flex flex-col">
       <MinimalHeader />
       <main className="flex-1 relative overflow-hidden">
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 text-center pointer-events-none">
+        {/* Fortress Status Bar — top */}
+        <FortressStatusBar health={fortressHealth} systemHealth={systemHealth} isLoading={fortressLoading} />
+
+        {/* Title */}
+        <div className="absolute left-1/2 -translate-x-1/2 z-10 text-center pointer-events-none" style={{ top: "48px" }}>
           <h1 className={`text-lg font-bold tracking-[0.25em] uppercase transition-colors duration-500 ${
             isExecutiveMode ? "text-amber-300" : "text-foreground"
           }`}>
@@ -180,6 +186,7 @@ const NeuralConstellation = () => {
           </p>
         </div>
 
+        {/* 3D Scene */}
         <div className="absolute inset-0">
           <ConstellationScene
             agents={agentNodes}
@@ -232,23 +239,16 @@ const NeuralConstellation = () => {
           </div>
         </div>
 
-        <ConstellationLegend
-          isExecutiveMode={isExecutiveMode}
-          onToggleMode={() => setIsExecutiveMode((p) => !p)}
-          agentCount={agentNodes.length}
-          connectionCount={connectionCount}
-          knowledgeEdgeCount={knowledgeGraphEdges.length}
-          activeAgentCount={activityMetrics.filter((m) => m.activityScore > 0.3).length}
-        />
+        {/* Left Panel — Fortification Legend (replaces old ConstellationLegend) */}
+        <FortificationLegend health={fortressHealth} isLoading={fortressLoading} />
 
-        <FortressHUD health={fortressHealth} isLoading={fortressLoading} />
-
-        <NodeDetailPanel
+        {/* Right Panel — Node detail on click */}
+        <FortressNodeDetail
           agent={selectedAgent}
           onClose={() => setSelectedAgent(null)}
-          isExecutiveMode={isExecutiveMode}
           activityMetrics={activityMetrics}
           scanPulses={scanPulses}
+          fortressHealth={fortressHealth}
         />
       </main>
     </div>
