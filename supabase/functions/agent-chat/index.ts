@@ -591,8 +591,34 @@ Respond naturally and briefly.`
     } catch (e) {
       // Non-fatal — proceed without corrections
     }
+
+    // Load undelivered pending messages for this agent (broadcasts, directives, etc.)
+    let pendingMessagesBlock = "";
+    try {
+      const { data: pendingMsgs } = await supabase
+        .from("agent_pending_messages")
+        .select("id, message, priority, trigger_event, created_at")
+        .eq("agent_id", agent.id)
+        .is("delivered_at", null)
+        .is("dismissed_at", null)
+        .order("created_at", { ascending: false })
+        .limit(5);
+      
+      if (pendingMsgs && pendingMsgs.length > 0) {
+        pendingMessagesBlock = `\n\n📨 PENDING MESSAGES FROM COMMAND:\n${pendingMsgs.map(m => `[${m.priority?.toUpperCase() || 'NORMAL'}] ${m.message}`).join('\n')}\nYou have read and internalized these messages. Let them inform your tone and conduct.\n`;
+        
+        // Mark as delivered
+        const msgIds = pendingMsgs.map(m => m.id);
+        await supabase
+          .from("agent_pending_messages")
+          .update({ delivered_at: new Date().toISOString() })
+          .in("id", msgIds);
+      }
+    } catch (e) {
+      // Non-fatal — proceed without pending messages
+    }
     
-    const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}${behavioralCorrectionBlock}
+    const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}${behavioralCorrectionBlock}${pendingMessagesBlock}
 
 Your Mission: ${agent.mission_scope}
 Your Call Sign: ${agent.call_sign}
