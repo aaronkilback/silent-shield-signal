@@ -163,6 +163,7 @@ export function SignalDetailSheet({
                 entity_tags: (signal as any).entity_tags,
                 rule_priority: (signal as any).rule_priority,
                 normalized_text: signal.normalized_text,
+                triage_override: (signal as any).triage_override,
               }}
               onUpdated={onAssign}
             />

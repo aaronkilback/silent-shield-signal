@@ -8707,6 +8707,7 @@ export type Database = {
           tenant_id: string | null
           thumbnail_url: string | null
           title: string | null
+          triage_override: string | null
           updated_at: string
         }
         Insert: {
@@ -8758,6 +8759,7 @@ export type Database = {
           tenant_id?: string | null
           thumbnail_url?: string | null
           title?: string | null
+          triage_override?: string | null
           updated_at?: string
         }
         Update: {
@@ -8809,6 +8811,7 @@ export type Database = {
           tenant_id?: string | null
           thumbnail_url?: string | null
           title?: string | null
+          triage_override?: string | null
           updated_at?: string
         }
         Relationships: [

@@ -491,6 +491,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                 entity_tags: signal.entity_tags,
                 rule_priority: signal.rule_priority,
                 normalized_text: signal.normalized_text,
+                triage_override: (signal as any).triage_override,
               }}
               onUpdated={onSignalUpdated}
             />

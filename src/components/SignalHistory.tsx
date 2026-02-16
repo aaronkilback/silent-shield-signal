@@ -409,6 +409,10 @@ export const SignalHistory = () => {
 
   // Classify each signal into a primary bucket
   const classifySignal = (signal: Signal): 'international' | 'review' | 'historical' | 'recent' => {
+    // Manual override takes precedence
+    if ((signal as any).triage_override) {
+      return (signal as any).triage_override as 'international' | 'review' | 'historical' | 'recent';
+    }
     if (isInternationalSignal(signal)) return 'international';
     if (isQuestionableSignal(signal)) return 'review';
     const recency = categorizeByRecency(signal);
