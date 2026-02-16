@@ -641,10 +641,18 @@ function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, o
   );
 }
 
-// Connection lines — real comm links shown brighter
-function ConnectionLines({ agents, commLinks = [] }: { agents: AgentNode[]; commLinks?: AgentCommLink[] }) {
+// Connection lines — colored by edge state taxonomy (Inactive/Active/Battle-Tested/Redundant)
+function ConnectionLines({ agents, commLinks = [], activityMetrics = [] }: { 
+  agents: AgentNode[]; commLinks?: AgentCommLink[]; activityMetrics?: AgentActivityMetrics[];
+}) {
+  const activityMap = useMemo(() => {
+    const map = new Map<string, number>();
+    activityMetrics.forEach((m) => map.set(m.callSign, m.activityScore));
+    return map;
+  }, [activityMetrics]);
+
   const connections = useMemo(() => {
-    const conns: { a: number; b: number; isReal: boolean; strength: number }[] = [];
+    const conns: { a: number; b: number; isReal: boolean; strength: number; edgeState: 'inactive' | 'active' | 'battle-tested' | 'redundant' }[] = [];
     const callSignIndex = new Map(agents.map((a, i) => [a.callSign, i]));
     const primaryIndices = agents.map((a, i) => (a.tier === "primary" ? i : -1)).filter((i) => i >= 0);
 
@@ -656,7 +664,22 @@ function ConnectionLines({ agents, commLinks = [] }: { agents: AgentNode[]; comm
         const key = [Math.min(srcIdx, tgtIdx), Math.max(srcIdx, tgtIdx)].join("-");
         if (!realPairs.has(key)) {
           realPairs.add(key);
-          conns.push({ a: srcIdx, b: tgtIdx, isReal: true, strength: Math.min(link.messageCount / 10, 1) });
+          const strength = Math.min(link.messageCount / 10, 1);
+          const scoreA = activityMap.get(agents[srcIdx].callSign) || 0;
+          const scoreB = activityMap.get(agents[tgtIdx].callSign) || 0;
+          const combined = (scoreA + scoreB) / 2;
+          
+          let edgeState: 'inactive' | 'active' | 'battle-tested' | 'redundant';
+          if (scoreA > 0.5 && scoreB > 0.5 && strength > 0.3) {
+            edgeState = 'redundant';
+          } else if (combined >= 0.35 || strength > 0.5) {
+            edgeState = 'battle-tested';
+          } else if (scoreA > 0 || scoreB > 0) {
+            edgeState = 'active';
+          } else {
+            edgeState = 'inactive';
+          }
+          conns.push({ a: srcIdx, b: tgtIdx, isReal: true, strength, edgeState });
         }
       }
     });
@@ -665,37 +688,54 @@ function ConnectionLines({ agents, commLinks = [] }: { agents: AgentNode[]; comm
       for (let j = i + 1; j < primaryIndices.length; j++) {
         const key = [primaryIndices[i], primaryIndices[j]].join("-");
         if (!realPairs.has(key)) {
-          conns.push({ a: primaryIndices[i], b: primaryIndices[j], isReal: false, strength: 0.3 });
+          const scoreA = activityMap.get(agents[primaryIndices[i]].callSign) || 0;
+          const scoreB = activityMap.get(agents[primaryIndices[j]].callSign) || 0;
+          const edgeState = (scoreA > 0 || scoreB > 0) ? 'active' as const : 'inactive' as const;
+          conns.push({ a: primaryIndices[i], b: primaryIndices[j], isReal: false, strength: 0.3, edgeState });
         }
       }
     }
 
-    // Ensure every agent connects to AEGIS-CMD (the orchestrator parent)
+    // Ensure every agent connects to AEGIS-CMD
     const aegisIdx = callSignIndex.get("AEGIS-CMD");
     agents.forEach((agent, idx) => {
       if (idx === aegisIdx) return;
       const key = [Math.min(idx, aegisIdx ?? 0), Math.max(idx, aegisIdx ?? 0)].join("-");
       if (!realPairs.has(key) && aegisIdx !== undefined) {
-        conns.push({ a: idx, b: aegisIdx, isReal: true, strength: 0.6 });
+        const score = activityMap.get(agent.callSign) || 0;
+        const edgeState = score > 0.5 ? 'battle-tested' as const : score > 0 ? 'active' as const : 'inactive' as const;
+        conns.push({ a: idx, b: aegisIdx, isReal: true, strength: 0.6, edgeState });
         realPairs.add(key);
       }
     });
 
     return conns;
-  }, [agents, commLinks]);
+  }, [agents, commLinks, activityMap]);
+
+  const edgeVisuals: Record<string, { color: string; opacity: number; lineWidth: number; dashed: boolean; dashScale: number; dashSize: number; gapSize: number }> = {
+    inactive:       { color: "#ef4444", opacity: 0.25, lineWidth: 0.8, dashed: true,  dashScale: 1, dashSize: 0.3, gapSize: 0.3 },
+    active:         { color: "#f59e0b", opacity: 0.4,  lineWidth: 1.2, dashed: true,  dashScale: 1, dashSize: 0.6, gapSize: 0.2 },
+    'battle-tested': { color: "#10b981", opacity: 0.55, lineWidth: 1.8, dashed: false, dashScale: 1, dashSize: 1,   gapSize: 0 },
+    redundant:      { color: "#22d3ee", opacity: 0.65, lineWidth: 2.5, dashed: false, dashScale: 1, dashSize: 1,   gapSize: 0 },
+  };
 
   return (
     <group>
       {connections.map((conn, idx) => {
         const points = [new THREE.Vector3(...agents[conn.a].position), new THREE.Vector3(...agents[conn.b].position)];
+        const vis = edgeVisuals[conn.edgeState];
         return (
           <Line
             key={idx}
             points={points}
-            color={conn.isReal ? "#22d3ee" : "#3b82f6"}
+            color={vis.color}
             transparent
-            opacity={conn.isReal ? 0.4 + conn.strength * 0.3 : conn.strength * 0.3}
-            lineWidth={conn.isReal ? 1.5 + conn.strength : 0.8}
+            opacity={vis.opacity}
+            lineWidth={vis.lineWidth}
+            dashed={vis.dashed}
+            dashScale={vis.dashScale}
+            dashSize={vis.dashSize}
+            gapSize={vis.gapSize}
           />
         );
       })}
@@ -2119,7 +2159,7 @@ export function ConstellationScene({
           <meshBasicMaterial color="#64748b" transparent opacity={0.05} />
         </mesh>
 
-        <ConnectionLines agents={visibleAgents} commLinks={commLinks} />
+        <ConnectionLines agents={visibleAgents} commLinks={commLinks} activityMetrics={activityMetrics} />
         <SignalParticles agents={visibleAgents} commLinks={commLinks} />
 
         {/* Knowledge graph overlay — dashed colored arcs */}
