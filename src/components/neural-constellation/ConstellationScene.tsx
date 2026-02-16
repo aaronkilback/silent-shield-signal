@@ -2145,19 +2145,6 @@ export function ConstellationScene({
         <MoonBody earthPosition={earthPosition} />
         
 
-        {/* Tier orbital ring guides */}
-        <mesh rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[5, 0.015, 8, 96]} />
-          <meshBasicMaterial color="#3b82f6" transparent opacity={0.12} />
-        </mesh>
-        <mesh rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[9, 0.01, 8, 96]} />
-          <meshBasicMaterial color="#8b5cf6" transparent opacity={0.08} />
-        </mesh>
-        <mesh rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[13, 0.008, 8, 96]} />
-          <meshBasicMaterial color="#64748b" transparent opacity={0.05} />
-        </mesh>
 
         <ConnectionLines agents={visibleAgents} commLinks={commLinks} activityMetrics={activityMetrics} />
         <SignalParticles agents={visibleAgents} commLinks={commLinks} />
