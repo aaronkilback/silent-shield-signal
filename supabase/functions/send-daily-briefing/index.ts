@@ -42,8 +42,10 @@ Deno.serve(async (req) => {
       { data: recentActions },
       { data: doctrineEntries },
     ] = await Promise.all([
-      supabase.from('signals').select('id, category, severity, title, normalized_text, created_at')
-        .gte('created_at', cutoff24h).order('created_at', { ascending: false }).limit(50),
+      supabase.from('signals').select('id, category, severity, title, normalized_text, created_at, quality_score, relevance_score, triage_override, event_date, confidence')
+        .gte('created_at', cutoff24h)
+        .neq('status', 'false_positive')
+        .order('created_at', { ascending: false }).limit(50),
       supabase.from('incidents').select('id, priority, status, opened_at')
         .eq('status', 'open').limit(50),
       supabase.from('autonomous_scan_results').select('risk_score, findings, created_at')
@@ -54,10 +56,29 @@ Deno.serve(async (req) => {
         .eq('is_active', true).order('created_at', { ascending: false }).limit(30),
     ]);
 
+    // Filter signals for briefing quality: exclude historical, low-quality, and low-relevance
+    const briefingSignals = (recentSignals || []).filter((s: any) => {
+      // Exclude historical signals
+      if (s.triage_override === 'historical') return false;
+      // Exclude signals with event dates > 90 days old
+      if (s.event_date) {
+        const eventDate = new Date(s.event_date);
+        const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000);
+        if (eventDate < ninetyDaysAgo) return false;
+      }
+      // Exclude low quality signals
+      if (s.quality_score !== null && s.quality_score < 0.4) return false;
+      // Exclude low relevance signals
+      if (s.relevance_score !== null && s.relevance_score < 0.4) return false;
+      return true;
+    });
+
     const metrics = {
-      signals_24h: (recentSignals || []).length,
-      critical_signals: (recentSignals || []).filter(s => s.severity === 'critical').length,
-      high_signals: (recentSignals || []).filter(s => s.severity === 'high').length,
+      signals_24h: briefingSignals.length,
+      total_ingested_24h: (recentSignals || []).length,
+      filtered_out: (recentSignals || []).length - briefingSignals.length,
+      critical_signals: briefingSignals.filter((s: any) => s.severity === 'critical').length,
+      high_signals: briefingSignals.filter((s: any) => s.severity === 'high').length,
       open_incidents: (openIncidents || []).length,
       risk_score: recentScans?.[0]?.risk_score || 0,
       autonomous_actions: (recentActions || []).length,
@@ -127,23 +148,33 @@ Deno.serve(async (req) => {
       messages: [
         {
           role: 'system',
-          content: `You are Fortress AI, generating a concise daily security briefing email. Write in measured, professional prose suitable for a non-technical executive. No markdown formatting — use plain text with clear section headers. Keep it under 250 words. Current date: ${dateContext.currentDateFormatted}, ${dateContext.currentTime24h} ${dateContext.currentTimezone}.
+          content: `You are Fortress AI, the senior intelligence officer for a corporate security operations center. Generate a daily security briefing email that reads like a classified intelligence product — not a dashboard summary.
+
+CRITICAL RULES:
+- Do NOT mention historical events (>90 days old) as current threats. They have already been filtered out.
+- Do NOT pad the briefing with generic security advice. Every sentence must be grounded in TODAY's data.
+- If there are few signals, say so honestly. A quiet day is valuable intelligence.
+- Prioritize: What changed? What's new? What requires action?
+- Name specific entities, locations, and categories. Vague language like "various threats were detected" is unacceptable.
+
+Current date: ${dateContext.currentDateFormatted}, ${dateContext.currentTime24h} ${dateContext.currentTimezone}.
 
 Structure:
-1. SITUATION OVERVIEW (2-3 sentences)
-2. KEY METRICS (bullet-style numbers)
-3. NOTABLE SIGNALS (top 3 if any, one line each)
-4. RECOMMENDED POSTURE (1-2 sentences)
+1. SITUATION OVERVIEW (2-3 sentences — what is the overall posture and why)
+2. KEY METRICS (bullet-style numbers with context, not just raw counts)
+3. PRIORITY SIGNALS (top 3-5 actionable signals with specifics: what, where, severity, and why it matters)
+4. EMERGING PATTERNS (any trends or clusters — if none, say "No notable patterns detected")
+5. RECOMMENDED POSTURE (specific actions, not generic advice)
 
-Tone: Calm, authoritative, zero jargon.`,
+Tone: Calm, authoritative, measured. Like a senior intelligence officer delivering a classified briefing. Zero filler words.`,
         },
         {
           role: 'user',
-          content: `Generate today's daily briefing.\n\nMETRICS:\n${JSON.stringify(metrics, null, 2)}\n\nTOP SIGNALS (last 24h):\n${JSON.stringify((recentSignals || []).slice(0, 5).map(s => ({ severity: s.severity, category: s.category, title: s.title })), null, 2)}\n\nAUTONOMOUS ACTIONS:\n${JSON.stringify((recentActions || []).map(a => a.action_type), null, 2)}`,
+          content: `Generate today's daily briefing.\n\nMETRICS:\n${JSON.stringify(metrics, null, 2)}\n\nACTIONABLE SIGNALS (filtered for quality and recency — ${briefingSignals.length} of ${(recentSignals || []).length} total):\n${JSON.stringify(briefingSignals.slice(0, 10).map((s: any) => ({ severity: s.severity, category: s.category, title: s.title, normalized_text: (s.normalized_text || '').substring(0, 200), confidence: s.confidence, quality_score: s.quality_score })), null, 2)}\n\nAUTONOMOUS ACTIONS:\n${JSON.stringify((recentActions || []).map((a: any) => a.action_type), null, 2)}`,
         },
       ],
       functionName: 'send-daily-briefing',
-      extraBody: { max_tokens: 800, temperature: 0.2 },
+      extraBody: { max_tokens: 1500, temperature: 0.2 },
       dlqOnFailure: true,
       dlqPayload: { date: dateContext.currentDateISO, metrics },
     });
