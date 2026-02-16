@@ -23,12 +23,8 @@ export const useUserRole = () => {
     queryFn: async () => {
       const { data: { user } } = await supabase.auth.getUser();
       
-      if (!user) {
-        console.log('[UserRole] No authenticated user');
-        return [];
-      }
+      if (!user) return [];
 
-      console.log('[UserRole] Fetching roles for user:', user.id);
       const { data, error } = await supabase
         .from('user_roles')
         .select('role')
@@ -39,9 +35,7 @@ export const useUserRole = () => {
         throw error;
       }
 
-      const rolesList = data?.map(r => r.role as AppRole) || [];
-      console.log('[UserRole] User roles:', rolesList);
-      return rolesList;
+      return data?.map(r => r.role as AppRole) || [];
     },
     enabled: true,
   });
@@ -54,8 +48,6 @@ export const useUserRole = () => {
   const isAdmin = hasRole('admin');
   const isAnalyst = hasRole('analyst');
   const isViewer = hasRole('viewer');
-
-  console.log('[UserRole] Role checks - Super Admin:', isSuperAdmin, 'Admin:', isAdmin, 'Analyst:', isAnalyst, 'Viewer:', isViewer);
 
   return {
     roles: roles || [],
