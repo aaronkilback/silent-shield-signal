@@ -21,6 +21,16 @@ const armorLayers = [
   { color: "#f59e0b", icon: BookOpen, label: "Calibration", desc: "accuracy multiplier live" },
 ];
 
+// Must match ACTIVITY_VISUALS in ConstellationScene.tsx exactly
+const particleTypes = [
+  { color: "rgb(33, 212, 237)", label: "Signal Ingest", desc: "cyan" },
+  { color: "rgb(99, 135, 255)", label: "OSINT Scan", desc: "blue" },
+  { color: "rgb(148, 74, 242)", label: "Knowledge", desc: "violet" },
+  { color: "rgb(33, 237, 140)", label: "Agent Comms", desc: "green" },
+  { color: "rgb(255, 89, 38)", label: "Alert Escalation", desc: "red" },
+  { color: "rgb(64, 89, 128)", label: "Standby", desc: "slate" },
+];
+
 export function FortificationLegend({ health, isLoading }: FortificationLegendProps) {
   if (isLoading || !health) return null;
 
@@ -92,6 +102,23 @@ export function FortificationLegend({ health, isLoading }: FortificationLegendPr
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        {/* Particle Telemetry */}
+        <div className="px-3 py-2 border-b border-border/30">
+          <div className="text-[9px] text-muted-foreground uppercase tracking-widest font-semibold mb-1.5">
+            Particle Telemetry <span className="normal-case text-[8px]">(Live Activity)</span>
+          </div>
+          <div className="space-y-1">
+            {particleTypes.map((pt) => (
+              <div key={pt.label} className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: pt.color, boxShadow: `0 0 6px ${pt.color}60` }} />
+                <span className="text-[10px] text-foreground font-medium">{pt.label}</span>
+                <span className="text-[9px] text-muted-foreground ml-auto">{pt.desc}</span>
+              </div>
+            ))}
           </div>
         </div>
 
