@@ -337,12 +337,21 @@ Be specific and concise. Focus on facts, not speculation.`
         {
           role: 'system',
           content: `You are a security intelligence classifier. Analyze security events and extract:
-- normalized_text: clean summary
-- entity_tags: array of entities (IPs, domains, usernames)
+- normalized_text: clean summary of the event
+- entity_tags: array of entities (people, organizations, locations, IPs, domains)
 - location: geographic location if mentioned
-- category: type (malware, phishing, intrusion, data_exfil, etc)
+- category: type (malware, phishing, intrusion, data_exfil, protest, activism, regulatory, environmental, social_sentiment, crime, sabotage, legal, document_upload, etc)
 - severity: critical, high, medium, or low
 - confidence: 0-100 score
+- event_date: the ISO 8601 date (YYYY-MM-DD) of WHEN THE DESCRIBED EVENT ACTUALLY OCCURRED. Look for specific dates, years, seasons, or temporal references in the text. If the text says "January 9, 2019" the event_date is "2019-01-09". If the text says "December 4th, 2023" the event_date is "2023-12-04". If the event appears to be happening now or no date is discernible, use null.
+- is_historical: boolean — true if the described event occurred more than 90 days ago based on temporal clues in the text. Look for past years (2019, 2020, 2021, 2022, 2023, 2024, early 2025), phrases like "years ago", concluded campaigns, archived content.
+
+CRITICAL TEMPORAL RULES:
+- Extract the ACTUAL event date from the text, NOT the publication/crawl date.
+- "January 9, 2019" means event_date: "2019-01-09", NOT "2026-01-09".
+- If the event is historical (>90 days old), severity MUST be "low" regardless of how dramatic the event was.
+- Historical events are NOT current threats.
+
 Respond ONLY with valid JSON.`
         },
         { role: 'user', content: signalText }
@@ -361,6 +370,14 @@ Respond ONLY with valid JSON.`
       // Keep rules-based severity if matched
       if (rulesResult.severity) {
         classification.severity = rulesResult.severity;
+      }
+      // ═══ HISTORICAL CONTENT GUARDRAIL AT INGESTION ═══
+      // If AI identifies this as historical content, force severity to low
+      if (classResult.data.is_historical === true) {
+        console.log(`[HISTORICAL GUARDRAIL] AI classified signal as historical — forcing severity to low`);
+        if (!rulesResult.severity) {
+          classification.severity = 'low';
+        }
       }
     }
 
@@ -788,16 +805,40 @@ Is this signal actionable intelligence for this specific client?`
       ? 'low_confidence' 
       : 'new';
     
-    // Extract event_date from raw metadata if available
+    // Extract event_date: AI-extracted date takes priority over raw metadata
     let eventDate: string | null = null;
-    const rawPubDate = signalRaw?.pubDate || signalRaw?.published_date || signalRaw?.published || signalRaw?.date;
-    if (rawPubDate) {
+    let triageOverride: string | null = null;
+    
+    // Priority 1: AI-extracted event_date (from text analysis — most accurate)
+    if (classResult.data?.event_date) {
       try {
-        const parsed = new Date(rawPubDate);
+        const parsed = new Date(classResult.data.event_date);
         if (!isNaN(parsed.getTime())) {
           eventDate = parsed.toISOString();
+          console.log(`[EventDate] AI-extracted event_date: ${eventDate}`);
+          
+          // Auto-triage historical signals
+          const ninetyDaysAgo = new Date();
+          ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+          if (parsed < ninetyDaysAgo) {
+            triageOverride = 'historical';
+            console.log(`[EventDate] Signal is historical (${classResult.data.event_date}) — auto-triaging to historical tab`);
+          }
         }
       } catch { /* ignore */ }
+    }
+    
+    // Priority 2: Raw metadata pubDate (fallback, often just the crawl date)
+    if (!eventDate) {
+      const rawPubDate = signalRaw?.pubDate || signalRaw?.published_date || signalRaw?.published || signalRaw?.date;
+      if (rawPubDate) {
+        try {
+          const parsed = new Date(rawPubDate);
+          if (!isNaN(parsed.getTime())) {
+            eventDate = parsed.toISOString();
+          }
+        } catch { /* ignore */ }
+      }
     }
 
     // Insert signal WITH content_hash and title from the start
@@ -827,7 +868,8 @@ Is this signal actionable intelligence for this specific client?`
         status: signalStatus,
         is_test: is_test || false,
         content_hash: contentHash,
-        event_date: eventDate
+        event_date: eventDate,
+        triage_override: triageOverride
       })
       .select()
       .single();
