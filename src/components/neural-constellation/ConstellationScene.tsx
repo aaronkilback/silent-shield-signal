@@ -296,12 +296,7 @@ function PerformanceHalo({ position, activityScore, color, size }: {
 
   if (activityScore < 0.05) return null;
 
-  return (
-    <mesh ref={ringRef} position={position}>
-      <torusGeometry args={[size * 2.5, 0.025 + activityScore * 0.03, 8, 48]} />
-      <meshBasicMaterial color={haloColor} transparent opacity={haloOpacity} side={THREE.DoubleSide} />
-    </mesh>
-  );
+  return null;
 }
 
 // AEGIS Command Hub — unique central node with orbital rings
@@ -458,10 +453,7 @@ function OperatorDeviceNode({ position, isOnline = false, deviceCount = 0, hasMe
           <meshStandardMaterial color={color} emissive={color} emissiveIntensity={isActive ? 1.2 : 0.3} roughness={0.15} metalness={0.9} />
         </mesh>
       </group>
-      <mesh ref={ringRef}>
-        <torusGeometry args={[0.8, 0.015, 8, 32]} />
-        <meshBasicMaterial color={isActive ? (hasMessageActivity ? "#22d3ee" : "#10b981") : "#475569"} transparent opacity={isActive ? 0.35 : 0.1} />
-      </mesh>
+      {/* ring removed */}
       <mesh>
         <sphereGeometry args={[0.6, 12, 12]} />
         <meshBasicMaterial color={isActive ? "#10b981" : "#475569"} transparent opacity={isActive ? 0.06 : 0.02} />
@@ -1120,16 +1112,7 @@ function DebateClusterRing({ agents, debate }: { agents: AgentNode[]; debate: Ac
   if (!hasParticipants) return null;
 
   return (
-    <group position={centroid}>
-      <mesh ref={ringRef}>
-        <torusGeometry args={[radius, 0.03, 8, 64]} />
-        <meshBasicMaterial color="#f59e0b" transparent opacity={0.4} />
-      </mesh>
-      <mesh rotation={[Math.PI / 4, 0, 0]}>
-        <torusGeometry args={[radius * 1.2, 0.02, 8, 64]} />
-        <meshBasicMaterial color="#ef4444" transparent opacity={0.15} />
-      </mesh>
-    </group>
+    null
   );
 }
 
@@ -2010,17 +1993,7 @@ function FortificationRings({ agents, fortressHealth }: { agents: AgentNode[]; f
         const size = agent.callSign === "AEGIS-CMD" ? 1.0 : 0.6;
         return (
           <group key={`fort-${agent.id}`} position={agent.position}>
-            {ringConfigs.map((ring, i) => {
-              if (ring.pct <= 0) return null;
-              const opacity = ring.pct * 0.4;
-              const dashRatio = ring.pct; // partial rings for partial closure
-              return (
-                <mesh key={i} rotation={[Math.PI / 2 + (i * 0.15), i * 0.3, 0]}>
-                  <torusGeometry args={[ring.radius * size * 1.8, 0.02, 8, 64, Math.PI * 2 * dashRatio]} />
-                  <meshBasicMaterial color={ring.color} transparent opacity={opacity} />
-                </mesh>
-              );
-            })}
+            {/* armor rings removed */}
           </group>
         );
       })}
