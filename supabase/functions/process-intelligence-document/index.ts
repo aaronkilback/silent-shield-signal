@@ -404,13 +404,25 @@ ${feedbackRejectionContext}
 6. If in doubt, describe ONLY what the article explicitly states - never extrapolate
 7. Signal descriptions must be direct paraphrases of source content, not interpretations
 
+**CRITICAL SOURCE-FIDELITY RULES:**
+8. The source text you receive is often a SEARCH ENGINE SNIPPET — a short, fragmented excerpt. DO NOT construct a detailed narrative from fragments. If the text is under 200 characters, your signal description should be equally brief and hedged (e.g., "A search result mentions X in context of Y").
+9. CHECK THE SOURCE URL DOMAIN. If the URL contains a non-Canadian location (e.g., "maribyrnong", "OtagoDailyTimes", "NetflixUKandIreland"), the content is likely NOT about Canadian events — set relevance_score to 0.1 or lower.
+10. If the URL locale is non-English/non-Canadian (e.g., "locale=ro_RO"), treat it as geographically irrelevant.
+11. DO NOT upgrade fragmentary snippets into urgent-sounding intelligence. A snippet saying "counter-protest" in passing does NOT mean "a counter-protest is being planned."
+12. If you cannot verify the WHO, WHAT, WHEN, WHERE from the source text alone, set relevance_score below 0.3 and mark is_historical_content as true.
+13. Netflix documentaries, webinars, books, and educational content are NOT security threats — skip them entirely or set relevance_score to 0.1.
+
 **GEOGRAPHIC RELEVANCE RULES:**
-8. Only create signals that are geographically relevant to the client's area of operations (NE British Columbia, pipeline corridors, LNG terminals)
-9. DO NOT create signals about events in distant provinces/cities (e.g., Halifax, Toronto, Quebec) unless they DIRECTLY impact the client's infrastructure, supply chain, or named stakeholders
-10. National policy/regulatory signals are acceptable only if they explicitly mention the client, their projects, or their region
+14. Only create signals that are geographically relevant to the client's area of operations (NE British Columbia, pipeline corridors, LNG terminals)
+15. DO NOT create signals about events in distant provinces/cities (e.g., Halifax, Toronto, Quebec) unless they DIRECTLY impact the client's infrastructure, supply chain, or named stakeholders
+16. National policy/regulatory signals are acceptable only if they explicitly mention the client, their projects, or their region
+17. CHECK THE URL DOMAIN for geographic cues — "OtagoDailyTimes" = New Zealand, "maribyrnong" = Australia, "culturalsurvival" = international NGO. These are almost never relevant.
 
 **QUALITY RULES:**
-11. Do NOT create signals for general government programs, worker safety policies, or agricultural programs unless they specifically impact the client
+18. Do NOT create signals for general government programs, worker safety policies, or agricultural programs unless they specifically impact the client
+19. Do NOT create signals for wildlife/health events unless they directly threaten operations in the client's operating area
+20. Give a relevance_score of 0.3 or lower to signals that are tangentially related
+21. Do NOT create signals from Netflix/streaming content, webinars, book promotions, or educational resources
 12. Do NOT create signals for wildlife/health events unless they directly threaten operations in the client's operating area
 13. Give a relevance_score of 0.3 or lower to signals that are tangentially related
 
@@ -425,10 +437,13 @@ Extract entities, signals, and entity mentions from documents.`
           role: 'user',
           content: `Analyze this document and extract intelligence:
 
+SOURCE URL: ${document.source_url || document.metadata?.url || 'unknown'}
+SOURCE DOMAIN: ${(() => { try { return new URL(document.source_url || document.metadata?.url || '').hostname; } catch { return 'unknown'; } })()}
 TITLE: ${document.title}
+TEXT LENGTH: ${(document.raw_text || '').length} characters
 TEXT: ${(document.raw_text || '').substring(0, 80000)}
 
-Extract all entities, signals, and their relationships.`
+IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain suggests a non-Canadian source (e.g., OtagoDailyTimes = New Zealand, maribyrnong = Australia, Netflix = entertainment), set relevance_score very low. If TEXT LENGTH is under 200, the source is a search snippet — be conservative and brief in your description. Extract all entities, signals, and their relationships.`
         }
       ],
       functionName: 'process-intelligence-document',
@@ -667,6 +682,17 @@ Extract all entities, signals, and their relationships.`
 
     // Process signals - create one per matched client
     for (const signal of intelligence.signals || []) {
+      // HARD RELEVANCE GATE: Skip signals the AI scored below 0.3
+      if ((signal.relevance_score || 0) < 0.3) {
+        console.log(`[RelevanceGate] Skipping low-relevance signal (${signal.relevance_score}): ${signal.title}`);
+        continue;
+      }
+      
+      // HARD HISTORICAL GATE: Skip signals explicitly marked as historical
+      if (signal.is_historical_content === true && (signal.relevance_score || 0) < 0.6) {
+        console.log(`[HistoricalGate] Skipping historical signal: ${signal.title}`);
+        continue;
+      }
       // FIX 3: Generate content hash based on SOURCE URL + signal content for better deduplication
       // This ensures the same RSS article always produces the same hash regardless of AI phrasing variations
       const sourceUrl = document.metadata?.url || '';
