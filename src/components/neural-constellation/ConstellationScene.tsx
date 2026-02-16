@@ -383,21 +383,6 @@ function AegisCommandHub({ agent, onClick, activityScore = 0, onHover, onUnhover
           metalness={0.9}
         />
       </mesh>
-      {/* Orbital ring 1 — equatorial */}
-      <mesh ref={ring1Ref}>
-        <torusGeometry args={[1.4, 0.025, 8, 64]} />
-        <meshBasicMaterial color="#f59e0b" transparent opacity={0.5} />
-      </mesh>
-      {/* Orbital ring 2 — tilted */}
-      <mesh ref={ring2Ref} rotation={[Math.PI / 3, 0, Math.PI / 6]}>
-        <torusGeometry args={[1.8, 0.018, 8, 64]} />
-        <meshBasicMaterial color="#fbbf24" transparent opacity={0.3} />
-      </mesh>
-      {/* Orbital ring 3 — opposite tilt */}
-      <mesh ref={ring3Ref} rotation={[-Math.PI / 4, Math.PI / 5, 0]}>
-        <torusGeometry args={[2.2, 0.012, 8, 64]} />
-        <meshBasicMaterial color="#d97706" transparent opacity={0.2} />
-      </mesh>
       {/* Strong point light — AEGIS illuminates the constellation */}
       <pointLight color="#f59e0b" intensity={3.0} distance={25} />
       <pointLight color="#fbbf24" intensity={1.0} distance={15} />
