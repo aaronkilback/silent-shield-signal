@@ -1,18 +1,25 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getUserFromRequest } from "../_shared/supabase-client.ts";
-import { callAiGateway } from "../_shared/ai-gateway.ts";
-
 /**
- * WRAITH Security Advisor
+ * WRAITH Security Advisor — Consolidated Domain Service (#7)
  * 
- * Provides personal security analysis: breach checks, URL/email analysis,
- * digital footprint scanning, and security scoring.
+ * Single entry point for all personal security analysis operations.
+ * Provides breach checks, URL/email analysis, network scanning, and security scoring.
+ * 
+ * Actions:
+ *   analyze_url          — AI-powered URL phishing/malware analysis
+ *   analyze_email        — AI-powered email social engineering detection
+ *   check_breaches       — HIBP breach lookup
+ *   full_security_audit  — Comprehensive security posture audit
+ *   get_threat_feed      — CISA KEV vulnerability feed
+ *   get_security_score   — Retrieve latest security score
+ *   scan_ip_exposure     — Public IP reputation & exposure analysis
+ *   check_dns_leaks      — DNS leak detection (VPN validation)
+ *   check_ssl            — SSL/TLS certificate & header analysis
+ *   check_webrtc         — WebRTC leak guidance (client-side execution)
  */
 
-interface RequestBody {
-  action: 'analyze_url' | 'analyze_email' | 'check_breaches' | 'full_security_audit' | 'get_threat_feed' | 'get_security_score' | 'scan_ip_exposure' | 'check_dns_leaks' | 'check_ssl' | 'check_webrtc';
-  input?: string;
-  email?: string;
-}
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getUserFromRequest } from "../_shared/supabase-client.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
+import type { WraithSecurityAction, DomainRequest } from "../_shared/types.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -22,7 +29,17 @@ Deno.serve(async (req) => {
     const { userId } = await getUserFromRequest(req);
     if (!userId) return errorResponse('Authentication required', 401);
 
-    const { action, input, email } = await req.json() as RequestBody;
+    const body = await req.json() as DomainRequest<WraithSecurityAction>;
+    const { action, input, email } = body as any;
+
+    if (!action) {
+      return errorResponse(
+        'Missing "action" field. Valid actions: analyze_url, analyze_email, check_breaches, full_security_audit, get_threat_feed, get_security_score, scan_ip_exposure, check_dns_leaks, check_ssl, check_webrtc',
+        400
+      );
+    }
+
+    console.log(`[WraithSecurityAdvisor] Dispatching action: ${action}`);
     const supabase = createServiceClient();
 
     switch (action) {
@@ -47,10 +64,13 @@ Deno.serve(async (req) => {
       case 'check_webrtc':
         return successResponse(await checkWebRtcLeak());
       default:
-        return errorResponse('Unknown action', 400);
+        return errorResponse(
+          `Unknown action: ${action}. Valid actions: analyze_url, analyze_email, check_breaches, full_security_audit, get_threat_feed, get_security_score, scan_ip_exposure, check_dns_leaks, check_ssl, check_webrtc`,
+          400
+        );
     }
   } catch (error) {
-    console.error('[wraith-security-advisor] Error:', error);
+    console.error('[WraithSecurityAdvisor] Router error:', error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

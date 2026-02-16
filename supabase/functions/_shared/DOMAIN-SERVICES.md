@@ -2,7 +2,7 @@
 
 ## Overview
 
-Fortress consolidates ~82 individual edge functions into **6 domain service routers**.
+Fortress consolidates ~82 individual edge functions into **7 domain service routers**.
 Each router acts as a single entry point for a functional domain, dispatching requests
 to the appropriate logic via an `action` field in the request body.
 
@@ -94,9 +94,7 @@ consistent contract for all callers (auto-orchestrator, watchdog, dashboard-ai-a
 | `monitor-news` | `monitor-news` | News monitoring |
 | `monitor-news-google` | `monitor-news-google` | Google News emergency |
 | `monitor-social` | `monitor-social` | Social media aggregated |
-| `monitor-twitter` | `monitor-twitter` | Twitter/X monitoring |
-| `monitor-facebook` | `monitor-facebook` | Facebook monitoring |
-| `monitor-instagram` | `monitor-instagram` | Instagram monitoring |
+| `monitor-social-unified` | `monitor-social-unified` | Unified social monitoring |
 | `monitor-linkedin` | `monitor-linkedin` | LinkedIn monitoring |
 | `monitor-github` | `monitor-github` | GitHub code exposure |
 | `monitor-darkweb` | `monitor-darkweb` | Dark web monitoring |
@@ -123,6 +121,21 @@ consistent contract for all callers (auto-orchestrator, watchdog, dashboard-ai-a
 | `entity-scan` | `osint-entity-scan` | OSINT entity scan |
 | `test-connectivity` | `test-osint-source-connectivity` | Source connectivity test |
 
+### 7. `wraith-security-advisor` — Personal Security (10 actions)
+
+| Action | Handler | Purpose |
+|--------|---------|---------|
+| `analyze_url` | Inlined | AI-powered URL phishing/malware analysis |
+| `analyze_email` | Inlined | AI-powered email social engineering detection |
+| `check_breaches` | Inlined | HIBP breach lookup |
+| `full_security_audit` | Inlined | Comprehensive security posture audit |
+| `get_threat_feed` | Inlined | CISA KEV vulnerability feed |
+| `get_security_score` | Inlined | Retrieve latest security score |
+| `scan_ip_exposure` | Inlined | Public IP reputation & exposure analysis |
+| `check_dns_leaks` | Inlined | DNS leak detection (VPN validation) |
+| `check_ssl` | Inlined | SSL/TLS certificate & header analysis |
+| `check_webrtc` | Inlined | WebRTC leak guidance (client-side execution) |
+
 ## Request Format
 
 All domain services use the same envelope:
@@ -141,7 +154,8 @@ POST /functions/v1/{domain-service}
 |--------|---------------|
 | `auto-orchestrator` | `osint-collector`, `signal-processor`, `intelligence-engine` |
 | `system-watchdog` | `osint-collector` (stale source remediation) |
-| `dashboard-ai-assistant` | All 6 domain services |
+| `dashboard-ai-assistant` | All 7 domain services |
+| `SecurityAdvisor.tsx` | `wraith-security-advisor` |
 
 ## Non-Regression Guarantee
 

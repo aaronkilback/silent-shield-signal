@@ -153,6 +153,10 @@ export const Tables = {
   
   // Watchdog
   WATCHDOG_LEARNINGS: 'watchdog_learnings' as const,
+  
+  // WRAITH Security
+  USER_SECURITY_AUDITS: 'user_security_audits' as const,
+  THREAT_ANALYSIS_REQUESTS: 'threat_analysis_requests' as const,
 } as const;
 
 // ═══════════════════════════════════════════════════════════════
@@ -406,6 +410,19 @@ export type OsintCollectorAction =
   | 'monitor-regional-apac'
   | 'web-search'
   | 'manual-scan';
+
+/** wraith-security-advisor domain actions */
+export type WraithSecurityAction =
+  | 'analyze_url'
+  | 'analyze_email'
+  | 'check_breaches'
+  | 'full_security_audit'
+  | 'get_threat_feed'
+  | 'get_security_score'
+  | 'scan_ip_exposure'
+  | 'check_dns_leaks'
+  | 'check_ssl'
+  | 'check_webrtc';
 
 // ═══════════════════════════════════════════════════════════════
 //              COMMON REQUEST / RESPONSE CONTRACTS
