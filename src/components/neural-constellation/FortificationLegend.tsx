@@ -23,12 +23,12 @@ const armorLayers = [
 
 // Must match ACTIVITY_VISUALS in ConstellationScene.tsx exactly
 const particleTypes = [
-  { color: "rgb(33, 212, 237)", label: "Signal Ingest", desc: "cyan" },
-  { color: "rgb(99, 135, 255)", label: "OSINT Scan", desc: "blue" },
-  { color: "rgb(148, 74, 242)", label: "Knowledge", desc: "violet" },
-  { color: "rgb(33, 237, 140)", label: "Agent Comms", desc: "green" },
-  { color: "rgb(255, 89, 38)", label: "Alert Escalation", desc: "red" },
-  { color: "rgb(64, 89, 128)", label: "Standby", desc: "slate" },
+  { color: "rgb(33, 237, 140)", label: "Agent Comms", desc: "debates + conversations" },
+  { color: "rgb(33, 212, 237)", label: "Signal Routing", desc: "signals → agents" },
+  { color: "rgb(99, 135, 255)", label: "OSINT Scan", desc: "autonomous scan results" },
+  { color: "rgb(255, 89, 38)", label: "Alert Escalation", desc: "threats → command" },
+  { color: "rgb(148, 74, 242)", label: "Knowledge Flow", desc: "nebula → learners" },
+  { color: "rgb(64, 89, 128)", label: "Idle Heartbeat", desc: "no recent activity" },
 ];
 
 export function FortificationLegend({ health, isLoading }: FortificationLegendProps) {
