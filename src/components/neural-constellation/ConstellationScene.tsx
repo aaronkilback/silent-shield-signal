@@ -984,39 +984,29 @@ function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPul
       }
     });
 
-    // 4. Fill remaining slots with idle standby particles for low-activity agents
-    if (routes.length < 10 && agents.length > 2) {
-      agents.forEach((a, idx) => {
-        const m = metricsMap.get(a.callSign);
-        const score = m?.activityScore ?? 0;
-        if (score < 0.1 && aegisIdx !== undefined && idx !== aegisIdx) {
-          routes.push({ from: idx, to: aegisIdx, type: "idle" });
-        }
-      });
-    }
-
-    // 5. If we still have few routes, distribute varied activity types across agents
-    //    so the constellation always shows a mix of colored particles
-    if (routes.length < 12 && agents.length > 1) {
+    // 4. Always distribute a balanced mix of activity types across the network
+    //    This ensures every color from the legend is always represented
+    {
       const typeRotation: ActivityType[] = ["signal_ingest", "scan_sweep", "learning", "message", "alert", "idle"];
-      for (let i = 0; i < agents.length && routes.length < 20; i++) {
-        if (aegisIdx !== undefined && i !== aegisIdx) {
-          const t = typeRotation[i % typeRotation.length];
-          // Alternate direction based on type
-          if (t === "signal_ingest" || t === "learning") {
-            routes.push({ from: aegisIdx, to: i, type: t });
-          } else {
-            routes.push({ from: i, to: aegisIdx, type: t });
-          }
+      const nonAegis = agents.map((_, i) => i).filter(i => i !== aegisIdx);
+      // We want at least 2 routes per type = 12 minimum varied routes
+      const targetRoutes = Math.max(18, nonAegis.length * 2);
+      let typeIdx = 0;
+      for (let pass = 0; routes.length < targetRoutes && pass < nonAegis.length * 2; pass++) {
+        const agentIdx = nonAegis[pass % nonAegis.length];
+        const t = typeRotation[typeIdx % typeRotation.length];
+        typeIdx++;
+        if (aegisIdx === undefined) continue;
+        // Direction based on type semantics
+        if (t === "signal_ingest" || t === "learning") {
+          routes.push({ from: aegisIdx, to: agentIdx, type: t });
+        } else if (t === "message") {
+          // Messages between agents
+          const otherIdx = nonAegis[(pass + 1) % nonAegis.length];
+          routes.push({ from: agentIdx, to: otherIdx, type: t });
+        } else {
+          routes.push({ from: agentIdx, to: aegisIdx, type: t });
         }
-      }
-    }
-
-    // 6. Ensure we always have some routes
-    if (routes.length === 0 && agents.length > 1) {
-      const fallbackTypes: ActivityType[] = ["signal_ingest", "scan_sweep", "learning", "message", "alert", "idle"];
-      for (let i = 0; i < Math.min(agents.length, 6); i++) {
-        routes.push({ from: i, to: (i + 1) % agents.length, type: fallbackTypes[i % fallbackTypes.length] });
       }
     }
 
@@ -1905,9 +1895,14 @@ function LearningParticleStreams({ agents, activelyLearningAgents = [] }: {
     const indices = agents
       .map((a, i) => activelyLearningAgents.includes(a.callSign) ? i : -1)
       .filter(i => i >= 0);
-    // If no agents are actively learning, show ambient flow to random agents
-    if (indices.length === 0 && agents.length > 0) {
-      return [0, Math.min(2, agents.length - 1), Math.min(4, agents.length - 1)].filter((v, i, a) => a.indexOf(v) === i);
+    // If no agents are actively learning, show ambient flow to a spread of agents (skip index 0 which is AEGIS)
+    if (indices.length === 0 && agents.length > 2) {
+      const spread: number[] = [];
+      const step = Math.max(1, Math.floor(agents.length / 5));
+      for (let i = 1; i < agents.length && spread.length < 5; i += step) {
+        spread.push(i);
+      }
+      return spread;
     }
     return indices;
   }, [agents, activelyLearningAgents]);
