@@ -2,6 +2,104 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
 import { createHistoryEntry, completeHistoryEntry, failHistoryEntry } from "../_shared/monitoring-history.ts";
 import { scoreSignalRelevance, isTestContent } from "../_shared/signal-relevance-scorer.ts";
 
+// ═══ DOMAIN BLOCKLIST ═══
+// Social media, entertainment, and e-commerce domains that should never produce emergency signals
+const BLOCKED_DOMAINS = [
+  'tiktok.com', 'instagram.com', 'facebook.com', 'reddit.com',
+  'youtube.com', 'twitter.com', 'x.com', 'pinterest.com', 'tumblr.com',
+  'substack.com', 'medium.com', 'eventbrite.com', 'meetup.com',
+  'amazon.com', 'ebay.com', 'aliexpress.com', 'walmart.com',
+  'imdb.com', 'rottentomatoes.com', 'goodreads.com',
+  'timesofindia.indiatimes.com', 'timesnownews.com', 'ndtv.com',
+  'hindustantimes.com', 'thehindu.com', 'indiatoday.in',
+  'nytimes.com', 'msn.com', 'foxnews.com', 'nypost.com', // US-focused outlets
+];
+
+/**
+ * AI relevance gate — uses Gemini to verify a Google result is a genuine,
+ * current, actionable emergency in Western Canada before ingestion.
+ */
+async function aiRelevanceGate(
+  title: string,
+  snippet: string,
+  url: string,
+  displayLink: string,
+  searchQuery: string,
+): Promise<{ relevant: boolean; location: string | null; reason: string }> {
+  const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+  if (!LOVABLE_API_KEY) {
+    // Fallback: if no AI key, use strict regex-only path (existing behavior)
+    return { relevant: true, location: null, reason: 'no_ai_key_fallback' };
+  }
+
+  const prompt = `You are a signal relevance filter for a Canadian corporate security platform focused on Western Canada (British Columbia, Alberta, Saskatchewan, NWT, Yukon). 
+
+Evaluate this Google search result and determine if it describes a GENUINE, CURRENT, ACTIONABLE emergency event physically occurring in Canada.
+
+Title: ${title}
+Snippet: ${snippet}
+URL: ${url}
+Domain: ${displayLink}
+Search query used: ${searchQuery}
+
+REJECT if ANY of these are true:
+- Event is NOT in Canada (India, USA, UK, etc.)
+- It's a social media post, meme, entertainment, or opinion piece
+- It's historical content (event happened more than 7 days ago)
+- It's a product listing, event listing, or promotional content
+- It's a general news article about crime/violence outside Canada
+- The emergency keywords appear only in tangential context (e.g., article about AI mentions "blackmail")
+- It's a TikTok, Instagram reel, Reddit thread, or blog post
+
+ACCEPT only if:
+- A real emergency event is occurring or just occurred in Canada
+- The content describes an actionable security situation (shooting, bomb threat, evacuation, AMBER alert, etc.)
+- The source is a credible news outlet or official agency
+
+Respond in this exact JSON format only:
+{"relevant": true/false, "location": "City, Province" or null, "reason": "one sentence explanation"}`;
+
+  try {
+    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash-lite',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0,
+        max_tokens: 150,
+      }),
+    });
+
+    if (!response.ok) {
+      console.warn(`[EmergencyGoogle] AI gate returned ${response.status}, falling back to permissive`);
+      return { relevant: true, location: null, reason: 'ai_error_fallback' };
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    
+    // Extract JSON from response
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        relevant: parsed.relevant === true,
+        location: parsed.location || null,
+        reason: parsed.reason || 'unknown',
+      };
+    }
+    
+    return { relevant: true, location: null, reason: 'ai_parse_fallback' };
+  } catch (err) {
+    console.warn(`[EmergencyGoogle] AI gate error: ${err}`);
+    return { relevant: true, location: null, reason: 'ai_exception_fallback' };
+  }
+}
+
 // Emergency keywords that MUST appear in the content for it to be a real emergency signal
 // STRICT: Each pattern must indicate a genuine, actionable emergency — not just news
 const EMERGENCY_CONTENT_VALIDATORS = [
@@ -154,6 +252,14 @@ Deno.serve(async (req) => {
 
           if (existing) continue;
 
+          // ═══ DOMAIN BLOCKLIST GATE ═══
+          const domainLower = (item.displayLink || '').toLowerCase();
+          const isDomainBlocked = BLOCKED_DOMAINS.some(d => domainLower.includes(d));
+          if (isDomainBlocked) {
+            console.log(`[EmergencyGoogle] ✗ Blocked domain: ${item.displayLink} — ${item.title.substring(0, 50)}`);
+            continue;
+          }
+
           // ═══ CONTENT VALIDATION GATE ═══
           // Google results often include irrelevant pages. Require at least one
           // emergency keyword to actually appear in the title or snippet.
@@ -176,6 +282,14 @@ Deno.serve(async (req) => {
 
           // Skip test content
           if (isTestContent(fullText)) continue;
+
+          // ═══ AI RELEVANCE GATE (Gemini) ═══
+          // Verify this is a genuine, current Canadian emergency — not global noise
+          const aiVerdict = await aiRelevanceGate(item.title, item.snippet, item.link, item.displayLink, query);
+          if (!aiVerdict.relevant) {
+            console.log(`[EmergencyGoogle] ✗ AI rejected: "${item.title.substring(0, 50)}" — ${aiVerdict.reason}`);
+            continue;
+          }
 
           // Run through relevance scorer for additional filtering
           const relevanceResult = await scoreSignalRelevance(
@@ -238,7 +352,7 @@ Deno.serve(async (req) => {
               signal_type: 'emergency',
               category,
               severity,
-              location: item.displayLink || 'Canada',
+              location: aiVerdict.location || 'Canada',
               content_hash: contentHash,
               relevance_score: relevanceResult.score,
               raw_json: {
