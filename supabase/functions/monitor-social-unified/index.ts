@@ -180,6 +180,35 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ═══ BROAD ACTIVISM CAMPAIGN QUERIES ═══
+    // These catch anti-industry campaigns that don't mention specific clients
+    const CAMPAIGN_QUERIES = [
+      // Anti-pipeline / oil & gas campaigns (generic)
+      '"stop pipelines" OR "ban pipelines" OR "no new pipelines" (Canada OR BC OR Alberta)',
+      '"fossil fuel" campaign (pipeline OR LNG) (Canada OR British Columbia OR Alberta)',
+      // Known activist orgs — broad campaign monitoring
+      'standearth OR "stand.earth" (pipeline OR LNG OR "oil and gas" OR "fossil fuel")',
+      '"Dogwood BC" OR "Dogwood Initiative" (pipeline OR LNG OR campaign)',
+      '"BC Counter Info" OR "Frack Free BC" (pipeline OR action OR blockade)',
+      // Indigenous-led pipeline resistance (broad)
+      '"land defender" OR "land back" (pipeline OR LNG OR "oil and gas") Canada',
+    ];
+
+    for (const campaignQuery of CAMPAIGN_QUERIES) {
+      if (searchBudgetRemaining <= 0) break;
+      for (const platform of PLATFORMS) {
+        if (searchBudgetRemaining <= 0) break;
+        searchQueue.push({
+          query: `${platform.sites[0]} ${campaignQuery}`,
+          platform: platform.name,
+          sourceName: 'Industry Campaign Monitor',
+          sourceType: 'client' as const,
+          clientId: null,
+          entityId: null,
+        });
+      }
+    }
+
     // Process search queue
     for (const search of searchQueue) {
       if (searchBudgetRemaining <= 0 || isTimeUp()) {
