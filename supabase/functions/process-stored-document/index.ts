@@ -491,238 +491,140 @@ Deno.serve(async (req) => {
     } else if (document.file_type === 'application/pdf') {
       console.log('Extracting text from PDF...');
 
-      // Primary: pdfjs-based extraction (more reliable than regex parsing)
+      // Primary: AI vision via base64 data URL
+      // pdfjs-dist does not work in Deno; signed URLs rejected by gateway for PDFs
+      // Gateway requires data:application/pdf;base64,... format
       try {
-        const maxPdfBytes = 12 * 1024 * 1024; // safety cap
-        const blobToRead = fileData.size > maxPdfBytes ? fileData.slice(0, maxPdfBytes) : fileData;
-        const arrayBuffer = await blobToRead.arrayBuffer();
+        const fileSizeMB = document.file_size / (1024 * 1024);
+        // Real-world testing: 5MB PDF OOMs. Blob download already uses ~N MB,
+        // then arrayBuffer + base64 + JSON.stringify adds ~3.7x N more.
+        // Safe threshold: 3MB raw → ~14MB total memory footprint
+        const MAX_PDF_MB = 3;
 
-         const pdfjsLib: any = await import('https://esm.sh/pdfjs-dist@4.2.67/legacy/build/pdf.mjs');
-         // NOTE: Do NOT set GlobalWorkerOptions.workerSrc in Deno.
-         // With `disableWorker: true`, pdfjs will use a fake worker; setting workerSrc
-         // can trigger a module fetch that fails in this environment and breaks extraction.
+        if (fileSizeMB > MAX_PDF_MB) {
+          console.log(`PDF too large for edge function processing (${fileSizeMB.toFixed(1)}MB > ${MAX_PDF_MB}MB limit)`);
+          textContent = `[PDF document: ${document.filename} (${fileSizeMB.toFixed(1)}MB). Exceeds processing limit. Content stored for manual review.]`;
+        } else {
+          console.log(`Processing PDF (${fileSizeMB.toFixed(1)}MB) via AI extraction...`);
+          
+          // Step 1: Convert blob → base64 string, then release intermediate buffers
+          const ab = await fileData.arrayBuffer();
+          const pdfBase64 = encodeBase64(new Uint8Array(ab));
+          // ab and Uint8Array can now be GC'd (we only need pdfBase64)
+          
+          console.log(`Sending ${(pdfBase64.length / (1024 * 1024)).toFixed(2)}MB base64 to AI...`);
 
-         const loadingTask = pdfjsLib.getDocument({
-           data: new Uint8Array(arrayBuffer),
-           disableWorker: true,
-         });
+          // Use only 1 retry to avoid OOM from multiple in-flight requests
+          const extractResp = await fetchWithRetry(
+            'https://ai.gateway.lovable.dev/v1/chat/completions',
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: 'google/gemini-2.5-flash',
+                messages: [{
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'text',
+                      text: `Extract ALL readable text from this PDF document "${document.filename}".
 
-        const pdf = await loadingTask.promise;
-        const maxPages = Math.min(pdf.numPages || 0, 25);
+INSTRUCTIONS:
+1. Extract complete text content — do NOT summarize.
+2. Preserve structure: headings, paragraphs, tables (use | for columns), bullet points.
+3. If pages are scanned images, perform OCR.
+4. Mark unclear text with [?].
+5. Return ONLY the extracted text, no commentary.`
+                    },
+                    {
+                      type: 'image_url',
+                      image_url: { url: `data:application/pdf;base64,${pdfBase64}` }
+                    }
+                  ]
+                }],
+                max_tokens: 16000
+              }),
+            },
+            1, // Single attempt — retries double memory usage
+            'PDF AI extraction'
+          );
 
-        const pages: string[] = [];
-        for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
-          const page = await pdf.getPage(pageNum);
-          const tc = await page.getTextContent();
-          const pageText = (tc.items || [])
-            .map((it: any) => (typeof it?.str === 'string' ? it.str : ''))
-            .join(' ');
-          if (pageText.trim()) pages.push(pageText);
+          if (extractResp.ok) {
+            const extractData = await extractResp.json();
+            const extracted = extractData.choices?.[0]?.message?.content?.trim();
+            if (extracted && extracted.length > 50) {
+              textContent = extracted.slice(0, 200000);
+              console.log(`AI PDF extraction successful: ${textContent.length} characters`);
+            } else {
+              console.warn('AI PDF extraction returned minimal content');
+            }
+          } else {
+            const errText = await extractResp.text();
+            console.error(`AI PDF extraction error ${extractResp.status}: ${errText.substring(0, 300)}`);
+          }
         }
+      } catch (primaryError) {
+        console.error('Primary PDF extraction failed:', primaryError);
+      }
 
-        textContent = pages
-          .join('\n\n')
-          .replace(/\s+/g, ' ')
-          // Keep only readable ASCII + whitespace to avoid binary garbage
-          .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .slice(0, 200000);
+      // Fallback: lightweight heuristic for small text-based PDFs (1MB cap)
+      if (!textContent || textContent.length < 100) {
+        try {
+          const smallSlice = fileData.size > 1024 * 1024 ? fileData.slice(0, 1024 * 1024) : fileData;
+          const arrayBuffer = await smallSlice.arrayBuffer();
+          const pdfString = new TextDecoder('latin1').decode(new Uint8Array(arrayBuffer));
 
-        console.log(
-          `Extracted ${textContent.length} characters from PDF using pdfjs (${maxPages}/${pdf.numPages} pages)`
-        );
-      } catch (pdfJsError) {
-        console.warn('pdfjs extraction failed, falling back to heuristic extraction:', pdfJsError);
-
-        // Fallback: heuristic extraction from PDF text operators
-        const arrayBuffer = await fileData.slice(0, 1024 * 1024).arrayBuffer(); // 1MB
-        const uint8Array = new Uint8Array(arrayBuffer);
-        const pdfString = new TextDecoder('latin1').decode(uint8Array);
-
-        const textMatches = pdfString.match(/BT(.*?)ET/gs);
-        if (textMatches && textMatches.length > 0) {
-          let extractedText = '';
-          for (const match of textMatches.slice(0, 1500)) {
-            const parenStrings = match.match(/\((?:\\.|[^\\)])*\)/g);
-            if (parenStrings) {
-              for (const str of parenStrings) {
-                const text = str.slice(1, -1);
-                const decoded = text
-                  .replace(/\\n/g, ' ')
-                  .replace(/\\r/g, ' ')
-                  .replace(/\\t/g, ' ')
-                  .replace(/\\\(/g, '(')
-                  .replace(/\\\)/g, ')')
-                  .replace(/\\\\/g, '\\');
-                extractedText += decoded + ' ';
+          const textMatches = pdfString.match(/BT(.*?)ET/gs);
+          if (textMatches && textMatches.length > 0) {
+            let extractedText = '';
+            for (const match of textMatches.slice(0, 1500)) {
+              const parenStrings = match.match(/\((?:\\.|[^\\)])*\)/g);
+              if (parenStrings) {
+                for (const str of parenStrings) {
+                  const text = str.slice(1, -1);
+                  const decoded = text
+                    .replace(/\\n/g, ' ')
+                    .replace(/\\r/g, ' ')
+                    .replace(/\\t/g, ' ')
+                    .replace(/\\\(/g, '(')
+                    .replace(/\\\)/g, ')')
+                    .replace(/\\\\/g, '\\');
+                  extractedText += decoded + ' ';
+                }
               }
             }
-          }
 
-          textContent = extractedText
-            .replace(/\s+/g, ' ')
-            .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .slice(0, 50000);
+            const cleaned = extractedText
+              .replace(/\s+/g, ' ')
+              .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .slice(0, 50000);
 
-          // Validate text quality - check for real English words
-          const commonWords = ['the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'are', 'was', 'were', 'been', 'has', 'will', 'would', 'could', 'should', 'not', 'but', 'what', 'which', 'when', 'where', 'who', 'how', 'all', 'each', 'every', 'some', 'such', 'than', 'very', 'about', 'into', 'over', 'after', 'before', 'security', 'report', 'threat', 'risk', 'incident'];
-          const lowerText = textContent.toLowerCase();
-          const foundCommonWords = commonWords.filter(w => lowerText.includes(` ${w} `));
-          
-          if (foundCommonWords.length < 8) {
-            console.log(`PDF text extraction produced garbage (only ${foundCommonWords.length} common words found). This appears to be a scanned/image-based PDF.`);
-            textContent = ''; // Clear garbage text
-          } else {
-            console.log(`Extracted ${textContent.length} characters from PDF text streams (fallback), ${foundCommonWords.length} common words found`);
+            const commonWords = ['the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'are', 'was', 'were', 'been', 'has', 'will', 'would', 'could', 'should', 'not', 'but', 'what', 'which', 'when', 'where', 'who', 'how', 'all', 'each', 'every', 'some', 'such', 'than', 'very', 'about', 'into', 'over', 'after', 'before', 'security', 'report', 'threat', 'risk', 'incident'];
+            const lowerText = cleaned.toLowerCase();
+            const foundCommonWords = commonWords.filter(w => lowerText.includes(` ${w} `));
+
+            if (foundCommonWords.length >= 8) {
+              textContent = cleaned;
+              console.log(`Heuristic PDF extraction: ${textContent.length} chars, ${foundCommonWords.length} common words`);
+            } else {
+              console.log(`Heuristic extraction produced garbage (${foundCommonWords.length} common words)`);
+            }
           }
-        } else {
-          // Raw extraction usually produces garbage for image-based PDFs
-          console.log('No text streams found in PDF - likely image-based/scanned document');
-          textContent = '';
+        } catch (heuristicErr) {
+          console.warn('Heuristic PDF fallback failed:', heuristicErr);
         }
       }
       
-      // If text extraction failed or produced garbage, try vision-based analysis
+      // Ultimate fallback for PDFs where all extraction failed
       if (!textContent || textContent.length < 100) {
-        console.log('PDF appears to be image-based. Attempting vision-based OCR analysis...');
-        
-        try {
-          const fileSizeMB = document.file_size / (1024 * 1024);
-          // We support OCR up to 10MB per chunk; for larger PDFs we split by page ranges
-          const MAX_CHUNK_MB = 8; // Leave headroom under Gemini's ~10MB base64 limit
-          const pdfBytes = await fileData.arrayBuffer();
-          const pdfUint8 = new Uint8Array(pdfBytes);
-          
-          // Helper: perform OCR on a byte range (full PDF or a sliced portion)
-          const ocrChunk = async (chunkBytes: Uint8Array, label: string): Promise<string> => {
-            const chunkBase64 = encodeBase64(new Uint8Array(chunkBytes));
-            const payloadMB = chunkBase64.length / (1024 * 1024);
-            console.log(`OCR ${label}: sending ${payloadMB.toFixed(2)}MB payload...`);
-            
-            const resp = await fetchWithRetry(
-              'https://ai.gateway.lovable.dev/v1/chat/completions',
-              {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  model: 'google/gemini-2.5-flash',
-                  messages: [{
-                    role: 'user',
-                    content: [
-                      {
-                        type: 'text',
-                        text: `You are performing OCR on "${document.filename}" (${label}).
-
-INSTRUCTIONS:
-1. Extract ALL readable text.
-2. Preserve structure: headings, paragraphs, tables (use | for columns), bullet points.
-3. Mark unclear text with [?].
-4. Do NOT summarize - extract full text.`
-                      },
-                      {
-                        type: 'image_url',
-                        image_url: { url: `data:application/pdf;base64,${chunkBase64}` }
-                      }
-                    ]
-                  }],
-                  max_tokens: 16000
-                }),
-              },
-              3,
-              `PDF OCR ${label}`
-            );
-            if (!resp.ok) {
-              const errText = await resp.text();
-              console.error(`OCR ${label} failed ${resp.status}: ${errText.substring(0, 300)}`);
-              return '';
-            }
-            const data = await resp.json();
-            return data.choices?.[0]?.message?.content?.trim() || '';
-          };
-
-          if (fileSizeMB <= MAX_CHUNK_MB) {
-            // Small enough to process in one shot
-            textContent = await ocrChunk(pdfUint8, 'full PDF');
-          } else {
-            // Split PDF into ~equal byte chunks and OCR each
-            const numChunks = Math.ceil(fileSizeMB / MAX_CHUNK_MB);
-            const chunkSize = Math.ceil(pdfBytes.byteLength / numChunks);
-            console.log(`Large PDF (${fileSizeMB.toFixed(1)}MB) - splitting into ${numChunks} chunks of ~${(chunkSize / (1024 * 1024)).toFixed(1)}MB each`);
-
-            const ocrParts: string[] = [];
-            for (let i = 0; i < numChunks; i++) {
-              const start = i * chunkSize;
-              const end = Math.min(start + chunkSize, pdfBytes.byteLength);
-              const chunkBytes = pdfUint8.slice(start, end);
-              const part = await ocrChunk(chunkBytes, `chunk ${i + 1}/${numChunks}`);
-              if (part && part.length > 20) {
-                ocrParts.push(`--- Chunk ${i + 1} ---\n${part}`);
-              }
-            }
-            textContent = ocrParts.join('\n\n');
-            console.log(`Chunked OCR complete: ${textContent.length} characters from ${ocrParts.length} chunks`);
-          }
-
-          // If still minimal, try Pro model as fallback (for first chunk only to save cost)
-          if (!textContent || textContent.length < 100) {
-            console.log('Flash OCR returned minimal content, trying Gemini Pro fallback...');
-            const proBytes = fileSizeMB > MAX_CHUNK_MB ? pdfUint8.slice(0, MAX_CHUNK_MB * 1024 * 1024) : pdfUint8;
-            const proBase64 = encodeBase64(new Uint8Array(proBytes));
-            const proResp = await fetchWithRetry(
-              'https://ai.gateway.lovable.dev/v1/chat/completions',
-              {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  model: 'google/gemini-2.5-pro',
-                  messages: [{
-                    role: 'user',
-                    content: [
-                      {
-                        type: 'text',
-                        text: `Perform complete OCR on this scanned document "${document.filename}". Extract ALL text, tables, headings. Preserve formatting.`
-                      },
-                      {
-                        type: 'image_url',
-                        image_url: { url: `data:application/pdf;base64,${proBase64}` }
-                      }
-                    ]
-                  }],
-                  max_tokens: 16000
-                }),
-              },
-              2,
-              'PDF OCR Pro Fallback'
-            );
-            if (proResp.ok) {
-              const proData = await proResp.json();
-              const proContent = proData.choices?.[0]?.message?.content?.trim();
-              if (proContent && proContent.length > 100) {
-                textContent = proContent;
-                console.log(`Pro fallback OCR successful: ${textContent.length} chars`);
-              }
-            }
-          }
-
-          // Ultimate fallback message
-          if (!textContent || textContent.length < 100) {
-            textContent = `[Image-based PDF could not be fully analyzed via OCR. File: ${document.filename}. Size: ${fileSizeMB.toFixed(1)}MB. The document may be corrupted or contain complex graphics.]`;
-            console.warn('All PDF OCR attempts failed or returned minimal content');
-          }
-        } catch (visionError) {
-          console.error('PDF OCR processing error:', visionError);
-          const fileSizeMB = document.file_size / (1024 * 1024);
-          textContent = `[This PDF appears to be image-based/scanned and OCR analysis encountered an error. File: ${document.filename}. Size: ${fileSizeMB.toFixed(1)}MB. Error: ${visionError instanceof Error ? visionError.message : 'Unknown error'}]`;
-        }
+        const fileSizeMB = document.file_size / (1024 * 1024);
+        textContent = `[PDF document: ${document.filename} (${fileSizeMB.toFixed(1)}MB). Automated text extraction was unsuccessful. The document is stored and can be analyzed on-demand via the AI assistant.]`;
+        console.warn('All PDF extraction attempts failed — stored placeholder');
       }
     } else if (document.file_type.startsWith('image/')) {
       // Image files (JPEG, PNG, WebP, GIF, BMP, TIFF, etc.)
