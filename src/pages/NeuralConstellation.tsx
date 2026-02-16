@@ -8,6 +8,7 @@ import { ConstellationScene, type AgentNode } from "@/components/neural-constell
 import { FortressNodeDetail } from "@/components/neural-constellation/FortressNodeDetail";
 import { FortificationLegend } from "@/components/neural-constellation/FortificationLegend";
 import { FortressStatusBar } from "@/components/neural-constellation/FortressStatusBar";
+import { DraggablePanel } from "@/components/neural-constellation/DraggablePanel";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMetrics, useKnowledgeGraphEdges, useOperatorDevices, useOperatorMessageActivity, useKnowledgeGrowthData } from "@/hooks/useConstellationData";
@@ -166,8 +167,10 @@ const NeuralConstellation = () => {
     <div className="min-h-screen bg-background flex flex-col">
       <MinimalHeader />
       <main className="flex-1 relative overflow-hidden">
-        {/* Fortress Status Bar — top */}
-        <FortressStatusBar health={fortressHealth} systemHealth={systemHealth} isLoading={fortressLoading} />
+        {/* Fortress Status Bar — top (draggable) */}
+        <DraggablePanel>
+          <FortressStatusBar health={fortressHealth} systemHealth={systemHealth} isLoading={fortressLoading} />
+        </DraggablePanel>
 
         {/* Title */}
         <div className="absolute left-1/2 -translate-x-1/2 z-10 text-center pointer-events-none" style={{ top: "48px" }}>
@@ -206,9 +209,9 @@ const NeuralConstellation = () => {
           />
         </div>
 
-        {/* Bottom status bar */}
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
-          <div className="flex items-center gap-6 bg-card/70 backdrop-blur-xl border border-border rounded px-5 py-2">
+        {/* Bottom status bar (draggable) */}
+        <DraggablePanel className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10" style={{ pointerEvents: "auto" }}>
+          <div data-drag-handle className="flex items-center gap-6 bg-card/70 backdrop-blur-xl border border-border rounded px-5 py-2">
             <div className="text-[10px] tracking-widest uppercase">
               <span className="text-muted-foreground">Live Comms: </span>
               <span className="text-cyan-400 font-bold">{commLinks.length}</span>
@@ -237,7 +240,7 @@ const NeuralConstellation = () => {
               )}
             </div>
           </div>
-        </div>
+        </DraggablePanel>
 
         {/* Left Panel — Fortification Legend (replaces old ConstellationLegend) */}
         <FortificationLegend health={fortressHealth} isLoading={fortressLoading} />

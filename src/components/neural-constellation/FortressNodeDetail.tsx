@@ -1,4 +1,5 @@
-import { X, CheckCircle2, AlertCircle, XCircle, Shield } from "lucide-react";
+import { X, CheckCircle2, AlertCircle, XCircle, Shield, GripHorizontal } from "lucide-react";
+import { DraggablePanel } from "./DraggablePanel";
 import type { AgentNode } from "./ConstellationScene";
 import type { AgentActivityMetrics, ScanPulse } from "@/hooks/useConstellationData";
 import type { FortressHealth, LoopStatus } from "@/hooks/useFortressHealth";
@@ -56,11 +57,14 @@ export function FortressNodeDetail({ agent, onClose, activityMetrics = [], scanP
   });
 
   return (
-    <div className="absolute right-4 z-10 animate-slide-in-right" style={{ top: "52px", bottom: "60px", width: "300px" }}>
+    <DraggablePanel className="absolute right-4 z-10 animate-slide-in-right" style={{ top: "52px", bottom: "60px", width: "300px" }}>
       <div className="h-full backdrop-blur-xl border rounded-lg bg-card/90 border-border overflow-hidden flex flex-col">
-        {/* Header */}
-        <div className="p-3 border-b border-border/50 flex items-center justify-between flex-shrink-0">
-          <div className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground">Node Status</div>
+        {/* Header — drag handle */}
+        <div data-drag-handle className="p-3 border-b border-border/50 flex items-center justify-between flex-shrink-0 cursor-grab active:cursor-grabbing">
+          <div className="flex items-center gap-2">
+            <GripHorizontal className="w-3 h-3 text-muted-foreground/40" />
+            <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground">Node Status</span>
+          </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-secondary transition-colors">
             <X className="w-3.5 h-3.5 text-muted-foreground" />
           </button>
@@ -166,7 +170,7 @@ export function FortressNodeDetail({ agent, onClose, activityMetrics = [], scanP
           </button>
         </div>
       </div>
-    </div>
+    </DraggablePanel>
   );
 }
 
