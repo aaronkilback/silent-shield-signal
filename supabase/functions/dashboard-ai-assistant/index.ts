@@ -7566,6 +7566,52 @@ The signal is now in the database with status 'triaged' and rules have been appl
       }
     }
 
+    case "broadcast_to_agents": {
+      const { message, priority = "normal" } = args;
+      
+      // Get all active agents
+      const { data: activeAgents, error: agentsErr } = await supabaseClient
+        .from("ai_agents")
+        .select("id, call_sign, codename")
+        .eq("is_active", true);
+      
+      if (agentsErr || !activeAgents?.length) {
+        return { error: "Failed to fetch active agents", details: agentsErr?.message };
+      }
+
+      // Get the sender's profile
+      const senderUserId = userId || null;
+
+      // Insert a pending message for each agent
+      const pendingMessages = activeAgents.map((agent: any) => ({
+        agent_id: agent.id,
+        recipient_user_id: senderUserId, // The user sending is also the recipient context
+        sender_user_id: senderUserId,
+        message: `[BROADCAST FROM PRINCIPAL] ${message}`,
+        priority,
+        trigger_event: "principal_broadcast",
+      }));
+
+      const { error: insertErr } = await supabaseClient
+        .from("agent_pending_messages")
+        .insert(pendingMessages);
+
+      if (insertErr) {
+        return { error: "Failed to deliver broadcast", details: insertErr.message };
+      }
+
+      // Also log as agent messages in each agent's conversation (if they have one)
+      const deliveredTo = activeAgents.map((a: any) => a.call_sign);
+      
+      return {
+        success: true,
+        delivered_to: deliveredTo,
+        agent_count: activeAgents.length,
+        message_preview: message.substring(0, 100),
+        summary: `Message broadcast to ${activeAgents.length} agents: ${deliveredTo.join(", ")}`,
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
