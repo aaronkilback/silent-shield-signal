@@ -22,6 +22,14 @@ const SEVERITIES = ["critical", "high", "medium", "low"];
 
 const PRIORITIES = ["p1", "p2", "p3", "p4"];
 
+const TRIAGE_TABS = [
+  { value: "auto", label: "Auto-classify" },
+  { value: "recent", label: "Recent" },
+  { value: "historical", label: "Historical" },
+  { value: "international", label: "International" },
+  { value: "review", label: "Review" },
+];
+
 interface SignalManualOverrideProps {
   signal: {
     id: string;
@@ -30,6 +38,7 @@ interface SignalManualOverrideProps {
     entity_tags?: string[] | null;
     rule_priority?: string | null;
     normalized_text?: string | null;
+    triage_override?: string | null;
   };
   onUpdated?: () => void;
 }
@@ -41,6 +50,7 @@ export function SignalManualOverride({ signal, onUpdated }: SignalManualOverride
   const [severity, setSeverity] = useState(signal.severity || "");
   const [priority, setPriority] = useState(signal.rule_priority || "");
   const [tags, setTags] = useState<string[]>(signal.entity_tags || []);
+  const [triageTab, setTriageTab] = useState(signal.triage_override || "auto");
   const [newTag, setNewTag] = useState("");
   const [applyToFuture, setApplyToFuture] = useState(true);
 
@@ -48,6 +58,7 @@ export function SignalManualOverride({ signal, onUpdated }: SignalManualOverride
     category !== (signal.category || "") ||
     severity !== (signal.severity || "") ||
     priority !== (signal.rule_priority || "") ||
+    triageTab !== (signal.triage_override || "auto") ||
     JSON.stringify(tags) !== JSON.stringify(signal.entity_tags || []);
 
   const addTag = () => {
@@ -76,6 +87,9 @@ export function SignalManualOverride({ signal, onUpdated }: SignalManualOverride
       if (severity !== (signal.severity || "")) updates.severity = severity;
       if (priority !== (signal.rule_priority || "")) updates.rule_priority = priority;
       if (JSON.stringify(tags) !== JSON.stringify(signal.entity_tags || [])) updates.entity_tags = tags;
+      if (triageTab !== (signal.triage_override || "auto")) {
+        updates.triage_override = triageTab === "auto" ? null : triageTab;
+      }
 
       const { error: updateError } = await supabase
         .from("signals")
@@ -145,6 +159,7 @@ export function SignalManualOverride({ signal, onUpdated }: SignalManualOverride
                 setSeverity(signal.severity || "");
                 setPriority(signal.rule_priority || "");
                 setTags(signal.entity_tags || []);
+                setTriageTab(signal.triage_override || "auto");
                 setEditing(false);
               }}
             >
@@ -214,6 +229,26 @@ export function SignalManualOverride({ signal, onUpdated }: SignalManualOverride
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Triage Tab */}
+          <div className="space-y-1.5">
+            <Label className="text-xs">Triage Tab</Label>
+            <Select value={triageTab} onValueChange={setTriageTab}>
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue placeholder="Auto-classify" />
+              </SelectTrigger>
+              <SelectContent>
+                {TRIAGE_TABS.map((t) => (
+                  <SelectItem key={t.value} value={t.value} className="text-xs">
+                    {t.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[10px] text-muted-foreground">
+              Override which tab this signal appears in
+            </p>
           </div>
 
           {/* Tags */}
