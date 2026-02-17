@@ -118,16 +118,61 @@ Deno.serve(async (req) => {
 
     } else {
       // ── Proactive: Identify knowledge gaps from recent activity ──
-      const gaps = await identifyKnowledgeGaps(supabase);
-      console.log(`[agent-self-learning] Identified ${gaps.length} knowledge gaps`);
+      // If a specific agent was requested, run learning for that agent directly
+      if (agent_call_sign && agent_call_sign !== 'AEGIS-CMD') {
+        console.log(`[agent-self-learning] Proactive learning for agent: ${agent_call_sign}`);
+        const agentGaps = await identifyLiteratureGaps(supabase, agent_call_sign);
+        console.log(`[agent-self-learning] ${agent_call_sign}: ${agentGaps.length} learning targets`);
+        for (const gap of agentGaps.slice(0, queryLimit)) {
+          await new Promise(r => setTimeout(r, 1500));
+          await researchTopic(supabase, PERPLEXITY_API_KEY, {
+            topic: gap.query,
+            context: gap.context,
+            agentCallSign: agent_call_sign,
+          }, results);
+        }
+      } else {
+        // General proactive: identify gaps + rotate through underserved agents
+        const gaps = await identifyKnowledgeGaps(supabase);
+        
+        // Also find the agent with the least learning activity and add a gap for them
+        const agentsToRotate = Object.keys(AGENT_LEARNING_PROMPTS);
+        const { data: recentSessions } = await supabase
+          .from('agent_learning_sessions')
+          .select('agent_id')
+          .gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
+        
+        const activeAgentIds = new Set((recentSessions || []).map((s: any) => s.agent_id).filter(Boolean));
+        
+        // Find agents that haven't had any learning sessions
+        for (const callSign of agentsToRotate) {
+          const { data: agentRow } = await supabase
+            .from('ai_agents')
+            .select('id')
+            .eq('call_sign', callSign)
+            .maybeSingle();
+          
+          if (agentRow && !activeAgentIds.has(agentRow.id)) {
+            const agentSpecialty = AGENT_LEARNING_PROMPTS[callSign]?.substring(0, 60) || 'security';
+            gaps.push({
+              query: `${agentSpecialty} - latest tactics, detection methods, and response procedures 2025 2026`,
+              context: `Agent ${callSign} has had no learning activity in 7 days — rotating in`,
+              suggestedAgent: callSign,
+            });
+            break; // Only add one underserved agent per cycle to avoid overwhelming
+          }
+        }
+        
+        console.log(`[agent-self-learning] Identified ${gaps.length} knowledge gaps`);
 
-      for (const gap of gaps.slice(0, queryLimit)) {
-        await new Promise(r => setTimeout(r, 1500));
-        await researchTopic(supabase, PERPLEXITY_API_KEY, {
-          topic: gap.query,
-          context: gap.context,
-          agentCallSign: gap.suggestedAgent || 'AEGIS-CMD',
-        }, results);
+        for (const gap of gaps.slice(0, queryLimit)) {
+          await new Promise(r => setTimeout(r, 1500));
+          await researchTopic(supabase, PERPLEXITY_API_KEY, {
+            topic: gap.query,
+            context: gap.context,
+            agentCallSign: gap.suggestedAgent || 'AEGIS-CMD',
+          }, results);
+        }
       }
     }
 
@@ -283,15 +328,18 @@ Return ONLY the JSON array.`;
     // Store in agent memory for the specific agent
     if (entries.length > 0) {
       const memoryContent = entries.map((e: any) => `[${e.knowledge_type}] ${e.title}: ${e.content?.substring(0, 200)}`).join('\n\n');
-      await supabase.from('agent_investigation_memory').insert({
-        agent_call_sign: agentCallSign,
-        content: `Self-learning on "${topic}": ${memoryContent}`,
-        memory_type: 'learned_expertise',
-        confidence: 0.85,
-        incident_id: incidentId || null,
-        tags: ['self_learning', entry.domain || 'general'],
-        entities: [],
-      }).catch(() => { /* non-critical */ });
+      const primaryDomain = entries[0]?.domain || 'general';
+      try {
+        await supabase.from('agent_investigation_memory').insert({
+          agent_call_sign: agentCallSign,
+          content: `Self-learning on "${topic}": ${memoryContent}`,
+          memory_type: 'learned_expertise',
+          confidence: 0.85,
+          incident_id: incidentId || null,
+          tags: ['self_learning', primaryDomain],
+          entities: [],
+        });
+      } catch (_) { /* non-critical */ }
     }
   } catch (err) {
     console.error(`[agent-self-learning] Research error for "${topic}":`, err);
