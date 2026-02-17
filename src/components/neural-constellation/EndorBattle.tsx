@@ -1,130 +1,248 @@
 /**
- * Full Endor Battle — ambient Star Wars-style space battle background
- * Features: Movie-accurate Star Destroyers, Mon Calamari cruisers, Death Star,
- * fighters, pooled turbolaser bolts, explosions.
+ * Full Endor Battle — Agent-driven space battle with scoring.
+ * Ships have HP, are destroyable, score is tracked, auto-restarts.
+ * Agent specialties drive faction bonuses (speed, accuracy, shields, etc.)
  * Laser colors: Rebels fire RED, Empire fires GREEN (movie-accurate).
  */
-import { useRef, useMemo, useCallback } from "react";
+import { useRef, useMemo, useCallback, useState } from "react";
 import { useFrame } from "@react-three/fiber";
+import { Html } from "@react-three/drei";
 import * as THREE from "three";
+
+// ═══════════════════════════════════════════════════════════════
+//  TYPES & CONSTANTS
+// ═══════════════════════════════════════════════════════════════
+
+const BATTLE_CENTER: [number, number, number] = [0, 15, -45];
+const BATTLE_RADIUS = 25;
+const FIGHTER_COUNT = 80;
+const MAX_LASERS = 120;
+const MAX_TURBO_BOLTS = 60;
+const RESTART_DELAY = 4; // seconds before auto-restart
+
+interface AgentBonus {
+  callSign: string;
+  specialty: string;
+  faction: "rebel" | "imperial";
+  // Computed bonuses from specialty
+  speedMult: number;
+  accuracyMult: number;
+  shieldMult: number;
+  fireRateMult: number;
+  damageMult: number;
+}
+
+interface CapitalShipState {
+  position: THREE.Vector3;
+  basePosition: THREE.Vector3;
+  rotation: THREE.Euler;
+  velocity: THREE.Vector3;
+  hp: number;
+  maxHp: number;
+  alive: boolean;
+  faction: "rebel" | "imperial";
+  index: number;
+  driftPhase: number;
+  driftSpeed: number;
+  assignedAgent: string | null;
+}
+
+interface FighterData {
+  position: THREE.Vector3;
+  velocity: THREE.Vector3;
+  target: THREE.Vector3;
+  faction: "rebel" | "imperial";
+  alive: boolean;
+  hp: number;
+  fireCooldown: number;
+  bankAngle: number;
+  evadeTimer: number;
+}
+
+interface LaserBolt {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  color: string;
+  life: number;
+  maxLife: number;
+  active: boolean;
+  damage: number;
+  targetFaction: "rebel" | "imperial";
+}
+
+interface TurboBolt {
+  position: THREE.Vector3;
+  velocity: THREE.Vector3;
+  color: string;
+  life: number;
+  maxLife: number;
+  active: boolean;
+  damage: number;
+  targetIndex: number;
+  targetFaction: "rebel" | "imperial";
+}
+
+interface BattleScore {
+  rebel: number;
+  imperial: number;
+  round: number;
+  rebelShipsLeft: number;
+  imperialShipsLeft: number;
+  rebelFightersLeft: number;
+  imperialFightersLeft: number;
+  gameOver: boolean;
+  winner: "rebel" | "imperial" | null;
+  restartTimer: number;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AGENT SPECIALTY → BATTLE BONUS MAPPING
+// ═══════════════════════════════════════════════════════════════
+
+function computeAgentBonuses(agents?: { callSign: string; specialty: string }[]): { rebel: AgentBonus[]; imperial: AgentBonus[] } {
+  if (!agents || agents.length === 0) {
+    return { rebel: [], imperial: [] };
+  }
+
+  // Assign agents to factions based on their role
+  const imperialCallSigns = ["WRAITH", "NEO", "SPECTER", "VIPER", "WARDEN", "FORGE", "0DAY", "SENTINEL-OPS", "CERBERUS"];
+  const bonuses: AgentBonus[] = agents.map(a => {
+    const faction = imperialCallSigns.includes(a.callSign) ? "imperial" : "rebel";
+    const spec = (a.specialty || "").toLowerCase();
+
+    let speedMult = 1, accuracyMult = 1, shieldMult = 1, fireRateMult = 1, damageMult = 1;
+
+    // Map specialties to combat bonuses
+    if (spec.includes("cyber") || spec.includes("apt") || spec.includes("offensive")) {
+      damageMult = 1.3; fireRateMult = 1.2; // Offensive → more damage
+    }
+    if (spec.includes("financial") || spec.includes("aml") || spec.includes("fraud")) {
+      shieldMult = 1.3; // Resource management → better shields
+    }
+    if (spec.includes("security") || spec.includes("physical") || spec.includes("protection")) {
+      shieldMult = 1.25; accuracyMult = 1.15; // Defense → shields + accuracy
+    }
+    if (spec.includes("intel") || spec.includes("investigation") || spec.includes("osint")) {
+      accuracyMult = 1.3; // Intel → precision targeting
+    }
+    if (spec.includes("counter") || spec.includes("espionage")) {
+      speedMult = 1.2; accuracyMult = 1.15; // Counterintel → evasion + accuracy
+    }
+    if (spec.includes("supply") || spec.includes("chain")) {
+      fireRateMult = 1.25; shieldMult = 1.1; // Logistics → faster resupply
+    }
+    if (spec.includes("narco") || spec.includes("drug")) {
+      speedMult = 1.25; damageMult = 1.15; // Aggressive → speed + damage
+    }
+    if (spec.includes("geoint") || spec.includes("geo") || spec.includes("terrain")) {
+      accuracyMult = 1.25; speedMult = 1.1; // Spatial awareness
+    }
+    if (spec.includes("terror") || spec.includes("sentinel")) {
+      damageMult = 1.2; fireRateMult = 1.15;
+    }
+    if (spec.includes("simulat") || spec.includes("war") || spec.includes("game")) {
+      speedMult = 1.15; accuracyMult = 1.15; damageMult = 1.1; fireRateMult = 1.1; // Wargamer → balanced
+    }
+    if (spec.includes("command") || spec.includes("orchestrat")) {
+      speedMult = 1.1; accuracyMult = 1.1; shieldMult = 1.1; fireRateMult = 1.1; damageMult = 1.1; // Commander → all +10%
+    }
+    if (spec.includes("content") || spec.includes("moderat")) {
+      shieldMult = 1.2; // Defensive posture
+    }
+    if (spec.includes("data") || spec.includes("quality")) {
+      accuracyMult = 1.35; // Precision
+    }
+
+    return { callSign: a.callSign, specialty: a.specialty, faction, speedMult, accuracyMult, shieldMult, fireRateMult, damageMult };
+  });
+
+  return {
+    rebel: bonuses.filter(b => b.faction === "rebel"),
+    imperial: bonuses.filter(b => b.faction === "imperial"),
+  };
+}
+
+function getFactionMultipliers(bonuses: AgentBonus[]) {
+  if (bonuses.length === 0) return { speed: 1, accuracy: 1, shield: 1, fireRate: 1, damage: 1 };
+  // Average all agent bonuses for the faction
+  const avg = (key: keyof AgentBonus) => bonuses.reduce((s, b) => s + (b[key] as number), 0) / bonuses.length;
+  return {
+    speed: avg("speedMult"),
+    accuracy: avg("accuracyMult"),
+    shield: avg("shieldMult"),
+    fireRate: avg("fireRateMult"),
+    damage: avg("damageMult"),
+  };
+}
 
 // ═══════════════════════════════════════════════════════════════
 //  SHIP GEOMETRY BUILDERS
 // ═══════════════════════════════════════════════════════════════
 
 function createStarDestroyerGeometry(): THREE.BufferGeometry {
-  const group = new THREE.Group();
-
-  // Main dagger wedge hull
   const hullShape = new THREE.Shape();
-  hullShape.moveTo(0, 3.0);       // Nose tip
-  hullShape.lineTo(-1.6, -2.0);   // Port rear
-  // Engine notches (port side)
-  hullShape.lineTo(-1.4, -2.3);
-  hullShape.lineTo(-1.0, -2.1);
-  hullShape.lineTo(-0.8, -2.4);
-  hullShape.lineTo(-0.4, -2.2);
-  hullShape.lineTo(0, -2.5);      // Center rear
-  // Engine notches (starboard side)
-  hullShape.lineTo(0.4, -2.2);
-  hullShape.lineTo(0.8, -2.4);
-  hullShape.lineTo(1.0, -2.1);
-  hullShape.lineTo(1.4, -2.3);
-  hullShape.lineTo(1.6, -2.0);    // Starboard rear
+  hullShape.moveTo(0, 3.0);
+  hullShape.lineTo(-1.6, -2.0);
+  hullShape.lineTo(-1.4, -2.3); hullShape.lineTo(-1.0, -2.1);
+  hullShape.lineTo(-0.8, -2.4); hullShape.lineTo(-0.4, -2.2);
+  hullShape.lineTo(0, -2.5);
+  hullShape.lineTo(0.4, -2.2); hullShape.lineTo(0.8, -2.4);
+  hullShape.lineTo(1.0, -2.1); hullShape.lineTo(1.4, -2.3);
+  hullShape.lineTo(1.6, -2.0);
   hullShape.closePath();
 
   const hullGeo = new THREE.ExtrudeGeometry(hullShape, { depth: 0.35, bevelEnabled: false });
   hullGeo.rotateX(Math.PI / 2);
   hullGeo.scale(1.5, 0.25, 1.5);
 
-  // T-shaped command tower (bridge)
   const towerBase = new THREE.BoxGeometry(0.3, 0.8, 0.25);
   towerBase.translate(0, 0.55, -1.8);
-
-  // Bridge horizontal bar (T crosspiece)
   const towerBar = new THREE.BoxGeometry(1.2, 0.2, 0.2);
   towerBar.translate(0, 0.95, -1.8);
-
-  // Shield generator domes (two small spheres on bridge)
   const domL = new THREE.SphereGeometry(0.12, 6, 6);
   domL.translate(-0.4, 1.1, -1.8);
   const domR = new THREE.SphereGeometry(0.12, 6, 6);
   domR.translate(0.4, 1.1, -1.8);
-
-  // Surface panel detail lines (thin boxes along hull)
   const panel1 = new THREE.BoxGeometry(0.05, 0.02, 3.5);
   panel1.translate(-0.5, 0.13, -0.2);
   const panel2 = new THREE.BoxGeometry(0.05, 0.02, 3.5);
   panel2.translate(0.5, 0.13, -0.2);
-  const panel3 = new THREE.BoxGeometry(2.0, 0.02, 0.05);
-  panel3.translate(0, 0.13, -0.8);
 
-  // Merge all into one geometry
-  const merged = new THREE.BufferGeometry();
-  const geos = [hullGeo, towerBase, towerBar, domL, domR, panel1, panel2, panel3];
-  // Use mergeBufferGeometries equivalent
   const positions: number[] = [];
   const normals: number[] = [];
-  for (const g of geos) {
-    const posArr = g.attributes.position.array;
-    const normArr = g.attributes.normal.array;
-    for (let i = 0; i < posArr.length; i++) {
-      positions.push(posArr[i]);
-      normals.push(normArr[i]);
-    }
+  for (const g of [hullGeo, towerBase, towerBar, domL, domR, panel1, panel2]) {
+    const p = g.attributes.position.array;
+    const n = g.attributes.normal.array;
+    for (let i = 0; i < p.length; i++) { positions.push(p[i]); normals.push(n[i]); }
   }
+  const merged = new THREE.BufferGeometry();
   merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   merged.computeBoundingSphere();
-
   return merged;
 }
 
 function createMonCalGeometry(): THREE.BufferGeometry {
-  // Elongated organic hull with lateral pod bulges and bridge dome
   const positions: number[] = [];
   const normals: number[] = [];
-
   function addGeo(g: THREE.BufferGeometry) {
     const p = g.attributes.position.array;
     const n = g.attributes.normal.array;
-    for (let i = 0; i < p.length; i++) {
-      positions.push(p[i]);
-      normals.push(n[i]);
-    }
+    for (let i = 0; i < p.length; i++) { positions.push(p[i]); normals.push(n[i]); }
   }
-
-  // Main elongated hull body
   const hull = new THREE.SphereGeometry(1, 10, 8);
-  hull.scale(2.5, 0.55, 0.9);
-  addGeo(hull);
-
-  // Lateral pod bulge (port)
+  hull.scale(2.5, 0.55, 0.9); addGeo(hull);
   const podL = new THREE.SphereGeometry(0.5, 6, 6);
-  podL.scale(1.0, 0.8, 1.2);
-  podL.translate(0.3, 0, -0.9);
-  addGeo(podL);
-
-  // Lateral pod bulge (starboard)
+  podL.scale(1.0, 0.8, 1.2); podL.translate(0.3, 0, -0.9); addGeo(podL);
   const podR = new THREE.SphereGeometry(0.5, 6, 6);
-  podR.scale(1.0, 0.8, 1.2);
-  podR.translate(0.3, 0, 0.9);
-  addGeo(podR);
-
-  // Bridge dome (top, towards front)
+  podR.scale(1.0, 0.8, 1.2); podR.translate(0.3, 0, 0.9); addGeo(podR);
   const bridge = new THREE.SphereGeometry(0.3, 6, 6);
-  bridge.scale(1.0, 0.6, 0.8);
-  bridge.translate(1.0, 0.5, 0);
-  addGeo(bridge);
-
-  // Multi-engine cluster (rear) — 5 small spheres
+  bridge.scale(1.0, 0.6, 0.8); bridge.translate(1.0, 0.5, 0); addGeo(bridge);
   for (let i = 0; i < 5; i++) {
     const eng = new THREE.SphereGeometry(0.18, 5, 5);
     const angle = (i / 5) * Math.PI * 2;
-    eng.translate(-2.4, Math.sin(angle) * 0.3, Math.cos(angle) * 0.3);
-    addGeo(eng);
+    eng.translate(-2.4, Math.sin(angle) * 0.3, Math.cos(angle) * 0.3); addGeo(eng);
   }
-
   const merged = new THREE.BufferGeometry();
   merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
@@ -133,16 +251,11 @@ function createMonCalGeometry(): THREE.BufferGeometry {
 }
 
 function createFighterGeometry(isXWing: boolean): THREE.BufferGeometry {
-  if (isXWing) {
-    const geo = new THREE.BoxGeometry(0.1, 0.02, 0.15);
-    return geo;
-  }
-  const geo = new THREE.BoxGeometry(0.12, 0.12, 0.04);
-  return geo;
+  return isXWing ? new THREE.BoxGeometry(0.1, 0.02, 0.15) : new THREE.BoxGeometry(0.12, 0.12, 0.04);
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  DEATH STAR
+//  DEATH STAR (background, not destroyable)
 // ═══════════════════════════════════════════════════════════════
 
 function DeathStar({ position }: { position: [number, number, number] }) {
@@ -167,79 +280,75 @@ function DeathStar({ position }: { position: [number, number, number] }) {
 
   return (
     <group ref={ref} position={position}>
-      <mesh>
-        <sphereGeometry args={[5, 24, 24]} />
-        <meshStandardMaterial color="#3a3a3a" roughness={0.8} metalness={0.4} />
-      </mesh>
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[5.02, 0.15, 4, 32]} />
-        <meshStandardMaterial color="#222222" roughness={0.9} />
-      </mesh>
-      <mesh position={[2, 2.5, 3.2]} rotation={[0.3, 0.8, 0]}>
-        <circleGeometry args={[1.5, 16]} />
-        <meshStandardMaterial color="#1a1a1a" roughness={0.95} />
-      </mesh>
-      <mesh ref={glowRef} position={[2, 2.5, 3.5]}>
-        <sphereGeometry args={[1.8, 12, 12]} />
-        <meshBasicMaterial color="#44ff44" transparent opacity={0.04} />
-      </mesh>
-      <mesh ref={laserRef} position={[2, 2.5, 15]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[0.3, 0.1, 25, 6]} />
-        <meshBasicMaterial color="#44ff44" transparent opacity={0} />
-      </mesh>
+      <mesh><sphereGeometry args={[5, 24, 24]} /><meshStandardMaterial color="#3a3a3a" roughness={0.8} metalness={0.4} /></mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[5.02, 0.15, 4, 32]} /><meshStandardMaterial color="#222222" roughness={0.9} /></mesh>
+      <mesh position={[2, 2.5, 3.2]} rotation={[0.3, 0.8, 0]}><circleGeometry args={[1.5, 16]} /><meshStandardMaterial color="#1a1a1a" roughness={0.95} /></mesh>
+      <mesh ref={glowRef} position={[2, 2.5, 3.5]}><sphereGeometry args={[1.8, 12, 12]} /><meshBasicMaterial color="#44ff44" transparent opacity={0.04} /></mesh>
+      <mesh ref={laserRef} position={[2, 2.5, 15]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.3, 0.1, 25, 6]} /><meshBasicMaterial color="#44ff44" transparent opacity={0} /></mesh>
       <pointLight color="#666666" intensity={1} distance={30} />
     </group>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  CAPITAL SHIPS
+//  CAPITAL SHIPS (with HP and damage flash)
 // ═══════════════════════════════════════════════════════════════
 
-interface CapitalShipProps {
-  position: THREE.Vector3;
-  rotation: THREE.Euler;
-  isImperial: boolean;
-  index: number;
-}
-
-function CapitalShip({ position, rotation, isImperial, index }: CapitalShipProps) {
+function CapitalShipMesh({ ship, geometry }: { ship: CapitalShipState; geometry: THREE.BufferGeometry }) {
   const ref = useRef<THREE.Group>(null);
-  const driftSpeed = useRef(0.1 + Math.random() * 0.15);
-  const driftPhase = useRef(Math.random() * Math.PI * 2);
+  const matRef = useRef<THREE.MeshStandardMaterial>(null);
+  const damageFlash = useRef(0);
+  const lastHp = useRef(ship.hp);
 
-  const geometry = useMemo(() =>
-    isImperial ? createStarDestroyerGeometry() : createMonCalGeometry(),
-    [isImperial]
-  );
-
-  const color = isImperial ? "#8899aa" : "#aa7755";
+  const isImperial = ship.faction === "imperial";
+  const baseColor = isImperial ? "#8899aa" : "#aa7755";
   const emissiveColor = isImperial ? "#334466" : "#553322";
 
   useFrame((_, delta) => {
-    if (!ref.current) return;
-    driftPhase.current += delta * driftSpeed.current;
-    ref.current.position.x = position.x + Math.sin(driftPhase.current + index) * 0.5;
-    ref.current.position.y = position.y + Math.cos(driftPhase.current * 0.7 + index * 2) * 0.3;
-    ref.current.position.z = position.z + Math.sin(driftPhase.current * 0.5) * 0.4;
-    ref.current.rotation.z = rotation.z + Math.sin(driftPhase.current * 0.3) * 0.03;
+    if (!ref.current || !ship.alive) {
+      if (ref.current) ref.current.visible = false;
+      return;
+    }
+    ref.current.visible = true;
+
+    // Detect damage
+    if (ship.hp < lastHp.current) {
+      damageFlash.current = 0.3;
+    }
+    lastHp.current = ship.hp;
+
+    damageFlash.current = Math.max(0, damageFlash.current - delta);
+
+    // Drift movement
+    ship.driftPhase += delta * ship.driftSpeed;
+    ref.current.position.x = ship.position.x;
+    ref.current.position.y = ship.position.y;
+    ref.current.position.z = ship.position.z;
+    ref.current.rotation.copy(ship.rotation);
+
+    // Damage flash — red tint
+    if (matRef.current) {
+      if (damageFlash.current > 0) {
+        matRef.current.emissive.set("#ff2222");
+        matRef.current.emissiveIntensity = damageFlash.current * 3;
+      } else {
+        matRef.current.emissive.set(emissiveColor);
+        matRef.current.emissiveIntensity = 0.3;
+      }
+    }
   });
 
+  // HP bar
+  const hpFrac = ship.hp / ship.maxHp;
+
   return (
-    <group ref={ref} position={position} rotation={rotation}>
+    <group ref={ref} position={ship.position} rotation={ship.rotation}>
       <mesh geometry={geometry}>
-        <meshStandardMaterial
-          color={color}
-          emissive={emissiveColor}
-          emissiveIntensity={0.3}
-          roughness={0.6}
-          metalness={0.7}
-        />
+        <meshStandardMaterial ref={matRef} color={baseColor} emissive={emissiveColor} emissiveIntensity={0.3} roughness={0.6} metalness={0.7} />
       </mesh>
-      {/* Engine glow — Mon Cal gets multi-engine cluster glow */}
+      {/* Engine glows */}
       {isImperial ? (
         <>
-          {/* SD triple engine bank */}
           {[-0.4, 0, 0.4].map((zOff, ei) => (
             <mesh key={ei} position={[0, 0, -1.5 * 1.5 + zOff * 0.5]}>
               <sphereGeometry args={[0.25, 6, 6]} />
@@ -249,7 +358,6 @@ function CapitalShip({ position, rotation, isImperial, index }: CapitalShipProps
         </>
       ) : (
         <>
-          {/* Mon Cal 5-engine cluster */}
           {Array.from({ length: 5 }, (_, i) => {
             const angle = (i / 5) * Math.PI * 2;
             return (
@@ -261,66 +369,39 @@ function CapitalShip({ position, rotation, isImperial, index }: CapitalShipProps
           })}
         </>
       )}
-      <pointLight
-        color={isImperial ? "#4466cc" : "#ff6633"}
-        intensity={0.5}
-        distance={8}
-      />
+      {/* HP Bar floating above ship */}
+      <group position={[0, 2.0, 0]}>
+        {/* Background */}
+        <mesh>
+          <planeGeometry args={[3, 0.2]} />
+          <meshBasicMaterial color="#111111" transparent opacity={0.6} />
+        </mesh>
+        {/* HP fill */}
+        <mesh position={[(hpFrac - 1) * 1.5, 0, 0.01]}>
+          <planeGeometry args={[3 * hpFrac, 0.18]} />
+          <meshBasicMaterial color={hpFrac > 0.5 ? "#22ff44" : hpFrac > 0.25 ? "#ffaa22" : "#ff2222"} transparent opacity={0.8} />
+        </mesh>
+      </group>
+      <pointLight color={isImperial ? "#4466cc" : "#ff6633"} intensity={0.5} distance={8} />
     </group>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  FIGHTER SWARMS (instanced for performance)
+//  FIGHTER SWARM (with HP and destruction)
 // ═══════════════════════════════════════════════════════════════
 
-interface FighterData {
-  position: THREE.Vector3;
-  velocity: THREE.Vector3;
-  target: THREE.Vector3;
-  faction: "rebel" | "imperial";
-  alive: boolean;
-  fireCooldown: number;
-  bankAngle: number;
-  evadeTimer: number;
-}
-
-const FIGHTER_COUNT = 80;
-const BATTLE_CENTER: [number, number, number] = [0, 15, -45];
-const BATTLE_RADIUS = 25;
-
-function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, to: THREE.Vector3, color: string) => void }) {
+function FighterSwarm({ 
+  laserCallback, fighters, rebelMults, imperialMults 
+}: { 
+  laserCallback: (from: THREE.Vector3, to: THREE.Vector3, color: string, damage: number, targetFaction: "rebel" | "imperial") => void;
+  fighters: React.MutableRefObject<FighterData[]>;
+  rebelMults: ReturnType<typeof getFactionMultipliers>;
+  imperialMults: ReturnType<typeof getFactionMultipliers>;
+}) {
   const rebelRef = useRef<THREE.InstancedMesh>(null);
   const imperialRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
-  const fighters = useRef<FighterData[]>([]);
-
-  useMemo(() => {
-    fighters.current = Array.from({ length: FIGHTER_COUNT }, (_, i) => {
-      const isRebel = i < FIGHTER_COUNT / 2;
-      const angle = Math.random() * Math.PI * 2;
-      const r = 5 + Math.random() * BATTLE_RADIUS;
-      const y = (Math.random() - 0.5) * 15;
-      return {
-        position: new THREE.Vector3(
-          BATTLE_CENTER[0] + Math.cos(angle) * r,
-          BATTLE_CENTER[1] + y,
-          BATTLE_CENTER[2] + Math.sin(angle) * r,
-        ),
-        velocity: new THREE.Vector3(
-          (Math.random() - 0.5) * 2,
-          (Math.random() - 0.5),
-          (Math.random() - 0.5) * 2,
-        ),
-        target: new THREE.Vector3(),
-        faction: isRebel ? "rebel" : "imperial",
-        alive: true,
-        fireCooldown: Math.random() * 3,
-        bankAngle: 0,
-        evadeTimer: 0,
-      };
-    });
-  }, []);
 
   useFrame((_, delta) => {
     const clampedDelta = Math.min(delta, 0.05);
@@ -329,6 +410,7 @@ function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, 
 
     fighters.current.forEach((fighter) => {
       if (!fighter.alive) return;
+      const mults = fighter.faction === "rebel" ? rebelMults : imperialMults;
       const enemies = fighter.faction === "rebel" ? imperials : rebels;
       let nearest = enemies[0];
       let nearestDist = Infinity;
@@ -351,9 +433,12 @@ function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, 
         toTarget.z += (Math.random() - 0.5) * 0.8;
         toTarget.normalize();
       }
-      const speed = fighter.faction === "rebel" ? 6 : 5.5;
+      const baseSpeed = fighter.faction === "rebel" ? 6 : 5.5;
+      const speed = baseSpeed * mults.speed;
       fighter.velocity.lerp(toTarget.multiplyScalar(speed), clampedDelta * 2);
       fighter.position.addScaledVector(fighter.velocity, clampedDelta);
+
+      // Keep in bounds
       const fromCenter = new THREE.Vector3(
         fighter.position.x - BATTLE_CENTER[0],
         fighter.position.y - BATTLE_CENTER[1],
@@ -363,18 +448,22 @@ function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, 
         fromCenter.normalize().multiplyScalar(-2);
         fighter.velocity.add(fromCenter);
       }
-      // Fire lasers — movie-accurate: Rebels=RED, Empire=GREEN
+
+      // Fire lasers with agent bonuses
       fighter.fireCooldown -= clampedDelta;
-      if (fighter.fireCooldown <= 0 && dist < 15 && nearest) {
-        fighter.fireCooldown = 0.3 + Math.random() * 0.8;
+      const fireInterval = (0.3 + Math.random() * 0.8) / mults.fireRate;
+      if (fighter.fireCooldown <= 0 && dist < 15 * mults.accuracy && nearest) {
+        fighter.fireCooldown = fireInterval;
         const laserEnd = fighter.position.clone().addScaledVector(
           new THREE.Vector3().subVectors(nearest.position, fighter.position).normalize(),
           Math.min(dist, 8),
         );
+        const targetFaction: "rebel" | "imperial" = fighter.faction === "rebel" ? "imperial" : "rebel";
         laserCallback(
-          fighter.position.clone(),
-          laserEnd,
+          fighter.position.clone(), laserEnd,
           fighter.faction === "rebel" ? "#ff2222" : "#22ff44",
+          1 * mults.damage,
+          targetFaction,
         );
       }
       const cross = new THREE.Vector3().crossVectors(fighter.velocity.clone().normalize(), toTarget);
@@ -386,27 +475,16 @@ function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, 
     fighters.current.forEach((fighter) => {
       if (!fighter.alive) return;
       dummy.position.copy(fighter.position);
-      if (fighter.velocity.lengthSq() > 0.01) {
-        dummy.lookAt(fighter.position.clone().add(fighter.velocity));
-      }
+      if (fighter.velocity.lengthSq() > 0.01) dummy.lookAt(fighter.position.clone().add(fighter.velocity));
       dummy.rotateZ(fighter.bankAngle);
       dummy.scale.setScalar(1);
       dummy.updateMatrix();
-      if (fighter.faction === "rebel" && rebelRef.current) {
-        rebelRef.current.setMatrixAt(rebelIdx++, dummy.matrix);
-      } else if (fighter.faction === "imperial" && imperialRef.current) {
-        imperialRef.current.setMatrixAt(imperialIdx++, dummy.matrix);
-      }
+      if (fighter.faction === "rebel" && rebelRef.current) rebelRef.current.setMatrixAt(rebelIdx++, dummy.matrix);
+      else if (fighter.faction === "imperial" && imperialRef.current) imperialRef.current.setMatrixAt(imperialIdx++, dummy.matrix);
     });
 
-    if (rebelRef.current) {
-      rebelRef.current.count = rebelIdx;
-      rebelRef.current.instanceMatrix.needsUpdate = true;
-    }
-    if (imperialRef.current) {
-      imperialRef.current.count = imperialIdx;
-      imperialRef.current.instanceMatrix.needsUpdate = true;
-    }
+    if (rebelRef.current) { rebelRef.current.count = rebelIdx; rebelRef.current.instanceMatrix.needsUpdate = true; }
+    if (imperialRef.current) { imperialRef.current.count = imperialIdx; imperialRef.current.instanceMatrix.needsUpdate = true; }
   });
 
   const rebelGeo = useMemo(() => createFighterGeometry(true), []);
@@ -425,34 +503,21 @@ function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, 
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  LASER BOLTS (pooled for performance — fighter lasers)
+//  LASER BOLTS (pooled, now with damage + hit detection)
 // ═══════════════════════════════════════════════════════════════
 
-interface LaserBolt {
-  from: THREE.Vector3;
-  to: THREE.Vector3;
-  color: string;
-  life: number;
-  maxLife: number;
-  active: boolean;
-}
-
-const MAX_LASERS = 120;
-
-function LaserBolts({ lasersRef }: { lasersRef: React.MutableRefObject<LaserBolt[]> }) {
-  const groupRef = useRef<THREE.Group>(null);
+function LaserBolts({ lasersRef, fighters, onFighterKill }: { 
+  lasersRef: React.MutableRefObject<LaserBolt[]>;
+  fighters: React.MutableRefObject<FighterData[]>;
+  onFighterKill: (faction: "rebel" | "imperial") => void;
+}) {
   const meshRefs = useRef<(THREE.Mesh | null)[]>([]);
 
   useFrame((_, delta) => {
     lasersRef.current.forEach((laser, i) => {
       if (!laser.active) return;
       laser.life += delta;
-      if (laser.life >= laser.maxLife) {
-        laser.active = false;
-        const mesh = meshRefs.current[i];
-        if (mesh) mesh.visible = false;
-        return;
-      }
+      if (laser.life >= laser.maxLife) { laser.active = false; const m = meshRefs.current[i]; if (m) m.visible = false; return; }
       const mesh = meshRefs.current[i];
       if (!mesh) return;
       const progress = laser.life / laser.maxLife;
@@ -462,23 +527,32 @@ function LaserBolts({ lasersRef }: { lasersRef: React.MutableRefObject<LaserBolt
       mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
       mesh.visible = true;
       (mesh.material as THREE.MeshBasicMaterial).opacity = 1 - progress * 0.5;
+
+      // Hit detection on fighters
+      if (progress > 0.7) {
+        for (const f of fighters.current) {
+          if (!f.alive || f.faction !== laser.targetFaction) continue;
+          if (f.position.distanceTo(currentPos) < 1.5) {
+            f.hp -= laser.damage;
+            if (f.hp <= 0) {
+              f.alive = false;
+              onFighterKill(f.faction);
+            }
+            laser.active = false;
+            if (mesh) mesh.visible = false;
+            break;
+          }
+        }
+      }
     });
   });
 
   return (
-    <group ref={groupRef}>
+    <group>
       {Array.from({ length: MAX_LASERS }, (_, i) => (
-        <mesh
-          key={i}
-          ref={(el) => { meshRefs.current[i] = el; }}
-          visible={false}
-        >
+        <mesh key={i} ref={(el) => { meshRefs.current[i] = el; }} visible={false}>
           <cylinderGeometry args={[0.02, 0.02, 0.6, 3]} />
-          <meshBasicMaterial
-            color={lasersRef.current[i]?.color || "#ff2222"}
-            transparent
-            opacity={0.9}
-          />
+          <meshBasicMaterial color={lasersRef.current[i]?.color || "#ff2222"} transparent opacity={0.9} />
         </mesh>
       ))}
     </group>
@@ -486,58 +560,44 @@ function LaserBolts({ lasersRef }: { lasersRef: React.MutableRefObject<LaserBolt
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  EXPLOSIONS (particle bursts)
+//  EXPLOSIONS
 // ═══════════════════════════════════════════════════════════════
 
-function ExplosionParticles() {
+function ExplosionParticles({ explosionQueue }: { explosionQueue: React.MutableRefObject<THREE.Vector3[]> }) {
   const ref = useRef<THREE.Points>(null);
-  const PARTICLE_COUNT = 200;
-  const particles = useRef<{
-    positions: Float32Array;
-    velocities: Float32Array;
-    lifetimes: Float32Array;
-    colors: Float32Array;
-  }>({
+  const PARTICLE_COUNT = 300;
+  const particles = useRef<{ positions: Float32Array; velocities: Float32Array; lifetimes: Float32Array; colors: Float32Array }>({
     positions: new Float32Array(PARTICLE_COUNT * 3),
     velocities: new Float32Array(PARTICLE_COUNT * 3),
     lifetimes: new Float32Array(PARTICLE_COUNT),
     colors: new Float32Array(PARTICLE_COUNT * 3),
   });
 
-  const spawnExplosion = useCallback((pos: THREE.Vector3) => {
+  const spawnExplosion = useCallback((pos: THREE.Vector3, size: number = 15) => {
     const p = particles.current;
     let spawned = 0;
-    for (let i = 0; i < PARTICLE_COUNT && spawned < 15; i++) {
+    for (let i = 0; i < PARTICLE_COUNT && spawned < size; i++) {
       if (p.lifetimes[i] <= 0) {
-        p.positions[i * 3] = pos.x;
-        p.positions[i * 3 + 1] = pos.y;
-        p.positions[i * 3 + 2] = pos.z;
-        p.velocities[i * 3] = (Math.random() - 0.5) * 8;
-        p.velocities[i * 3 + 1] = (Math.random() - 0.5) * 8;
-        p.velocities[i * 3 + 2] = (Math.random() - 0.5) * 8;
-        p.lifetimes[i] = 0.5 + Math.random() * 0.8;
+        p.positions[i * 3] = pos.x; p.positions[i * 3 + 1] = pos.y; p.positions[i * 3 + 2] = pos.z;
+        const s = size > 20 ? 12 : 8;
+        p.velocities[i * 3] = (Math.random() - 0.5) * s;
+        p.velocities[i * 3 + 1] = (Math.random() - 0.5) * s;
+        p.velocities[i * 3 + 2] = (Math.random() - 0.5) * s;
+        p.lifetimes[i] = 0.5 + Math.random() * (size > 20 ? 1.5 : 0.8);
         const heat = Math.random();
-        p.colors[i * 3] = 1;
-        p.colors[i * 3 + 1] = 0.3 + heat * 0.6;
-        p.colors[i * 3 + 2] = heat * 0.3;
+        p.colors[i * 3] = 1; p.colors[i * 3 + 1] = 0.3 + heat * 0.6; p.colors[i * 3 + 2] = heat * 0.3;
         spawned++;
       }
     }
   }, []);
 
-  const timer = useRef(0);
   useFrame((_, delta) => {
-    timer.current += delta;
-    if (timer.current > 0.8 + Math.random() * 1.5) {
-      timer.current = 0;
-      const angle = Math.random() * Math.PI * 2;
-      const r = 5 + Math.random() * 20;
-      spawnExplosion(new THREE.Vector3(
-        BATTLE_CENTER[0] + Math.cos(angle) * r,
-        BATTLE_CENTER[1] + (Math.random() - 0.5) * 10,
-        BATTLE_CENTER[2] + Math.sin(angle) * r,
-      ));
+    // Process queued explosions
+    while (explosionQueue.current.length > 0) {
+      const pos = explosionQueue.current.shift()!;
+      spawnExplosion(pos, 30);
     }
+
     const p = particles.current;
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       if (p.lifetimes[i] <= 0) continue;
@@ -545,14 +605,11 @@ function ExplosionParticles() {
       p.positions[i * 3] += p.velocities[i * 3] * delta;
       p.positions[i * 3 + 1] += p.velocities[i * 3 + 1] * delta;
       p.positions[i * 3 + 2] += p.velocities[i * 3 + 2] * delta;
-      p.velocities[i * 3] *= 0.97;
-      p.velocities[i * 3 + 1] *= 0.97;
-      p.velocities[i * 3 + 2] *= 0.97;
+      p.velocities[i * 3] *= 0.97; p.velocities[i * 3 + 1] *= 0.97; p.velocities[i * 3 + 2] *= 0.97;
     }
     if (ref.current) {
-      const geom = ref.current.geometry;
-      geom.attributes.position.needsUpdate = true;
-      geom.attributes.color.needsUpdate = true;
+      ref.current.geometry.attributes.position.needsUpdate = true;
+      ref.current.geometry.attributes.color.needsUpdate = true;
     }
   });
 
@@ -568,119 +625,93 @@ function ExplosionParticles() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  TURBOLASER BOLTS — POOLED IMPERATIVE SYSTEM
-//  Bolts physically travel from one capital ship to another.
-//  Empire fires GREEN, Rebels fire RED (movie-accurate).
+//  TURBOLASER BOLTS — POOLED WITH DAMAGE
 // ═══════════════════════════════════════════════════════════════
 
-interface TurboBolt {
-  position: THREE.Vector3;
-  velocity: THREE.Vector3;
-  color: string;
-  life: number;
-  maxLife: number;
-  active: boolean;
-}
-
-const MAX_TURBO_BOLTS = 60;
-
-function TurbolaserExchanges({ imperialPositions, rebelPositions }: {
-  imperialPositions: THREE.Vector3[];
-  rebelPositions: THREE.Vector3[];
+function TurbolaserExchanges({ capitalShips, rebelMults, imperialMults, onShipKill, explosionQueue }: {
+  capitalShips: React.MutableRefObject<CapitalShipState[]>;
+  rebelMults: ReturnType<typeof getFactionMultipliers>;
+  imperialMults: ReturnType<typeof getFactionMultipliers>;
+  onShipKill: (faction: "rebel" | "imperial") => void;
+  explosionQueue: React.MutableRefObject<THREE.Vector3[]>;
 }) {
   const meshRefs = useRef<(THREE.Mesh | null)[]>([]);
-
   const bolts = useRef<TurboBolt[]>(
     Array.from({ length: MAX_TURBO_BOLTS }, () => ({
-      position: new THREE.Vector3(),
-      velocity: new THREE.Vector3(),
-      color: "#22ff44",
-      life: 0,
-      maxLife: 1.5,
-      active: false,
+      position: new THREE.Vector3(), velocity: new THREE.Vector3(),
+      color: "#22ff44", life: 0, maxLife: 1.5, active: false, damage: 10, targetIndex: 0, targetFaction: "rebel" as const,
     }))
   );
-
   const fireTimer = useRef(0);
 
   useFrame((_, delta) => {
     const clampedDelta = Math.min(delta, 0.05);
+    const ships = capitalShips.current;
+    const aliveImps = ships.filter(s => s.faction === "imperial" && s.alive);
+    const aliveRebs = ships.filter(s => s.faction === "rebel" && s.alive);
 
-    // Spawn new bolts periodically
     fireTimer.current += clampedDelta;
-    if (fireTimer.current > 0.12 + Math.random() * 0.15) {
+    const fireRate = 0.12 + Math.random() * 0.15;
+    if (fireTimer.current > fireRate && aliveImps.length > 0 && aliveRebs.length > 0) {
       fireTimer.current = 0;
+      const count = Math.random() > 0.6 ? 2 : 1;
+      for (let b = 0; b < count; b++) {
+        const bolt = bolts.current.find(bl => !bl.active);
+        if (!bolt) break;
+        const imperialFires = Math.random() > 0.45;
+        const sources = imperialFires ? aliveImps : aliveRebs;
+        const targets = imperialFires ? aliveRebs : aliveImps;
+        const mults = imperialFires ? imperialMults : rebelMults;
 
-      if (imperialPositions.length > 0 && rebelPositions.length > 0) {
-        // Alternate sides, fire 1-2 bolts at a time
-        const count = Math.random() > 0.6 ? 2 : 1;
-        for (let b = 0; b < count; b++) {
-          const bolt = bolts.current.find(bl => !bl.active);
-          if (!bolt) break;
+        const sourceShip = sources[Math.floor(Math.random() * sources.length)];
+        const targetShip = targets[Math.floor(Math.random() * targets.length)];
 
-          const imperialFires = Math.random() > 0.45; // Slight imperial bias
-          const sources = imperialFires ? imperialPositions : rebelPositions;
-          const targets = imperialFires ? rebelPositions : imperialPositions;
+        const from = sourceShip.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, (Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 3));
+        const to = targetShip.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 2 / mults.accuracy, (Math.random() - 0.5) * 1.5 / mults.accuracy, (Math.random() - 0.5) * 2 / mults.accuracy));
 
-          const from = sources[Math.floor(Math.random() * sources.length)].clone();
-          const to = targets[Math.floor(Math.random() * targets.length)].clone();
-
-          // Offset from hull surface randomly
-          from.add(new THREE.Vector3(
-            (Math.random() - 0.5) * 3,
-            (Math.random() - 0.5) * 1.5,
-            (Math.random() - 0.5) * 3
-          ));
-          // Slight inaccuracy on target
-          to.add(new THREE.Vector3(
-            (Math.random() - 0.5) * 2,
-            (Math.random() - 0.5) * 1.5,
-            (Math.random() - 0.5) * 2
-          ));
-
-          const dir = new THREE.Vector3().subVectors(to, from);
-          const dist = dir.length();
-          dir.normalize();
-
-          const speed = 30 + Math.random() * 15; // Fast bolts
-          bolt.position.copy(from);
-          bolt.velocity.copy(dir).multiplyScalar(speed);
-          bolt.maxLife = dist / speed + 0.1; // Enough time to reach target
-          bolt.life = 0;
-          bolt.active = true;
-          // Movie-accurate: Empire=GREEN, Rebels=RED
-          bolt.color = imperialFires ? "#22ff44" : "#ff2222";
-        }
+        const dir = new THREE.Vector3().subVectors(to, from);
+        const dist = dir.length();
+        dir.normalize();
+        const speed = 30 + Math.random() * 15;
+        bolt.position.copy(from);
+        bolt.velocity.copy(dir).multiplyScalar(speed);
+        bolt.maxLife = dist / speed + 0.1;
+        bolt.life = 0;
+        bolt.active = true;
+        bolt.color = imperialFires ? "#22ff44" : "#ff2222";
+        bolt.damage = 8 * mults.damage;
+        bolt.targetIndex = targetShip.index;
+        bolt.targetFaction = imperialFires ? "rebel" : "imperial";
       }
     }
 
-    // Update active bolts
     bolts.current.forEach((bolt, i) => {
       const mesh = meshRefs.current[i];
-      if (!bolt.active) {
-        if (mesh) mesh.visible = false;
-        return;
-      }
-
+      if (!bolt.active) { if (mesh) mesh.visible = false; return; }
       bolt.life += clampedDelta;
       if (bolt.life >= bolt.maxLife) {
         bolt.active = false;
         if (mesh) mesh.visible = false;
+        // Hit detection on capital ship at end of life
+        const target = ships.find(s => s.index === bolt.targetIndex && s.faction === bolt.targetFaction && s.alive);
+        if (target && bolt.position.distanceTo(target.position) < 6) {
+          const shieldMult = bolt.targetFaction === "rebel" ? rebelMults.shield : imperialMults.shield;
+          target.hp -= bolt.damage / shieldMult;
+          if (target.hp <= 0) {
+            target.alive = false;
+            explosionQueue.current.push(target.position.clone());
+            onShipKill(target.faction);
+          }
+        }
         return;
       }
-
-      // Move bolt
       bolt.position.addScaledVector(bolt.velocity, clampedDelta);
-
       if (mesh) {
         mesh.position.copy(bolt.position);
-        // Orient along velocity
         const dir = bolt.velocity.clone().normalize();
         mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
         mesh.visible = true;
-
         const mat = mesh.material as THREE.MeshBasicMaterial;
-        // Fade out near end of life
         const remaining = 1 - bolt.life / bolt.maxLife;
         mat.opacity = Math.min(remaining * 4, 0.95);
         mat.color.set(bolt.color);
@@ -691,11 +722,7 @@ function TurbolaserExchanges({ imperialPositions, rebelPositions }: {
   return (
     <group>
       {Array.from({ length: MAX_TURBO_BOLTS }, (_, i) => (
-        <mesh
-          key={i}
-          ref={(el) => { meshRefs.current[i] = el; }}
-          visible={false}
-        >
+        <mesh key={i} ref={(el) => { meshRefs.current[i] = el; }} visible={false}>
           <cylinderGeometry args={[0.05, 0.05, 1.2, 4]} />
           <meshBasicMaterial color="#22ff44" transparent opacity={0.9} />
         </mesh>
@@ -705,63 +732,315 @@ function TurbolaserExchanges({ imperialPositions, rebelPositions }: {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  SCOREBOARD HUD (HTML overlay inside Canvas)
+// ═══════════════════════════════════════════════════════════════
+
+function BattleHUD({ score }: { score: BattleScore }) {
+  return (
+    <Html position={[BATTLE_CENTER[0], BATTLE_CENTER[1] + 22, BATTLE_CENTER[2]]} center distanceFactor={40}>
+      <div style={{
+        background: "rgba(0,0,0,0.75)", borderRadius: "6px", padding: "8px 16px",
+        border: "1px solid rgba(255,255,255,0.15)", backdropFilter: "blur(8px)",
+        display: "flex", flexDirection: "column", alignItems: "center", gap: "4px",
+        fontFamily: "monospace", pointerEvents: "none", minWidth: "220px",
+      }}>
+        <div style={{ fontSize: "8px", letterSpacing: "3px", color: "#888", textTransform: "uppercase" }}>
+          Round {score.round}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: "7px", color: "#ff4444", letterSpacing: "2px" }}>REBEL</div>
+            <div style={{ fontSize: "18px", fontWeight: "bold", color: "#ff6644" }}>{score.rebel}</div>
+            <div style={{ fontSize: "7px", color: "#666" }}>
+              {score.rebelShipsLeft}S · {score.rebelFightersLeft}F
+            </div>
+          </div>
+          <div style={{ fontSize: "10px", color: "#444" }}>vs</div>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: "7px", color: "#44ff44", letterSpacing: "2px" }}>EMPIRE</div>
+            <div style={{ fontSize: "18px", fontWeight: "bold", color: "#44ff88" }}>{score.imperial}</div>
+            <div style={{ fontSize: "7px", color: "#666" }}>
+              {score.imperialShipsLeft}S · {score.imperialFightersLeft}F
+            </div>
+          </div>
+        </div>
+        {score.gameOver && (
+          <div style={{
+            fontSize: "9px", letterSpacing: "2px", marginTop: "2px",
+            color: score.winner === "rebel" ? "#ff6644" : "#44ff88",
+            textTransform: "uppercase", fontWeight: "bold",
+          }}>
+            {score.winner === "rebel" ? "Rebel Alliance Wins!" : "Empire Wins!"}
+            <div style={{ fontSize: "7px", color: "#555", fontWeight: "normal" }}>Restarting...</div>
+          </div>
+        )}
+      </div>
+    </Html>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INITIALIZERS
+// ═══════════════════════════════════════════════════════════════
+
+function createInitialCapitalShips(): CapitalShipState[] {
+  const ships: CapitalShipState[] = [];
+  // 3 Star Destroyers
+  const impPositions = [
+    { pos: [BATTLE_CENTER[0] + 25, BATTLE_CENTER[1] + 5, BATTLE_CENTER[2] - 10], rot: [0, -0.8, 0.05] },
+    { pos: [BATTLE_CENTER[0] + 20, BATTLE_CENTER[1] - 3, BATTLE_CENTER[2] + 15], rot: [0, -1.2, -0.03] },
+    { pos: [BATTLE_CENTER[0] + 30, BATTLE_CENTER[1] + 2, BATTLE_CENTER[2] + 5], rot: [0, -0.5, 0.02] },
+  ];
+  impPositions.forEach((s, i) => {
+    ships.push({
+      position: new THREE.Vector3(...(s.pos as [number, number, number])),
+      basePosition: new THREE.Vector3(...(s.pos as [number, number, number])),
+      rotation: new THREE.Euler(...(s.rot as [number, number, number])),
+      velocity: new THREE.Vector3(),
+      hp: 100, maxHp: 100, alive: true, faction: "imperial", index: i,
+      driftPhase: Math.random() * Math.PI * 2, driftSpeed: 0.1 + Math.random() * 0.15,
+      assignedAgent: null,
+    });
+  });
+  // 2 Mon Cal cruisers
+  const rebPositions = [
+    { pos: [BATTLE_CENTER[0] - 20, BATTLE_CENTER[1] - 2, BATTLE_CENTER[2] + 8], rot: [0, 0.6, -0.04] },
+    { pos: [BATTLE_CENTER[0] - 18, BATTLE_CENTER[1] + 4, BATTLE_CENTER[2] - 12], rot: [0, 1.0, 0.03] },
+  ];
+  rebPositions.forEach((s, i) => {
+    ships.push({
+      position: new THREE.Vector3(...(s.pos as [number, number, number])),
+      basePosition: new THREE.Vector3(...(s.pos as [number, number, number])),
+      rotation: new THREE.Euler(...(s.rot as [number, number, number])),
+      velocity: new THREE.Vector3(),
+      hp: 120, maxHp: 120, alive: true, faction: "rebel", index: i + 10,
+      driftPhase: Math.random() * Math.PI * 2, driftSpeed: 0.1 + Math.random() * 0.15,
+      assignedAgent: null,
+    });
+  });
+  return ships;
+}
+
+function createInitialFighters(): FighterData[] {
+  return Array.from({ length: FIGHTER_COUNT }, (_, i) => {
+    const isRebel = i < FIGHTER_COUNT / 2;
+    const angle = Math.random() * Math.PI * 2;
+    const r = 5 + Math.random() * BATTLE_RADIUS;
+    const y = (Math.random() - 0.5) * 15;
+    return {
+      position: new THREE.Vector3(BATTLE_CENTER[0] + Math.cos(angle) * r, BATTLE_CENTER[1] + y, BATTLE_CENTER[2] + Math.sin(angle) * r),
+      velocity: new THREE.Vector3((Math.random() - 0.5) * 2, (Math.random() - 0.5), (Math.random() - 0.5) * 2),
+      target: new THREE.Vector3(),
+      faction: isRebel ? "rebel" as const : "imperial" as const,
+      alive: true, hp: 2, fireCooldown: Math.random() * 3, bankAngle: 0, evadeTimer: 0,
+    };
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CAPITAL SHIP MOVEMENT (drift toward enemies)
+// ═══════════════════════════════════════════════════════════════
+
+function CapitalShipAI({ capitalShips, rebelMults, imperialMults }: {
+  capitalShips: React.MutableRefObject<CapitalShipState[]>;
+  rebelMults: ReturnType<typeof getFactionMultipliers>;
+  imperialMults: ReturnType<typeof getFactionMultipliers>;
+}) {
+  useFrame((_, delta) => {
+    const clampedDelta = Math.min(delta, 0.05);
+    const ships = capitalShips.current;
+    const aliveImps = ships.filter(s => s.faction === "imperial" && s.alive);
+    const aliveRebs = ships.filter(s => s.faction === "rebel" && s.alive);
+
+    ships.forEach(ship => {
+      if (!ship.alive) return;
+      const mults = ship.faction === "rebel" ? rebelMults : imperialMults;
+      const enemies = ship.faction === "rebel" ? aliveImps : aliveRebs;
+
+      // Slow drift toward nearest enemy
+      if (enemies.length > 0) {
+        let nearest = enemies[0];
+        let nearestDist = Infinity;
+        for (const e of enemies) {
+          const d = ship.position.distanceTo(e.position);
+          if (d < nearestDist) { nearestDist = d; nearest = e; }
+        }
+        const toEnemy = new THREE.Vector3().subVectors(nearest.position, ship.position).normalize();
+        // Don't get too close
+        if (nearestDist > 15) {
+          ship.velocity.lerp(toEnemy.multiplyScalar(1.5 * mults.speed), clampedDelta * 0.3);
+        } else {
+          // Orbit/hold distance
+          const tangent = new THREE.Vector3(-toEnemy.z, 0, toEnemy.x);
+          ship.velocity.lerp(tangent.multiplyScalar(0.8 * mults.speed), clampedDelta * 0.3);
+        }
+      }
+
+      ship.position.addScaledVector(ship.velocity, clampedDelta);
+
+      // Gentle oscillation
+      ship.driftPhase += clampedDelta * ship.driftSpeed;
+      ship.position.y += Math.sin(ship.driftPhase) * 0.01;
+    });
+  });
+
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  MAIN BATTLE ORCHESTRATOR
 // ═══════════════════════════════════════════════════════════════
 
-export function EndorBattle() {
+export interface EndorBattleProps {
+  agents?: { callSign: string; specialty: string }[];
+}
+
+export function EndorBattle({ agents }: EndorBattleProps) {
+  const [score, setScore] = useState<BattleScore>({
+    rebel: 0, imperial: 0, round: 1,
+    rebelShipsLeft: 2, imperialShipsLeft: 3,
+    rebelFightersLeft: FIGHTER_COUNT / 2, imperialFightersLeft: FIGHTER_COUNT / 2,
+    gameOver: false, winner: null, restartTimer: 0,
+  });
+
+  const capitalShips = useRef<CapitalShipState[]>(createInitialCapitalShips());
+  const fighters = useRef<FighterData[]>(createInitialFighters());
+  const explosionQueue = useRef<THREE.Vector3[]>([]);
+  const restartTimerRef = useRef(0);
+  const scoreRef = useRef(score);
+  scoreRef.current = score;
+
+  const { rebel: rebelBonuses, imperial: imperialBonuses } = useMemo(() => computeAgentBonuses(agents), [agents]);
+  const rebelMults = useMemo(() => getFactionMultipliers(rebelBonuses), [rebelBonuses]);
+  const imperialMults = useMemo(() => getFactionMultipliers(imperialBonuses), [imperialBonuses]);
+
   const lasersRef = useRef<LaserBolt[]>(
     Array.from({ length: MAX_LASERS }, () => ({
-      from: new THREE.Vector3(),
-      to: new THREE.Vector3(),
-      color: "#ff2222",
-      life: 0,
-      maxLife: 0.3,
-      active: false,
+      from: new THREE.Vector3(), to: new THREE.Vector3(), color: "#ff2222",
+      life: 0, maxLife: 0.3, active: false, damage: 1, targetFaction: "rebel" as const,
     }))
   );
 
-  const laserCallback = useCallback((from: THREE.Vector3, to: THREE.Vector3, color: string) => {
+  const laserCallback = useCallback((from: THREE.Vector3, to: THREE.Vector3, color: string, damage: number, targetFaction: "rebel" | "imperial") => {
     const laser = lasersRef.current.find(l => !l.active);
     if (laser) {
-      laser.from.copy(from);
-      laser.to.copy(to);
-      laser.color = color;
-      laser.life = 0;
-      laser.maxLife = 0.2 + Math.random() * 0.15;
-      laser.active = true;
+      laser.from.copy(from); laser.to.copy(to); laser.color = color;
+      laser.life = 0; laser.maxLife = 0.2 + Math.random() * 0.15;
+      laser.active = true; laser.damage = damage; laser.targetFaction = targetFaction;
     }
   }, []);
 
-  const imperialShips = useMemo(() => [
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 25, BATTLE_CENTER[1] + 5, BATTLE_CENTER[2] - 10), rot: new THREE.Euler(0, -0.8, 0.05) },
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 20, BATTLE_CENTER[1] - 3, BATTLE_CENTER[2] + 15), rot: new THREE.Euler(0, -1.2, -0.03) },
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 30, BATTLE_CENTER[1] + 2, BATTLE_CENTER[2] + 5), rot: new THREE.Euler(0, -0.5, 0.02) },
-  ], []);
+  const resetBattle = useCallback(() => {
+    capitalShips.current = createInitialCapitalShips();
+    fighters.current = createInitialFighters();
+    lasersRef.current.forEach(l => { l.active = false; });
+    restartTimerRef.current = 0;
+  }, []);
 
-  const rebelShips = useMemo(() => [
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] - 20, BATTLE_CENTER[1] - 2, BATTLE_CENTER[2] + 8), rot: new THREE.Euler(0, 0.6, -0.04) },
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] - 18, BATTLE_CENTER[1] + 4, BATTLE_CENTER[2] - 12), rot: new THREE.Euler(0, 1.0, 0.03) },
-  ], []);
+  const onFighterKill = useCallback((faction: "rebel" | "imperial") => {
+    setScore(prev => {
+      const updated = { ...prev };
+      if (faction === "rebel") {
+        updated.rebelFightersLeft = Math.max(0, prev.rebelFightersLeft - 1);
+        updated.imperial += 1;
+      } else {
+        updated.imperialFightersLeft = Math.max(0, prev.imperialFightersLeft - 1);
+        updated.rebel += 1;
+      }
+      return updated;
+    });
+  }, []);
 
-  const imperialPositions = useMemo(() => imperialShips.map(s => s.pos), [imperialShips]);
-  const rebelPositions = useMemo(() => rebelShips.map(s => s.pos), [rebelShips]);
+  const onShipKill = useCallback((faction: "rebel" | "imperial") => {
+    setScore(prev => {
+      const updated = { ...prev };
+      if (faction === "rebel") {
+        updated.rebelShipsLeft = Math.max(0, prev.rebelShipsLeft - 1);
+        updated.imperial += 10; // Capital ships worth more
+      } else {
+        updated.imperialShipsLeft = Math.max(0, prev.imperialShipsLeft - 1);
+        updated.rebel += 10;
+      }
+      return updated;
+    });
+  }, []);
+
+  // Game over + restart check
+  useFrame((_, delta) => {
+    const s = scoreRef.current;
+    const aliveRebFighters = fighters.current.filter(f => f.faction === "rebel" && f.alive).length;
+    const aliveImpFighters = fighters.current.filter(f => f.faction === "imperial" && f.alive).length;
+    const aliveRebShips = capitalShips.current.filter(s => s.faction === "rebel" && s.alive).length;
+    const aliveImpShips = capitalShips.current.filter(s => s.faction === "imperial" && s.alive).length;
+
+    const rebAlive = aliveRebFighters + aliveRebShips;
+    const impAlive = aliveImpFighters + aliveImpShips;
+
+    if (!s.gameOver && (rebAlive === 0 || impAlive === 0)) {
+      const winner = rebAlive === 0 ? "imperial" as const : "rebel" as const;
+      setScore(prev => ({ ...prev, gameOver: true, winner }));
+      restartTimerRef.current = 0;
+    }
+
+    if (s.gameOver) {
+      restartTimerRef.current += delta;
+      if (restartTimerRef.current >= RESTART_DELAY) {
+        resetBattle();
+        setScore(prev => ({
+          rebel: prev.rebel, imperial: prev.imperial, round: prev.round + 1,
+          rebelShipsLeft: 2, imperialShipsLeft: 3,
+          rebelFightersLeft: FIGHTER_COUNT / 2, imperialFightersLeft: FIGHTER_COUNT / 2,
+          gameOver: false, winner: null, restartTimer: 0,
+        }));
+      }
+    }
+
+    // Sync live counts
+    if (!s.gameOver) {
+      setScore(prev => ({
+        ...prev,
+        rebelFightersLeft: aliveRebFighters,
+        imperialFightersLeft: aliveImpFighters,
+        rebelShipsLeft: aliveRebShips,
+        imperialShipsLeft: aliveImpShips,
+      }));
+    }
+  });
+
+  const sdGeo = useMemo(() => createStarDestroyerGeometry(), []);
+  const mcGeo = useMemo(() => createMonCalGeometry(), []);
 
   return (
     <group>
       <DeathStar position={[BATTLE_CENTER[0] + 50, BATTLE_CENTER[1] + 15, BATTLE_CENTER[2] - 30]} />
 
-      {imperialShips.map((ship, i) => (
-        <CapitalShip key={`imp-${i}`} position={ship.pos} rotation={ship.rot} isImperial={true} index={i} />
+      {capitalShips.current.map(ship => (
+        <CapitalShipMesh
+          key={`${ship.faction}-${ship.index}`}
+          ship={ship}
+          geometry={ship.faction === "imperial" ? sdGeo : mcGeo}
+        />
       ))}
 
-      {rebelShips.map((ship, i) => (
-        <CapitalShip key={`reb-${i}`} position={ship.pos} rotation={ship.rot} isImperial={false} index={i + 10} />
-      ))}
+      <CapitalShipAI capitalShips={capitalShips} rebelMults={rebelMults} imperialMults={imperialMults} />
 
-      <FighterSwarm laserCallback={laserCallback} />
-      <LaserBolts lasersRef={lasersRef} />
-      <TurbolaserExchanges imperialPositions={imperialPositions} rebelPositions={rebelPositions} />
-      <ExplosionParticles />
+      <FighterSwarm
+        laserCallback={laserCallback}
+        fighters={fighters}
+        rebelMults={rebelMults}
+        imperialMults={imperialMults}
+      />
+      <LaserBolts lasersRef={lasersRef} fighters={fighters} onFighterKill={onFighterKill} />
+      <TurbolaserExchanges
+        capitalShips={capitalShips}
+        rebelMults={rebelMults}
+        imperialMults={imperialMults}
+        onShipKill={onShipKill}
+        explosionQueue={explosionQueue}
+      />
+      <ExplosionParticles explosionQueue={explosionQueue} />
+
+      <BattleHUD score={score} />
 
       <pointLight position={BATTLE_CENTER} color="#ff6633" intensity={0.8} distance={50} />
       <pointLight position={[BATTLE_CENTER[0] + 20, BATTLE_CENTER[1], BATTLE_CENTER[2]]} color="#4466ff" intensity={0.4} distance={30} />

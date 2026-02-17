@@ -2174,8 +2174,8 @@ export function ConstellationScene({
         <AsteroidBelt />
         <Comets />
 
-        {/* Star Wars Endor Battle — ambient background layer */}
-        <EndorBattle />
+        {/* Star Wars Endor Battle — agent-driven battle */}
+        <EndorBattle agents={agents.map(a => ({ callSign: a.callSign, specialty: a.specialty }))} />
 
         {/* Knowledge Nebula — cosmic source of intelligence above the constellation */}
         <KnowledgeNebula totalEntries={knowledgeGrowth?.totalEntries || 0} />
