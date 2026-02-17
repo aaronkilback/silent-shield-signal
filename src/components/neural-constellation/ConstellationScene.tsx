@@ -1,7 +1,7 @@
 import { useRef, useMemo, useCallback, useState, useEffect, forwardRef, useImperativeHandle } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Line, Html, useTexture } from "@react-three/drei";
-import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
+// Post-processing removed due to R3F v8 compatibility issues
 import * as THREE from "three";
 import { MilkyWayBand, PlanetParade, AsteroidBelt, Comets } from "./SolarSystemElements";
 import { EndorBattle } from "./EndorBattle";
@@ -2308,15 +2308,8 @@ export function ConstellationScene({
           panSpeed={1.2}
         />
 
-        {/* Post-processing effects */}
-        <EffectComposer multisampling={4}>
-          <Bloom
-            luminanceThreshold={0.6}
-            luminanceSmoothing={0.4}
-            intensity={0.8}
-          />
-          <Vignette offset={0.15} darkness={0.7} />
-        </EffectComposer>
+
+
       </Canvas>
     </div>
   );
