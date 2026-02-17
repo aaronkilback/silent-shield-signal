@@ -263,95 +263,38 @@ function createMillenniumFalconGeometry(): THREE.BufferGeometry {
     for (let i = 0; i < p.length; i++) { positions.push(p[i]); normals.push(n[i]); }
   }
 
-  // Main saucer — flattened disc, slightly wider than long
-  const disc = new THREE.CylinderGeometry(2.0, 2.0, 0.18, 20);
+  // Clean, recognizable silhouette optimized for small scale
+  // Main saucer disc — the iconic flat circle
+  const disc = new THREE.CylinderGeometry(1.0, 1.0, 0.08, 16);
   disc.rotateX(Math.PI / 2);
-  disc.scale(1.0, 1.0, 0.85); // Slightly oval
   addGeo(disc);
 
-  // Raised center section (slightly domed top plate)
-  const centerPlate = new THREE.CylinderGeometry(1.2, 1.3, 0.12, 16);
-  centerPlate.rotateX(Math.PI / 2);
-  centerPlate.translate(0, 0.12, -0.15);
-  addGeo(centerPlate);
+  // Forward mandible prongs — the key identifier
+  const mandL = new THREE.BoxGeometry(0.18, 0.07, 0.9);
+  mandL.translate(-0.32, 0, 1.1);
+  addGeo(mandL);
+  const mandR = new THREE.BoxGeometry(0.18, 0.07, 0.9);
+  mandR.translate(0.32, 0, 1.1);
+  addGeo(mandR);
 
-  // Forward mandible prongs — the distinctive fork
-  const mandibleL = new THREE.BoxGeometry(0.25, 0.14, 1.6);
-  mandibleL.translate(-0.6, 0, 2.2);
-  addGeo(mandibleL);
-  const mandibleR = new THREE.BoxGeometry(0.25, 0.14, 1.6);
-  mandibleR.translate(0.6, 0, 2.2);
-  addGeo(mandibleR);
-
-  // Mandible gap infill plates (thinner connecting pieces)
-  const gapFillL = new THREE.BoxGeometry(0.12, 0.08, 0.8);
-  gapFillL.translate(-0.35, 0, 2.6);
-  addGeo(gapFillL);
-  const gapFillR = new THREE.BoxGeometry(0.12, 0.08, 0.8);
-  gapFillR.translate(0.35, 0, 2.6);
-  addGeo(gapFillR);
-
-  // Front crossbar between mandibles
-  const crossbar = new THREE.BoxGeometry(1.5, 0.08, 0.12);
-  crossbar.translate(0, 0, 2.95);
-  addGeo(crossbar);
-
-  // Cockpit — cylindrical tube extending from RIGHT side with dome
-  const cockpitArm = new THREE.CylinderGeometry(0.12, 0.12, 1.1, 6);
-  cockpitArm.rotateZ(Math.PI / 2);
-  cockpitArm.translate(1.55, 0.06, 1.2);
+  // Cockpit — offset to the right, the most recognizable feature
+  const cockpitArm = new THREE.BoxGeometry(0.6, 0.06, 0.1);
+  cockpitArm.translate(0.9, 0.02, 0.5);
   addGeo(cockpitArm);
-  const cockpit = new THREE.SphereGeometry(0.25, 8, 6);
-  cockpit.scale(1.0, 0.7, 1.0);
-  cockpit.translate(2.05, 0.06, 1.2);
+  const cockpit = new THREE.SphereGeometry(0.14, 6, 4);
+  cockpit.translate(1.15, 0.04, 0.5);
   addGeo(cockpit);
 
-  // Rear engine bank — wide, slightly recessed
-  const engineBlock = new THREE.BoxGeometry(2.2, 0.22, 0.15);
-  engineBlock.translate(0, 0, -1.85);
-  addGeo(engineBlock);
-  // Engine glow recesses
-  for (let i = 0; i < 7; i++) {
-    const vent = new THREE.BoxGeometry(0.2, 0.12, 0.06);
-    vent.translate(-0.9 + i * 0.3, 0, -1.95);
-    addGeo(vent);
-  }
-
-  // Top quad turret
-  const turretTop = new THREE.CylinderGeometry(0.15, 0.18, 0.15, 6);
-  turretTop.translate(0.15, 0.22, -0.2);
-  addGeo(turretTop);
-  const gunTopL = new THREE.CylinderGeometry(0.02, 0.02, 0.5, 4);
-  gunTopL.rotateX(Math.PI / 2);
-  gunTopL.translate(0.05, 0.26, 0.1);
-  addGeo(gunTopL);
-  const gunTopR = new THREE.CylinderGeometry(0.02, 0.02, 0.5, 4);
-  gunTopR.rotateX(Math.PI / 2);
-  gunTopR.translate(0.25, 0.26, 0.1);
-  addGeo(gunTopR);
-
-  // Bottom quad turret
-  const turretBot = new THREE.CylinderGeometry(0.15, 0.18, 0.15, 6);
-  turretBot.translate(0.15, -0.22, -0.2);
-  addGeo(turretBot);
+  // Rear engines — flat bar
+  const engines = new THREE.BoxGeometry(1.2, 0.1, 0.08);
+  engines.translate(0, 0, -0.95);
+  addGeo(engines);
 
   // Satellite dish on top
-  const dishBase = new THREE.CylinderGeometry(0.06, 0.06, 0.12, 6);
-  dishBase.translate(-0.6, 0.2, 0.1);
-  addGeo(dishBase);
-  const dish = new THREE.CylinderGeometry(0.0, 0.3, 0.1, 10);
+  const dish = new THREE.CylinderGeometry(0.0, 0.18, 0.06, 8);
   dish.rotateX(Math.PI);
-  dish.translate(-0.6, 0.32, 0.1);
+  dish.translate(-0.3, 0.12, 0.05);
   addGeo(dish);
-
-  // Side panel detail (port)
-  const panelL = new THREE.BoxGeometry(0.04, 0.04, 1.5);
-  panelL.translate(-1.5, 0, 0);
-  addGeo(panelL);
-  // Side panel detail (starboard)
-  const panelR = new THREE.BoxGeometry(0.04, 0.04, 1.5);
-  panelR.translate(1.5, 0, 0);
-  addGeo(panelR);
 
   const merged = new THREE.BufferGeometry();
   merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
@@ -390,7 +333,7 @@ function MillenniumFalcon({ laserCallback, imperialFighters, capitalShips, explo
     ref.current.visible = true;
     const dt = Math.min(delta, 0.05);
 
-    // Find nearest imperial target (prefer fighters, but also attack capital ships)
+    // Find nearest imperial target
     const impFighters = imperialFighters.current.filter(f => f.faction === "imperial" && f.alive);
     const impShips = capitalShips.current.filter(s => s.faction === "imperial" && s.alive);
 
@@ -401,7 +344,6 @@ function MillenniumFalcon({ laserCallback, imperialFighters, capitalShips, explo
       const d = posRef.current.distanceTo(f.position);
       if (d < nearestDist) { nearestDist = d; nearestPos = f.position; }
     }
-    // Occasionally go for capital ships
     if (Math.random() < 0.02 || !nearestPos) {
       for (const s of impShips) {
         const d = posRef.current.distanceTo(s.position);
@@ -409,9 +351,7 @@ function MillenniumFalcon({ laserCallback, imperialFighters, capitalShips, explo
       }
     }
 
-    if (nearestPos) {
-      targetRef.current.copy(nearestPos);
-    }
+    if (nearestPos) targetRef.current.copy(nearestPos);
 
     // Pursuit with evasive jinking
     const toTarget = new THREE.Vector3().subVectors(targetRef.current, posRef.current).normalize();
@@ -424,8 +364,34 @@ function MillenniumFalcon({ laserCallback, imperialFighters, capitalShips, explo
       toTarget.normalize();
     }
 
-    const speed = 10; // Fastest ship in the battle
-    velRef.current.lerp(toTarget.multiplyScalar(speed), dt * 3);
+    // === COLLISION AVOIDANCE ===
+    // Steer away from capital ships
+    const avoidForce = new THREE.Vector3();
+    const AVOID_DIST_CAP = 6;
+    const AVOID_DIST_FIGHTER = 2;
+    for (const s of capitalShips.current) {
+      if (!s.alive) continue;
+      const diff = new THREE.Vector3().subVectors(posRef.current, s.position);
+      const d = diff.length();
+      if (d < AVOID_DIST_CAP && d > 0.1) {
+        diff.normalize().multiplyScalar((AVOID_DIST_CAP - d) / AVOID_DIST_CAP * 15);
+        avoidForce.add(diff);
+      }
+    }
+    // Steer away from nearby fighters
+    for (const f of imperialFighters.current) {
+      if (!f.alive) continue;
+      const diff = new THREE.Vector3().subVectors(posRef.current, f.position);
+      const d = diff.length();
+      if (d < AVOID_DIST_FIGHTER && d > 0.1) {
+        diff.normalize().multiplyScalar((AVOID_DIST_FIGHTER - d) / AVOID_DIST_FIGHTER * 8);
+        avoidForce.add(diff);
+      }
+    }
+
+    const speed = 10;
+    const steer = toTarget.multiplyScalar(speed).add(avoidForce);
+    velRef.current.lerp(steer.normalize().multiplyScalar(speed), dt * 3);
     posRef.current.addScaledVector(velRef.current, dt);
 
     // Keep in bounds
@@ -443,39 +409,33 @@ function MillenniumFalcon({ laserCallback, imperialFighters, capitalShips, explo
     if (velRef.current.lengthSq() > 0.01) {
       ref.current.lookAt(posRef.current.clone().add(velRef.current));
     }
-    // Banking roll
-    const cross = new THREE.Vector3().crossVectors(velRef.current.clone().normalize(), toTarget);
+    const cross = new THREE.Vector3().crossVectors(velRef.current.clone().normalize(), toTarget.normalize());
     rollAngle.current = THREE.MathUtils.lerp(rollAngle.current, cross.y * 2, dt * 4);
     ref.current.rotateZ(rollAngle.current);
 
-    // Quad laser fire — fast and deadly
+    // Quad laser fire
     fireTimer.current -= dt;
     if (fireTimer.current <= 0 && nearestDist < 18) {
-      fireTimer.current = 0.12 + Math.random() * 0.1; // Very fast fire rate
+      fireTimer.current = 0.12 + Math.random() * 0.1;
       const dir = new THREE.Vector3().subVectors(targetRef.current, posRef.current).normalize();
       const end = posRef.current.clone().addScaledVector(dir, Math.min(nearestDist, 10));
       laserCallback(posRef.current.clone(), end, "#ff2222", 2, "imperial");
-
-      // Second turret bolt slightly offset
       const offset = new THREE.Vector3((Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.3, 0);
       laserCallback(posRef.current.clone().add(offset), end.clone().add(offset), "#ff2222", 2, "imperial");
     }
-
-    // Take damage from nearby imperial lasers (handled by LaserBolts hit detection treating it as a fighter)
   });
 
   return (
     <group ref={ref} position={posRef.current}>
-      <mesh geometry={geo} scale={0.6}>
-        <meshStandardMaterial color="#bbaa88" emissive="#886644" emissiveIntensity={0.4} roughness={0.5} metalness={0.6} />
+      <mesh geometry={geo} scale={1.0}>
+        <meshStandardMaterial color="#c8b888" emissive="#887755" emissiveIntensity={0.5} roughness={0.45} metalness={0.7} />
       </mesh>
-      {/* Engine glow (rear) */}
-      <mesh position={[0, 0, -1.0]} scale={0.6}>
-        <sphereGeometry args={[0.4, 6, 6]} />
-        <meshBasicMaterial color="#4488ff" transparent opacity={0.6} />
+      {/* Engine glow (rear, blue) */}
+      <mesh position={[0, 0, -0.95]}>
+        <sphereGeometry args={[0.3, 6, 6]} />
+        <meshBasicMaterial color="#4499ff" transparent opacity={0.7} />
       </mesh>
-      {/* Engine trail particles effect — simple glow */}
-      <pointLight color="#4488ff" intensity={1.5} distance={5} />
+      <pointLight color="#4499ff" intensity={2} distance={6} />
     </group>
   );
 }
