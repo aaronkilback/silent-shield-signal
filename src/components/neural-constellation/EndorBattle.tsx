@@ -702,10 +702,10 @@ function LaserBolts({ lasersRef, fighters, onFighterKill }: {
 
   useFrame((_, delta) => {
     lasersRef.current.forEach((laser, i) => {
-      if (!laser.active) return;
-      laser.life += delta;
-      if (laser.life >= laser.maxLife) { laser.active = false; const m = meshRefs.current[i]; if (m) m.visible = false; return; }
       const mesh = meshRefs.current[i];
+      if (!laser.active) { if (mesh) mesh.visible = false; return; }
+      laser.life += delta;
+      if (laser.life >= laser.maxLife) { laser.active = false; if (mesh) mesh.visible = false; return; }
       if (!mesh) return;
       const progress = laser.life / laser.maxLife;
       const currentPos = new THREE.Vector3().lerpVectors(laser.from, laser.to, progress);
@@ -713,7 +713,9 @@ function LaserBolts({ lasersRef, fighters, onFighterKill }: {
       mesh.position.copy(currentPos);
       mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
       mesh.visible = true;
-      (mesh.material as THREE.MeshBasicMaterial).opacity = 1 - progress * 0.5;
+      const mat = mesh.material as THREE.MeshBasicMaterial;
+      mat.color.set(laser.color);
+      mat.opacity = 1 - progress * 0.5;
 
       // Hit detection on fighters
       if (progress > 0.7) {
@@ -1121,7 +1123,9 @@ export function EndorBattle({ agents }: EndorBattleProps) {
     capitalShips.current = createInitialCapitalShips();
     fighters.current = createInitialFighters();
     lasersRef.current.forEach(l => { l.active = false; });
+    explosionQueue.current = [];
     restartTimerRef.current = 0;
+    scoreSyncTimer.current = 0;
   }, []);
 
   const onFighterKill = useCallback((faction: "rebel" | "imperial") => {
@@ -1152,13 +1156,14 @@ export function EndorBattle({ agents }: EndorBattleProps) {
     });
   }, []);
 
-  // Game over + restart check
+  // Game over + restart check (throttled to avoid per-frame re-renders)
+  const scoreSyncTimer = useRef(0);
   useFrame((_, delta) => {
     const s = scoreRef.current;
     const aliveRebFighters = fighters.current.filter(f => f.faction === "rebel" && f.alive).length;
     const aliveImpFighters = fighters.current.filter(f => f.faction === "imperial" && f.alive).length;
-    const aliveRebShips = capitalShips.current.filter(s => s.faction === "rebel" && s.alive).length;
-    const aliveImpShips = capitalShips.current.filter(s => s.faction === "imperial" && s.alive).length;
+    const aliveRebShips = capitalShips.current.filter(sh => sh.faction === "rebel" && sh.alive).length;
+    const aliveImpShips = capitalShips.current.filter(sh => sh.faction === "imperial" && sh.alive).length;
 
     const rebAlive = aliveRebFighters + aliveRebShips;
     const impAlive = aliveImpFighters + aliveImpShips;
@@ -1182,15 +1187,24 @@ export function EndorBattle({ agents }: EndorBattleProps) {
       }
     }
 
-    // Sync live counts
-    if (!s.gameOver) {
-      setScore(prev => ({
-        ...prev,
-        rebelFightersLeft: aliveRebFighters,
-        imperialFightersLeft: aliveImpFighters,
-        rebelShipsLeft: aliveRebShips,
-        imperialShipsLeft: aliveImpShips,
-      }));
+    // Sync live counts — throttled to ~1Hz to avoid thrashing React
+    scoreSyncTimer.current += delta;
+    if (!s.gameOver && scoreSyncTimer.current >= 1.0) {
+      scoreSyncTimer.current = 0;
+      if (
+        s.rebelFightersLeft !== aliveRebFighters ||
+        s.imperialFightersLeft !== aliveImpFighters ||
+        s.rebelShipsLeft !== aliveRebShips ||
+        s.imperialShipsLeft !== aliveImpShips
+      ) {
+        setScore(prev => ({
+          ...prev,
+          rebelFightersLeft: aliveRebFighters,
+          imperialFightersLeft: aliveImpFighters,
+          rebelShipsLeft: aliveRebShips,
+          imperialShipsLeft: aliveImpShips,
+        }));
+      }
     }
   });
 
