@@ -40,6 +40,7 @@ const AGENT_LEARNING_PROMPTS: Record<string, string> = {
   'PRAETOR': 'You are a major case management specialist. Research this topic for investigative methodologies, evidence handling, and case coordination.',
   'CRUCIBLE': 'You are a data quality and intelligence gap analyst. Research this topic to identify coverage blind spots and monitoring improvements.',
   '0DAY': 'You are an elite offensive security specialist and ethical hacker modeled after Ryan Montgomery (0dayctf). Research this topic for exploitation techniques, vulnerability patterns, attack methodologies, defensive countermeasures, and red team tradecraft. Focus on penetration testing, digital footprint exposure, WiFi/Bluetooth/network vulnerabilities, password security, AI-weaponized attacks, phishing campaigns, mobile device threats, and emerging offensive tooling. Always include detection and mitigation alongside attack vectors.',
+  'VERIDIAN-TANGO': 'You are an elite counterterrorism intelligence analyst specializing in energy-sector threats. Research this topic for terrorism plot indicators, radicalization pathways, attack methodologies targeting pipelines/LNG/refineries, Canadian national security frameworks (CSIS/RCMP INSET), BC/Alberta regional threat patterns, eco-terrorism escalation indicators, and critical infrastructure protection strategies. Always distinguish between activism and terrorism, and anchor findings to specific evidence.',
 };
 
 Deno.serve(async (req) => {
@@ -310,6 +311,7 @@ function generateLiteratureQueries(topic: string, agent: string): string[] {
     'OUROBOROS': 'supply chain security, vendor risk, logistics threats',
     'CRUCIBLE': 'intelligence analysis methodology, structured analytic techniques',
     '0DAY': 'offensive security, ethical hacking, penetration testing, red team operations, vulnerability research, digital footprint analysis, WiFi security, Bluetooth security, password security, AI-weaponized attacks, phishing campaigns, mobile device security',
+    'VERIDIAN-TANGO': 'counterterrorism intelligence, energy sector terrorism, radicalization detection, plot disruption, critical infrastructure protection, Canadian national security, eco-terrorism, CBRNE threats, lone wolf identification, pipeline and LNG facility attack vectors',
   };
 
   const focus = agentFocus[agent] || 'security and intelligence';
@@ -549,6 +551,15 @@ async function identifyLiteratureGaps(
         'network vulnerability assessment — zero-trust architecture, VPN exploitation (Fortinet/Citrix/Pulse CVEs), lateral movement techniques',
         'bug bounty methodology and responsible disclosure — HackerOne, Bugcrowd, vulnerability chaining, CVSS scoring, 0-day market dynamics',
       ],
+      'VERIDIAN-TANGO': [
+        'counterterrorism intelligence analysis and plot detection methodology — attack planning cycle, precursor indicators, disruption windows',
+        'energy sector terrorism and critical infrastructure protection — pipeline sabotage, LNG facility vulnerabilities, SCADA/ICS attack vectors, refinery targeting',
+        'Canadian counterterrorism framework — CSIS strategic assessments, RCMP INSET operations, Canadian Anti-Terrorism Act, Five Eyes intelligence sharing',
+        'radicalization pathways and extremism detection — IMVE, eco-terrorism escalation, online radicalization, lone wolf behavioral indicators',
+        'BC and Alberta regional threat landscape — environmental extremism history, Indigenous rights vs. extremism distinction, energy corridor security',
+        'CBRNE threat assessment for energy infrastructure — chemical release scenarios, explosive device detection, radiological dispersal devices',
+        'terrorism financing and logistics — material acquisition patterns, operational security indicators, cell communication methods',
+      ],
     };
 
     const readingList = specialtyReadingLists[agentCallSign] || ['security risk management and threat assessment'];
@@ -569,7 +580,9 @@ function mapDomainToAgent(domain: string): string {
     cyber: 'NEO', financial_crime: 'CERBERUS', geopolitical: 'MERIDIAN',
     physical_security: 'ARGUS', counterintelligence: 'SPECTER', investigations: 'PRAETOR',
     executive_protection: 'ARGUS', crisis_management: 'AEGIS-CMD', compliance: 'CRUCIBLE',
-    osint: 'NEO', offensive_security: '0DAY',
+    osint: 'NEO', offensive_security: '0DAY', terrorism: 'VERIDIAN-TANGO',
+    counterterrorism: 'VERIDIAN-TANGO', extremism: 'VERIDIAN-TANGO',
+    radicalization: 'VERIDIAN-TANGO', energy_terrorism: 'VERIDIAN-TANGO',
   };
   return mapping[domain] || 'AEGIS-CMD';
 }
@@ -685,6 +698,12 @@ function mapTypeToAgent(signalType: string): string {
     phishing: '0DAY',
     credential_leak: '0DAY',
     ransomware: '0DAY',
+    terrorism: 'VERIDIAN-TANGO',
+    extremism: 'VERIDIAN-TANGO',
+    radicalization: 'VERIDIAN-TANGO',
+    ied: 'VERIDIAN-TANGO',
+    bomb_threat: 'VERIDIAN-TANGO',
+    cbrne: 'VERIDIAN-TANGO',
   };
   return mapping[signalType] || 'AEGIS-CMD';
 }
