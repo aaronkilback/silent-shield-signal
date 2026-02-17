@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { Switch } from "@/components/ui/switch";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useEffect } from "react";
@@ -82,6 +83,7 @@ const NeuralConstellation = () => {
   const navigate = useNavigate();
   const [selectedAgent, setSelectedAgent] = useState<AgentNode | null>(null);
   const [isExecutiveMode, setIsExecutiveMode] = useState(true);
+  const [showBattle, setShowBattle] = useState(true);
 
   useEffect(() => {
     if (!authLoading && !user) navigate("/auth");
@@ -189,6 +191,14 @@ const NeuralConstellation = () => {
           </p>
         </div>
 
+        {/* Battle toggle */}
+        <div className="absolute top-14 left-4 z-20">
+          <label className="flex items-center gap-2 bg-card/70 backdrop-blur-xl border border-border rounded px-3 py-2 cursor-pointer">
+            <Switch checked={showBattle} onCheckedChange={setShowBattle} />
+            <span className="text-[10px] tracking-widest uppercase text-muted-foreground">Battle Sim</span>
+          </label>
+        </div>
+
         {/* 3D Scene */}
         <div className="absolute inset-0">
           <ConstellationScene
@@ -206,6 +216,7 @@ const NeuralConstellation = () => {
             signalLocations={signalLocations}
             knowledgeGrowth={knowledgeGrowth}
             fortressHealth={fortressHealth}
+            showBattle={showBattle}
           />
         </div>
 

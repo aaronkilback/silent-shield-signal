@@ -35,6 +35,7 @@ interface ConstellationSceneProps {
   signalLocations?: string[];
   knowledgeGrowth?: KnowledgeGrowthData;
   fortressHealth?: FortressHealth;
+  showBattle?: boolean;
 }
 
 // Camera presets
@@ -2108,6 +2109,7 @@ export function ConstellationScene({
   signalLocations = [],
   knowledgeGrowth,
   fortressHealth,
+  showBattle = true,
 }: ConstellationSceneProps) {
   const [cameraView, setCameraView] = useState<CameraView>("constellation");
   const controlsRef = useRef<any>(null);
@@ -2181,7 +2183,7 @@ export function ConstellationScene({
         <Comets />
 
         {/* Star Wars Endor Battle — agent-driven battle */}
-        <EndorBattle agents={agents.map(a => ({ callSign: a.callSign, specialty: a.specialty }))} />
+        {showBattle && <EndorBattle agents={agents.map(a => ({ callSign: a.callSign, specialty: a.specialty }))} />}
 
         {/* Knowledge Nebula — cosmic source of intelligence above the constellation */}
         <KnowledgeNebula totalEntries={knowledgeGrowth?.totalEntries || 0} />
