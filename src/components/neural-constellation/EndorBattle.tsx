@@ -263,38 +263,89 @@ function createMillenniumFalconGeometry(): THREE.BufferGeometry {
     for (let i = 0; i < p.length; i++) { positions.push(p[i]); normals.push(n[i]); }
   }
 
-  // Clean, recognizable silhouette optimized for small scale
-  // Main saucer disc — the iconic flat circle
-  const disc = new THREE.CylinderGeometry(1.0, 1.0, 0.08, 16);
+  // === MAIN SAUCER — slightly oval, flat disc ===
+  const disc = new THREE.CylinderGeometry(1.0, 1.0, 0.06, 24);
   disc.rotateX(Math.PI / 2);
+  disc.scale(1.0, 1.0, 0.88); // wider than long
   addGeo(disc);
 
-  // Forward mandible prongs — the key identifier
-  const mandL = new THREE.BoxGeometry(0.18, 0.07, 0.9);
-  mandL.translate(-0.32, 0, 1.1);
+  // Raised center hull plate (the thicker raised area on top/bottom)
+  const centerHull = new THREE.CylinderGeometry(0.55, 0.6, 0.1, 16);
+  centerHull.rotateX(Math.PI / 2);
+  centerHull.translate(0, 0.06, -0.08);
+  addGeo(centerHull);
+
+  // === FORWARD MANDIBLES — the iconic wedge fork ===
+  // Left mandible — tapered wedge
+  const mandL = new THREE.BoxGeometry(0.22, 0.06, 1.0);
+  mandL.translate(-0.38, 0, 1.05);
   addGeo(mandL);
-  const mandR = new THREE.BoxGeometry(0.18, 0.07, 0.9);
-  mandR.translate(0.32, 0, 1.1);
+  // Right mandible
+  const mandR = new THREE.BoxGeometry(0.22, 0.06, 1.0);
+  mandR.translate(0.38, 0, 1.05);
   addGeo(mandR);
+  // Mandible tips converge slightly — angled nose plates
+  const noseL = new THREE.BoxGeometry(0.16, 0.05, 0.3);
+  noseL.translate(-0.28, 0, 1.6);
+  addGeo(noseL);
+  const noseR = new THREE.BoxGeometry(0.16, 0.05, 0.3);
+  noseR.translate(0.28, 0, 1.6);
+  addGeo(noseR);
+  // Crossbar connecting mandible tips
+  const crossbar = new THREE.BoxGeometry(0.7, 0.04, 0.06);
+  crossbar.translate(0, 0, 1.72);
+  addGeo(crossbar);
 
-  // Cockpit — offset to the right, the most recognizable feature
-  const cockpitArm = new THREE.BoxGeometry(0.6, 0.06, 0.1);
-  cockpitArm.translate(0.9, 0.02, 0.5);
-  addGeo(cockpitArm);
-  const cockpit = new THREE.SphereGeometry(0.14, 6, 4);
-  cockpit.translate(1.15, 0.04, 0.5);
-  addGeo(cockpit);
+  // === COCKPIT — starboard side tube + dome (the most recognizable feature) ===
+  const cockpitTube = new THREE.CylinderGeometry(0.07, 0.07, 0.7, 6);
+  cockpitTube.rotateZ(Math.PI / 2);
+  cockpitTube.translate(0.85, 0.02, 0.65);
+  addGeo(cockpitTube);
+  const cockpitDome = new THREE.SphereGeometry(0.13, 8, 6);
+  cockpitDome.scale(1.0, 0.7, 1.0);
+  cockpitDome.translate(1.18, 0.04, 0.65);
+  addGeo(cockpitDome);
 
-  // Rear engines — flat bar
-  const engines = new THREE.BoxGeometry(1.2, 0.1, 0.08);
-  engines.translate(0, 0, -0.95);
-  addGeo(engines);
+  // === REAR ENGINE BLOCK — wide exhaust bank ===
+  const engineBlock = new THREE.BoxGeometry(1.4, 0.08, 0.1);
+  engineBlock.translate(0, 0, -0.88);
+  addGeo(engineBlock);
+  // Individual engine vents (11 vents for detail)
+  for (let i = 0; i < 11; i++) {
+    const vent = new THREE.BoxGeometry(0.08, 0.05, 0.04);
+    vent.translate(-0.6 + i * 0.12, 0, -0.96);
+    addGeo(vent);
+  }
 
-  // Satellite dish on top
-  const dish = new THREE.CylinderGeometry(0.0, 0.18, 0.06, 8);
+  // === SATELLITE DISH — top center-left ===
+  const dishStalk = new THREE.CylinderGeometry(0.03, 0.03, 0.08, 4);
+  dishStalk.translate(-0.25, 0.1, 0.1);
+  addGeo(dishStalk);
+  const dish = new THREE.CylinderGeometry(0.0, 0.2, 0.05, 10);
   dish.rotateX(Math.PI);
-  dish.translate(-0.3, 0.12, 0.05);
+  dish.translate(-0.25, 0.16, 0.1);
   addGeo(dish);
+
+  // === TOP/BOTTOM TURRET WELLS ===
+  const turretTop = new THREE.CylinderGeometry(0.1, 0.12, 0.08, 6);
+  turretTop.translate(0.12, 0.1, -0.15);
+  addGeo(turretTop);
+  const turretBot = new THREE.CylinderGeometry(0.1, 0.12, 0.08, 6);
+  turretBot.translate(0.12, -0.1, -0.15);
+  addGeo(turretBot);
+
+  // === SURFACE DETAIL — panel lines along the hull ===
+  const panelL = new THREE.BoxGeometry(0.02, 0.02, 1.4);
+  panelL.translate(-0.65, 0.04, 0.1);
+  addGeo(panelL);
+  const panelR = new THREE.BoxGeometry(0.02, 0.02, 1.4);
+  panelR.translate(0.65, 0.04, 0.1);
+  addGeo(panelR);
+
+  // Dorsal hull ridge
+  const ridge = new THREE.BoxGeometry(0.8, 0.03, 0.04);
+  ridge.translate(0, 0.08, 0.3);
+  addGeo(ridge);
 
   const merged = new THREE.BufferGeometry();
   merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
@@ -427,15 +478,21 @@ function MillenniumFalcon({ laserCallback, imperialFighters, capitalShips, explo
 
   return (
     <group ref={ref} position={posRef.current}>
-      <mesh geometry={geo} scale={1.0}>
-        <meshStandardMaterial color="#c8b888" emissive="#887755" emissiveIntensity={0.5} roughness={0.45} metalness={0.7} />
+      {/* Main hull — weathered grey-green like the movie */}
+      <mesh geometry={geo} scale={1.2}>
+        <meshStandardMaterial color="#b8b8a0" emissive="#666655" emissiveIntensity={0.3} roughness={0.6} metalness={0.5} />
       </mesh>
-      {/* Engine glow (rear, blue) */}
-      <mesh position={[0, 0, -0.95]}>
-        <sphereGeometry args={[0.3, 6, 6]} />
-        <meshBasicMaterial color="#4499ff" transparent opacity={0.7} />
+      {/* Engine glow bank (rear, bright blue) */}
+      <mesh position={[0, 0, -1.1]} scale={[1.4, 0.3, 0.3]}>
+        <sphereGeometry args={[0.25, 6, 4]} />
+        <meshBasicMaterial color="#5599ff" transparent opacity={0.8} />
       </mesh>
-      <pointLight color="#4499ff" intensity={2} distance={6} />
+      {/* Cockpit glow */}
+      <mesh position={[1.42, 0.05, 0.78]}>
+        <sphereGeometry args={[0.08, 4, 4]} />
+        <meshBasicMaterial color="#aaddff" transparent opacity={0.6} />
+      </mesh>
+      <pointLight color="#5599ff" intensity={2.5} distance={7} />
     </group>
   );
 }
