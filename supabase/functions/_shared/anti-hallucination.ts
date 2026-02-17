@@ -789,12 +789,26 @@ export function validateAIOutput(
     /\b([A-Z]{2,}(?:-[A-Z0-9]+)+)\b/g, // CALLSIGN-STYLE patterns
   ];
   
+  // Non-agent acronym prefixes (matches starting with these are skipped)
+  const EXCLUDED_PREFIXES = [
+    'ISO', 'UTC', 'MST', 'MDT', 'CST', 'EST', 'PST', 'API', 'URL', 'PDF', 'HTML', 'CSS', 'JSON', 'SQL', 'RLS',
+    'RCMP', 'CSIS', 'FBI', 'CIA', 'NSA', 'DHS', 'OSINT', 'HUMINT', 'SIGINT', 'GEOINT', 'IMINT',
+    'NATO', 'NORAD', 'LNG', 'CEO', 'CTO', 'CSO', 'CIO', 'PIR', 'FID', 'CVSS', 'CVE', 'APT', 'IOC', 'TTP',
+    'MITRE', 'NIST', 'AML', 'KYC', 'FS', 'TLS', 'SSL', 'SSH', 'VPN', 'DNS', 'TCP', 'UDP', 'HTTP', 'HTTPS',
+    'INSET', 'IMET', 'CSE', 'ITAC', 'FINTRAC',
+  ];
+  
   agentRefPatterns.forEach(pattern => {
     let match;
     while ((match = pattern.exec(output)) !== null) {
       const ref = match[1];
-      // Skip common non-agent acronyms
-      if (['ISO', 'UTC', 'MST', 'MDT', 'CST', 'EST', 'PST', 'API', 'URL', 'PDF', 'HTML', 'CSS', 'JSON', 'SQL', 'RLS', 'RCMP', 'CSIS', 'FBI', 'CIA', 'NSA', 'DHS', 'OSINT', 'HUMINT', 'SIGINT', 'GEOINT', 'IMINT', 'NATO', 'NORAD', 'LNG', 'CEO', 'CTO', 'CSO', 'CIO', 'PIR', 'FID', 'CVSS', 'CVE', 'APT', 'IOC', 'TTP', 'MITRE', 'ATT&CK', 'NIST', 'AML', 'KYC'].includes(ref)) continue;
+      
+      // Skip if ref starts with any excluded prefix
+      const isExcluded = EXCLUDED_PREFIXES.some(prefix => ref.toUpperCase().startsWith(prefix));
+      if (isExcluded) continue;
+      
+      // Skip Fortress citation IDs (e.g., FID-2026-02-17-PETRONAS-SIG-001)
+      if (/^[A-Z]{2,3}-\d{4}-/.test(ref)) continue;
       
       const isKnownCallSign = KNOWN_AGENT_CALLSIGNS.some(cs => cs.toUpperCase() === ref.toUpperCase());
       const isKnownCodename = KNOWN_AGENT_CODENAMES.some(cn => cn.toUpperCase() === ref.toUpperCase());
