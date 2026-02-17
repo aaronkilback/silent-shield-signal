@@ -3,6 +3,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Line, Html, useTexture } from "@react-three/drei";
 import * as THREE from "three";
 import { MilkyWayBand, PlanetParade, AsteroidBelt, Comets } from "./SolarSystemElements";
+import { EndorBattle } from "./EndorBattle";
 import type { AgentCommLink, ActiveDebate, ScanPulse, AgentActivityMetrics, KnowledgeGraphEdge, OperatorDevice, OperatorMessageActivity, KnowledgeGrowthData } from "@/hooks/useConstellationData";
 import type { FortressHealth } from "@/hooks/useFortressHealth";
 
@@ -2172,6 +2173,9 @@ export function ConstellationScene({
         <PlanetParade />
         <AsteroidBelt />
         <Comets />
+
+        {/* Star Wars Endor Battle — ambient background layer */}
+        <EndorBattle />
 
         {/* Knowledge Nebula — cosmic source of intelligence above the constellation */}
         <KnowledgeNebula totalEntries={knowledgeGrowth?.totalEntries || 0} />
