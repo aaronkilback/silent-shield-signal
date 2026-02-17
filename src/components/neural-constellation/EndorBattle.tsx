@@ -164,21 +164,21 @@ function DeathStar({ position }: { position: [number, number, number] }) {
   });
 
   return (
-    <group ref={ref} position={position}>
+    <group ref={ref} position={position} scale={[2.5, 2.5, 2.5]}>
       {/* Main sphere */}
       <mesh>
         <sphereGeometry args={[5, 24, 24]} />
-        <meshStandardMaterial color="#3a3a3a" roughness={0.8} metalness={0.4} />
+        <meshStandardMaterial color="#3a3a3a" roughness={0.8} metalness={0.4} emissive="#111111" emissiveIntensity={0.3} />
       </mesh>
       {/* Equatorial trench */}
       <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[5.02, 0.15, 4, 32]} />
-        <meshStandardMaterial color="#222222" roughness={0.9} />
+        <torusGeometry args={[5.02, 0.2, 6, 32]} />
+        <meshStandardMaterial color="#1a1a1a" roughness={0.9} />
       </mesh>
       {/* Superlaser dish */}
       <mesh position={[2, 2.5, 3.2]} rotation={[0.3, 0.8, 0]}>
         <circleGeometry args={[1.5, 16]} />
-        <meshStandardMaterial color="#1a1a1a" roughness={0.95} />
+        <meshStandardMaterial color="#0a0a0a" roughness={0.95} />
       </mesh>
       {/* Superlaser glow */}
       <mesh ref={glowRef} position={[2, 2.5, 3.5]}>
@@ -186,12 +186,12 @@ function DeathStar({ position }: { position: [number, number, number] }) {
         <meshBasicMaterial color="#44ff44" transparent opacity={0.04} />
       </mesh>
       {/* Superlaser beam */}
-      <mesh ref={laserRef} position={[2, 2.5, 15]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[0.3, 0.1, 25, 6]} />
+      <mesh ref={laserRef} position={[2, 2.5, 20]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.5, 0.15, 35, 6]} />
         <meshBasicMaterial color="#44ff44" transparent opacity={0} />
       </mesh>
       {/* Ambient light */}
-      <pointLight color="#666666" intensity={1} distance={30} />
+      <pointLight color="#888888" intensity={3} distance={80} />
     </group>
   );
 }
@@ -231,30 +231,39 @@ function CapitalShip({ position, rotation, isImperial, index }: CapitalShipProps
     ref.current.rotation.z = rotation.z + Math.sin(driftPhase.current * 0.3) * 0.03;
   });
 
+  const shipScale = isImperial ? 3.0 : 2.5;
+
   return (
-    <group ref={ref} position={position} rotation={rotation}>
+    <group ref={ref} position={position} rotation={rotation} scale={[shipScale, shipScale, shipScale]}>
       <mesh geometry={geometry}>
         <meshStandardMaterial 
           color={color} 
           emissive={emissiveColor} 
-          emissiveIntensity={0.3}
-          roughness={0.6}
-          metalness={0.7}
+          emissiveIntensity={0.5}
+          roughness={0.5}
+          metalness={0.8}
         />
       </mesh>
-      {/* Engine glow */}
-      <mesh position={isImperial ? [0, 0, -1.5] : [0, 0, -1]}>
-        <sphereGeometry args={[isImperial ? 0.4 : 0.6, 8, 8]} />
-        <meshBasicMaterial 
-          color={isImperial ? "#6688ff" : "#ff8844"} 
-          transparent 
-          opacity={0.4} 
-        />
-      </mesh>
+      {/* Engine glow — multiple engines for Star Destroyers */}
+      {isImperial ? (
+        <>
+          {[-0.8, -0.3, 0.3, 0.8].map((x, i) => (
+            <mesh key={i} position={[x, 0, -5.5]}>
+              <sphereGeometry args={[0.35, 8, 8]} />
+              <meshBasicMaterial color="#6699ff" transparent opacity={0.6} />
+            </mesh>
+          ))}
+        </>
+      ) : (
+        <mesh position={[0, 0, -2.2]}>
+          <sphereGeometry args={[0.8, 8, 8]} />
+          <meshBasicMaterial color="#ff8844" transparent opacity={0.5} />
+        </mesh>
+      )}
       <pointLight 
         color={isImperial ? "#4466cc" : "#ff6633"} 
-        intensity={0.5} 
-        distance={8} 
+        intensity={2} 
+        distance={25} 
       />
     </group>
   );
@@ -276,8 +285,8 @@ interface FighterData {
 }
 
 const FIGHTER_COUNT = 80;
-const BATTLE_CENTER: [number, number, number] = [0, 15, -45];
-const BATTLE_RADIUS = 25;
+const BATTLE_CENTER: [number, number, number] = [0, 8, -80];
+const BATTLE_RADIUS = 40;
 
 function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, to: THREE.Vector3, color: string) => void }) {
   const rebelRef = useRef<THREE.InstancedMesh>(null);
@@ -634,7 +643,7 @@ function TurbolaserExchanges({ imperialPositions, rebelPositions }: {
         dir.normalize();
         return (
           <mesh key={i} position={mid} quaternion={new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir)}>
-            <cylinderGeometry args={[0.06, 0.06, length, 4]} />
+            <cylinderGeometry args={[0.15, 0.15, length, 4]} />
             <meshBasicMaterial color={beam.color} transparent opacity={Math.min(beam.life * 3, 0.8)} />
           </mesh>
         );
@@ -672,16 +681,16 @@ export function EndorBattle() {
     }
   }, []);
 
-  // Capital ship positions — arranged around battle center
+  // Capital ship positions — spread wide around battle center
   const imperialShips = useMemo(() => [
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 25, BATTLE_CENTER[1] + 5, BATTLE_CENTER[2] - 10), rot: new THREE.Euler(0, -0.8, 0.05) },
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 20, BATTLE_CENTER[1] - 3, BATTLE_CENTER[2] + 15), rot: new THREE.Euler(0, -1.2, -0.03) },
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 30, BATTLE_CENTER[1] + 2, BATTLE_CENTER[2] + 5), rot: new THREE.Euler(0, -0.5, 0.02) },
+    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 35, BATTLE_CENTER[1] + 8, BATTLE_CENTER[2] - 15), rot: new THREE.Euler(0, -0.8, 0.05) },
+    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 28, BATTLE_CENTER[1] - 5, BATTLE_CENTER[2] + 20), rot: new THREE.Euler(0, -1.2, -0.03) },
+    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 42, BATTLE_CENTER[1] + 3, BATTLE_CENTER[2] + 8), rot: new THREE.Euler(0, -0.5, 0.02) },
   ], []);
 
   const rebelShips = useMemo(() => [
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] - 20, BATTLE_CENTER[1] - 2, BATTLE_CENTER[2] + 8), rot: new THREE.Euler(0, 0.6, -0.04) },
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] - 18, BATTLE_CENTER[1] + 4, BATTLE_CENTER[2] - 12), rot: new THREE.Euler(0, 1.0, 0.03) },
+    { pos: new THREE.Vector3(BATTLE_CENTER[0] - 30, BATTLE_CENTER[1] - 4, BATTLE_CENTER[2] + 12), rot: new THREE.Euler(0, 0.6, -0.04) },
+    { pos: new THREE.Vector3(BATTLE_CENTER[0] - 25, BATTLE_CENTER[1] + 6, BATTLE_CENTER[2] - 18), rot: new THREE.Euler(0, 1.0, 0.03) },
   ], []);
 
   const imperialPositions = useMemo(() => imperialShips.map(s => s.pos), [imperialShips]);
@@ -690,7 +699,7 @@ export function EndorBattle() {
   return (
     <group>
       {/* Death Star — looming in background */}
-      <DeathStar position={[BATTLE_CENTER[0] + 50, BATTLE_CENTER[1] + 15, BATTLE_CENTER[2] - 30]} />
+      <DeathStar position={[BATTLE_CENTER[0] + 70, BATTLE_CENTER[1] + 20, BATTLE_CENTER[2] - 50]} />
 
       {/* Imperial Star Destroyers */}
       {imperialShips.map((ship, i) => (
@@ -714,9 +723,10 @@ export function EndorBattle() {
       {/* Explosions */}
       <ExplosionParticles />
 
-      {/* Battle area ambient light */}
-      <pointLight position={BATTLE_CENTER} color="#ff6633" intensity={0.8} distance={50} />
-      <pointLight position={[BATTLE_CENTER[0]+20, BATTLE_CENTER[1], BATTLE_CENTER[2]]} color="#4466ff" intensity={0.4} distance={30} />
+      {/* Battle area ambient light — stronger so ships are visible at distance */}
+      <pointLight position={BATTLE_CENTER} color="#ff6633" intensity={3} distance={120} />
+      <pointLight position={[BATTLE_CENTER[0]+30, BATTLE_CENTER[1], BATTLE_CENTER[2]]} color="#4466ff" intensity={2} distance={80} />
+      <pointLight position={[BATTLE_CENTER[0]-30, BATTLE_CENTER[1], BATTLE_CENTER[2]]} color="#ff4422" intensity={1.5} distance={80} />
     </group>
   );
 }
