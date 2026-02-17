@@ -696,6 +696,21 @@ Example: If user says "Say hello to Kayla for me", you should:
 
 ALWAYS USE TOOLS to retrieve data before reporting on it. Never just describe what you would do.
 
+═══ OPERATIONAL HONESTY (CRITICAL — ZERO TOLERANCE) ═══
+YOU MUST NEVER CLAIM TO HAVE PERFORMED AN ACTION UNLESS A TOOL IN THIS CONVERSATION CONFIRMED IT.
+
+RULES:
+1. If the user asks you to update/change/add/remove something and you have a tool for it: CALL THE TOOL FIRST, then report the ACTUAL result.
+2. If the tool returned success: report it as done.
+3. If the tool returned failure: report it FAILED — do not claim it worked.
+4. If you did NOT call a tool: you CANNOT claim the action happened. Say "I don't have a tool for that" or "Let me do that now" and call the tool.
+5. NEVER say "I've updated the monitoring config" or "I've added keywords" without calling update_client_monitoring_config and getting a success response.
+6. NEVER say "I will add" or "I will update" without actually calling the tool in the same turn.
+7. NEVER promise "I will continue to monitor" — you execute one-time actions only.
+8. NEVER claim you dispatched patrols, contacted law enforcement, sent SMS/calls, or performed any physical-world action.
+9. For configuration changes (keywords, thresholds, exclusions): you MUST call update_client_monitoring_config and report the verified result.
+10. Describe ONLY what tools actually confirmed — everything else is a recommendation for the user to act on themselves.
+
 CLIENT ISOLATION RULES (CRITICAL):
 - You MUST NEVER mention, reference, or discuss clients other than the one currently being discussed
 - If data from multiple clients appears in your context, ONLY use data relevant to the current conversation
@@ -2831,7 +2846,42 @@ To include geopolitical or external news context, please ask me to perform an ex
               redactions.push(`[REDACTED: ${label}]`);
             });
             sanitized = sanitized.replace(pattern, '');
-          }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // POST-PROCESSING: Detect fabricated action claims not backed by tool calls
+    // ════════════════════════════════════════════════════════════════════════
+    const executedToolNames = new Set(toolResults.filter(t => t.result?.success).map(t => t.tool));
+    
+    const ACTION_CLAIM_PATTERNS: { pattern: RegExp; requiredTool: string; replacement: string }[] = [
+      { 
+        pattern: /I(?:'ve| have) (?:added|updated|modified|changed|configured|set up|enabled|applied)\s+(?:the\s+)?(?:monitoring\s+)?(?:keywords?|config(?:uration)?|settings?|parameters?|thresholds?|exclusions?)/gi,
+        requiredTool: 'update_client_monitoring_config',
+        replacement: '⚠️ I was unable to update the monitoring configuration because the tool was not called in this turn. Let me attempt that now — please repeat your request.'
+      },
+      {
+        pattern: /I(?:'ve| have) (?:shared|disseminated|distributed|sent|forwarded)\s+(?:this\s+)?(?:document|report|briefing|file)\s+(?:to|with)\s+(?:the\s+)?(?:agents?|team|specialists?)/gi,
+        requiredTool: 'process_document',
+        replacement: '⚠️ Document dissemination is handled automatically by the backend pipeline — I cannot manually share documents with agents.'
+      },
+      {
+        pattern: /I(?:'ve| have) (?:marked|flagged|tagged|classified|submitted feedback for)\s+(?:the\s+)?(?:signals?|items?)\s+as\s+(?:irrelevant|relevant|noise|false.?positive)/gi,
+        requiredTool: 'submit_ai_feedback',
+        replacement: '⚠️ I was unable to submit signal feedback because the tool was not called. Please ask me again and I will call the tool.'
+      },
+      {
+        pattern: /I will (?:continue to |keep |actively )?monitor(?:ing)?/gi,
+        requiredTool: '__never__',
+        replacement: 'Our scheduled monitors will pick up new content in future scan cycles. I can search for current mentions now if needed.'
+      },
+    ];
+
+    for (const { pattern, requiredTool, replacement } of ACTION_CLAIM_PATTERNS) {
+      if (pattern.test(agentResponse) && !executedToolNames.has(requiredTool)) {
+        console.warn(`⛔ FABRICATED ACTION CLAIM detected: Pattern matched but tool '${requiredTool}' was not called`);
+        agentResponse = agentResponse.replace(pattern, replacement);
+      }
+    }
         }
         
         // Clean up extra whitespace from removals
