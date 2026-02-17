@@ -254,6 +254,193 @@ function createFighterGeometry(isXWing: boolean): THREE.BufferGeometry {
   return isXWing ? new THREE.BoxGeometry(0.1, 0.02, 0.15) : new THREE.BoxGeometry(0.12, 0.12, 0.04);
 }
 
+function createMillenniumFalconGeometry(): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const normals: number[] = [];
+  function addGeo(g: THREE.BufferGeometry) {
+    const p = g.attributes.position.array;
+    const n = g.attributes.normal.array;
+    for (let i = 0; i < p.length; i++) { positions.push(p[i]); normals.push(n[i]); }
+  }
+
+  // Main saucer disc
+  const disc = new THREE.CylinderGeometry(1.8, 1.8, 0.25, 16);
+  disc.rotateX(Math.PI / 2);
+  addGeo(disc);
+
+  // Forward mandibles (two prongs)
+  const mandibleL = new THREE.BoxGeometry(0.3, 0.15, 1.2);
+  mandibleL.translate(-0.55, 0, 1.8);
+  addGeo(mandibleL);
+  const mandibleR = new THREE.BoxGeometry(0.3, 0.15, 1.2);
+  mandibleR.translate(0.55, 0, 1.8);
+  addGeo(mandibleR);
+
+  // Mandible crossbar
+  const crossbar = new THREE.BoxGeometry(1.4, 0.1, 0.15);
+  crossbar.translate(0, 0, 2.35);
+  addGeo(crossbar);
+
+  // Cockpit tube (starboard side)
+  const cockpitTube = new THREE.CylinderGeometry(0.15, 0.15, 1.0, 6);
+  cockpitTube.rotateX(Math.PI / 2);
+  cockpitTube.translate(1.6, 0.1, 1.0);
+  addGeo(cockpitTube);
+
+  // Cockpit head
+  const cockpitHead = new THREE.SphereGeometry(0.22, 6, 6);
+  cockpitHead.translate(1.6, 0.1, 1.5);
+  addGeo(cockpitHead);
+
+  // Rear engine bank (wide rectangle)
+  const engineBlock = new THREE.BoxGeometry(1.8, 0.3, 0.2);
+  engineBlock.translate(0, 0, -1.7);
+  addGeo(engineBlock);
+
+  // Turret dome (top)
+  const turretTop = new THREE.SphereGeometry(0.2, 6, 6);
+  turretTop.scale(1, 0.6, 1);
+  turretTop.translate(0.3, 0.25, -0.3);
+  addGeo(turretTop);
+
+  // Turret dome (bottom)
+  const turretBot = new THREE.SphereGeometry(0.2, 6, 6);
+  turretBot.scale(1, 0.6, 1);
+  turretBot.translate(0.3, -0.25, -0.3);
+  addGeo(turretBot);
+
+  // Satellite dish (top)
+  const dish = new THREE.CylinderGeometry(0.0, 0.35, 0.15, 8);
+  dish.translate(-0.5, 0.3, 0);
+  addGeo(dish);
+
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  merged.computeBoundingSphere();
+  return merged;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MILLENNIUM FALCON — Hero rebel ship
+// ═══════════════════════════════════════════════════════════════
+
+function MillenniumFalcon({ laserCallback, imperialFighters, capitalShips, explosionQueue, onFighterKill }: {
+  laserCallback: (from: THREE.Vector3, to: THREE.Vector3, color: string, damage: number, targetFaction: "rebel" | "imperial") => void;
+  imperialFighters: React.MutableRefObject<FighterData[]>;
+  capitalShips: React.MutableRefObject<CapitalShipState[]>;
+  explosionQueue: React.MutableRefObject<THREE.Vector3[]>;
+  onFighterKill: (faction: "rebel" | "imperial") => void;
+}) {
+  const ref = useRef<THREE.Group>(null);
+  const geo = useMemo(() => createMillenniumFalconGeometry(), []);
+  const posRef = useRef(new THREE.Vector3(BATTLE_CENTER[0] - 10, BATTLE_CENTER[1] + 3, BATTLE_CENTER[2]));
+  const velRef = useRef(new THREE.Vector3(2, 0, 1));
+  const fireTimer = useRef(0);
+  const targetRef = useRef(new THREE.Vector3());
+  const evadeTimer = useRef(0);
+  const rollAngle = useRef(0);
+  const alive = useRef(true);
+  const hp = useRef(15); // Tough little ship
+
+  useFrame((_, delta) => {
+    if (!ref.current || !alive.current) {
+      if (ref.current) ref.current.visible = false;
+      return;
+    }
+    ref.current.visible = true;
+    const dt = Math.min(delta, 0.05);
+
+    // Find nearest imperial target (prefer fighters, but also attack capital ships)
+    const impFighters = imperialFighters.current.filter(f => f.faction === "imperial" && f.alive);
+    const impShips = capitalShips.current.filter(s => s.faction === "imperial" && s.alive);
+
+    let nearestPos: THREE.Vector3 | null = null;
+    let nearestDist = Infinity;
+
+    for (const f of impFighters) {
+      const d = posRef.current.distanceTo(f.position);
+      if (d < nearestDist) { nearestDist = d; nearestPos = f.position; }
+    }
+    // Occasionally go for capital ships
+    if (Math.random() < 0.02 || !nearestPos) {
+      for (const s of impShips) {
+        const d = posRef.current.distanceTo(s.position);
+        if (d < nearestDist * 1.5) { nearestDist = d; nearestPos = s.position; }
+      }
+    }
+
+    if (nearestPos) {
+      targetRef.current.copy(nearestPos);
+    }
+
+    // Pursuit with evasive jinking
+    const toTarget = new THREE.Vector3().subVectors(targetRef.current, posRef.current).normalize();
+    evadeTimer.current -= dt;
+    if (evadeTimer.current <= 0) {
+      evadeTimer.current = 0.5 + Math.random() * 1.5;
+      toTarget.x += (Math.random() - 0.5) * 1.2;
+      toTarget.y += (Math.random() - 0.5) * 0.8;
+      toTarget.z += (Math.random() - 0.5) * 1.2;
+      toTarget.normalize();
+    }
+
+    const speed = 10; // Fastest ship in the battle
+    velRef.current.lerp(toTarget.multiplyScalar(speed), dt * 3);
+    posRef.current.addScaledVector(velRef.current, dt);
+
+    // Keep in bounds
+    const fromCenter = new THREE.Vector3(
+      posRef.current.x - BATTLE_CENTER[0],
+      posRef.current.y - BATTLE_CENTER[1],
+      posRef.current.z - BATTLE_CENTER[2],
+    );
+    if (fromCenter.length() > BATTLE_RADIUS * 1.3) {
+      fromCenter.normalize().multiplyScalar(-3);
+      velRef.current.add(fromCenter);
+    }
+
+    ref.current.position.copy(posRef.current);
+    if (velRef.current.lengthSq() > 0.01) {
+      ref.current.lookAt(posRef.current.clone().add(velRef.current));
+    }
+    // Banking roll
+    const cross = new THREE.Vector3().crossVectors(velRef.current.clone().normalize(), toTarget);
+    rollAngle.current = THREE.MathUtils.lerp(rollAngle.current, cross.y * 2, dt * 4);
+    ref.current.rotateZ(rollAngle.current);
+
+    // Quad laser fire — fast and deadly
+    fireTimer.current -= dt;
+    if (fireTimer.current <= 0 && nearestDist < 18) {
+      fireTimer.current = 0.12 + Math.random() * 0.1; // Very fast fire rate
+      const dir = new THREE.Vector3().subVectors(targetRef.current, posRef.current).normalize();
+      const end = posRef.current.clone().addScaledVector(dir, Math.min(nearestDist, 10));
+      laserCallback(posRef.current.clone(), end, "#ff2222", 2, "imperial");
+
+      // Second turret bolt slightly offset
+      const offset = new THREE.Vector3((Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.3, 0);
+      laserCallback(posRef.current.clone().add(offset), end.clone().add(offset), "#ff2222", 2, "imperial");
+    }
+
+    // Take damage from nearby imperial lasers (handled by LaserBolts hit detection treating it as a fighter)
+  });
+
+  return (
+    <group ref={ref} position={posRef.current}>
+      <mesh geometry={geo} scale={0.6}>
+        <meshStandardMaterial color="#bbaa88" emissive="#886644" emissiveIntensity={0.4} roughness={0.5} metalness={0.6} />
+      </mesh>
+      {/* Engine glow (rear) */}
+      <mesh position={[0, 0, -1.0]} scale={0.6}>
+        <sphereGeometry args={[0.4, 6, 6]} />
+        <meshBasicMaterial color="#4488ff" transparent opacity={0.6} />
+      </mesh>
+      {/* Engine trail particles effect — simple glow */}
+      <pointLight color="#4488ff" intensity={1.5} distance={5} />
+    </group>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  DEATH STAR (background, not destroyable)
 // ═══════════════════════════════════════════════════════════════
@@ -1039,6 +1226,13 @@ export function EndorBattle({ agents }: EndorBattleProps) {
         explosionQueue={explosionQueue}
       />
       <ExplosionParticles explosionQueue={explosionQueue} />
+      <MillenniumFalcon
+        laserCallback={laserCallback}
+        imperialFighters={fighters}
+        capitalShips={capitalShips}
+        explosionQueue={explosionQueue}
+        onFighterKill={onFighterKill}
+      />
 
       <BattleHUD score={score} />
 
