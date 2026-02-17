@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { INVESTIGATION_PERSON_STATUSES, PERSON_STATUS_LABELS, type InvestigationPersonStatus } from "@/lib/constants/investigation";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -56,7 +57,7 @@ const InvestigationDetail = () => {
   const [newEntryEventHour, setNewEntryEventHour] = useState("12");
   const [newEntryEventMinute, setNewEntryEventMinute] = useState("00");
   const [newPersonName, setNewPersonName] = useState("");
-  const [newPersonStatus, setNewPersonStatus] = useState("witness");
+  const [newPersonStatus, setNewPersonStatus] = useState<InvestigationPersonStatus>("witness");
   const [newPersonPhone, setNewPersonPhone] = useState("");
   const [newPersonEmail, setNewPersonEmail] = useState("");
   const [newPersonPosition, setNewPersonPosition] = useState("");
@@ -1240,16 +1241,16 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-6 gap-2">
-                  <Select value={newPersonStatus} onValueChange={setNewPersonStatus}>
+                  <Select value={newPersonStatus} onValueChange={(v) => setNewPersonStatus(v as InvestigationPersonStatus)}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="complainant">Complainant</SelectItem>
-                      <SelectItem value="witness">Witness</SelectItem>
-                      <SelectItem value="suspect">Suspect</SelectItem>
-                      <SelectItem value="supervisor">Supervisor</SelectItem>
-                      <SelectItem value="other">Other</SelectItem>
+                      <SelectItem value="complainant">{PERSON_STATUS_LABELS.complainant}</SelectItem>
+                      <SelectItem value="witness">{PERSON_STATUS_LABELS.witness}</SelectItem>
+                      <SelectItem value="suspect">{PERSON_STATUS_LABELS.suspect}</SelectItem>
+                      <SelectItem value="supervisor">{PERSON_STATUS_LABELS.supervisor}</SelectItem>
+                      <SelectItem value="other">{PERSON_STATUS_LABELS.other}</SelectItem>
                     </SelectContent>
                   </Select>
                   <EntityPersonLookup
@@ -1302,11 +1303,11 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="complainant">Complainant</SelectItem>
-                              <SelectItem value="witness">Witness</SelectItem>
-                              <SelectItem value="suspect">Suspect</SelectItem>
-                              <SelectItem value="supervisor">Supervisor</SelectItem>
-                              <SelectItem value="other">Other</SelectItem>
+                              <SelectItem value="complainant">{PERSON_STATUS_LABELS.complainant}</SelectItem>
+                              <SelectItem value="witness">{PERSON_STATUS_LABELS.witness}</SelectItem>
+                              <SelectItem value="suspect">{PERSON_STATUS_LABELS.suspect}</SelectItem>
+                              <SelectItem value="supervisor">{PERSON_STATUS_LABELS.supervisor}</SelectItem>
+                              <SelectItem value="other">{PERSON_STATUS_LABELS.other}</SelectItem>
                             </SelectContent>
                           </Select>
                           <Input className="flex-1" value={editingPersonData.name} onChange={(e) => setEditingPersonData(d => ({...d, name: e.target.value}))} placeholder="Name" />

@@ -103,9 +103,16 @@ export const systemTestRunManager = {
     const startedAt = new Date().toISOString();
     setState({ status: "running", startedAt });
 
+    const MAX_TOTAL_MS = 5 * 60 * 1000; // 5 minute hard cap
+
     (async () => {
       try {
-        const results = await runAllTests();
+        const results = await Promise.race([
+          runAllTests(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Test run exceeded 5-minute limit")), MAX_TOTAL_MS)
+          ),
+        ]);
         setState({
           status: "completed",
           startedAt,

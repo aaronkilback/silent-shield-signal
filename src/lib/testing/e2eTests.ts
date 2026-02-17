@@ -23,14 +23,21 @@ export interface TestSuite {
 
 type TestFn = () => Promise<void>;
 
+const TEST_TIMEOUT_MS = 15_000; // 15s per test — prevents hung edge function calls from blocking the suite
+
 /**
- * Run a single test with timing and error capture
+ * Run a single test with timing, error capture, and a hard timeout
  */
 async function runTest(name: string, testFn: TestFn): Promise<TestResult> {
   const start = performance.now();
   
   try {
-    await testFn();
+    await Promise.race([
+      testFn(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Test timed out after ${TEST_TIMEOUT_MS / 1000}s`)), TEST_TIMEOUT_MS)
+      ),
+    ]);
     return {
       name,
       passed: true,
