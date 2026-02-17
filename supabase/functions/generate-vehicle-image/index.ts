@@ -26,6 +26,7 @@ Deno.serve(async (req) => {
       functionName: 'generate-vehicle-image',
       extraBody: { modalities: ['image', 'text'] },
       retries: 1,
+      skipGuardrails: true, // Image generation doesn't need text guardrails
     });
 
     if (result.error) {
