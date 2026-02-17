@@ -13,7 +13,8 @@
  * - Adjusts baselines as the platform grows
  * - Feeds historical context into AI analysis for smarter decisions
  * 
- * Runs every 6 hours via pg_cron. Emails ak@silentshieldsecurity.com
+ * Runs once daily at 06:00 MST (13:00 UTC) via pg_cron. Emails ak@silentshieldsecurity.com
+ * Critical issues bypass the daily schedule via shouldAlert=true with severity=critical.
  */
 
 import { Resend } from "npm:resend@2.0.0";
@@ -78,10 +79,11 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - LEARNING: Track which anti-patterns are most common to identify systemic prompt weaknesses
 
 ### Daily Briefing System (HIGH)
-- Sends AI-generated threat summary at 06:00 Calgary (13:00 UTC)
+- Sends AI-generated threat summary once daily at 06:00 Calgary (13:00 UTC)
+- 20-hour dedup guard prevents duplicate sends regardless of trigger source
 - Suppression rule: skips if no new intelligence in 24h (NORMAL)
 - Uses Silent Shield doctrine (core-10 tagged entries)
-- EXPECTED: Sends daily unless suppressed. Check AFTER 14:00 UTC only
+- EXPECTED: Exactly one briefing per day unless suppressed. Check AFTER 14:00 UTC only
 - REMEDIATION: Can trigger manual briefing re-send
 
 ### Autonomous Operations (HIGH)
@@ -1893,8 +1895,18 @@ Deno.serve(async (req) => {
       } catch { /* logging is best-effort */ }
     }
 
-    // Phase 7: Email (always send if remediations were attempted, otherwise only on alert)
-    const shouldEmail = analysis.shouldAlert || remediationResults.length > 0;
+    // Phase 7: Email — only send if critical, or if it's the scheduled daily run (dedup via 20h window)
+    const isCritical = analysis.severity === 'critical';
+    const dedupCutoff = new Date(Date.now() - 20 * 3600000).toISOString();
+    const { data: recentWatchdogEmails } = await supabase
+      .from('autonomous_actions_log')
+      .select('id')
+      .eq('action_type', 'watchdog_report')
+      .gte('created_at', dedupCutoff)
+      .limit(1);
+
+    const alreadyEmailedRecently = recentWatchdogEmails && recentWatchdogEmails.length > 0;
+    const shouldEmail = isCritical || ((analysis.shouldAlert || remediationResults.length > 0) && !alreadyEmailedRecently);
 
     if (shouldEmail) {
       const resend = new Resend(RESEND_API_KEY);
@@ -1923,7 +1935,15 @@ Deno.serve(async (req) => {
       });
 
       if (emailError) console.error('[Watchdog] Email failed:', emailError);
-      else console.log(`[Watchdog] 📧 Report sent to ${ALERT_EMAIL}`);
+      else {
+        console.log(`[Watchdog] 📧 Report sent to ${ALERT_EMAIL}`);
+        // Log for dedup tracking
+        await supabase.from('autonomous_actions_log').insert({
+          action_type: 'watchdog_report', trigger_source: 'system-watchdog',
+          action_details: { severity: analysis.severity, findings: analysis.findings.length, fixed: fixedCount },
+          status: 'completed',
+        });
+      }
 
       return successResponse({
         success: true, severity: analysis.severity, runId,

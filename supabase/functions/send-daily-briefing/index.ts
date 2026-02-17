@@ -84,19 +84,19 @@ Deno.serve(async (req) => {
       autonomous_actions: (recentActions || []).length,
     };
 
-    // DEDUP GUARD
-    const todayStart = dateContext.currentDateISO + 'T00:00:00Z';
+    // DEDUP GUARD — use 20-hour lookback (timezone-safe)
+    const dedupCutoff = new Date(Date.now() - 20 * 3600000).toISOString();
     const { data: alreadySent } = await supabase
       .from('autonomous_actions_log')
       .select('id')
       .eq('action_type', 'daily_email_briefing')
-      .eq('status', 'completed')
-      .gte('created_at', todayStart)
-      .not('action_details->skipped', 'eq', 'true')
+      .in('status', ['completed', 'partial'])
+      .gte('created_at', dedupCutoff)
       .limit(1);
 
     if (alreadySent && alreadySent.length > 0) {
-      return successResponse({ success: true, message: 'Briefing already sent today', sent: 0, deduplicated: true });
+      console.log('[DailyBriefing] Already sent within 20h — dedup blocked');
+      return successResponse({ success: true, message: 'Briefing already sent within 20 hours', sent: 0, deduplicated: true });
     }
 
     const hasNewActivity = metrics.signals_24h > 0 || metrics.open_incidents > 0 || metrics.autonomous_actions > 0;
