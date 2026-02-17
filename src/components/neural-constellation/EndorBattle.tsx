@@ -485,12 +485,12 @@ function MillenniumFalcon({ laserCallback, imperialFighters, capitalShips, explo
       {/* Engine glow bank (rear, bright blue) */}
       <mesh position={[0, 0, -1.1]} scale={[1.4, 0.3, 0.3]}>
         <sphereGeometry args={[0.25, 6, 4]} />
-        <meshBasicMaterial color="#5599ff" transparent opacity={0.8} />
+        <meshBasicMaterial color={[2, 3, 6]} toneMapped={false} transparent opacity={0.8} />
       </mesh>
       {/* Cockpit glow */}
       <mesh position={[1.42, 0.05, 0.78]}>
         <sphereGeometry args={[0.08, 4, 4]} />
-        <meshBasicMaterial color="#aaddff" transparent opacity={0.6} />
+        <meshBasicMaterial color={[3, 4, 6]} toneMapped={false} transparent opacity={0.6} />
       </mesh>
       <pointLight color="#5599ff" intensity={2.5} distance={7} />
     </group>
@@ -568,7 +568,7 @@ function DeathStar({ position }: { position: [number, number, number] }) {
       <mesh><sphereGeometry args={[5, 24, 24]} /><meshStandardMaterial color="#3a3a3a" roughness={0.8} metalness={0.4} /></mesh>
       <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[5.02, 0.15, 4, 32]} /><meshStandardMaterial color="#222222" roughness={0.9} /></mesh>
       <mesh position={[2, 2.5, 3.2]} rotation={[0.3, 0.8, 0]}><circleGeometry args={[1.5, 16]} /><meshStandardMaterial color="#1a1a1a" roughness={0.95} /></mesh>
-      <mesh ref={glowRef} position={[2, 2.5, 3.5]}><sphereGeometry args={[1.8, 12, 12]} /><meshBasicMaterial color="#44ff44" transparent opacity={0.04} /></mesh>
+      <mesh ref={glowRef} position={[2, 2.5, 3.5]}><sphereGeometry args={[1.8, 12, 12]} /><meshBasicMaterial color={[1, 4, 1]} toneMapped={false} transparent opacity={0.04} /></mesh>
       {/* Superlaser beam aimed at Endor moon */}
       <mesh
         ref={laserRef}
@@ -577,7 +577,7 @@ function DeathStar({ position }: { position: [number, number, number] }) {
         visible={false}
       >
         <cylinderGeometry args={[0.6, 0.15, laserLen, 8]} />
-        <meshBasicMaterial color="#44ff44" transparent opacity={0} />
+        <meshBasicMaterial color={[1, 5, 1]} toneMapped={false} transparent opacity={0} />
       </mesh>
       <pointLight color="#666666" intensity={1} distance={30} />
     </group>
@@ -646,7 +646,7 @@ function CapitalShipMesh({ ship, geometry }: { ship: CapitalShipState; geometry:
           {[-0.4, 0, 0.4].map((zOff, ei) => (
             <mesh key={ei} position={[0, 0, -1.5 * 1.5 + zOff * 0.5]}>
               <sphereGeometry args={[0.25, 6, 6]} />
-              <meshBasicMaterial color="#6688ff" transparent opacity={0.5} />
+              <meshBasicMaterial color={[1.5, 2, 5]} toneMapped={false} transparent opacity={0.5} />
             </mesh>
           ))}
         </>
@@ -657,7 +657,7 @@ function CapitalShipMesh({ ship, geometry }: { ship: CapitalShipState; geometry:
             return (
               <mesh key={i} position={[-2.4, Math.sin(angle) * 0.3, Math.cos(angle) * 0.3]}>
                 <sphereGeometry args={[0.15, 5, 5]} />
-                <meshBasicMaterial color="#ff8844" transparent opacity={0.6} />
+                <meshBasicMaterial color={[4, 2, 1]} toneMapped={false} transparent opacity={0.6} />
               </mesh>
             );
           })}
@@ -787,10 +787,10 @@ function FighterSwarm({
   return (
     <>
       <instancedMesh ref={rebelRef} args={[rebelGeo, undefined, FIGHTER_COUNT / 2]}>
-        <meshStandardMaterial color="#cccccc" emissive="#ff6644" emissiveIntensity={0.5} roughness={0.4} metalness={0.6} />
+        <meshStandardMaterial color="#cccccc" emissive="#ff6644" emissiveIntensity={1.2} roughness={0.35} metalness={0.7} toneMapped={false} />
       </instancedMesh>
       <instancedMesh ref={imperialRef} args={[imperialGeo, undefined, FIGHTER_COUNT / 2]}>
-        <meshStandardMaterial color="#555566" emissive="#4466aa" emissiveIntensity={0.5} roughness={0.5} metalness={0.7} />
+        <meshStandardMaterial color="#555566" emissive="#4466aa" emissiveIntensity={1.2} roughness={0.4} metalness={0.8} toneMapped={false} />
       </instancedMesh>
     </>
   );
