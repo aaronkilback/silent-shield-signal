@@ -749,30 +749,29 @@ function LaserBolts({ lasersRef, fighters, onFighterKill }: {
   onFighterKill: (faction: "rebel" | "imperial") => void;
 }) {
   const groupRef = useRef<THREE.Group>(null);
-  const meshesReady = useRef(false);
   const laserGeo = useMemo(() => new THREE.CylinderGeometry(0.02, 0.02, 0.6, 3), []);
-
-  // Create meshes imperatively to avoid JSX material issues
   const meshPool = useRef<THREE.Mesh[]>([]);
-  
-  useMemo(() => {
-    meshPool.current = Array.from({ length: MAX_LASERS }, () => {
-      const mat = new THREE.MeshBasicMaterial({ color: "#ff2222", transparent: true, opacity: 0.9 });
-      const mesh = new THREE.Mesh(laserGeo, mat);
-      mesh.visible = false;
-      return mesh;
-    });
-  }, [laserGeo]);
-
-  // Add meshes to group once mounted
-  useFrame(() => {
-    if (!meshesReady.current && groupRef.current) {
-      meshPool.current.forEach(m => groupRef.current!.add(m));
-      meshesReady.current = true;
-    }
-  });
+  const mounted = useRef(false);
 
   useFrame((_, delta) => {
+    if (!groupRef.current) return;
+
+    // Lazily create and attach meshes once
+    if (!mounted.current) {
+      // Clear any stale children
+      while (groupRef.current.children.length > 0) {
+        groupRef.current.remove(groupRef.current.children[0]);
+      }
+      meshPool.current = Array.from({ length: MAX_LASERS }, () => {
+        const mat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.9 });
+        const mesh = new THREE.Mesh(laserGeo, mat);
+        mesh.visible = false;
+        groupRef.current!.add(mesh);
+        return mesh;
+      });
+      mounted.current = true;
+    }
+
     lasersRef.current.forEach((laser, i) => {
       const mesh = meshPool.current[i];
       if (!mesh) return;
@@ -893,27 +892,27 @@ function TurbolaserExchanges({ capitalShips, rebelMults, imperialMults, onShipKi
   );
 
   const meshPool = useRef<THREE.Mesh[]>([]);
-  const meshesReady = useRef(false);
-
-  useMemo(() => {
-    meshPool.current = Array.from({ length: MAX_TURBO_BOLTS }, () => {
-      const mat = new THREE.MeshBasicMaterial({ color: "#22ff44", transparent: true, opacity: 0.9 });
-      const mesh = new THREE.Mesh(turboGeo, mat);
-      mesh.visible = false;
-      return mesh;
-    });
-  }, [turboGeo]);
+  const mounted = useRef(false);
 
   const fireTimer = useRef(0);
 
-  useFrame(() => {
-    if (!meshesReady.current && groupRef.current) {
-      meshPool.current.forEach(m => groupRef.current!.add(m));
-      meshesReady.current = true;
-    }
-  });
-
   useFrame((_, delta) => {
+    if (!groupRef.current) return;
+
+    // Lazily create and attach meshes once
+    if (!mounted.current) {
+      while (groupRef.current.children.length > 0) {
+        groupRef.current.remove(groupRef.current.children[0]);
+      }
+      meshPool.current = Array.from({ length: MAX_TURBO_BOLTS }, () => {
+        const mat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.9 });
+        const mesh = new THREE.Mesh(turboGeo, mat);
+        mesh.visible = false;
+        groupRef.current!.add(mesh);
+        return mesh;
+      });
+      mounted.current = true;
+    }
     const clampedDelta = Math.min(delta, 0.05);
     const ships = capitalShips.current;
     const aliveImps = ships.filter(s => s.faction === "imperial" && s.alive);
