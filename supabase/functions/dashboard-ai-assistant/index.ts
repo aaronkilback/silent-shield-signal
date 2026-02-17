@@ -146,7 +146,7 @@ function isMetaConversation(text: string): boolean {
 
 // Build the unified AEGIS system prompt from shared modules
 // Single source of truth — no more inline prompt duplication
-function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = ""): string {
+function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = ""): string {
   const timeContext = getTimeContext();
   
   return `${AEGIS_CORE_IDENTITY}
@@ -159,6 +159,7 @@ ${AEGIS_CHAT_MODIFIERS}
 
 ═══ CURRENT TIME ═══
 ${timeContext.full}
+${agentRosterContext}
 ${tenantKnowledgeContext}${behavioralCorrectionContext}
 ${learningContext ? `\n${learningContext}\n` : ''}
 ${FORTRESS_PLATFORM_OVERVIEW}
@@ -7656,7 +7657,7 @@ Deno.serve(async (req) => {
     
     // ═══ PARALLELIZED CONTEXT LOADING ═══
     // Run auth + learning + corrections concurrently to cut latency
-    const [authResult, learningResult, correctionsResult] = await Promise.allSettled([
+    const [authResult, learningResult, correctionsResult, agentRosterResult] = await Promise.allSettled([
       // 1. Auth + tenant + tenant knowledge (chained since they depend on each other)
       (async () => {
         if (!authHeader?.startsWith("Bearer ")) return null;
@@ -7713,6 +7714,18 @@ Deno.serve(async (req) => {
         .limit(3)
         .then(({ data }: any) => data)
         .catch(() => null),
+      
+      // 4. Live agent roster — prevents agent hallucination
+      supabaseClient
+        .from("ai_agents")
+        .select("call_sign, codename, specialty, is_active, header_name")
+        .eq("is_active", true)
+        .order("call_sign", { ascending: true })
+        .then(({ data }: any) => data)
+        .catch((e: any) => {
+          console.warn("[AEGIS] Failed to load agent roster (non-fatal):", e);
+          return null;
+        }),
     ]);
 
     const learningContext = learningResult.status === 'fulfilled' ? (learningResult.value as string) : "";
@@ -7723,6 +7736,18 @@ Deno.serve(async (req) => {
     if (corrections && (corrections as any[])?.length > 0) {
       behavioralCorrectionContext = `\n\n⚠️ ACTIVE BEHAVIORAL CORRECTIONS:\n${(corrections as any[]).map((c: any) => c.content).join('\n---\n')}\n`;
       console.log(`[AEGIS] Loaded ${(corrections as any[]).length} active behavioral correction(s)`);
+    }
+
+    // Build live agent roster context to prevent hallucination
+    let agentRosterContext = "";
+    const agentRoster = agentRosterResult.status === 'fulfilled' ? agentRosterResult.value : null;
+    if (agentRoster && (agentRoster as any[])?.length > 0) {
+      const agents = agentRoster as any[];
+      agentRosterContext = `\n\n═══ LIVE AGENT ROSTER (${agents.length} active agents — ONLY these exist, do NOT invent others) ═══\n${agents.map((a: any) => `• ${a.call_sign}${a.header_name ? ` (${a.header_name})` : ''}${a.codename && a.codename !== a.call_sign ? ` — Codename: ${a.codename}` : ''} — Specialty: ${a.specialty}`).join('\n')}\n⚠️ Any agent NOT listed above DOES NOT EXIST. Never reference, describe, or claim to message an agent not in this list.\n`;
+      console.log(`[AEGIS] Loaded live agent roster: ${agents.length} active agents`);
+    } else {
+      agentRosterContext = `\n\n═══ LIVE AGENT ROSTER ═══\n⚠️ Agent roster could not be loaded. Before referencing ANY agent by name, you MUST call query_fortress_data to verify the agent exists in the ai_agents table. NEVER guess or fabricate agent names.\n`;
+      console.warn("[AEGIS] Agent roster unavailable — fallback anti-hallucination rule active");
     }
 
     const truncateContent = (content: string, maxChars: number = 50000): string => {
@@ -7969,7 +7994,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         messages: [
           {
             role: "system",
-            content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext),
+            content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext),
           },
           ...processedMessages,
         ],
