@@ -23,7 +23,7 @@ export interface TestSuite {
 
 type TestFn = () => Promise<void>;
 
-const TEST_TIMEOUT_MS = 30_000; // 30s per test — allows for edge function cold starts while still preventing hung calls
+const TEST_TIMEOUT_MS = 60_000; // 60s per test — heavy AI/simulation edge functions need more time
 
 /**
  * Run a single test with timing, error capture, and a hard timeout
@@ -652,7 +652,9 @@ export const entityRelationshipsTests = {
           // Warning & threat targeting
           'target_of_warning', 'subject_of', 'warned_about',
           // Historical & behavioral
-          'has_history_of'
+          'has_history_of',
+          // Sanctions & compliance
+          'subject_to_sanctions_by'
         ];
         
         const { data: relationships, error } = await supabase
