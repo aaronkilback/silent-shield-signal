@@ -519,7 +519,7 @@ async function handleAggregateImplicitFeedback(): Promise<Response> {
   const signalIds = [...signalStats.keys()];
   const { data: signals } = await supabase
     .from('signals')
-    .select('id, title, normalized_text, category, source_type, rule_category')
+    .select('id, title, normalized_text, category, rule_category, source_id')
     .in('id', signalIds);
 
   const signalMap = new Map((signals || []).map(s => [s.id, s]));
@@ -553,7 +553,7 @@ async function handleAggregateImplicitFeedback(): Promise<Response> {
       target[kw] = (target[kw] || 0) + weight;
     }
     if (category) target[`category:${category}`] = (target[`category:${category}`] || 0) + weight;
-    if (signal.source_type) target[`source:${signal.source_type}`] = (target[`source:${signal.source_type}`] || 0) + weight;
+    if (signal.source_id) target[`source:${signal.source_id}`] = (target[`source:${signal.source_id}`] || 0) + weight;
 
     if (stats.escalations > 0) behavioralMetrics.total_escalations = (behavioralMetrics.total_escalations || 0) + stats.escalations;
     if (stats.reportInclusions > 0) behavioralMetrics.total_report_inclusions = (behavioralMetrics.total_report_inclusions || 0) + stats.reportInclusions;

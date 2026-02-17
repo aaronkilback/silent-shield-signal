@@ -629,7 +629,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     supabase.from('signals').select('*', { count: 'exact', head: true }).gte('created_at', sixHoursAgo),
     supabase.from('monitoring_history').select('source_name').lt('scan_completed_at', sixHoursAgo).limit(20),
     supabase.from('signals').select('category').gte('created_at', twentyFourHoursAgo).limit(500),
-    supabase.from('audio_briefings').select('id').gte('created_at', today + 'T00:00:00Z').eq('source_type', 'daily_briefing').limit(1),
+    supabase.from('autonomous_actions_log').select('id').eq('action_type', 'daily_email_briefing').in('status', ['completed', 'partial']).gte('created_at', new Date(now.getTime() - 20 * 3600000).toISOString()).limit(1),
     supabase.from('scheduled_briefings').select('id').eq('is_active', true).eq('briefing_type', 'daily_email'),
     supabase.from('signals').select('*', { count: 'exact', head: true }).gte('created_at', twentyFourHoursAgo),
     supabase.from('signals').select('id').is('client_id', null).not('category', 'eq', 'global').limit(20),
@@ -699,6 +699,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
   const dbStart = Date.now();
   let dbConnected = true;
   try { const { error } = await supabase.from('signals').select('id').limit(1); if (error) dbConnected = false; } catch { dbConnected = false; }
+  const dbResponseTimeMs = Date.now() - dbStart;
 
   let aiHealthStatus: number | null = null;
   try {
@@ -828,7 +829,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     dailyBriefing: { sentToday: (todayBriefingsResult.data?.length || 0) > 0, suppressionLikely: (recentNewSignalsResult.count || 0) === 0, recipientCount: briefingConfigResult.data?.length || 0 },
     dataIntegrity: { orphanedSignals: orphanedSignalsResult.data?.length || 0, orphanedEntities: orphanedEntitiesResult.data?.length || 0, orphanedFeedback: orphanedFeedbackCount, staleSources: staleSourceCountResult.count || 0 },
     bugReports: { totalOpen: openBugsResult.count || 0, staleCount: staleBugsResult.count || 0, recentSpike: recentBugsResult.count || 0, oldestOpenDays, recurringPatterns: [...new Set(recurringPatterns)] },
-    database: { connected: dbConnected, responseTimeMs: Date.now() - dbStart },
+    database: { connected: dbConnected, responseTimeMs: dbResponseTimeMs },
     autonomousOps: { recentActions: autonomousActionsResult.count || 0, lastActionAge },
     aiHealth: { systemHealthCheckStatus: aiHealthStatus },
     aegisBehavior,
