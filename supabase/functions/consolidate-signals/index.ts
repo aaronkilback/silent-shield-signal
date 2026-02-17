@@ -185,6 +185,9 @@ Deno.serve(async (req) => {
     const locationMap = new Map<string, string[]>();
     const PROVINCE_LEVEL = new Set(['b.c.', 'bc', 'british columbia', 'alberta', 'saskatchewan', 'manitoba', 'ontario', 'quebec', 'nova scotia', 'new brunswick', 'pei', 'newfoundland', 'yukon', 'nwt', 'nunavut']);
 
+    // Strategy C: Title-similarity clustering
+    const titleMap = new Map<string, string[]>();
+
     // Track same-source + actor clusters for campaign dedup
     const sourceActorMap = new Map<string, string[]>();
 
@@ -208,13 +211,25 @@ Deno.serve(async (req) => {
       }
 
       // Same-source + same-actor clustering for campaign-type signals
-      // Extract known activist org names from text
       const actors = extractActors(text);
       const sourceId = (sig as SignalRow).source_id || 'unknown';
       for (const actor of actors) {
         const saKey = `${sourceId}|${actor}`;
         if (!sourceActorMap.has(saKey)) sourceActorMap.set(saKey, []);
         sourceActorMap.get(saKey)!.push(sig.id);
+      }
+
+      // Strategy C: Normalize title for near-duplicate matching
+      const title = (sig as SignalRow).title || '';
+      if (title.length > 15) {
+        const normalizedTitle = title.toLowerCase()
+          .replace(/[^a-z0-9\s]/g, '')  // strip punctuation
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (normalizedTitle.length > 10) {
+          if (!titleMap.has(normalizedTitle)) titleMap.set(normalizedTitle, []);
+          titleMap.get(normalizedTitle)!.push(sig.id);
+        }
       }
     }
 
@@ -268,9 +283,36 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Collect groups from both strategies (deduplicate by checking if already grouped)
-    const grouped = new Set<string>();
+    // Strategy C: Exact title match (catches reworded same-event signals)
+    const parentC = new Map<string, string>();
+    function findC(id: string): string {
+      if (!parentC.has(id)) parentC.set(id, id);
+      if (parentC.get(id) !== id) parentC.set(id, findC(parentC.get(id)!));
+      return parentC.get(id)!;
+    }
+    function unionC(a: string, b: string) {
+      const ra = findC(a), rb = findC(b);
+      if (ra !== rb) parentC.set(rb, ra);
+    }
+
+    for (const ids of titleMap.values()) {
+      if (ids.length > 1) {
+        for (let i = 1; i < ids.length; i++) {
+          unionC(ids[0], ids[i]);
+        }
+      }
+    }
+
+    // Collect groups from all strategies (deduplicate by checking if already grouped)
     const groups = new Map<string, string[]>();
+
+    // Helper: check if signal is already in a multi-member group
+    function isAlreadyClustered(id: string): boolean {
+      for (const members of groups.values()) {
+        if (members.length > 1 && members.includes(id)) return true;
+      }
+      return false;
+    }
 
     // Groups from Strategy A
     for (const id of signalMap.keys()) {
@@ -283,13 +325,17 @@ Deno.serve(async (req) => {
     // Groups from Strategy B — only add signals not already in a Strategy A cluster
     for (const id of signalMap.keys()) {
       if (!parentB.has(id)) continue;
-      // Check if this signal is already in a multi-member A group
-      if (parentA.has(id)) {
-        const aRoot = `A_${findA(id)}`;
-        const aGroup = groups.get(aRoot);
-        if (aGroup && aGroup.length > 1) continue; // already clustered by A
-      }
+      if (isAlreadyClustered(id)) continue;
       const root = `B_${findB(id)}`;
+      if (!groups.has(root)) groups.set(root, []);
+      groups.get(root)!.push(id);
+    }
+
+    // Groups from Strategy C — only add signals not already clustered
+    for (const id of signalMap.keys()) {
+      if (!parentC.has(id)) continue;
+      if (isAlreadyClustered(id)) continue;
+      const root = `C_${findC(id)}`;
       if (!groups.has(root)) groups.set(root, []);
       groups.get(root)!.push(id);
     }
