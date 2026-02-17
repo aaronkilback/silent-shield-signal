@@ -23,7 +23,7 @@ export interface TestSuite {
 
 type TestFn = () => Promise<void>;
 
-const TEST_TIMEOUT_MS = 15_000; // 15s per test — prevents hung edge function calls from blocking the suite
+const TEST_TIMEOUT_MS = 10_000; // 10s per test — prevents hung edge function calls from blocking the suite
 
 /**
  * Run a single test with timing, error capture, and a hard timeout
@@ -6456,9 +6456,14 @@ export async function runAllTests(): Promise<TestSuite[]> {
     investigationAutopilotTests,
   ];
   
-  for (const suite of suites) {
-    const result = await runTestSuite(suite.name, suite.tests);
-    results.push(result);
+  // Run suites in concurrent batches of 5 for speed
+  const BATCH_SIZE = 5;
+  for (let i = 0; i < suites.length; i += BATCH_SIZE) {
+    const batch = suites.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map(suite => runTestSuite(suite.name, suite.tests))
+    );
+    results.push(...batchResults);
   }
   
   return results;

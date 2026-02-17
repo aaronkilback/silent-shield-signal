@@ -103,7 +103,7 @@ export const systemTestRunManager = {
     const startedAt = new Date().toISOString();
     setState({ status: "running", startedAt });
 
-    const MAX_TOTAL_MS = 5 * 60 * 1000; // 5 minute hard cap
+    const MAX_TOTAL_MS = 10 * 60 * 1000; // 10 minute hard cap
 
     (async () => {
       try {
