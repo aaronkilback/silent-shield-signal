@@ -23,6 +23,7 @@ interface SignalRow {
   content_hash: string | null;
   created_at: string;
   client_id: string | null;
+  source_id: string | null;
   raw_json: Record<string, unknown> | null;
 }
 
@@ -36,6 +37,7 @@ const LOCATION_PATTERNS = [
 ];
 
 const EVENT_TYPE_PATTERNS: Array<{ pattern: RegExp; eventType: string }> = [
+  // Emergency / violence
   { pattern: /\b(active\s*shooter|mass\s*shoot|shooting|shooter|shots?\s*fired|gunm[ae]n|gunfire)\b/i, eventType: 'shooting' },
   { pattern: /\b(bomb\s*threat|explosion|bombing|ied|suspicious\s*package|detonat)\b/i, eventType: 'bombing' },
   { pattern: /\b(hostage|barricade|standoff|stand-off)\b/i, eventType: 'hostage' },
@@ -49,6 +51,8 @@ const EVENT_TYPE_PATTERNS: Array<{ pattern: RegExp; eventType: string }> = [
   { pattern: /\b(terrorist|terrorism|radicali[sz])\b/i, eventType: 'terrorism' },
   { pattern: /\b(mass\s*casualty|multiple\s*deaths|deaths?\s*reported|fatalities|tragedy|tragic|massacre)\b/i, eventType: 'mass_casualty' },
   { pattern: /\b(lockdown|shelter[\s-]in[\s-]place|police\s*incident|critical\s*incident)\b/i, eventType: 'critical_incident' },
+  // Specific protest events (only physical actions, not broad "campaigns")
+  { pattern: /\b(blockade|occupation|sit[\s-]?in|road\s*block)\b/i, eventType: 'direct_action' },
 ];
 
 function extractLocations(text: string): string[] {
@@ -100,6 +104,42 @@ function buildClusterKeys(text: string): string[] {
   return keys;
 }
 
+// ── Actor / organization extraction for campaign dedup ──────────────────
+
+const ACTOR_PATTERNS = [
+  /\b(stand\.?earth|stand\s+earth)\b/i,
+  /\b(dogwood\s*bc|dogwood)\b/i,
+  /\b(sierra\s*club\s*bc|sierra\s*club)\b/i,
+  /\b(greenpeace)\b/i,
+  /\b(my\s*sea\s*to\s*sky)\b/i,
+  /\b(we[\s-]?can)\b/i,
+  /\b(bc\s*climate\s*emergency\s*campaign)\b/i,
+  /\b(frack\s*free\s*bc)\b/i,
+  /\b(code\s*blue\s*bc)\b/i,
+  /\b(extinction\s*rebellion|xr)\b/i,
+  /\b(350\.?org)\b/i,
+  /\b(idle\s*no\s*more)\b/i,
+  /\b(coastal\s*first\s*nations)\b/i,
+  /\b(wet'suwet'en|wetsuweten)\b/i,
+  /\b(cape[\s_]doctors|cape)\b/i,
+  /\b(marbem|maritime\s*beyond\s*methane)\b/i,
+  /\b(north\s*shore\s*counter[\s-]info)\b/i,
+  /\b(warrior\s*up)\b/i,
+  /\b(raven\s*trust)\b/i,
+];
+
+function extractActors(text: string): string[] {
+  const actors = new Set<string>();
+  for (const pattern of ACTOR_PATTERNS) {
+    if (pattern.test(text)) {
+      // Normalize actor name to lowercase key
+      const match = text.match(pattern);
+      if (match) actors.add(match[0].toLowerCase().replace(/[\s.]+/g, '_'));
+    }
+  }
+  return [...actors];
+}
+
 // ── Main handler ────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -125,7 +165,7 @@ Deno.serve(async (req) => {
     // 1. Fetch recent signals
     const { data: signals, error: fetchErr } = await supabase
       .from('signals')
-      .select('id, normalized_text, title, category, severity, content_hash, created_at, client_id, raw_json')
+      .select('id, normalized_text, title, category, severity, content_hash, created_at, client_id, source_id, raw_json')
       .gte('created_at', cutoff)
       .order('created_at', { ascending: true });
 
@@ -145,6 +185,9 @@ Deno.serve(async (req) => {
     const locationMap = new Map<string, string[]>();
     const PROVINCE_LEVEL = new Set(['b.c.', 'bc', 'british columbia', 'alberta', 'saskatchewan', 'manitoba', 'ontario', 'quebec', 'nova scotia', 'new brunswick', 'pei', 'newfoundland', 'yukon', 'nwt', 'nunavut']);
 
+    // Track same-source + actor clusters for campaign dedup
+    const sourceActorMap = new Map<string, string[]>();
+
     for (const sig of signals) {
       signalMap.set(sig.id, sig as SignalRow);
       const text = `${sig.title || ''} ${sig.normalized_text || ''}`;
@@ -154,48 +197,99 @@ Deno.serve(async (req) => {
         clusterMap.get(key)!.push(sig.id);
       }
 
-      // Aggressive: cluster by specific city/town alone (not province-level)
+      // Aggressive location-only clustering — only for small towns, not major cities
+      const MAJOR_CITIES = new Set(['vancouver', 'victoria', 'surrey', 'burnaby', 'nanaimo', 'kelowna', 'kamloops', 'prince george', 'edmonton', 'calgary', 'toronto', 'ottawa', 'montreal', 'winnipeg', 'saskatoon', 'regina', 'halifax', 'quebec city']);
       const locations = extractLocations(text);
       for (const loc of locations) {
-        if (PROVINCE_LEVEL.has(loc)) continue;
+        if (PROVINCE_LEVEL.has(loc) || MAJOR_CITIES.has(loc)) continue;
         const locKey = `loc_only|${loc}`;
         if (!locationMap.has(locKey)) locationMap.set(locKey, []);
         locationMap.get(locKey)!.push(sig.id);
       }
+
+      // Same-source + same-actor clustering for campaign-type signals
+      // Extract known activist org names from text
+      const actors = extractActors(text);
+      const sourceId = (sig as SignalRow).source_id || 'unknown';
+      for (const actor of actors) {
+        const saKey = `${sourceId}|${actor}`;
+        if (!sourceActorMap.has(saKey)) sourceActorMap.set(saKey, []);
+        sourceActorMap.get(saKey)!.push(sig.id);
+      }
     }
 
     // 3. Merge overlapping clusters via union-find
-    const parent = new Map<string, string>();
-    function find(id: string): string {
-      if (!parent.has(id)) parent.set(id, id);
-      if (parent.get(id) !== id) parent.set(id, find(parent.get(id)!));
-      return parent.get(id)!;
+    // Use separate union-finds to prevent cross-contamination between strategies
+    
+    // Strategy A: Location + Event Type (emergency-focused)
+    const parentA = new Map<string, string>();
+    function findA(id: string): string {
+      if (!parentA.has(id)) parentA.set(id, id);
+      if (parentA.get(id) !== id) parentA.set(id, findA(parentA.get(id)!));
+      return parentA.get(id)!;
     }
-    function union(a: string, b: string) {
-      const ra = find(a), rb = find(b);
-      if (ra !== rb) parent.set(rb, ra);
+    function unionA(a: string, b: string) {
+      const ra = findA(a), rb = findA(b);
+      if (ra !== rb) parentA.set(rb, ra);
     }
 
     for (const ids of clusterMap.values()) {
       for (let i = 1; i < ids.length; i++) {
-        union(ids[0], ids[i]);
+        unionA(ids[0], ids[i]);
       }
     }
 
-    // Aggressive location-only clustering: signals about the same specific town/city
+    // Small-town location-only clustering
     for (const ids of locationMap.values()) {
       if (ids.length > 1) {
         for (let i = 1; i < ids.length; i++) {
-          union(ids[0], ids[i]);
+          unionA(ids[0], ids[i]);
         }
       }
     }
 
-    // Group signals by their root
+    // Strategy B: Same-source + same-actor (campaign dedup)
+    const parentB = new Map<string, string>();
+    function findB(id: string): string {
+      if (!parentB.has(id)) parentB.set(id, id);
+      if (parentB.get(id) !== id) parentB.set(id, findB(parentB.get(id)!));
+      return parentB.get(id)!;
+    }
+    function unionB(a: string, b: string) {
+      const ra = findB(a), rb = findB(b);
+      if (ra !== rb) parentB.set(rb, ra);
+    }
+
+    for (const ids of sourceActorMap.values()) {
+      if (ids.length > 1) {
+        for (let i = 1; i < ids.length; i++) {
+          unionB(ids[0], ids[i]);
+        }
+      }
+    }
+
+    // Collect groups from both strategies (deduplicate by checking if already grouped)
+    const grouped = new Set<string>();
     const groups = new Map<string, string[]>();
+
+    // Groups from Strategy A
     for (const id of signalMap.keys()) {
-      if (!parent.has(id)) continue; // no cluster key → skip
-      const root = find(id);
+      if (!parentA.has(id)) continue;
+      const root = `A_${findA(id)}`;
+      if (!groups.has(root)) groups.set(root, []);
+      groups.get(root)!.push(id);
+    }
+
+    // Groups from Strategy B — only add signals not already in a Strategy A cluster
+    for (const id of signalMap.keys()) {
+      if (!parentB.has(id)) continue;
+      // Check if this signal is already in a multi-member A group
+      if (parentA.has(id)) {
+        const aRoot = `A_${findA(id)}`;
+        const aGroup = groups.get(aRoot);
+        if (aGroup && aGroup.length > 1) continue; // already clustered by A
+      }
+      const root = `B_${findB(id)}`;
       if (!groups.has(root)) groups.set(root, []);
       groups.get(root)!.push(id);
     }
