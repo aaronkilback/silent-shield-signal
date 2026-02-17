@@ -6,6 +6,7 @@
  * - Automatic retries with exponential backoff
  * - Structured error logging
  * - Dead letter queue for critical failures
+ * - **Universal anti-hallucination guardrails** (auto-injected into every call)
  * 
  * Usage:
  *   import { callAiGateway } from "../_shared/ai-gateway.ts";
@@ -14,6 +15,7 @@
 
 import { protectedApiCall, CircuitOpenError } from "./circuit-breaker.ts";
 import { logError } from "./error-logger.ts";
+import { getCriticalDateContext, validateAIOutput } from "./anti-hallucination.ts";
 
 interface AiGatewayRequest {
   model: string;
@@ -27,6 +29,8 @@ interface AiGatewayRequest {
   dlqOnFailure?: boolean;
   /** Payload to store in DLQ for retry */
   dlqPayload?: Record<string, unknown>;
+  /** If true, skip anti-hallucination injection (e.g., for image generation) */
+  skipGuardrails?: boolean;
 }
 
 interface AiGatewayResponse {
@@ -34,11 +38,74 @@ interface AiGatewayResponse {
   raw: any;
   error: string | null;
   circuitOpen: boolean;
+  /** Hallucination validation warnings (empty if clean) */
+  hallucinationWarnings?: string[];
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  UNIVERSAL ANTI-HALLUCINATION GUARDRAILS
+//  Auto-injected into EVERY AI call at the gateway level.
+//  No edge function can bypass this unless skipGuardrails=true.
+// ═══════════════════════════════════════════════════════════════
+const UNIVERSAL_GUARDRAILS = `
+[FORTRESS TRUTH PROTOCOL — MANDATORY FOR ALL AI RESPONSES]
+
+CURRENT DATETIME: {{DATETIME}}
+
+ABSOLUTE RULES (ZERO TOLERANCE — VIOLATION = SYSTEM FAILURE):
+
+1. NEVER FABRICATE DATA: Do not invent statistics, dates, names, events, organizations, threat actors, incident details, or any factual claims. If you don't have the data, say "No data available."
+
+2. NEVER FABRICATE ENTITIES: Do not reference agents, people, organizations, assets, or systems that were not provided in your context. If asked about something not in your data, say so.
+
+3. SOURCE EVERY CLAIM: Every factual statement must trace to either (a) data provided in this prompt, (b) a tool result, or (c) your general knowledge explicitly marked as such.
+
+4. DISTINGUISH FACT FROM ANALYSIS: Clearly separate "the data shows X" from "this suggests Y." Never present inference as fact.
+
+5. NO NARRATIVE INFLATION: Do not dramatize, escalate, or inflate the significance of data. Report proportionally. A single signal is a single signal, not a "campaign."
+
+6. NO TEMPORAL FABRICATION: Do not invent dates, timelines, or sequences of events. Use only dates from provided data.
+
+7. ACKNOWLEDGE GAPS: If information is incomplete, say so explicitly. Never fill gaps with plausible-sounding fabrications.
+
+8. NO PHANTOM CAPABILITIES: Do not claim to have performed actions you did not perform, or promise capabilities you do not have.
+
+9. NO CORRELATION WITHOUT EVIDENCE: Geographic proximity, temporal coincidence, or thematic similarity alone do NOT establish connections between events.
+
+10. MEASURED LANGUAGE: Use "possible," "suggests," "indicates" — never "definitely," "certainly," "proves" unless backed by direct evidence.
+`;
+
+function getGuardrailsPrompt(): string {
+  const dateContext = getCriticalDateContext();
+  return UNIVERSAL_GUARDRAILS.replace('{{DATETIME}}', dateContext.currentDateTimeLocal);
 }
 
 /**
- * Call the AI Gateway with full resilience stack.
- * Returns { content, raw, error, circuitOpen } — never throws.
+ * Inject anti-hallucination guardrails into the message array.
+ * Prepends to existing system message or adds a new one.
+ */
+function injectGuardrails(messages: Array<{ role: string; content: string }>): Array<{ role: string; content: string }> {
+  const guardrails = getGuardrailsPrompt();
+  const result = [...messages];
+  
+  const systemIdx = result.findIndex(m => m.role === 'system');
+  if (systemIdx >= 0) {
+    // Prepend guardrails to existing system message
+    result[systemIdx] = {
+      ...result[systemIdx],
+      content: guardrails + '\n\n' + result[systemIdx].content,
+    };
+  } else {
+    // Insert new system message at the beginning
+    result.unshift({ role: 'system', content: guardrails });
+  }
+  
+  return result;
+}
+
+/**
+ * Call the AI Gateway with full resilience stack + anti-hallucination guardrails.
+ * Returns { content, raw, error, circuitOpen, hallucinationWarnings } — never throws.
  */
 export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewayResponse> {
   const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
@@ -50,6 +117,11 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
     return { content: null, raw: null, error: 'LOVABLE_API_KEY not configured', circuitOpen: false };
   }
 
+  // Auto-inject anti-hallucination guardrails unless explicitly skipped
+  const messages = request.skipGuardrails
+    ? request.messages
+    : injectGuardrails(request.messages);
+
   try {
     const data = await protectedApiCall(
       'ai-gateway',
@@ -57,7 +129,7 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
       async () => {
         const body: Record<string, unknown> = {
           model: request.model,
-          messages: request.messages,
+          messages,
           ...request.extraBody,
         };
 
@@ -91,7 +163,18 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
     );
 
     const content = data?.choices?.[0]?.message?.content || null;
-    return { content, raw: data, error: null, circuitOpen: false };
+    
+    // Post-response hallucination validation
+    let hallucinationWarnings: string[] = [];
+    if (content && !request.skipGuardrails) {
+      const validation = validateAIOutput(content, {});
+      if (!validation.isValid) {
+        hallucinationWarnings = validation.warnings;
+        console.warn(`[${request.functionName}] ⚠️ Hallucination warnings:`, validation.warnings.join('; '));
+      }
+    }
+    
+    return { content, raw: data, error: null, circuitOpen: false, hallucinationWarnings };
 
   } catch (error) {
     if (error instanceof CircuitOpenError) {
@@ -139,9 +222,14 @@ export async function callAiGatewayStream(request: AiGatewayRequest & {
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
+        // Inject guardrails into streaming calls too
+        const guardedMessages = request.skipGuardrails
+          ? request.messages
+          : injectGuardrails(request.messages);
+          
         const body: Record<string, unknown> = {
           model: request.model,
-          messages: request.messages,
+          messages: guardedMessages,
           stream: true,
           ...request.extraBody,
         };
