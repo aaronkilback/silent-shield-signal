@@ -684,12 +684,17 @@ export function validateAIOutput(
     signalCount?: number;
     entityCount?: number;
     knownDates?: string[];
+    knownAgentCallSigns?: string[];
+    knownAgentCodenames?: string[];
+    toolsCalledThisTurn?: string[];
   }
 ): ValidationResult {
   const warnings: string[] = [];
   const flaggedPhrases: string[] = [];
   
-  // Check for vague quantifiers that should be exact
+  // ═══════════════════════════════════════════════════════════════
+  //  1. VAGUE QUANTIFIERS (existing)
+  // ═══════════════════════════════════════════════════════════════
   const vaguePatterns = [
     /several\s+(?:incidents?|signals?|entities?|threats?)/gi,
     /numerous\s+(?:incidents?|signals?|entities?|threats?)/gi,
@@ -708,7 +713,9 @@ export function validateAIOutput(
     }
   });
   
-  // Check for suspicious date claims
+  // ═══════════════════════════════════════════════════════════════
+  //  2. SUSPICIOUS DATE CLAIMS (existing)
+  // ═══════════════════════════════════════════════════════════════
   const datePatterns = [
     /first\s+identified\s+on\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d+,?\s*\d*/gi,
     /emerged\s+(?:on|in)\s+\w+\s+\d+/gi,
@@ -723,7 +730,9 @@ export function validateAIOutput(
     }
   });
   
-  // Check for number discrepancies if known counts provided
+  // ═══════════════════════════════════════════════════════════════
+  //  3. DATA COUNT MISMATCHES (existing, expanded)
+  // ═══════════════════════════════════════════════════════════════
   if (knownData.incidentCount !== undefined) {
     const incidentNumberMatches = output.match(/(\d+)\s+(?:open\s+)?incidents?/gi) || [];
     incidentNumberMatches.forEach(match => {
@@ -733,6 +742,165 @@ export function validateAIOutput(
       }
     });
   }
+  
+  if (knownData.signalCount !== undefined) {
+    const signalNumberMatches = output.match(/(\d+)\s+(?:active\s+|new\s+)?signals?/gi) || [];
+    signalNumberMatches.forEach(match => {
+      const num = parseInt(match.match(/\d+/)?.[0] || '0');
+      if (num > 0 && Math.abs(num - knownData.signalCount!) > knownData.signalCount! * 0.2) {
+        warnings.push(`Signal count mismatch: AI stated ${num}, actual is ${knownData.signalCount}`);
+      }
+    });
+  }
+
+  if (knownData.entityCount !== undefined) {
+    const entityNumberMatches = output.match(/(\d+)\s+(?:known\s+|tracked\s+|active\s+)?entit(?:y|ies)/gi) || [];
+    entityNumberMatches.forEach(match => {
+      const num = parseInt(match.match(/\d+/)?.[0] || '0');
+      if (num > 0 && Math.abs(num - knownData.entityCount!) > knownData.entityCount! * 0.2) {
+        warnings.push(`Entity count mismatch: AI stated ${num}, actual is ${knownData.entityCount}`);
+      }
+    });
+  }
+  
+  // ═══════════════════════════════════════════════════════════════
+  //  4. FABRICATED AGENT/ENTITY REFERENCES
+  //     Catches invented agent names not in the real roster
+  // ═══════════════════════════════════════════════════════════════
+  const KNOWN_AGENT_CALLSIGNS = knownData.knownAgentCallSigns || [
+    'AEGIS-CMD', '0DAY', 'MATRIX', 'FININT', 'CHAIN-WATCH', 'INSIDE-EYE',
+    'LOCUS-INTEL', 'NARCO-INTEL', 'SENTINEL-OPS', 'FORTRESS-GUARD',
+    'BRAVO-1', 'SIM-COMMAND', 'SENT-CON', 'CRUCIBLE', 'HERALD',
+    'GLOBE-SAGE', 'VERIDIAN-TANGO', 'PURE-DATA', 'PATTERN-SEEKER',
+    'ECHO-ALPHA', 'Scout', 'VICODIN', 'LEX-MAGNA', 'TIME-WARP',
+    'AUREUS-GUARD', 'ECHO-WATCH', 'WATCH-ALPHA-2'
+  ];
+  const KNOWN_AGENT_CODENAMES = knownData.knownAgentCodenames || [
+    'Aegis', 'Wraith', 'Neo', 'Cerberus', 'Ouroboros', 'Specter',
+    'Meridian', 'Viper', 'Argus', 'Warden', 'Praetor', 'Forge',
+    'Concierge', 'Crucible', 'HERALD', 'Oracle', 'Sentinel',
+    'Veritas', 'Nexus', 'Spartan', 'EMBER', 'House', 'Legion',
+    'Chronos', 'AUREUS-GUARD', 'ECHO-WATCH', 'Sentinel-2'
+  ];
+  
+  // Detect "Agent X" or "CALLSIGN-SOMETHING" patterns that don't match known agents
+  const agentRefPatterns = [
+    /(?:agent|specialist|analyst)\s+([A-Z][A-Z0-9_-]{2,})/gi,
+    /\b([A-Z]{2,}(?:-[A-Z0-9]+)+)\b/g, // CALLSIGN-STYLE patterns
+  ];
+  
+  agentRefPatterns.forEach(pattern => {
+    let match;
+    while ((match = pattern.exec(output)) !== null) {
+      const ref = match[1];
+      // Skip common non-agent acronyms
+      if (['ISO', 'UTC', 'MST', 'MDT', 'CST', 'EST', 'PST', 'API', 'URL', 'PDF', 'HTML', 'CSS', 'JSON', 'SQL', 'RLS', 'RCMP', 'CSIS', 'FBI', 'CIA', 'NSA', 'DHS', 'OSINT', 'HUMINT', 'SIGINT', 'GEOINT', 'IMINT', 'NATO', 'NORAD', 'LNG', 'CEO', 'CTO', 'CSO', 'CIO', 'PIR', 'FID', 'CVSS', 'CVE', 'APT', 'IOC', 'TTP', 'MITRE', 'ATT&CK', 'NIST', 'AML', 'KYC'].includes(ref)) continue;
+      
+      const isKnownCallSign = KNOWN_AGENT_CALLSIGNS.some(cs => cs.toUpperCase() === ref.toUpperCase());
+      const isKnownCodename = KNOWN_AGENT_CODENAMES.some(cn => cn.toUpperCase() === ref.toUpperCase());
+      
+      if (!isKnownCallSign && !isKnownCodename && ref.includes('-')) {
+        // Only flag dash-style refs that look like call signs
+        flaggedPhrases.push(ref);
+        warnings.push(`Possible fabricated agent reference: "${ref}". Not in known agent roster.`);
+      }
+    }
+  });
+  
+  // ═══════════════════════════════════════════════════════════════
+  //  5. FABRICATED URLs / SOURCE CITATIONS
+  //     Catches made-up URLs that look plausible
+  // ═══════════════════════════════════════════════════════════════
+  const urlPattern = /https?:\/\/[^\s)>\]"]+/gi;
+  const urls = output.match(urlPattern) || [];
+  const suspiciousUrlPatterns = [
+    /example\.com/i,
+    /placeholder/i,
+    /fake-?url/i,
+    /test-?source/i,
+    /internal-?ref/i,
+    // URLs with too-perfect slugs (likely fabricated)
+    /\/article-\d{5,}/i,
+    /\/report-\d{5,}/i,
+  ];
+  
+  urls.forEach(url => {
+    if (suspiciousUrlPatterns.some(p => p.test(url))) {
+      flaggedPhrases.push(url);
+      warnings.push(`Suspicious URL detected (possibly fabricated): "${url}"`);
+    }
+  });
+  
+  // ═══════════════════════════════════════════════════════════════
+  //  6. NARRATIVE INFLATION / FORBIDDEN ESCALATION LANGUAGE
+  //     Catches dramatic language the prompt forbids
+  // ═══════════════════════════════════════════════════════════════
+  const inflationPatterns = [
+    { pattern: /\bcoordinated\s+campaign\b/gi, alt: 'opposition activity' },
+    { pattern: /\bhigh[- ]tempo\b/gi, alt: 'increased activity' },
+    { pattern: /\bdry\s+runs?\s+for\s+a\s+larger\s+attack\b/gi, alt: 'remove — speculative' },
+    { pattern: /\bprofessional\s+adversary\b/gi, alt: 'threat actor' },
+    { pattern: /\bdiversionary\s+tactics?\b/gi, alt: 'remove — speculative' },
+    { pattern: /\bmulti[- ]site\s+campaign\b/gi, alt: 'activity across locations' },
+    { pattern: /\bimminent\s+(?:attack|threat|danger)\b/gi, alt: 'near-term risk' },
+    { pattern: /\bcrisis\b/gi, alt: 'active situation' },
+    { pattern: /\bexploit(?:ed|ing)?\s+by\s+(?:activist|media)/gi, alt: 'referenced in public commentary' },
+  ];
+  
+  inflationPatterns.forEach(({ pattern, alt }) => {
+    const matches = output.match(pattern);
+    if (matches) {
+      flaggedPhrases.push(...matches);
+      warnings.push(`Narrative inflation: "${matches[0]}" — should use "${alt}"`);
+    }
+  });
+  
+  // ═══════════════════════════════════════════════════════════════
+  //  7. CAPABILITY FABRICATION
+  //     Catches claims of performing impossible actions
+  // ═══════════════════════════════════════════════════════════════
+  const capabilityFabPatterns = [
+    /I(?:'ve| have)\s+(?:dispatched|deployed|sent)\s+(?:a\s+)?(?:patrol|team|personnel|security|drone)/gi,
+    /I(?:'ve| have)\s+(?:contacted|called|notified)\s+(?:RCMP|police|law enforcement|911|authorities)/gi,
+    /I(?:'ve| have)\s+(?:activated|enabled)\s+(?:perimeter|physical)\s+(?:monitoring|security|surveillance)/gi,
+    /I(?:'ve| have)\s+(?:sent|pushed|delivered)\s+(?:a\s+)?(?:push\s+)?notification/gi,
+    /I\s+will\s+continue\s+(?:to\s+)?monitor(?:ing)?/gi,
+    /I(?:'m| am)\s+(?:now\s+)?(?:monitoring|watching|tracking)\s+(?:the|this|that)/gi,
+    /I\s+will\s+alert\s+you\s+(?:when|if)/gi,
+  ];
+  
+  capabilityFabPatterns.forEach(pattern => {
+    const matches = output.match(pattern);
+    if (matches) {
+      flaggedPhrases.push(...matches);
+      warnings.push(`Capability fabrication: "${matches[0]}" — agent cannot perform this action`);
+    }
+  });
+  
+  // ═══════════════════════════════════════════════════════════════
+  //  8. CROSS-AGENT CLAIM FABRICATION
+  //     Catches "Agent X has confirmed/analyzed/reviewed" without evidence
+  // ═══════════════════════════════════════════════════════════════
+  const crossAgentPatterns = [
+    /(?:AEGIS|Wraith|Neo|Cerberus|Ouroboros|Specter|Meridian|Viper|Argus|Warden|Praetor|Forge|Crucible|HERALD|Oracle|Sentinel|Nexus)\s+(?:has\s+)?(?:confirmed|verified|analyzed|reviewed|assessed|completed|flagged|identified|detected)\b/gi,
+    /(?:coordinating|collaborated)\s+with\s+(?:AEGIS|Wraith|Neo|Cerberus|Ouroboros|Specter|Meridian|Viper|Argus|Warden|Praetor|Forge|Crucible|HERALD|Oracle|Sentinel|Nexus)/gi,
+  ];
+  
+  crossAgentPatterns.forEach(pattern => {
+    const matches = output.match(pattern);
+    if (matches) {
+      // Only flag if we know no cross-agent tool was called
+      const toolsCalled = knownData.toolsCalledThisTurn || [];
+      const hasAgentCollabTool = toolsCalled.some(t => 
+        t.includes('agent_debate') || t.includes('cross_agent') || t.includes('task_force')
+      );
+      
+      if (!hasAgentCollabTool) {
+        flaggedPhrases.push(...matches);
+        warnings.push(`Cross-agent fabrication: "${matches[0]}" — no inter-agent tool was called this turn`);
+      }
+    }
+  });
   
   return {
     isValid: warnings.length === 0,
