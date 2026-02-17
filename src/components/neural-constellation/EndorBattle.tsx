@@ -3,238 +3,45 @@
  * Plays behind the agent constellation as a decorative, ever-changing scene.
  * Features: Star Destroyers, Mon Calamari cruisers, Death Star, fighters, lasers, explosions.
  */
-import { useRef, useMemo, useCallback, useState } from "react";
+import { useRef, useMemo, useCallback } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
 // ═══════════════════════════════════════════════════════════════
-//  GEOMETRY MERGE HELPER
-// ═══════════════════════════════════════════════════════════════
-
-function mergeBufferGeometries(geometries: THREE.BufferGeometry[]): THREE.BufferGeometry {
-  let totalVerts = 0;
-  for (const g of geometries) totalVerts += g.attributes.position.count;
-  const positions = new Float32Array(totalVerts * 3);
-  const normals = new Float32Array(totalVerts * 3);
-  const indices: number[] = [];
-  let vertOffset = 0;
-  for (const g of geometries) {
-    const pos = g.attributes.position;
-    const norm = g.attributes.normal;
-    for (let i = 0; i < pos.count; i++) {
-      positions[(vertOffset + i) * 3] = pos.getX(i);
-      positions[(vertOffset + i) * 3 + 1] = pos.getY(i);
-      positions[(vertOffset + i) * 3 + 2] = pos.getZ(i);
-      if (norm) {
-        normals[(vertOffset + i) * 3] = norm.getX(i);
-        normals[(vertOffset + i) * 3 + 1] = norm.getY(i);
-        normals[(vertOffset + i) * 3 + 2] = norm.getZ(i);
-      }
-    }
-    if (g.index) {
-      for (let i = 0; i < g.index.count; i++) indices.push(g.index.getX(i) + vertOffset);
-    } else {
-      for (let i = 0; i < pos.count; i++) indices.push(i + vertOffset);
-    }
-    vertOffset += pos.count;
-  }
-  const merged = new THREE.BufferGeometry();
-  merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-  merged.setIndex(indices);
-  merged.computeVertexNormals();
-  return merged;
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  MOVIE-ACCURATE SHIP GEOMETRIES
+//  SHIP GEOMETRY BUILDERS (low-poly silhouettes)
 // ═══════════════════════════════════════════════════════════════
 
 function createStarDestroyerGeometry(): THREE.BufferGeometry {
-  // Imperial Star Destroyer — long dagger wedge, 2:1 length-to-width
-  // The hull is a flat triangular wedge tapering to a sharp point
   const shape = new THREE.Shape();
-  shape.moveTo(0, 5.0);        // sharp nose tip
-  shape.lineTo(-2.8, -3.0);    // port stern edge
-  shape.lineTo(-2.5, -4.0);    // port engine indent
-  shape.lineTo(-1.0, -4.5);    // port engine block
-  shape.lineTo(-0.3, -4.0);    // center engine gap
-  shape.lineTo(0, -4.2);       // center keel
-  shape.lineTo(0.3, -4.0);
-  shape.lineTo(1.0, -4.5);     // starboard engine block
-  shape.lineTo(2.5, -4.0);
-  shape.lineTo(2.8, -3.0);     // starboard stern
+  // Wedge shape from above
+  shape.moveTo(0, 2);
+  shape.lineTo(-1.2, -1.5);
+  shape.lineTo(-0.6, -2);
+  shape.lineTo(0.6, -2);
+  shape.lineTo(1.2, -1.5);
   shape.closePath();
-
-  const hull = new THREE.ExtrudeGeometry(shape, {
-    depth: 0.6, bevelEnabled: true, bevelThickness: 0.15, bevelSize: 0.08, bevelSegments: 2
-  });
-  hull.rotateX(Math.PI / 2);
-  hull.scale(1.8, 0.25, 1.8);
-
-  // Command tower — the iconic T-shaped bridge
-  const towerBase = new THREE.BoxGeometry(0.8, 1.2, 0.5);
-  towerBase.translate(0, 0.75, -3.5);
-  const towerNeck = new THREE.BoxGeometry(0.4, 0.6, 0.3);
-  towerNeck.translate(0, 1.5, -3.5);
-  // Bridge wings (the horizontal T bar)
-  const bridgeWing = new THREE.BoxGeometry(2.4, 0.12, 0.7);
-  bridgeWing.translate(0, 1.85, -3.5);
-  // Shield generator domes (two small spheres on top)
-  const dome1 = new THREE.SphereGeometry(0.18, 6, 6);
-  dome1.translate(-0.7, 2.1, -3.5);
-  const dome2 = new THREE.SphereGeometry(0.18, 6, 6);
-  dome2.translate(0.7, 2.1, -3.5);
-
-  // Surface detail — raised panels along the hull
-  const panel1 = new THREE.BoxGeometry(3.0, 0.08, 1.5);
-  panel1.translate(0, 0.2, 0);
-  const panel2 = new THREE.BoxGeometry(1.5, 0.06, 2.0);
-  panel2.translate(0, 0.18, -1.5);
-
-  return mergeBufferGeometries([hull, towerBase, towerNeck, bridgeWing, dome1, dome2, panel1, panel2]);
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.5, bevelEnabled: false });
+  geo.rotateX(Math.PI / 2);
+  geo.scale(1.5, 0.3, 1.5);
+  return geo;
 }
 
 function createMonCalGeometry(): THREE.BufferGeometry {
-  // MC80 Home One type — organic, bulbous, elongated with distinct bow and stern
-  const mainHull = new THREE.SphereGeometry(1.4, 16, 12);
-  const pos = mainHull.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const y = pos.getY(i);
-    const z = pos.getZ(i);
-    // Elongate forward, taper at stern
-    const zFactor = z > 0 ? 1.0 + z * 0.3 : 1.0 - Math.abs(z) * 0.15;
-    pos.setX(i, x * 2.2 * zFactor);
-    pos.setY(i, y * 0.7 * (1.0 + Math.abs(z) * 0.1));
-    pos.setZ(i, z * 2.0);
+  // Bulbous organic shape
+  const geo = new THREE.SphereGeometry(1, 8, 6);
+  geo.scale(2, 0.6, 1.2);
+  return geo;
+}
+
+function createFighterGeometry(isXWing: boolean): THREE.BufferGeometry {
+  if (isXWing) {
+    // Simple cross shape
+    const geo = new THREE.BoxGeometry(0.1, 0.02, 0.15);
+    return geo;
   }
-  pos.needsUpdate = true;
-  mainHull.computeVertexNormals();
-
-  // Bulbous wing pods — the distinctive lateral bulges
-  const pod1 = new THREE.SphereGeometry(0.6, 8, 8);
-  pod1.scale(1.5, 0.5, 1.0);
-  pod1.translate(2.0, -0.2, 0.5);
-  const pod2 = new THREE.SphereGeometry(0.6, 8, 8);
-  pod2.scale(1.5, 0.5, 1.0);
-  pod2.translate(-2.0, -0.2, 0.5);
-
-  // Engine cluster at stern
-  const eng1 = new THREE.CylinderGeometry(0.25, 0.35, 0.8, 8);
-  eng1.rotateX(Math.PI / 2); eng1.translate(0.5, -0.1, -2.8);
-  const eng2 = new THREE.CylinderGeometry(0.25, 0.35, 0.8, 8);
-  eng2.rotateX(Math.PI / 2); eng2.translate(-0.5, -0.1, -2.8);
-  const eng3 = new THREE.CylinderGeometry(0.2, 0.3, 0.6, 8);
-  eng3.rotateX(Math.PI / 2); eng3.translate(0, 0.2, -2.6);
-
-  // Bridge dome on top
-  const bridge = new THREE.SphereGeometry(0.4, 8, 6);
-  bridge.scale(1.2, 0.6, 1.0);
-  bridge.translate(0, 0.85, 0.8);
-
-  return mergeBufferGeometries([mainHull, pod1, pod2, eng1, eng2, eng3, bridge]);
-}
-
-function createXWingGeometry(): THREE.BufferGeometry {
-  // T-65 X-Wing — long nose, 4 S-foils in attack position, cylindrical fuselage
-  const fuselage = new THREE.CylinderGeometry(0.04, 0.05, 0.65, 6);
-  fuselage.rotateX(Math.PI / 2);
-  // Long pointed nose
-  const nose = new THREE.ConeGeometry(0.04, 0.35, 6);
-  nose.rotateX(-Math.PI / 2);
-  nose.translate(0, 0, 0.5);
-  // Cockpit canopy
-  const cockpit = new THREE.SphereGeometry(0.05, 6, 4);
-  cockpit.scale(0.8, 0.6, 1.0);
-  cockpit.translate(0, 0.04, 0.15);
-  // 4 S-foils in attack position (X shape)
-  const wing = (angle: number) => {
-    const w = new THREE.BoxGeometry(0.6, 0.012, 0.22);
-    w.applyMatrix4(new THREE.Matrix4().makeRotationZ(angle));
-    return w;
-  };
-  const w1 = wing(0.35); w1.translate(0.18, 0.08, -0.05);
-  const w2 = wing(-0.35); w2.translate(-0.18, 0.08, -0.05);
-  const w3 = wing(Math.PI + 0.35); w3.translate(0.18, -0.08, -0.05);
-  const w4 = wing(Math.PI - 0.35); w4.translate(-0.18, -0.08, -0.05);
-  // Laser cannon tips (4 thin cylinders at wing tips)
-  const cannon = (x: number, y: number) => {
-    const c = new THREE.CylinderGeometry(0.008, 0.008, 0.3, 3);
-    c.rotateX(Math.PI / 2);
-    c.translate(x, y, 0.1);
-    return c;
-  };
-  const c1 = cannon(0.42, 0.14);
-  const c2 = cannon(-0.42, 0.14);
-  const c3 = cannon(0.42, -0.14);
-  const c4 = cannon(-0.42, -0.14);
-  // Engine nacelles (4 at wing roots)
-  const engine = (x: number, y: number) => {
-    const e = new THREE.CylinderGeometry(0.022, 0.028, 0.12, 4);
-    e.rotateX(Math.PI / 2);
-    e.translate(x, y, -0.25);
-    return e;
-  };
-  const e1 = engine(0.15, 0.06);
-  const e2 = engine(-0.15, 0.06);
-  const e3 = engine(0.15, -0.06);
-  const e4 = engine(-0.15, -0.06);
-
-  return mergeBufferGeometries([fuselage, nose, cockpit, w1, w2, w3, w4, c1, c2, c3, c4, e1, e2, e3, e4]);
-}
-
-function createTIEGeometry(): THREE.BufferGeometry {
-  // TIE/ln Fighter — ball cockpit, two vertical hexagonal solar panels, short pylons
-  const cockpit = new THREE.SphereGeometry(0.07, 8, 8);
-  // Viewport window (darker front section)
-  const viewport = new THREE.CircleGeometry(0.045, 6);
-  viewport.translate(0, 0, 0.069);
-
-  // Hexagonal solar array panels (flat, large relative to cockpit)
-  const panelShape = new THREE.Shape();
-  const hexR = 0.2;
-  for (let i = 0; i < 6; i++) {
-    const a = (Math.PI / 3) * i - Math.PI / 6;
-    const px = Math.cos(a) * hexR;
-    const py = Math.sin(a) * hexR;
-    if (i === 0) panelShape.moveTo(px, py);
-    else panelShape.lineTo(px, py);
-  }
-  panelShape.closePath();
-
-  const panelGeo1 = new THREE.ExtrudeGeometry(panelShape, { depth: 0.008, bevelEnabled: false });
-  panelGeo1.rotateY(Math.PI / 2);
-  panelGeo1.translate(0.2, 0, 0);
-  const panelGeo2 = new THREE.ExtrudeGeometry(panelShape, { depth: 0.008, bevelEnabled: false });
-  panelGeo2.rotateY(-Math.PI / 2);
-  panelGeo2.translate(-0.2, 0, 0);
-
-  // Connecting pylons (short struts)
-  const pylon1 = new THREE.CylinderGeometry(0.012, 0.015, 0.14, 4);
-  pylon1.rotateZ(Math.PI / 2);
-  pylon1.translate(0.1, 0, 0);
-  const pylon2 = new THREE.CylinderGeometry(0.012, 0.015, 0.14, 4);
-  pylon2.rotateZ(Math.PI / 2);
-  pylon2.translate(-0.1, 0, 0);
-
-  return mergeBufferGeometries([cockpit, viewport, panelGeo1, panelGeo2, pylon1, pylon2]);
-}
-
-// Also add A-Wing (Rebel interceptor)
-function createAWingGeometry(): THREE.BufferGeometry {
-  // RZ-1 A-Wing — wedge-shaped, very fast interceptor
-  const body = new THREE.ConeGeometry(0.08, 0.4, 4);
-  body.rotateX(-Math.PI / 2);
-  body.rotateZ(Math.PI / 4); // diamond cross-section
-  // Two large engine pods
-  const eng1 = new THREE.CylinderGeometry(0.025, 0.03, 0.2, 4);
-  eng1.rotateX(Math.PI / 2);
-  eng1.translate(0.06, 0, -0.12);
-  const eng2 = new THREE.CylinderGeometry(0.025, 0.03, 0.2, 4);
-  eng2.rotateX(Math.PI / 2);
-  eng2.translate(-0.06, 0, -0.12);
-  return mergeBufferGeometries([body, eng1, eng2]);
+  // TIE — hexagonal panel + body
+  const geo = new THREE.BoxGeometry(0.12, 0.12, 0.04);
+  return geo;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -249,43 +56,50 @@ function DeathStar({ position }: { position: [number, number, number] }) {
 
   useFrame((_, delta) => {
     if (ref.current) ref.current.rotation.y += delta * 0.02;
+    
     firingRef.current += delta;
-    const cycle = firingRef.current % 14;
-    const isFiring = cycle < 1.0;
+    // Superlaser fires every ~12 seconds for 0.8s
+    const cycle = firingRef.current % 12;
+    const isFiring = cycle < 0.8;
+    
     if (laserRef.current) {
-      (laserRef.current.material as THREE.MeshBasicMaterial).opacity = isFiring ? 0.6 + Math.sin(firingRef.current * 40) * 0.3 : 0;
+      (laserRef.current.material as THREE.MeshBasicMaterial).opacity = isFiring ? 0.7 + Math.sin(firingRef.current * 30) * 0.3 : 0;
       laserRef.current.scale.x = isFiring ? 1 : 0;
     }
     if (glowRef.current) {
-      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = isFiring ? 0.2 : 0.03;
+      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = isFiring ? 0.15 : 0.04;
     }
   });
 
   return (
-    <group ref={ref} position={position} scale={[2.5, 2.5, 2.5]}>
+    <group ref={ref} position={position}>
+      {/* Main sphere */}
       <mesh>
-        <sphereGeometry args={[5, 32, 32]} />
-        <meshStandardMaterial color="#3a3a3a" roughness={0.85} metalness={0.3} emissive="#0a0a0a" emissiveIntensity={0.4} />
+        <sphereGeometry args={[5, 24, 24]} />
+        <meshStandardMaterial color="#3a3a3a" roughness={0.8} metalness={0.4} />
       </mesh>
       {/* Equatorial trench */}
       <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[5.02, 0.18, 6, 48]} />
+        <torusGeometry args={[5.02, 0.15, 4, 32]} />
+        <meshStandardMaterial color="#222222" roughness={0.9} />
+      </mesh>
+      {/* Superlaser dish */}
+      <mesh position={[2, 2.5, 3.2]} rotation={[0.3, 0.8, 0]}>
+        <circleGeometry args={[1.5, 16]} />
         <meshStandardMaterial color="#1a1a1a" roughness={0.95} />
       </mesh>
-      {/* Superlaser dish (concave) */}
-      <mesh position={[2, 2.5, 3.2]} rotation={[0.3, 0.8, 0]}>
-        <ringGeometry args={[0.3, 1.5, 16]} />
-        <meshStandardMaterial color="#0a0a0a" roughness={0.95} side={THREE.DoubleSide} />
-      </mesh>
+      {/* Superlaser glow */}
       <mesh ref={glowRef} position={[2, 2.5, 3.5]}>
         <sphereGeometry args={[1.8, 12, 12]} />
-        <meshBasicMaterial color="#44ff44" transparent opacity={0.03} />
+        <meshBasicMaterial color="#44ff44" transparent opacity={0.04} />
       </mesh>
-      <mesh ref={laserRef} position={[2, 2.5, 22]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[0.5, 0.12, 40, 6]} />
+      {/* Superlaser beam */}
+      <mesh ref={laserRef} position={[2, 2.5, 15]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.3, 0.1, 25, 6]} />
         <meshBasicMaterial color="#44ff44" transparent opacity={0} />
       </mesh>
-      <pointLight color="#888888" intensity={3} distance={80} />
+      {/* Ambient light */}
+      <pointLight color="#666666" intensity={1} distance={30} />
     </group>
   );
 }
@@ -303,71 +117,52 @@ interface CapitalShipProps {
 
 function CapitalShip({ position, rotation, isImperial, index }: CapitalShipProps) {
   const ref = useRef<THREE.Group>(null);
-  const driftSpeed = useRef(0.08 + Math.random() * 0.1);
+  const driftSpeed = useRef(0.1 + Math.random() * 0.15);
   const driftPhase = useRef(Math.random() * Math.PI * 2);
 
-  const geometry = useMemo(() =>
-    isImperial ? createStarDestroyerGeometry() : createMonCalGeometry(),
+  const geometry = useMemo(() => 
+    isImperial ? createStarDestroyerGeometry() : createMonCalGeometry(), 
     [isImperial]
   );
 
-  // Movie-accurate colors
-  const color = isImperial ? "#9aa4ad" : "#8b7355";
-  const emissiveColor = isImperial ? "#2a3a55" : "#3a2a18";
+  const color = isImperial ? "#8899aa" : "#aa7755";
+  const emissiveColor = isImperial ? "#334466" : "#553322";
 
   useFrame((_, delta) => {
     if (!ref.current) return;
     driftPhase.current += delta * driftSpeed.current;
-    ref.current.position.x = position.x + Math.sin(driftPhase.current + index) * 0.8;
-    ref.current.position.y = position.y + Math.cos(driftPhase.current * 0.6 + index * 2) * 0.4;
-    ref.current.position.z = position.z + Math.sin(driftPhase.current * 0.4) * 0.5;
-    ref.current.rotation.z = rotation.z + Math.sin(driftPhase.current * 0.2) * 0.02;
+    // Gentle drift
+    ref.current.position.x = position.x + Math.sin(driftPhase.current + index) * 0.5;
+    ref.current.position.y = position.y + Math.cos(driftPhase.current * 0.7 + index * 2) * 0.3;
+    ref.current.position.z = position.z + Math.sin(driftPhase.current * 0.5) * 0.4;
+    // Slow roll
+    ref.current.rotation.z = rotation.z + Math.sin(driftPhase.current * 0.3) * 0.03;
   });
 
-  const shipScale = isImperial ? 3.5 : 2.8;
-
   return (
-    <group ref={ref} position={position} rotation={rotation} scale={[shipScale, shipScale, shipScale]}>
+    <group ref={ref} position={position} rotation={rotation}>
       <mesh geometry={geometry}>
-        <meshStandardMaterial
-          color={color}
-          emissive={emissiveColor}
-          emissiveIntensity={0.4}
-          roughness={0.55}
-          metalness={0.75}
+        <meshStandardMaterial 
+          color={color} 
+          emissive={emissiveColor} 
+          emissiveIntensity={0.3}
+          roughness={0.6}
+          metalness={0.7}
         />
       </mesh>
-      {/* Engine glows */}
-      {isImperial ? (
-        <>
-          {[-0.9, -0.35, 0.35, 0.9].map((x, i) => (
-            <group key={i}>
-              <mesh position={[x * 1.1, 0, -7.5]}>
-                <sphereGeometry args={[0.25, 8, 8]} />
-                <meshBasicMaterial color="#88aaff" transparent opacity={0.7} />
-              </mesh>
-              {/* Engine exhaust cone */}
-              <mesh position={[x * 1.1, 0, -8.2]}>
-                <coneGeometry args={[0.15, 0.8, 6]} />
-                <meshBasicMaterial color="#4477ff" transparent opacity={0.3} />
-              </mesh>
-            </group>
-          ))}
-        </>
-      ) : (
-        <>
-          {[0.5, -0.5, 0].map((x, i) => (
-            <mesh key={i} position={[x, i === 2 ? 0.2 : -0.1, -2.8]}>
-              <sphereGeometry args={[0.3, 8, 8]} />
-              <meshBasicMaterial color="#ff8844" transparent opacity={0.5} />
-            </mesh>
-          ))}
-        </>
-      )}
-      <pointLight
-        color={isImperial ? "#4466cc" : "#ff6633"}
-        intensity={2.5}
-        distance={30}
+      {/* Engine glow */}
+      <mesh position={isImperial ? [0, 0, -1.5] : [0, 0, -1]}>
+        <sphereGeometry args={[isImperial ? 0.4 : 0.6, 8, 8]} />
+        <meshBasicMaterial 
+          color={isImperial ? "#6688ff" : "#ff8844"} 
+          transparent 
+          opacity={0.4} 
+        />
+      </mesh>
+      <pointLight 
+        color={isImperial ? "#4466cc" : "#ff6633"} 
+        intensity={0.5} 
+        distance={8} 
       />
     </group>
   );
@@ -389,15 +184,17 @@ interface FighterData {
 }
 
 const FIGHTER_COUNT = 80;
-const BATTLE_CENTER: [number, number, number] = [0, 8, -80];
-const BATTLE_RADIUS = 40;
+const BATTLE_CENTER: [number, number, number] = [0, 15, -45];
+const BATTLE_RADIUS = 25;
 
 function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, to: THREE.Vector3, color: string) => void }) {
   const rebelRef = useRef<THREE.InstancedMesh>(null);
   const imperialRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
+
   const fighters = useRef<FighterData[]>([]);
 
+  // Initialize fighters
   useMemo(() => {
     fighters.current = Array.from({ length: FIGHTER_COUNT }, (_, i) => {
       const isRebel = i < FIGHTER_COUNT / 2;
@@ -432,6 +229,8 @@ function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, 
 
     fighters.current.forEach((fighter) => {
       if (!fighter.alive) return;
+
+      // Pick nearest enemy as target
       const enemies = fighter.faction === "rebel" ? imperials : rebels;
       let nearest = enemies[0];
       let nearestDist = Infinity;
@@ -439,24 +238,34 @@ function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, 
         const d = fighter.position.distanceTo(enemy.position);
         if (d < nearestDist) { nearestDist = d; nearest = enemy; }
       }
+
       if (nearest) {
         fighter.target.copy(nearest.position);
+        // Pursuit with some lead
         fighter.target.addScaledVector(nearest.velocity, 0.5);
       }
+
+      // Steering
       const toTarget = new THREE.Vector3().subVectors(fighter.target, fighter.position);
       const dist = toTarget.length();
       toTarget.normalize();
+
+      // Add some chaos
       fighter.evadeTimer -= clampedDelta;
       if (fighter.evadeTimer <= 0) {
         fighter.evadeTimer = 1 + Math.random() * 3;
+        // Random jink
         toTarget.x += (Math.random() - 0.5) * 0.8;
         toTarget.y += (Math.random() - 0.5) * 0.5;
         toTarget.z += (Math.random() - 0.5) * 0.8;
         toTarget.normalize();
       }
-      const speed = fighter.faction === "rebel" ? 7 : 6;
+
+      const speed = fighter.faction === "rebel" ? 6 : 5.5;
       fighter.velocity.lerp(toTarget.multiplyScalar(speed), clampedDelta * 2);
       fighter.position.addScaledVector(fighter.velocity, clampedDelta);
+
+      // Keep in battle area
       const fromCenter = new THREE.Vector3(
         fighter.position.x - BATTLE_CENTER[0],
         fighter.position.y - BATTLE_CENTER[1],
@@ -466,6 +275,8 @@ function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, 
         fromCenter.normalize().multiplyScalar(-2);
         fighter.velocity.add(fromCenter);
       }
+
+      // Fire lasers
       fighter.fireCooldown -= clampedDelta;
       if (fighter.fireCooldown <= 0 && dist < 15 && nearest) {
         fighter.fireCooldown = 0.3 + Math.random() * 0.8;
@@ -473,34 +284,39 @@ function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, 
           new THREE.Vector3().subVectors(nearest.position, fighter.position).normalize(),
           Math.min(dist, 8),
         );
-        // Movie colors: Rebels fire RED, Empire fires GREEN
         laserCallback(
           fighter.position.clone(),
           laserEnd,
-          fighter.faction === "rebel" ? "#ff2222" : "#22ff44",
+          fighter.faction === "rebel" ? "#ff3333" : "#33ff33",
         );
       }
+
+      // Bank angle for visual flair
       const cross = new THREE.Vector3().crossVectors(fighter.velocity.clone().normalize(), toTarget);
       fighter.bankAngle = THREE.MathUtils.lerp(fighter.bankAngle, cross.y * 1.5, clampedDelta * 3);
     });
 
+    // Update instanced meshes
     let rebelIdx = 0;
     let imperialIdx = 0;
     fighters.current.forEach((fighter) => {
       if (!fighter.alive) return;
       dummy.position.copy(fighter.position);
+      // Orient along velocity
       if (fighter.velocity.lengthSq() > 0.01) {
         dummy.lookAt(fighter.position.clone().add(fighter.velocity));
       }
       dummy.rotateZ(fighter.bankAngle);
-      dummy.scale.setScalar(4.0);
+      dummy.scale.setScalar(1);
       dummy.updateMatrix();
+
       if (fighter.faction === "rebel" && rebelRef.current) {
         rebelRef.current.setMatrixAt(rebelIdx++, dummy.matrix);
       } else if (fighter.faction === "imperial" && imperialRef.current) {
         imperialRef.current.setMatrixAt(imperialIdx++, dummy.matrix);
       }
     });
+
     if (rebelRef.current) {
       rebelRef.current.count = rebelIdx;
       rebelRef.current.instanceMatrix.needsUpdate = true;
@@ -511,23 +327,23 @@ function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, 
     }
   });
 
-  const rebelGeo = useMemo(() => createXWingGeometry(), []);
-  const imperialGeo = useMemo(() => createTIEGeometry(), []);
+  const rebelGeo = useMemo(() => createFighterGeometry(true), []);
+  const imperialGeo = useMemo(() => createFighterGeometry(false), []);
 
   return (
     <>
       <instancedMesh ref={rebelRef} args={[rebelGeo, undefined, FIGHTER_COUNT / 2]}>
-        <meshStandardMaterial color="#e0ddd8" emissive="#ff6644" emissiveIntensity={0.4} roughness={0.35} metalness={0.6} />
+        <meshStandardMaterial color="#cccccc" emissive="#ff6644" emissiveIntensity={0.5} roughness={0.4} metalness={0.6} />
       </instancedMesh>
       <instancedMesh ref={imperialRef} args={[imperialGeo, undefined, FIGHTER_COUNT / 2]}>
-        <meshStandardMaterial color="#556677" emissive="#3355aa" emissiveIntensity={0.5} roughness={0.4} metalness={0.7} />
+        <meshStandardMaterial color="#555566" emissive="#4466aa" emissiveIntensity={0.5} roughness={0.5} metalness={0.7} />
       </instancedMesh>
     </>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  LASER BOLTS (pooled — fighters)
+//  LASER BOLTS (pooled for performance)
 // ═══════════════════════════════════════════════════════════════
 
 interface LaserBolt {
@@ -551,30 +367,34 @@ function LaserBolts({ lasersRef }: { lasersRef: React.MutableRefObject<LaserBolt
       laser.life += delta;
       if (laser.life >= laser.maxLife) {
         laser.active = false;
-        const mesh = meshRefs.current[i];
-        if (mesh) mesh.visible = false;
         return;
       }
       const mesh = meshRefs.current[i];
       if (!mesh) return;
+
       const progress = laser.life / laser.maxLife;
       const currentPos = new THREE.Vector3().lerpVectors(laser.from, laser.to, progress);
       const dir = new THREE.Vector3().subVectors(laser.to, laser.from).normalize();
+
       mesh.position.copy(currentPos);
       mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
       mesh.visible = true;
-      (mesh.material as THREE.MeshBasicMaterial).opacity = 1 - progress * 0.4;
+      (mesh.material as THREE.MeshBasicMaterial).opacity = 1 - progress * 0.5;
     });
   });
 
   return (
     <group ref={groupRef}>
       {Array.from({ length: MAX_LASERS }, (_, i) => (
-        <mesh key={i} ref={(el) => { meshRefs.current[i] = el; }} visible={false}>
-          <cylinderGeometry args={[0.05, 0.05, 1.0, 4]} />
-          <meshBasicMaterial
-            color={lasersRef.current[i]?.color || "#ff3333"}
-            transparent
+        <mesh
+          key={i}
+          ref={(el) => { meshRefs.current[i] = el; }}
+          visible={false}
+        >
+          <cylinderGeometry args={[0.02, 0.02, 0.6, 3]} />
+          <meshBasicMaterial 
+            color={lasersRef.current[i]?.color || "#ff3333"} 
+            transparent 
             opacity={0.9}
           />
         </mesh>
@@ -598,12 +418,13 @@ function ExplosionParticles() {
   }>({
     positions: new Float32Array(PARTICLE_COUNT * 3),
     velocities: new Float32Array(PARTICLE_COUNT * 3),
-    lifetimes: new Float32Array(PARTICLE_COUNT),
+    lifetimes: new Float32Array(PARTICLE_COUNT), // life remaining
     colors: new Float32Array(PARTICLE_COUNT * 3),
   });
 
   const spawnExplosion = useCallback((pos: THREE.Vector3) => {
     const p = particles.current;
+    // Find 15 dead particles and respawn
     let spawned = 0;
     for (let i = 0; i < PARTICLE_COUNT && spawned < 15; i++) {
       if (p.lifetimes[i] <= 0) {
@@ -614,6 +435,7 @@ function ExplosionParticles() {
         p.velocities[i * 3 + 1] = (Math.random() - 0.5) * 8;
         p.velocities[i * 3 + 2] = (Math.random() - 0.5) * 8;
         p.lifetimes[i] = 0.5 + Math.random() * 0.8;
+        // Orange-yellow-white
         const heat = Math.random();
         p.colors[i * 3] = 1;
         p.colors[i * 3 + 1] = 0.3 + heat * 0.6;
@@ -623,6 +445,7 @@ function ExplosionParticles() {
     }
   }, []);
 
+  // Random explosions at battle area
   const timer = useRef(0);
   useFrame((_, delta) => {
     timer.current += delta;
@@ -636,6 +459,7 @@ function ExplosionParticles() {
         BATTLE_CENTER[2] + Math.sin(angle) * r,
       ));
     }
+
     const p = particles.current;
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       if (p.lifetimes[i] <= 0) continue;
@@ -643,13 +467,16 @@ function ExplosionParticles() {
       p.positions[i * 3] += p.velocities[i * 3] * delta;
       p.positions[i * 3 + 1] += p.velocities[i * 3 + 1] * delta;
       p.positions[i * 3 + 2] += p.velocities[i * 3 + 2] * delta;
+      // Slow down
       p.velocities[i * 3] *= 0.97;
       p.velocities[i * 3 + 1] *= 0.97;
       p.velocities[i * 3 + 2] *= 0.97;
     }
+
     if (ref.current) {
-      ref.current.geometry.attributes.position.needsUpdate = true;
-      ref.current.geometry.attributes.color.needsUpdate = true;
+      const geom = ref.current.geometry;
+      geom.attributes.position.needsUpdate = true;
+      geom.attributes.color.needsUpdate = true;
     }
   });
 
@@ -659,109 +486,67 @@ function ExplosionParticles() {
         <bufferAttribute attach="attributes-position" count={PARTICLE_COUNT} array={particles.current.positions} itemSize={3} />
         <bufferAttribute attach="attributes-color" count={PARTICLE_COUNT} array={particles.current.colors} itemSize={3} />
       </bufferGeometry>
-      <pointsMaterial size={0.4} vertexColors transparent opacity={0.9} sizeAttenuation />
+      <pointsMaterial size={0.3} vertexColors transparent opacity={0.9} sizeAttenuation />
     </points>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  TURBOLASER BOLTS (traveling bolts between capital ships)
-//  Uses imperative refs to avoid React re-render issues
+//  TURBOLASER EXCHANGES (capital ship to capital ship)
 // ═══════════════════════════════════════════════════════════════
-
-const MAX_TURBO_BOLTS = 30;
-
-interface TurboBolt {
-  from: THREE.Vector3;
-  to: THREE.Vector3;
-  color: string;
-  progress: number; // 0 to 1
-  speed: number;
-  active: boolean;
-}
 
 function TurbolaserExchanges({ imperialPositions, rebelPositions }: {
   imperialPositions: THREE.Vector3[];
   rebelPositions: THREE.Vector3[];
 }) {
-  const meshRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const bolts = useRef<TurboBolt[]>(
-    Array.from({ length: MAX_TURBO_BOLTS }, () => ({
-      from: new THREE.Vector3(),
-      to: new THREE.Vector3(),
-      color: "#33ff66",
-      progress: 0,
-      speed: 1.5,
-      active: false,
-    }))
-  );
-  const spawnTimer = useRef(0);
+  const beamsRef = useRef<THREE.Group>(null);
+  const beams = useRef<{ from: THREE.Vector3; to: THREE.Vector3; life: number; color: string }[]>([]);
+  const timer = useRef(0);
 
   useFrame((_, delta) => {
-    // Spawn new bolts
-    spawnTimer.current += delta;
-    if (spawnTimer.current > 0.15 + Math.random() * 0.2) {
-      spawnTimer.current = 0;
+    timer.current += delta;
+    
+    // Fire turbolasers every ~0.4s
+    if (timer.current > 0.3 + Math.random() * 0.3) {
+      timer.current = 0;
       if (imperialPositions.length > 0 && rebelPositions.length > 0) {
-        const bolt = bolts.current.find(b => !b.active);
-        if (bolt) {
-          const fromImperial = Math.random() > 0.4; // Empire fires more
-          const sources = fromImperial ? imperialPositions : rebelPositions;
-          const targets = fromImperial ? rebelPositions : imperialPositions;
-          bolt.from.copy(sources[Math.floor(Math.random() * sources.length)]);
-          bolt.to.copy(targets[Math.floor(Math.random() * targets.length)]);
-          // Offset from ship center slightly
-          bolt.from.add(new THREE.Vector3((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 3, (Math.random() - 0.5) * 6));
-          bolt.to.add(new THREE.Vector3((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 3, (Math.random() - 0.5) * 6));
-          // Movie colors: Imperial = green, Rebel = red
-          bolt.color = fromImperial ? "#33ff66" : "#ff4444";
-          bolt.progress = 0;
-          bolt.speed = 1.2 + Math.random() * 0.8;
-          bolt.active = true;
-        }
+        const fromSide = Math.random() > 0.5;
+        const sources = fromSide ? imperialPositions : rebelPositions;
+        const targets = fromSide ? rebelPositions : imperialPositions;
+        const from = sources[Math.floor(Math.random() * sources.length)].clone();
+        const to = targets[Math.floor(Math.random() * targets.length)].clone();
+        // Add randomness
+        from.add(new THREE.Vector3((Math.random()-0.5)*3, (Math.random()-0.5)*2, (Math.random()-0.5)*3));
+        to.add(new THREE.Vector3((Math.random()-0.5)*3, (Math.random()-0.5)*2, (Math.random()-0.5)*3));
+        beams.current.push({
+          from, to,
+          life: 0.4 + Math.random() * 0.3,
+          color: fromSide ? "#33ff66" : "#ff4444",
+        });
       }
     }
 
-    // Update all bolts
-    bolts.current.forEach((bolt, i) => {
-      const mesh = meshRefs.current[i];
-      if (!mesh) return;
-
-      if (!bolt.active) {
-        mesh.visible = false;
-        return;
-      }
-
-      bolt.progress += delta * bolt.speed;
-      if (bolt.progress >= 1.0) {
-        bolt.active = false;
-        mesh.visible = false;
-        return;
-      }
-
-      // Position the bolt along the path
-      const currentPos = new THREE.Vector3().lerpVectors(bolt.from, bolt.to, bolt.progress);
-      const dir = new THREE.Vector3().subVectors(bolt.to, bolt.from).normalize();
-
-      mesh.position.copy(currentPos);
-      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-      mesh.visible = true;
-
-      // Update color
-      const mat = mesh.material as THREE.MeshBasicMaterial;
-      mat.color.set(bolt.color);
-      mat.opacity = 0.9 - bolt.progress * 0.3;
+    // Decay beams
+    beams.current = beams.current.filter(b => {
+      b.life -= delta;
+      return b.life > 0;
     });
   });
 
   return (
-    <group>
-      {Array.from({ length: MAX_TURBO_BOLTS }, (_, i) => (
-        <mesh key={i} ref={(el) => { meshRefs.current[i] = el; }} visible={false}>
-          <cylinderGeometry args={[0.12, 0.12, 2.5, 4]} />
-          <meshBasicMaterial color="#33ff66" transparent opacity={0.9} />
-        </mesh>
-      ))}
+    <group ref={beamsRef}>
+      {beams.current.slice(0, 20).map((beam, i) => {
+        const dir = new THREE.Vector3().subVectors(beam.to, beam.from);
+        const mid = new THREE.Vector3().addVectors(beam.from, beam.to).multiplyScalar(0.5);
+        const length = dir.length();
+        dir.normalize();
+        return (
+          <mesh key={i} position={mid} quaternion={new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir)}>
+            <cylinderGeometry args={[0.06, 0.06, length, 4]} />
+            <meshBasicMaterial color={beam.color} transparent opacity={Math.min(beam.life * 3, 0.8)} />
+          </mesh>
+        );
+      })}
     </group>
   );
 }
@@ -783,6 +568,7 @@ export function EndorBattle() {
   );
 
   const laserCallback = useCallback((from: THREE.Vector3, to: THREE.Vector3, color: string) => {
+    // Find inactive laser
     const laser = lasersRef.current.find(l => !l.active);
     if (laser) {
       laser.from.copy(from);
@@ -794,16 +580,16 @@ export function EndorBattle() {
     }
   }, []);
 
-  // Capital ship positions
+  // Capital ship positions — arranged around battle center
   const imperialShips = useMemo(() => [
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 35, BATTLE_CENTER[1] + 8, BATTLE_CENTER[2] - 15), rot: new THREE.Euler(0, -0.8, 0.05) },
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 28, BATTLE_CENTER[1] - 5, BATTLE_CENTER[2] + 20), rot: new THREE.Euler(0, -1.2, -0.03) },
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 42, BATTLE_CENTER[1] + 3, BATTLE_CENTER[2] + 8), rot: new THREE.Euler(0, -0.5, 0.02) },
+    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 25, BATTLE_CENTER[1] + 5, BATTLE_CENTER[2] - 10), rot: new THREE.Euler(0, -0.8, 0.05) },
+    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 20, BATTLE_CENTER[1] - 3, BATTLE_CENTER[2] + 15), rot: new THREE.Euler(0, -1.2, -0.03) },
+    { pos: new THREE.Vector3(BATTLE_CENTER[0] + 30, BATTLE_CENTER[1] + 2, BATTLE_CENTER[2] + 5), rot: new THREE.Euler(0, -0.5, 0.02) },
   ], []);
 
   const rebelShips = useMemo(() => [
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] - 30, BATTLE_CENTER[1] - 4, BATTLE_CENTER[2] + 12), rot: new THREE.Euler(0, 0.6, -0.04) },
-    { pos: new THREE.Vector3(BATTLE_CENTER[0] - 25, BATTLE_CENTER[1] + 6, BATTLE_CENTER[2] - 18), rot: new THREE.Euler(0, 1.0, 0.03) },
+    { pos: new THREE.Vector3(BATTLE_CENTER[0] - 20, BATTLE_CENTER[1] - 2, BATTLE_CENTER[2] + 8), rot: new THREE.Euler(0, 0.6, -0.04) },
+    { pos: new THREE.Vector3(BATTLE_CENTER[0] - 18, BATTLE_CENTER[1] + 4, BATTLE_CENTER[2] - 12), rot: new THREE.Euler(0, 1.0, 0.03) },
   ], []);
 
   const imperialPositions = useMemo(() => imperialShips.map(s => s.pos), [imperialShips]);
@@ -812,14 +598,14 @@ export function EndorBattle() {
   return (
     <group>
       {/* Death Star — looming in background */}
-      <DeathStar position={[BATTLE_CENTER[0] + 70, BATTLE_CENTER[1] + 20, BATTLE_CENTER[2] - 50]} />
+      <DeathStar position={[BATTLE_CENTER[0] + 50, BATTLE_CENTER[1] + 15, BATTLE_CENTER[2] - 30]} />
 
       {/* Imperial Star Destroyers */}
       {imperialShips.map((ship, i) => (
         <CapitalShip key={`imp-${i}`} position={ship.pos} rotation={ship.rot} isImperial={true} index={i} />
       ))}
 
-      {/* Rebel Mon Calamari cruisers */}
+      {/* Rebel capital ships (Mon Calamari cruisers) */}
       {rebelShips.map((ship, i) => (
         <CapitalShip key={`reb-${i}`} position={ship.pos} rotation={ship.rot} isImperial={false} index={i + 10} />
       ))}
@@ -827,19 +613,18 @@ export function EndorBattle() {
       {/* Fighter swarms */}
       <FighterSwarm laserCallback={laserCallback} />
 
-      {/* Fighter laser bolts */}
+      {/* Laser bolts */}
       <LaserBolts lasersRef={lasersRef} />
 
-      {/* Capital ship turbolaser exchanges — traveling bolts */}
+      {/* Capital ship turbolaser exchanges */}
       <TurbolaserExchanges imperialPositions={imperialPositions} rebelPositions={rebelPositions} />
 
       {/* Explosions */}
       <ExplosionParticles />
 
-      {/* Battle area lighting */}
-      <pointLight position={BATTLE_CENTER} color="#ff6633" intensity={3} distance={120} />
-      <pointLight position={[BATTLE_CENTER[0] + 30, BATTLE_CENTER[1], BATTLE_CENTER[2]]} color="#4466ff" intensity={2} distance={80} />
-      <pointLight position={[BATTLE_CENTER[0] - 30, BATTLE_CENTER[1], BATTLE_CENTER[2]]} color="#ff4422" intensity={1.5} distance={80} />
+      {/* Battle area ambient light */}
+      <pointLight position={BATTLE_CENTER} color="#ff6633" intensity={0.8} distance={50} />
+      <pointLight position={[BATTLE_CENTER[0]+20, BATTLE_CENTER[1], BATTLE_CENTER[2]]} color="#4466ff" intensity={0.4} distance={30} />
     </group>
   );
 }
