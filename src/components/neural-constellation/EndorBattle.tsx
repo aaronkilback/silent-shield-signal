@@ -263,89 +263,171 @@ function createMillenniumFalconGeometry(): THREE.BufferGeometry {
     for (let i = 0; i < p.length; i++) { positions.push(p[i]); normals.push(n[i]); }
   }
 
-  // === MAIN SAUCER — slightly oval, flat disc ===
-  const disc = new THREE.CylinderGeometry(1.0, 1.0, 0.06, 24);
-  disc.rotateX(Math.PI / 2);
-  disc.scale(1.0, 1.0, 0.88); // wider than long
-  addGeo(disc);
+  // === MAIN SAUCER — flat oval disc, the dominant shape ===
+  // Bottom plate (slightly thicker for depth)
+  const discBot = new THREE.CylinderGeometry(1.1, 1.1, 0.03, 32);
+  discBot.rotateX(Math.PI / 2);
+  discBot.scale(1.0, 1.0, 0.85);
+  discBot.translate(0, -0.015, 0);
+  addGeo(discBot);
+  // Top plate
+  const discTop = new THREE.CylinderGeometry(1.08, 1.08, 0.03, 32);
+  discTop.rotateX(Math.PI / 2);
+  discTop.scale(1.0, 1.0, 0.85);
+  discTop.translate(0, 0.015, 0);
+  addGeo(discTop);
+  // Rim edge ring for thickness
+  const rim = new THREE.TorusGeometry(1.08, 0.025, 6, 32);
+  rim.rotateX(Math.PI / 2);
+  rim.scale(1.0, 1.0, 0.85);
+  addGeo(rim);
 
-  // Raised center hull plate (the thicker raised area on top/bottom)
-  const centerHull = new THREE.CylinderGeometry(0.55, 0.6, 0.1, 16);
+  // === RAISED CENTER HULL — the offset raised section (slightly starboard-aft) ===
+  const centerHull = new THREE.CylinderGeometry(0.48, 0.52, 0.12, 20);
   centerHull.rotateX(Math.PI / 2);
-  centerHull.translate(0, 0.06, -0.08);
+  centerHull.translate(0.05, 0.07, -0.1);
   addGeo(centerHull);
+  // Dome on top of center hull
+  const topDome = new THREE.SphereGeometry(0.35, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+  topDome.scale(1.2, 0.35, 1.0);
+  topDome.translate(0.05, 0.13, -0.1);
+  addGeo(topDome);
 
-  // === FORWARD MANDIBLES — the iconic wedge fork ===
-  // Left mandible — tapered wedge
-  const mandL = new THREE.BoxGeometry(0.22, 0.06, 1.0);
-  mandL.translate(-0.38, 0, 1.05);
+  // === FORWARD MANDIBLES — the iconic forked prongs ===
+  // Left mandible — long tapered plate
+  const mandL = new THREE.BoxGeometry(0.28, 0.05, 1.15);
+  mandL.translate(-0.32, 0, 1.1);
   addGeo(mandL);
+  // Left mandible inner taper
+  const mandLInner = new THREE.BoxGeometry(0.12, 0.04, 0.5);
+  mandLInner.translate(-0.18, 0, 1.4);
+  addGeo(mandLInner);
   // Right mandible
-  const mandR = new THREE.BoxGeometry(0.22, 0.06, 1.0);
-  mandR.translate(0.38, 0, 1.05);
+  const mandR = new THREE.BoxGeometry(0.28, 0.05, 1.15);
+  mandR.translate(0.32, 0, 1.1);
   addGeo(mandR);
-  // Mandible tips converge slightly — angled nose plates
-  const noseL = new THREE.BoxGeometry(0.16, 0.05, 0.3);
-  noseL.translate(-0.28, 0, 1.6);
+  // Right mandible inner taper
+  const mandRInner = new THREE.BoxGeometry(0.12, 0.04, 0.5);
+  mandRInner.translate(0.18, 0, 1.4);
+  addGeo(mandRInner);
+  // Nose tips converging
+  const noseL = new THREE.BoxGeometry(0.2, 0.04, 0.25);
+  noseL.translate(-0.24, 0, 1.72);
   addGeo(noseL);
-  const noseR = new THREE.BoxGeometry(0.16, 0.05, 0.3);
-  noseR.translate(0.28, 0, 1.6);
+  const noseR = new THREE.BoxGeometry(0.2, 0.04, 0.25);
+  noseR.translate(0.24, 0, 1.72);
   addGeo(noseR);
-  // Crossbar connecting mandible tips
-  const crossbar = new THREE.BoxGeometry(0.7, 0.04, 0.06);
-  crossbar.translate(0, 0, 1.72);
+  // Crossbar at mandible tips
+  const crossbar = new THREE.BoxGeometry(0.56, 0.035, 0.05);
+  crossbar.translate(0, 0, 1.85);
   addGeo(crossbar);
+  // Mandible gap fill plates (the recessed freight loading area)
+  const gapFloor = new THREE.BoxGeometry(0.3, 0.02, 0.8);
+  gapFloor.translate(0, -0.02, 1.2);
+  addGeo(gapFloor);
 
-  // === COCKPIT — starboard side tube + dome (the most recognizable feature) ===
-  const cockpitTube = new THREE.CylinderGeometry(0.07, 0.07, 0.7, 6);
+  // === COCKPIT — starboard forward tube + dome ===
+  // Cockpit connector tube (angled slightly forward)
+  const cockpitTube = new THREE.CylinderGeometry(0.065, 0.065, 0.55, 8);
   cockpitTube.rotateZ(Math.PI / 2);
-  cockpitTube.translate(0.85, 0.02, 0.65);
+  cockpitTube.rotateY(-0.15); // angle forward slightly
+  cockpitTube.translate(0.9, 0.01, 0.7);
   addGeo(cockpitTube);
-  const cockpitDome = new THREE.SphereGeometry(0.13, 8, 6);
-  cockpitDome.scale(1.0, 0.7, 1.0);
-  cockpitDome.translate(1.18, 0.04, 0.65);
+  // Cockpit dome — flattened sphere
+  const cockpitDome = new THREE.SphereGeometry(0.12, 10, 8);
+  cockpitDome.scale(1.1, 0.65, 1.1);
+  cockpitDome.translate(1.2, 0.03, 0.68);
   addGeo(cockpitDome);
+  // Cockpit window band
+  const cockpitBand = new THREE.TorusGeometry(0.1, 0.015, 4, 10);
+  cockpitBand.rotateY(Math.PI / 2);
+  cockpitBand.translate(1.2, 0.04, 0.68);
+  addGeo(cockpitBand);
 
   // === REAR ENGINE BLOCK — wide exhaust bank ===
-  const engineBlock = new THREE.BoxGeometry(1.4, 0.08, 0.1);
-  engineBlock.translate(0, 0, -0.88);
+  const engineBlock = new THREE.BoxGeometry(1.6, 0.1, 0.12);
+  engineBlock.translate(0, 0, -0.95);
   addGeo(engineBlock);
-  // Individual engine vents (11 vents for detail)
+  // Engine housing (raised rear section)
+  const engineHousing = new THREE.BoxGeometry(1.5, 0.14, 0.08);
+  engineHousing.translate(0, 0.04, -0.88);
+  addGeo(engineHousing);
+  // Individual engine vents
   for (let i = 0; i < 11; i++) {
-    const vent = new THREE.BoxGeometry(0.08, 0.05, 0.04);
-    vent.translate(-0.6 + i * 0.12, 0, -0.96);
+    const vent = new THREE.BoxGeometry(0.09, 0.06, 0.035);
+    vent.translate(-0.65 + i * 0.13, 0, -1.02);
     addGeo(vent);
   }
+  // Engine exhaust recesses
+  for (let i = 0; i < 3; i++) {
+    const recess = new THREE.BoxGeometry(0.4, 0.04, 0.02);
+    recess.translate(-0.42 + i * 0.42, -0.03, -1.0);
+    addGeo(recess);
+  }
 
-  // === SATELLITE DISH — top center-left ===
-  const dishStalk = new THREE.CylinderGeometry(0.03, 0.03, 0.08, 4);
-  dishStalk.translate(-0.25, 0.1, 0.1);
+  // === SATELLITE DISH — top center (the round dish) ===
+  const dishStalk = new THREE.CylinderGeometry(0.025, 0.025, 0.1, 6);
+  dishStalk.translate(0.15, 0.14, 0.15);
   addGeo(dishStalk);
-  const dish = new THREE.CylinderGeometry(0.0, 0.2, 0.05, 10);
+  const dish = new THREE.SphereGeometry(0.18, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2);
   dish.rotateX(Math.PI);
-  dish.translate(-0.25, 0.16, 0.1);
+  dish.translate(0.15, 0.22, 0.15);
   addGeo(dish);
+  // Dish rim
+  const dishRim = new THREE.TorusGeometry(0.17, 0.012, 4, 12);
+  dishRim.translate(0.15, 0.22, 0.15);
+  addGeo(dishRim);
 
   // === TOP/BOTTOM TURRET WELLS ===
-  const turretTop = new THREE.CylinderGeometry(0.1, 0.12, 0.08, 6);
-  turretTop.translate(0.12, 0.1, -0.15);
+  const turretTop = new THREE.CylinderGeometry(0.08, 0.1, 0.1, 8);
+  turretTop.translate(0.05, 0.15, -0.2);
   addGeo(turretTop);
-  const turretBot = new THREE.CylinderGeometry(0.1, 0.12, 0.08, 6);
-  turretBot.translate(0.12, -0.1, -0.15);
+  // Turret gun barrels (top)
+  const gunT1 = new THREE.CylinderGeometry(0.012, 0.012, 0.2, 4);
+  gunT1.translate(0.02, 0.22, -0.2);
+  addGeo(gunT1);
+  const gunT2 = new THREE.CylinderGeometry(0.012, 0.012, 0.2, 4);
+  gunT2.translate(0.08, 0.22, -0.2);
+  addGeo(gunT2);
+  // Bottom turret
+  const turretBot = new THREE.CylinderGeometry(0.08, 0.1, 0.1, 8);
+  turretBot.translate(0.05, -0.15, -0.2);
   addGeo(turretBot);
 
-  // === SURFACE DETAIL — panel lines along the hull ===
-  const panelL = new THREE.BoxGeometry(0.02, 0.02, 1.4);
-  panelL.translate(-0.65, 0.04, 0.1);
+  // === SURFACE DETAIL — panel lines, greebles, hull plates ===
+  // Port side panel line
+  const panelL = new THREE.BoxGeometry(0.015, 0.015, 1.5);
+  panelL.translate(-0.72, 0.035, 0.15);
   addGeo(panelL);
-  const panelR = new THREE.BoxGeometry(0.02, 0.02, 1.4);
-  panelR.translate(0.65, 0.04, 0.1);
+  // Starboard panel line
+  const panelR = new THREE.BoxGeometry(0.015, 0.015, 1.5);
+  panelR.translate(0.72, 0.035, 0.15);
   addGeo(panelR);
-
   // Dorsal hull ridge
-  const ridge = new THREE.BoxGeometry(0.8, 0.03, 0.04);
-  ridge.translate(0, 0.08, 0.3);
+  const ridge = new THREE.BoxGeometry(0.9, 0.025, 0.035);
+  ridge.translate(0, 0.055, 0.35);
   addGeo(ridge);
+  // Forward hull plates (the raised sections near mandible roots)
+  const hullPlateL = new THREE.BoxGeometry(0.35, 0.04, 0.3);
+  hullPlateL.translate(-0.45, 0.03, 0.6);
+  addGeo(hullPlateL);
+  const hullPlateR = new THREE.BoxGeometry(0.35, 0.04, 0.3);
+  hullPlateR.translate(0.45, 0.03, 0.6);
+  addGeo(hullPlateR);
+  // Side notches / docking ring areas
+  const notchL = new THREE.BoxGeometry(0.08, 0.06, 0.2);
+  notchL.translate(-0.95, 0, -0.1);
+  addGeo(notchL);
+  const notchR = new THREE.BoxGeometry(0.08, 0.06, 0.2);
+  notchR.translate(0.95, 0, 0.2);
+  addGeo(notchR);
+  // Ventral hull greebles
+  for (let i = 0; i < 6; i++) {
+    const greeble = new THREE.BoxGeometry(0.06, 0.03, 0.06);
+    const angle = (i / 6) * Math.PI * 2;
+    greeble.translate(Math.cos(angle) * 0.65, -0.04, Math.sin(angle) * 0.55);
+    addGeo(greeble);
+  }
 
   const merged = new THREE.BufferGeometry();
   merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
