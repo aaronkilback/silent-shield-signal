@@ -2161,8 +2161,12 @@ export function ConstellationScene({
       <Canvas
         camera={{ position: [0, 2, 20], fov: 55 }}
         style={{ background: "#020408" }}
-        gl={{ antialias: true, alpha: false, powerPreference: "high-performance", toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2 }}
+        gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
         dpr={[1, 2]}
+        onCreated={({ gl }) => {
+          gl.toneMapping = THREE.ACESFilmicToneMapping;
+          gl.toneMappingExposure = 1.2;
+        }}
       >
         <CameraController view={cameraView} controlsRef={controlsRef} />
 
@@ -2310,9 +2314,8 @@ export function ConstellationScene({
             luminanceThreshold={0.6}
             luminanceSmoothing={0.4}
             intensity={0.8}
-            mipmapBlur
           />
-          <Vignette eskil={false} offset={0.15} darkness={0.7} />
+          <Vignette offset={0.15} darkness={0.7} />
         </EffectComposer>
       </Canvas>
     </div>
