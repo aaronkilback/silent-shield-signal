@@ -191,6 +191,30 @@ Deno.serve(async (req) => {
     // Track same-source + actor clusters for campaign dedup
     const sourceActorMap = new Map<string, string[]>();
 
+    // Strategy D: Same-source + keyword overlap
+    // Group signals by source, then compare keyword sets for overlap
+    const sourceSignals = new Map<string, string[]>();
+    const signalKeywords = new Map<string, Set<string>>();
+
+    // Stopwords for keyword extraction
+    const STOPWORDS = new Set(['the','a','an','and','or','but','in','on','at','to','for','of','with','by','from','is','are','was','were','be','been','being','have','has','had','do','does','did','will','would','could','should','may','might','shall','can','not','no','its','it','this','that','these','those','as','if','then','than','so','up','out','about','into','over','after','before','between','under','above','such','each','which','their','there','they','them','we','our','you','your','he','she','his','her','who','what','when','where','how','all','both','few','more','most','other','some','any','only','very','also','just','because','through','during','while','new','old','first','last','long','great','little','own','same','big','even','still','now','back','well','much','here','many']);
+
+    function extractKeywords(text: string): Set<string> {
+      const words = text.toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .split(/\s+/)
+        .filter(w => w.length > 3 && !STOPWORDS.has(w));
+      return new Set(words);
+    }
+
+    function keywordOverlap(a: Set<string>, b: Set<string>): number {
+      if (a.size === 0 || b.size === 0) return 0;
+      let intersection = 0;
+      for (const w of a) { if (b.has(w)) intersection++; }
+      const smaller = Math.min(a.size, b.size);
+      return intersection / smaller;
+    }
+
     for (const sig of signals) {
       signalMap.set(sig.id, sig as SignalRow);
       const text = `${sig.title || ''} ${sig.normalized_text || ''}`;
@@ -231,7 +255,30 @@ Deno.serve(async (req) => {
           titleMap.get(normalizedTitle)!.push(sig.id);
         }
       }
+
+      // Strategy D: Track keywords by source
+      if (sourceId !== 'unknown') {
+        if (!sourceSignals.has(sourceId)) sourceSignals.set(sourceId, []);
+        sourceSignals.get(sourceId)!.push(sig.id);
+        signalKeywords.set(sig.id, extractKeywords(text));
+      }
     }
+
+    // Strategy D: Build pairs from same-source signals with high keyword overlap
+    const keywordOverlapPairs: [string, string][] = [];
+    for (const [_srcId, ids] of sourceSignals) {
+      if (ids.length < 2 || ids.length > 50) continue; // skip sources with too many signals
+      for (let i = 0; i < ids.length; i++) {
+        for (let j = i + 1; j < ids.length; j++) {
+          const kwA = signalKeywords.get(ids[i]);
+          const kwB = signalKeywords.get(ids[j]);
+          if (kwA && kwB && keywordOverlap(kwA, kwB) >= 0.5) {
+            keywordOverlapPairs.push([ids[i], ids[j]]);
+          }
+        }
+      }
+    }
+    console.log(`[Consolidate] Strategy D: found ${keywordOverlapPairs.length} keyword-overlap pairs`);
 
     // 3. Merge overlapping clusters via union-find
     // Use separate union-finds to prevent cross-contamination between strategies
@@ -303,6 +350,22 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Strategy D: Same-source + keyword overlap
+    const parentD = new Map<string, string>();
+    function findD(id: string): string {
+      if (!parentD.has(id)) parentD.set(id, id);
+      if (parentD.get(id) !== id) parentD.set(id, findD(parentD.get(id)!));
+      return parentD.get(id)!;
+    }
+    function unionD(a: string, b: string) {
+      const ra = findD(a), rb = findD(b);
+      if (ra !== rb) parentD.set(rb, ra);
+    }
+
+    for (const [a, b] of keywordOverlapPairs) {
+      unionD(a, b);
+    }
+
     // Collect groups from all strategies (deduplicate by checking if already grouped)
     const groups = new Map<string, string[]>();
 
@@ -336,6 +399,15 @@ Deno.serve(async (req) => {
       if (!parentC.has(id)) continue;
       if (isAlreadyClustered(id)) continue;
       const root = `C_${findC(id)}`;
+      if (!groups.has(root)) groups.set(root, []);
+      groups.get(root)!.push(id);
+    }
+
+    // Groups from Strategy D — only add signals not already clustered
+    for (const id of signalMap.keys()) {
+      if (!parentD.has(id)) continue;
+      if (isAlreadyClustered(id)) continue;
+      const root = `D_${findD(id)}`;
       if (!groups.has(root)) groups.set(root, []);
       groups.get(root)!.push(id);
     }
