@@ -263,56 +263,95 @@ function createMillenniumFalconGeometry(): THREE.BufferGeometry {
     for (let i = 0; i < p.length; i++) { positions.push(p[i]); normals.push(n[i]); }
   }
 
-  // Main saucer disc
-  const disc = new THREE.CylinderGeometry(1.8, 1.8, 0.25, 16);
+  // Main saucer — flattened disc, slightly wider than long
+  const disc = new THREE.CylinderGeometry(2.0, 2.0, 0.18, 20);
   disc.rotateX(Math.PI / 2);
+  disc.scale(1.0, 1.0, 0.85); // Slightly oval
   addGeo(disc);
 
-  // Forward mandibles (two prongs)
-  const mandibleL = new THREE.BoxGeometry(0.3, 0.15, 1.2);
-  mandibleL.translate(-0.55, 0, 1.8);
+  // Raised center section (slightly domed top plate)
+  const centerPlate = new THREE.CylinderGeometry(1.2, 1.3, 0.12, 16);
+  centerPlate.rotateX(Math.PI / 2);
+  centerPlate.translate(0, 0.12, -0.15);
+  addGeo(centerPlate);
+
+  // Forward mandible prongs — the distinctive fork
+  const mandibleL = new THREE.BoxGeometry(0.25, 0.14, 1.6);
+  mandibleL.translate(-0.6, 0, 2.2);
   addGeo(mandibleL);
-  const mandibleR = new THREE.BoxGeometry(0.3, 0.15, 1.2);
-  mandibleR.translate(0.55, 0, 1.8);
+  const mandibleR = new THREE.BoxGeometry(0.25, 0.14, 1.6);
+  mandibleR.translate(0.6, 0, 2.2);
   addGeo(mandibleR);
 
-  // Mandible crossbar
-  const crossbar = new THREE.BoxGeometry(1.4, 0.1, 0.15);
-  crossbar.translate(0, 0, 2.35);
+  // Mandible gap infill plates (thinner connecting pieces)
+  const gapFillL = new THREE.BoxGeometry(0.12, 0.08, 0.8);
+  gapFillL.translate(-0.35, 0, 2.6);
+  addGeo(gapFillL);
+  const gapFillR = new THREE.BoxGeometry(0.12, 0.08, 0.8);
+  gapFillR.translate(0.35, 0, 2.6);
+  addGeo(gapFillR);
+
+  // Front crossbar between mandibles
+  const crossbar = new THREE.BoxGeometry(1.5, 0.08, 0.12);
+  crossbar.translate(0, 0, 2.95);
   addGeo(crossbar);
 
-  // Cockpit tube (starboard side)
-  const cockpitTube = new THREE.CylinderGeometry(0.15, 0.15, 1.0, 6);
-  cockpitTube.rotateX(Math.PI / 2);
-  cockpitTube.translate(1.6, 0.1, 1.0);
-  addGeo(cockpitTube);
+  // Cockpit — cylindrical tube extending from RIGHT side with dome
+  const cockpitArm = new THREE.CylinderGeometry(0.12, 0.12, 1.1, 6);
+  cockpitArm.rotateZ(Math.PI / 2);
+  cockpitArm.translate(1.55, 0.06, 1.2);
+  addGeo(cockpitArm);
+  const cockpit = new THREE.SphereGeometry(0.25, 8, 6);
+  cockpit.scale(1.0, 0.7, 1.0);
+  cockpit.translate(2.05, 0.06, 1.2);
+  addGeo(cockpit);
 
-  // Cockpit head
-  const cockpitHead = new THREE.SphereGeometry(0.22, 6, 6);
-  cockpitHead.translate(1.6, 0.1, 1.5);
-  addGeo(cockpitHead);
-
-  // Rear engine bank (wide rectangle)
-  const engineBlock = new THREE.BoxGeometry(1.8, 0.3, 0.2);
-  engineBlock.translate(0, 0, -1.7);
+  // Rear engine bank — wide, slightly recessed
+  const engineBlock = new THREE.BoxGeometry(2.2, 0.22, 0.15);
+  engineBlock.translate(0, 0, -1.85);
   addGeo(engineBlock);
+  // Engine glow recesses
+  for (let i = 0; i < 7; i++) {
+    const vent = new THREE.BoxGeometry(0.2, 0.12, 0.06);
+    vent.translate(-0.9 + i * 0.3, 0, -1.95);
+    addGeo(vent);
+  }
 
-  // Turret dome (top)
-  const turretTop = new THREE.SphereGeometry(0.2, 6, 6);
-  turretTop.scale(1, 0.6, 1);
-  turretTop.translate(0.3, 0.25, -0.3);
+  // Top quad turret
+  const turretTop = new THREE.CylinderGeometry(0.15, 0.18, 0.15, 6);
+  turretTop.translate(0.15, 0.22, -0.2);
   addGeo(turretTop);
+  const gunTopL = new THREE.CylinderGeometry(0.02, 0.02, 0.5, 4);
+  gunTopL.rotateX(Math.PI / 2);
+  gunTopL.translate(0.05, 0.26, 0.1);
+  addGeo(gunTopL);
+  const gunTopR = new THREE.CylinderGeometry(0.02, 0.02, 0.5, 4);
+  gunTopR.rotateX(Math.PI / 2);
+  gunTopR.translate(0.25, 0.26, 0.1);
+  addGeo(gunTopR);
 
-  // Turret dome (bottom)
-  const turretBot = new THREE.SphereGeometry(0.2, 6, 6);
-  turretBot.scale(1, 0.6, 1);
-  turretBot.translate(0.3, -0.25, -0.3);
+  // Bottom quad turret
+  const turretBot = new THREE.CylinderGeometry(0.15, 0.18, 0.15, 6);
+  turretBot.translate(0.15, -0.22, -0.2);
   addGeo(turretBot);
 
-  // Satellite dish (top)
-  const dish = new THREE.CylinderGeometry(0.0, 0.35, 0.15, 8);
-  dish.translate(-0.5, 0.3, 0);
+  // Satellite dish on top
+  const dishBase = new THREE.CylinderGeometry(0.06, 0.06, 0.12, 6);
+  dishBase.translate(-0.6, 0.2, 0.1);
+  addGeo(dishBase);
+  const dish = new THREE.CylinderGeometry(0.0, 0.3, 0.1, 10);
+  dish.rotateX(Math.PI);
+  dish.translate(-0.6, 0.32, 0.1);
   addGeo(dish);
+
+  // Side panel detail (port)
+  const panelL = new THREE.BoxGeometry(0.04, 0.04, 1.5);
+  panelL.translate(-1.5, 0, 0);
+  addGeo(panelL);
+  // Side panel detail (starboard)
+  const panelR = new THREE.BoxGeometry(0.04, 0.04, 1.5);
+  panelR.translate(1.5, 0, 0);
+  addGeo(panelR);
 
   const merged = new THREE.BufferGeometry();
   merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
@@ -445,23 +484,65 @@ function MillenniumFalcon({ laserCallback, imperialFighters, capitalShips, explo
 //  DEATH STAR (background, not destroyable)
 // ═══════════════════════════════════════════════════════════════
 
+// Position for the Endor forest moon
+const ENDOR_MOON_POS: [number, number, number] = [BATTLE_CENTER[0] - 40, BATTLE_CENTER[1] - 10, BATTLE_CENTER[2] - 20];
+
+function EndorMoon() {
+  const ref = useRef<THREE.Mesh>(null);
+  useFrame((_, delta) => {
+    if (ref.current) ref.current.rotation.y += delta * 0.01;
+  });
+  return (
+    <group position={ENDOR_MOON_POS}>
+      <mesh ref={ref}>
+        <sphereGeometry args={[6, 24, 24]} />
+        <meshStandardMaterial color="#2d4a1e" roughness={0.9} metalness={0.1} />
+      </mesh>
+      {/* Atmosphere glow */}
+      <mesh>
+        <sphereGeometry args={[6.3, 16, 16]} />
+        <meshBasicMaterial color="#88cc66" transparent opacity={0.06} />
+      </mesh>
+      {/* Cloud layer */}
+      <mesh rotation={[0.2, 0, 0.1]}>
+        <sphereGeometry args={[6.15, 16, 16]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.04} />
+      </mesh>
+      <pointLight color="#446633" intensity={0.5} distance={15} />
+    </group>
+  );
+}
+
 function DeathStar({ position }: { position: [number, number, number] }) {
   const ref = useRef<THREE.Group>(null);
   const glowRef = useRef<THREE.Mesh>(null);
   const laserRef = useRef<THREE.Mesh>(null);
   const firingRef = useRef(0);
 
+  // Compute laser direction toward Endor moon
+  const dsPos = useMemo(() => new THREE.Vector3(...position), [position]);
+  const moonPos = useMemo(() => new THREE.Vector3(...ENDOR_MOON_POS), []);
+  const laserDir = useMemo(() => new THREE.Vector3().subVectors(moonPos, dsPos), [dsPos, moonPos]);
+  const laserLen = useMemo(() => laserDir.length(), [laserDir]);
+  const laserMidpoint = useMemo(() => new THREE.Vector3().addVectors(dsPos, moonPos).multiplyScalar(0.5), [dsPos, moonPos]);
+  const laserQuat = useMemo(() => {
+    const dir = laserDir.clone().normalize();
+    const q = new THREE.Quaternion();
+    q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    return q;
+  }, [laserDir]);
+
   useFrame((_, delta) => {
     if (ref.current) ref.current.rotation.y += delta * 0.02;
     firingRef.current += delta;
-    const cycle = firingRef.current % 12;
-    const isFiring = cycle < 0.8;
+    const cycle = firingRef.current % 15; // Fire every 15 seconds
+    const isFiring = cycle < 1.5; // Fire for 1.5 seconds
     if (laserRef.current) {
-      (laserRef.current.material as THREE.MeshBasicMaterial).opacity = isFiring ? 0.7 + Math.sin(firingRef.current * 30) * 0.3 : 0;
-      laserRef.current.scale.x = isFiring ? 1 : 0;
+      (laserRef.current.material as THREE.MeshBasicMaterial).opacity = isFiring ? 0.5 + Math.sin(firingRef.current * 25) * 0.3 : 0;
+      laserRef.current.visible = isFiring;
     }
     if (glowRef.current) {
-      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = isFiring ? 0.15 : 0.04;
+      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = isFiring ? 0.25 : 0.04;
     }
   });
 
@@ -471,7 +552,16 @@ function DeathStar({ position }: { position: [number, number, number] }) {
       <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[5.02, 0.15, 4, 32]} /><meshStandardMaterial color="#222222" roughness={0.9} /></mesh>
       <mesh position={[2, 2.5, 3.2]} rotation={[0.3, 0.8, 0]}><circleGeometry args={[1.5, 16]} /><meshStandardMaterial color="#1a1a1a" roughness={0.95} /></mesh>
       <mesh ref={glowRef} position={[2, 2.5, 3.5]}><sphereGeometry args={[1.8, 12, 12]} /><meshBasicMaterial color="#44ff44" transparent opacity={0.04} /></mesh>
-      <mesh ref={laserRef} position={[2, 2.5, 15]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.3, 0.1, 25, 6]} /><meshBasicMaterial color="#44ff44" transparent opacity={0} /></mesh>
+      {/* Superlaser beam aimed at Endor moon */}
+      <mesh
+        ref={laserRef}
+        position={[laserMidpoint.x - position[0], laserMidpoint.y - position[1], laserMidpoint.z - position[2]]}
+        quaternion={laserQuat}
+        visible={false}
+      >
+        <cylinderGeometry args={[0.6, 0.15, laserLen, 8]} />
+        <meshBasicMaterial color="#44ff44" transparent opacity={0} />
+      </mesh>
       <pointLight color="#666666" intensity={1} distance={30} />
     </group>
   );
@@ -698,15 +788,37 @@ function LaserBolts({ lasersRef, fighters, onFighterKill }: {
   fighters: React.MutableRefObject<FighterData[]>;
   onFighterKill: (faction: "rebel" | "imperial") => void;
 }) {
-  const meshRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const groupRef = useRef<THREE.Group>(null);
+  const meshesReady = useRef(false);
+  const laserGeo = useMemo(() => new THREE.CylinderGeometry(0.02, 0.02, 0.6, 3), []);
+
+  // Create meshes imperatively to avoid JSX material issues
+  const meshPool = useRef<THREE.Mesh[]>([]);
+  
+  useMemo(() => {
+    meshPool.current = Array.from({ length: MAX_LASERS }, () => {
+      const mat = new THREE.MeshBasicMaterial({ color: "#ff2222", transparent: true, opacity: 0.9 });
+      const mesh = new THREE.Mesh(laserGeo, mat);
+      mesh.visible = false;
+      return mesh;
+    });
+  }, [laserGeo]);
+
+  // Add meshes to group once mounted
+  useFrame(() => {
+    if (!meshesReady.current && groupRef.current) {
+      meshPool.current.forEach(m => groupRef.current!.add(m));
+      meshesReady.current = true;
+    }
+  });
 
   useFrame((_, delta) => {
     lasersRef.current.forEach((laser, i) => {
-      const mesh = meshRefs.current[i];
-      if (!laser.active) { if (mesh) mesh.visible = false; return; }
-      laser.life += delta;
-      if (laser.life >= laser.maxLife) { laser.active = false; if (mesh) mesh.visible = false; return; }
+      const mesh = meshPool.current[i];
       if (!mesh) return;
+      if (!laser.active) { mesh.visible = false; return; }
+      laser.life += delta;
+      if (laser.life >= laser.maxLife) { laser.active = false; mesh.visible = false; return; }
       const progress = laser.life / laser.maxLife;
       const currentPos = new THREE.Vector3().lerpVectors(laser.from, laser.to, progress);
       const dir = new THREE.Vector3().subVectors(laser.to, laser.from).normalize();
@@ -723,12 +835,8 @@ function LaserBolts({ lasersRef, fighters, onFighterKill }: {
           if (!f.alive || f.faction !== laser.targetFaction) continue;
           if (f.position.distanceTo(currentPos) < 1.5) {
             f.hp -= laser.damage;
-            if (f.hp <= 0) {
-              f.alive = false;
-              onFighterKill(f.faction);
-            }
-            laser.active = false;
-            if (mesh) mesh.visible = false;
+            if (f.hp <= 0) { f.alive = false; onFighterKill(f.faction); }
+            laser.active = false; mesh.visible = false;
             break;
           }
         }
@@ -736,16 +844,7 @@ function LaserBolts({ lasersRef, fighters, onFighterKill }: {
     });
   });
 
-  return (
-    <group>
-      {Array.from({ length: MAX_LASERS }, (_, i) => (
-        <mesh key={i} ref={(el) => { meshRefs.current[i] = el; }} visible={false}>
-          <cylinderGeometry args={[0.02, 0.02, 0.6, 3]} />
-          <meshBasicMaterial color={lasersRef.current[i]?.color || "#ff2222"} transparent opacity={0.9} />
-        </mesh>
-      ))}
-    </group>
-  );
+  return <group ref={groupRef} />;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -824,14 +923,35 @@ function TurbolaserExchanges({ capitalShips, rebelMults, imperialMults, onShipKi
   onShipKill: (faction: "rebel" | "imperial") => void;
   explosionQueue: React.MutableRefObject<THREE.Vector3[]>;
 }) {
-  const meshRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const groupRef = useRef<THREE.Group>(null);
+  const turboGeo = useMemo(() => new THREE.CylinderGeometry(0.05, 0.05, 1.2, 4), []);
   const bolts = useRef<TurboBolt[]>(
     Array.from({ length: MAX_TURBO_BOLTS }, () => ({
       position: new THREE.Vector3(), velocity: new THREE.Vector3(),
       color: "#22ff44", life: 0, maxLife: 1.5, active: false, damage: 10, targetIndex: 0, targetFaction: "rebel" as const,
     }))
   );
+
+  const meshPool = useRef<THREE.Mesh[]>([]);
+  const meshesReady = useRef(false);
+
+  useMemo(() => {
+    meshPool.current = Array.from({ length: MAX_TURBO_BOLTS }, () => {
+      const mat = new THREE.MeshBasicMaterial({ color: "#22ff44", transparent: true, opacity: 0.9 });
+      const mesh = new THREE.Mesh(turboGeo, mat);
+      mesh.visible = false;
+      return mesh;
+    });
+  }, [turboGeo]);
+
   const fireTimer = useRef(0);
+
+  useFrame(() => {
+    if (!meshesReady.current && groupRef.current) {
+      meshPool.current.forEach(m => groupRef.current!.add(m));
+      meshesReady.current = true;
+    }
+  });
 
   useFrame((_, delta) => {
     const clampedDelta = Math.min(delta, 0.05);
@@ -875,13 +995,12 @@ function TurbolaserExchanges({ capitalShips, rebelMults, imperialMults, onShipKi
     }
 
     bolts.current.forEach((bolt, i) => {
-      const mesh = meshRefs.current[i];
-      if (!bolt.active) { if (mesh) mesh.visible = false; return; }
+      const mesh = meshPool.current[i];
+      if (!mesh) return;
+      if (!bolt.active) { mesh.visible = false; return; }
       bolt.life += clampedDelta;
       if (bolt.life >= bolt.maxLife) {
-        bolt.active = false;
-        if (mesh) mesh.visible = false;
-        // Hit detection on capital ship at end of life
+        bolt.active = false; mesh.visible = false;
         const target = ships.find(s => s.index === bolt.targetIndex && s.faction === bolt.targetFaction && s.alive);
         if (target && bolt.position.distanceTo(target.position) < 6) {
           const shieldMult = bolt.targetFaction === "rebel" ? rebelMults.shield : imperialMults.shield;
@@ -895,29 +1014,17 @@ function TurbolaserExchanges({ capitalShips, rebelMults, imperialMults, onShipKi
         return;
       }
       bolt.position.addScaledVector(bolt.velocity, clampedDelta);
-      if (mesh) {
-        mesh.position.copy(bolt.position);
-        const dir = bolt.velocity.clone().normalize();
-        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-        mesh.visible = true;
-        const mat = mesh.material as THREE.MeshBasicMaterial;
-        const remaining = 1 - bolt.life / bolt.maxLife;
-        mat.opacity = Math.min(remaining * 4, 0.95);
-        mat.color.set(bolt.color);
-      }
+      mesh.position.copy(bolt.position);
+      const dir = bolt.velocity.clone().normalize();
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      mesh.visible = true;
+      const mat = mesh.material as THREE.MeshBasicMaterial;
+      mat.opacity = Math.min((1 - bolt.life / bolt.maxLife) * 4, 0.95);
+      mat.color.set(bolt.color);
     });
   });
 
-  return (
-    <group>
-      {Array.from({ length: MAX_TURBO_BOLTS }, (_, i) => (
-        <mesh key={i} ref={(el) => { meshRefs.current[i] = el; }} visible={false}>
-          <cylinderGeometry args={[0.05, 0.05, 1.2, 4]} />
-          <meshBasicMaterial color="#22ff44" transparent opacity={0.9} />
-        </mesh>
-      ))}
-    </group>
-  );
+  return <group ref={groupRef} />;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1214,6 +1321,7 @@ export function EndorBattle({ agents }: EndorBattleProps) {
   return (
     <group>
       <DeathStar position={[BATTLE_CENTER[0] + 50, BATTLE_CENTER[1] + 15, BATTLE_CENTER[2] - 30]} />
+      <EndorMoon />
 
       {capitalShips.current.map(ship => (
         <CapitalShipMesh
