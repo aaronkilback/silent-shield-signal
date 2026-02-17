@@ -11,37 +11,129 @@ import * as THREE from "three";
 //  SHIP GEOMETRY BUILDERS (low-poly silhouettes)
 // ═══════════════════════════════════════════════════════════════
 
+// Simple geometry merge helper
+function mergeBufferGeometries(geometries: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  let totalVerts = 0;
+  let totalIdx = 0;
+  for (const g of geometries) {
+    totalVerts += g.attributes.position.count;
+    totalIdx += g.index ? g.index.count : g.attributes.position.count;
+  }
+  const positions = new Float32Array(totalVerts * 3);
+  const normals = new Float32Array(totalVerts * 3);
+  const indices: number[] = [];
+  let vertOffset = 0;
+  for (const g of geometries) {
+    const pos = g.attributes.position;
+    const norm = g.attributes.normal;
+    for (let i = 0; i < pos.count; i++) {
+      positions[(vertOffset + i) * 3] = pos.getX(i);
+      positions[(vertOffset + i) * 3 + 1] = pos.getY(i);
+      positions[(vertOffset + i) * 3 + 2] = pos.getZ(i);
+      if (norm) {
+        normals[(vertOffset + i) * 3] = norm.getX(i);
+        normals[(vertOffset + i) * 3 + 1] = norm.getY(i);
+        normals[(vertOffset + i) * 3 + 2] = norm.getZ(i);
+      }
+    }
+    if (g.index) {
+      for (let i = 0; i < g.index.count; i++) {
+        indices.push(g.index.getX(i) + vertOffset);
+      }
+    } else {
+      for (let i = 0; i < pos.count; i++) {
+        indices.push(i + vertOffset);
+      }
+    }
+    vertOffset += pos.count;
+  }
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  merged.setIndex(indices);
+  merged.computeVertexNormals();
+  return merged;
+}
+
 function createStarDestroyerGeometry(): THREE.BufferGeometry {
+  // Iconic wedge — triangular from top, with bridge tower bump
   const shape = new THREE.Shape();
-  // Wedge shape from above
-  shape.moveTo(0, 2);
-  shape.lineTo(-1.2, -1.5);
-  shape.lineTo(-0.6, -2);
-  shape.lineTo(0.6, -2);
-  shape.lineTo(1.2, -1.5);
+  shape.moveTo(0, 3.5);
+  shape.lineTo(-2.0, -2.5);
+  shape.lineTo(-1.8, -3.0);
+  shape.lineTo(-0.4, -3.2);
+  shape.lineTo(0, -2.8);
+  shape.lineTo(0.4, -3.2);
+  shape.lineTo(1.8, -3.0);
+  shape.lineTo(2.0, -2.5);
   shape.closePath();
-  const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.5, bevelEnabled: false });
-  geo.rotateX(Math.PI / 2);
-  geo.scale(1.5, 0.3, 1.5);
-  return geo;
+  const hull = new THREE.ExtrudeGeometry(shape, { depth: 0.8, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.04, bevelSegments: 1 });
+  hull.rotateX(Math.PI / 2);
+  hull.scale(2.0, 0.35, 2.0);
+  // Bridge tower
+  const tower = new THREE.BoxGeometry(1.2, 1.0, 0.6);
+  tower.translate(0, 0.7, -2.5);
+  const bridge = new THREE.BoxGeometry(1.8, 0.15, 0.9);
+  bridge.translate(0, 1.25, -2.5);
+  return mergeBufferGeometries([hull, tower, bridge]);
 }
 
 function createMonCalGeometry(): THREE.BufferGeometry {
-  // Bulbous organic shape
-  const geo = new THREE.SphereGeometry(1, 8, 6);
-  geo.scale(2, 0.6, 1.2);
-  return geo;
+  // Organic bulbous cruiser — elongated
+  const geo = new THREE.SphereGeometry(1.2, 12, 10);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const z = pos.getZ(i);
+    const scaleFactor = 1.0 - Math.abs(z) * 0.12;
+    pos.setX(i, pos.getX(i) * 2.5 * scaleFactor);
+    pos.setY(i, pos.getY(i) * 0.8);
+    pos.setZ(i, z * 1.6);
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+  // Add engine block
+  const engines = new THREE.CylinderGeometry(0.4, 0.5, 0.6, 8);
+  engines.rotateX(Math.PI / 2);
+  engines.translate(0, 0, -2.0);
+  return mergeBufferGeometries([geo, engines]);
 }
 
-function createFighterGeometry(isXWing: boolean): THREE.BufferGeometry {
-  if (isXWing) {
-    // Simple cross shape
-    const geo = new THREE.BoxGeometry(0.1, 0.02, 0.15);
-    return geo;
-  }
-  // TIE — hexagonal panel + body
-  const geo = new THREE.BoxGeometry(0.12, 0.12, 0.04);
-  return geo;
+function createXWingGeometry(): THREE.BufferGeometry {
+  // X-Wing: fuselage + 4 wing planes in X pattern
+  const fuselage = new THREE.BoxGeometry(0.12, 0.08, 0.6);
+  const nose = new THREE.ConeGeometry(0.06, 0.25, 4);
+  nose.rotateX(-Math.PI / 2);
+  nose.translate(0, 0, 0.42);
+  // 4 wings
+  const wingGeo = () => new THREE.BoxGeometry(0.55, 0.02, 0.3);
+  const w1 = wingGeo(); w1.applyMatrix4(new THREE.Matrix4().makeRotationZ(0.3)); w1.translate(0.15, 0.08, -0.05);
+  const w2 = wingGeo(); w2.applyMatrix4(new THREE.Matrix4().makeRotationZ(-0.3)); w2.translate(-0.15, 0.08, -0.05);
+  const w3 = wingGeo(); w3.applyMatrix4(new THREE.Matrix4().makeRotationZ(Math.PI + 0.3)); w3.translate(0.15, -0.08, -0.05);
+  const w4 = wingGeo(); w4.applyMatrix4(new THREE.Matrix4().makeRotationZ(Math.PI - 0.3)); w4.translate(-0.15, -0.08, -0.05);
+  // Engine pods at wing tips
+  const eng1 = new THREE.CylinderGeometry(0.025, 0.03, 0.15, 4); eng1.rotateX(Math.PI/2); eng1.translate(0.38, 0.12, -0.15);
+  const eng2 = new THREE.CylinderGeometry(0.025, 0.03, 0.15, 4); eng2.rotateX(Math.PI/2); eng2.translate(-0.38, 0.12, -0.15);
+  const eng3 = new THREE.CylinderGeometry(0.025, 0.03, 0.15, 4); eng3.rotateX(Math.PI/2); eng3.translate(0.38, -0.12, -0.15);
+  const eng4 = new THREE.CylinderGeometry(0.025, 0.03, 0.15, 4); eng4.rotateX(Math.PI/2); eng4.translate(-0.38, -0.12, -0.15);
+  return mergeBufferGeometries([fuselage, nose, w1, w2, w3, w4, eng1, eng2, eng3, eng4]);
+}
+
+function createTIEGeometry(): THREE.BufferGeometry {
+  // TIE Fighter: sphere cockpit + hexagonal wing panels + struts
+  const cockpit = new THREE.SphereGeometry(0.08, 6, 6);
+  const panel1 = new THREE.CircleGeometry(0.22, 6);
+  panel1.rotateY(Math.PI / 2); panel1.translate(0.18, 0, 0);
+  const panel1b = new THREE.CircleGeometry(0.22, 6);
+  panel1b.rotateY(-Math.PI / 2); panel1b.translate(0.18, 0, 0);
+  const panel2 = new THREE.CircleGeometry(0.22, 6);
+  panel2.rotateY(-Math.PI / 2); panel2.translate(-0.18, 0, 0);
+  const panel2b = new THREE.CircleGeometry(0.22, 6);
+  panel2b.rotateY(Math.PI / 2); panel2b.translate(-0.18, 0, 0);
+  const strut1 = new THREE.CylinderGeometry(0.012, 0.012, 0.18, 4);
+  strut1.rotateZ(Math.PI / 2); strut1.translate(0.09, 0, 0);
+  const strut2 = new THREE.CylinderGeometry(0.012, 0.012, 0.18, 4);
+  strut2.rotateZ(Math.PI / 2); strut2.translate(-0.09, 0, 0);
+  return mergeBufferGeometries([cockpit, panel1, panel1b, panel2, panel2b, strut1, strut2]);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -307,7 +399,7 @@ function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, 
         dummy.lookAt(fighter.position.clone().add(fighter.velocity));
       }
       dummy.rotateZ(fighter.bankAngle);
-      dummy.scale.setScalar(1);
+      dummy.scale.setScalar(3.5);
       dummy.updateMatrix();
 
       if (fighter.faction === "rebel" && rebelRef.current) {
@@ -327,16 +419,16 @@ function FighterSwarm({ laserCallback }: { laserCallback: (from: THREE.Vector3, 
     }
   });
 
-  const rebelGeo = useMemo(() => createFighterGeometry(true), []);
-  const imperialGeo = useMemo(() => createFighterGeometry(false), []);
+  const rebelGeo = useMemo(() => createXWingGeometry(), []);
+  const imperialGeo = useMemo(() => createTIEGeometry(), []);
 
   return (
     <>
       <instancedMesh ref={rebelRef} args={[rebelGeo, undefined, FIGHTER_COUNT / 2]}>
-        <meshStandardMaterial color="#cccccc" emissive="#ff6644" emissiveIntensity={0.5} roughness={0.4} metalness={0.6} />
+        <meshStandardMaterial color="#dddddd" emissive="#ff6644" emissiveIntensity={0.6} roughness={0.3} metalness={0.7} />
       </instancedMesh>
       <instancedMesh ref={imperialRef} args={[imperialGeo, undefined, FIGHTER_COUNT / 2]}>
-        <meshStandardMaterial color="#555566" emissive="#4466aa" emissiveIntensity={0.5} roughness={0.5} metalness={0.7} />
+        <meshStandardMaterial color="#667788" emissive="#4466cc" emissiveIntensity={0.6} roughness={0.4} metalness={0.8} />
       </instancedMesh>
     </>
   );
@@ -391,7 +483,7 @@ function LaserBolts({ lasersRef }: { lasersRef: React.MutableRefObject<LaserBolt
           ref={(el) => { meshRefs.current[i] = el; }}
           visible={false}
         >
-          <cylinderGeometry args={[0.02, 0.02, 0.6, 3]} />
+          <cylinderGeometry args={[0.06, 0.06, 1.2, 4]} />
           <meshBasicMaterial 
             color={lasersRef.current[i]?.color || "#ff3333"} 
             transparent 
