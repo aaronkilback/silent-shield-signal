@@ -380,14 +380,24 @@ export const SignalHistory = () => {
     return false;
   };
 
+  // Normalize confidence to 0-100 scale (handles mixed 0-1 and 0-100 values)
+  const normalizeConfidence = (confidence: number | null | undefined): number | null => {
+    if (confidence == null) return null;
+    // If value is <= 1, it's on a 0-1 scale — convert to percentage
+    return confidence <= 1 ? confidence * 100 : confidence;
+  };
+
   // Helper to detect questionable/low-confidence signals
   const isQuestionableSignal = (signal: Signal): boolean => {
     // Low quality score
     if (signal.quality_score != null && signal.quality_score < 0.4) return true;
-    // Very low relevance
-    if (signal.relevance_score != null && signal.relevance_score < 0.4) return true;
-    // Low confidence
-    if (signal.confidence != null && signal.confidence < 30) return true;
+    
+    // Very low relevance — but zero-relevance signals are filtered out entirely (not worth reviewing)
+    if (signal.relevance_score != null && signal.relevance_score > 0 && signal.relevance_score < 0.4) return true;
+    
+    // Low confidence (normalized to 0-100 scale)
+    const normalizedConf = normalizeConfidence(signal.confidence);
+    if (normalizedConf != null && normalizedConf < 30) return true;
     
     const text = `${signal.normalized_text || ''} ${signal.title || ''} ${signal.description || ''}`.toLowerCase();
     const sourceUrl = signal.raw_json?.source_url || signal.raw_json?.url || '';
@@ -399,6 +409,12 @@ export const SignalHistory = () => {
     // Source text is suspiciously short (likely search snippet)
     if (signal.normalized_text && signal.normalized_text.length < 60) return true;
     
+    return false;
+  };
+
+  // Signals with zero relevance are auto-hidden (not even worth reviewing)
+  const isAutoHidden = (signal: Signal): boolean => {
+    if (signal.relevance_score != null && signal.relevance_score === 0) return true;
     return false;
   };
 
@@ -429,6 +445,9 @@ export const SignalHistory = () => {
 
   // Apply filters including date range
   const filteredSignals = signals.filter(signal => {
+    // Auto-hide zero-relevance signals from all tabs
+    if (isAutoHidden(signal)) return false;
+
     if (categoryFilter !== 'all' && signal.rule_category !== categoryFilter && signal.category !== categoryFilter) {
       return false;
     }
@@ -460,11 +479,12 @@ export const SignalHistory = () => {
     historical: filteredSignals.filter(s => categorizeByRecency(s) === 'historical'),
   };
 
-  // Counts for tabs (based on classification, not just recency)
-  const recentCount = signals.filter(s => classifySignal(s) === 'recent').length;
-  const historicalCount = signals.filter(s => classifySignal(s) === 'historical').length;
-  const internationalCount = signals.filter(s => classifySignal(s) === 'international').length;
-  const reviewCount = signals.filter(s => classifySignal(s) === 'review').length;
+  // Counts for tabs (based on classification, excluding auto-hidden)
+  const visibleSignals = signals.filter(s => !isAutoHidden(s));
+  const recentCount = visibleSignals.filter(s => classifySignal(s) === 'recent').length;
+  const historicalCount = visibleSignals.filter(s => classifySignal(s) === 'historical').length;
+  const internationalCount = visibleSignals.filter(s => classifySignal(s) === 'international').length;
+  const reviewCount = visibleSignals.filter(s => classifySignal(s) === 'review').length;
 
   // Get unique categories and priorities for filters
   const uniqueCategories = Array.from(new Set(signals.map(s => s.rule_category || s.category).filter(Boolean)));
