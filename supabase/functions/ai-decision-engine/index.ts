@@ -749,6 +749,66 @@ Generated: ${new Date().toISOString()}
     
     console.log(`Signal ${signal.id} updated successfully with AI decision`);
 
+    // ═══ CROSS-MODEL CONSENSUS VALIDATION (P1/P2 only) ═══
+    // For critical signals, run a second model to validate the primary assessment.
+    // Disagreements are flagged for analyst review.
+    let consensusResult = null;
+    if (
+      (decision.incident_priority === 'p1' || decision.incident_priority === 'p2') &&
+      !decision.is_historical_content
+    ) {
+      try {
+        console.log(`[AI-Decision] Running cross-model consensus for P1/P2 signal ${signal.id}`);
+        const consensusResponse = await fetch(
+          `${Deno.env.get('SUPABASE_URL')}/functions/v1/multi-model-consensus`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              signal_id: signal.id,
+              signal_text: signal.normalized_text,
+              signal_category: signal.category,
+              signal_severity: decision.threat_level,
+              context: {
+                client_name: signal.clients?.name,
+                ai_decision_priority: decision.incident_priority,
+                ai_decision_confidence: decision.confidence,
+              },
+            }),
+          }
+        );
+        if (consensusResponse.ok) {
+          consensusResult = await consensusResponse.json();
+          console.log(`[AI-Decision] Consensus: ${consensusResult.final_assessment} (score: ${consensusResult.consensus_score}, disagreement: ${consensusResult.disagreement})`);
+          
+          // If consensus disagrees with primary assessment, flag it on the signal
+          if (consensusResult.disagreement) {
+            await supabase
+              .from('signals')
+              .update({
+                raw_json: {
+                  ...signal.raw_json,
+                  ai_decision: decision,
+                  consensus_validation: {
+                    disagreement: true,
+                    consensus_score: consensusResult.consensus_score,
+                    final_assessment: consensusResult.final_assessment,
+                    requires_analyst_review: true,
+                  },
+                  processing_method: 'ai+consensus',
+                },
+              })
+              .eq('id', signal.id);
+          }
+        }
+      } catch (consensusErr) {
+        console.warn('[AI-Decision] Non-fatal consensus validation error:', consensusErr);
+      }
+    }
+
     // ═══ STORYLINE CLUSTERING ═══
     // Classify signal into an existing narrative thread or create a new one
     let storylineResult = null;
@@ -771,7 +831,7 @@ Generated: ${new Date().toISOString()}
         success: true,
         decision,
         incident_id,
-        processing_method: 'ai',
+        processing_method: consensusResult ? 'ai+consensus' : 'ai',
         credits_used: true,
         storyline: storylineResult ? {
           action: storylineResult.action,
@@ -790,7 +850,13 @@ Generated: ${new Date().toISOString()}
           incident_created: decision.should_create_incident,
           alerts_sent: decision.alert_recipients?.length || 0,
           containment_initiated: decision.containment_actions?.length > 0
-        }
+        },
+        consensus_validation: consensusResult ? {
+          consensus_score: consensusResult.consensus_score,
+          disagreement: consensusResult.disagreement,
+          final_assessment: consensusResult.final_assessment,
+          enforcement: consensusResult.enforcement || 'tool_calling_v2',
+        } : null,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

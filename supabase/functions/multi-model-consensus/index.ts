@@ -1,13 +1,14 @@
 /**
- * Multi-Model Consensus Engine
+ * Multi-Model Consensus Engine v2
  * 
- * Runs high-severity signal assessments through 2 AI models simultaneously.
- * Flags disagreements for analyst review. Used for critical decisions
- * where single-model hallucination risk is unacceptable.
+ * Runs high-severity signal assessments through 2 AI models simultaneously
+ * using STRUCTURED TOOL CALLING (not free-text JSON parsing).
+ * Flags disagreements for analyst review.
  */
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { CONSENSUS_ASSESSMENT_TOOL } from "../_shared/structured-assessment-schemas.ts";
 
 interface ConsensusResult {
   model: string;
@@ -15,6 +16,7 @@ interface ConsensusResult {
   confidence: number;
   recommended_priority: string;
   key_factors: string[];
+  reasoning: string;
 }
 
 Deno.serve(async (req) => {
@@ -24,19 +26,12 @@ Deno.serve(async (req) => {
   try {
     const { signal_id, signal_text, signal_category, signal_severity, context } = await req.json();
     
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY not configured');
-    
     const supabase = createServiceClient();
 
-    const systemPrompt = `You are a senior intelligence analyst assessing a security signal for operational relevance. Respond ONLY with valid JSON matching this schema:
-{
-  "assessment": "relevant|irrelevant|requires_investigation",
-  "confidence": 0.0-1.0,
-  "recommended_priority": "p1|p2|p3|p4",
-  "key_factors": ["factor1", "factor2", "factor3"],
-  "reasoning": "Brief explanation (max 50 words)"
-}`;
+    const systemPrompt = `You are a senior intelligence analyst assessing a security signal for operational relevance. 
+Use the submit_assessment tool to deliver your structured assessment. 
+Do NOT output free text — call the tool with your assessment.
+Be precise: base confidence on evidence quality, not gut feeling.`;
 
     const userPrompt = `Assess this signal:
 Category: ${signal_category || 'unknown'}
@@ -44,15 +39,15 @@ Current Severity: ${signal_severity || 'unknown'}
 Content: ${(signal_text || '').substring(0, 1500)}
 ${context ? `Additional Context: ${JSON.stringify(context).substring(0, 500)}` : ''}`;
 
-    // Run two models in parallel
+    // Run two models in parallel — both using TOOL CALLING (not free-text JSON)
     const [model1Response, model2Response] = await Promise.all([
-      fetchModelAssessment(LOVABLE_API_KEY, 'google/gemini-3-pro-preview', systemPrompt, userPrompt),
-      fetchModelAssessment(LOVABLE_API_KEY, 'google/gemini-2.5-flash', systemPrompt, userPrompt),
+      fetchStructuredAssessment('google/gemini-3-pro-preview', systemPrompt, userPrompt),
+      fetchStructuredAssessment('google/gemini-2.5-flash', systemPrompt, userPrompt),
     ]);
 
-    // Parse results
-    const result1 = parseAssessment(model1Response, 'google/gemini-3-pro-preview');
-    const result2 = parseAssessment(model2Response, 'google/gemini-2.5-flash');
+    // Parse tool call results (guaranteed schema compliance)
+    const result1 = parseToolCallResult(model1Response, 'google/gemini-3-pro-preview');
+    const result2 = parseToolCallResult(model2Response, 'google/gemini-2.5-flash');
 
     // Determine consensus
     const assessmentsMatch = result1.assessment === result2.assessment;
@@ -67,10 +62,10 @@ ${context ? `Additional Context: ${JSON.stringify(context).substring(0, 500)}` :
 
     const disagreement = !assessmentsMatch || confidenceDelta > 0.3;
 
-    // Determine final assessment (weighted toward higher-capability model)
+    // Final assessment — weighted toward higher-capability model
     const finalAssessment = disagreement
       ? 'requires_review' 
-      : result1.assessment; // Gemini 3 Pro takes precedence
+      : result1.assessment;
 
     const finalPriority = disagreement
       ? higherPriority(result1.recommended_priority, result2.recommended_priority)
@@ -83,7 +78,7 @@ ${context ? `Additional Context: ${JSON.stringify(context).substring(0, 500)}` :
     // Log the consensus debate
     if (signal_id) {
       await supabase.from('agent_debate_records').insert({
-        debate_type: 'multi_model_consensus',
+        debate_type: 'multi_model_consensus_v2',
         participating_agents: ['gemini-3-pro', 'gemini-2.5-flash'],
         individual_analyses: { model_1: result1, model_2: result2 },
         synthesis: {
@@ -93,6 +88,7 @@ ${context ? `Additional Context: ${JSON.stringify(context).substring(0, 500)}` :
           final_priority: finalPriority,
           final_confidence: finalConfidence,
           confidence_delta: confidenceDelta,
+          enforcement: 'tool_calling_v2',
         },
         consensus_score: consensusScore,
         final_assessment: `${finalAssessment} (${finalPriority}) — confidence: ${finalConfidence.toFixed(2)}`,
@@ -103,14 +99,26 @@ ${context ? `Additional Context: ${JSON.stringify(context).substring(0, 500)}` :
     // If disagreement on a critical signal, flag for analyst review
     if (disagreement && signal_id) {
       await supabase.from('agent_pending_messages').insert({
-        recipient_user_id: '00000000-0000-0000-0000-000000000000', // Will be routed by system
-        message: `⚠️ Multi-model disagreement on signal assessment.\n\nModel 1 (Gemini 3 Pro): ${result1.assessment} (confidence: ${result1.confidence.toFixed(2)})\nModel 2 (Gemini 2.5 Flash): ${result2.assessment} (confidence: ${result2.confidence.toFixed(2)})\n\nSignal: ${(signal_text || '').substring(0, 200)}...\n\nPlease review and provide definitive assessment.`,
+        recipient_user_id: '00000000-0000-0000-0000-000000000000',
+        message: `⚠️ Multi-model disagreement on signal assessment.
+
+**Model 1** (Gemini 3 Pro): ${result1.assessment} (confidence: ${result1.confidence.toFixed(2)}, priority: ${result1.recommended_priority})
+• Factors: ${result1.key_factors.join(', ')}
+• Reasoning: ${result1.reasoning}
+
+**Model 2** (Gemini 2.5 Flash): ${result2.assessment} (confidence: ${result2.confidence.toFixed(2)}, priority: ${result2.recommended_priority})
+• Factors: ${result2.key_factors.join(', ')}
+• Reasoning: ${result2.reasoning}
+
+Signal: ${(signal_text || '').substring(0, 200)}...
+
+Please review and provide definitive assessment.`,
         priority: 'high',
         trigger_event: 'multi_model_disagreement',
       }).then(() => {}).catch(err => console.error('Failed to create pending message:', err));
     }
 
-    console.log(`[Consensus] Signal ${signal_id}: ${finalAssessment} (consensus: ${consensusScore.toFixed(2)}, disagreement: ${disagreement})`);
+    console.log(`[Consensus v2] Signal ${signal_id}: ${finalAssessment} (consensus: ${consensusScore.toFixed(2)}, disagreement: ${disagreement}, enforcement: tool_calling)`);
 
     return successResponse({
       signal_id,
@@ -119,21 +127,25 @@ ${context ? `Additional Context: ${JSON.stringify(context).substring(0, 500)}` :
       final_confidence: Math.round(finalConfidence * 100) / 100,
       consensus_score: Math.round(consensusScore * 100) / 100,
       disagreement,
+      enforcement: 'tool_calling_v2',
       model_results: [result1, result2],
     });
 
   } catch (error) {
-    console.error('[Consensus] Error:', error);
+    console.error('[Consensus v2] Error:', error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
 
-async function fetchModelAssessment(
-  _apiKey: string,
+/**
+ * Fetch a structured assessment from a model using TOOL CALLING.
+ * The model MUST use the submit_assessment tool — no free-text allowed.
+ */
+async function fetchStructuredAssessment(
   model: string,
   systemPrompt: string,
   userPrompt: string
-): Promise<string> {
+): Promise<any> {
   try {
     const aiResult = await callAiGateway({
       model,
@@ -143,34 +155,55 @@ async function fetchModelAssessment(
       ],
       functionName: 'multi-model-consensus',
       extraBody: {
-        max_tokens: 300,
+        tools: [CONSENSUS_ASSESSMENT_TOOL],
+        tool_choice: { type: 'function', function: { name: 'submit_assessment' } },
         temperature: 0.1,
       },
     });
 
     if (aiResult.error) {
-      console.error(`[Consensus] ${model} error: ${aiResult.error}`);
-      return '{}';
+      console.error(`[Consensus v2] ${model} error: ${aiResult.error}`);
+      return null;
     }
 
-    return aiResult.content || '{}';
+    return aiResult.raw;
   } catch (e) {
-    console.error(`[Consensus] ${model} error:`, e);
-    return '{}';
+    console.error(`[Consensus v2] ${model} error:`, e);
+    return null;
   }
 }
 
-function parseAssessment(raw: string, model: string): ConsensusResult {
+/**
+ * Parse tool call result from AI response.
+ * Since we use tool_choice: forced, the response MUST contain tool_calls.
+ */
+function parseToolCallResult(raw: any, model: string): ConsensusResult {
   try {
-    // Extract JSON from potential markdown wrapper
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+    const toolCalls = raw?.choices?.[0]?.message?.tool_calls;
+    if (!toolCalls || toolCalls.length === 0) {
+      // Fallback: try to parse content as JSON (shouldn't happen with tool_choice forced)
+      const content = raw?.choices?.[0]?.message?.content || '{}';
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+      return {
+        model,
+        assessment: parsed.assessment || 'unknown',
+        confidence: Math.min(1, Math.max(0, parsed.confidence || 0.5)),
+        recommended_priority: parsed.recommended_priority || 'p3',
+        key_factors: Array.isArray(parsed.key_factors) ? parsed.key_factors : [],
+        reasoning: parsed.reasoning || 'No reasoning provided',
+      };
+    }
+
+    // Parse the structured tool call arguments
+    const args = JSON.parse(toolCalls[0].function.arguments);
     return {
       model,
-      assessment: parsed.assessment || 'unknown',
-      confidence: Math.min(1, Math.max(0, parsed.confidence || 0.5)),
-      recommended_priority: parsed.recommended_priority || 'p3',
-      key_factors: Array.isArray(parsed.key_factors) ? parsed.key_factors : [],
+      assessment: args.assessment || 'unknown',
+      confidence: Math.min(1, Math.max(0, args.confidence || 0.5)),
+      recommended_priority: args.recommended_priority || 'p3',
+      key_factors: Array.isArray(args.key_factors) ? args.key_factors : [],
+      reasoning: args.reasoning || 'No reasoning provided',
     };
   } catch {
     return {
@@ -179,6 +212,7 @@ function parseAssessment(raw: string, model: string): ConsensusResult {
       confidence: 0.5,
       recommended_priority: 'p3',
       key_factors: ['parse_error'],
+      reasoning: 'Failed to parse model response',
     };
   }
 }
