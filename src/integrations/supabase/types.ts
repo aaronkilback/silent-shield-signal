@@ -8603,6 +8603,116 @@ export type Database = {
         }
         Relationships: []
       }
+      signal_storyline_members: {
+        Row: {
+          added_at: string
+          added_by: string | null
+          id: string
+          role: string | null
+          signal_id: string
+          similarity_score: number | null
+          storyline_id: string
+        }
+        Insert: {
+          added_at?: string
+          added_by?: string | null
+          id?: string
+          role?: string | null
+          signal_id: string
+          similarity_score?: number | null
+          storyline_id: string
+        }
+        Update: {
+          added_at?: string
+          added_by?: string | null
+          id?: string
+          role?: string | null
+          signal_id?: string
+          similarity_score?: number | null
+          storyline_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_storyline_members_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_storyline_members_storyline_id_fkey"
+            columns: ["storyline_id"]
+            isOneToOne: false
+            referencedRelation: "signal_storylines"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      signal_storylines: {
+        Row: {
+          category: string | null
+          client_id: string | null
+          created_at: string
+          embedding_centroid: string | null
+          first_seen_at: string
+          id: string
+          key_entities: string[] | null
+          key_locations: string[] | null
+          last_updated_at: string
+          metadata: Json | null
+          signal_count: number
+          status: string
+          summary: string | null
+          threat_level: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          category?: string | null
+          client_id?: string | null
+          created_at?: string
+          embedding_centroid?: string | null
+          first_seen_at?: string
+          id?: string
+          key_entities?: string[] | null
+          key_locations?: string[] | null
+          last_updated_at?: string
+          metadata?: Json | null
+          signal_count?: number
+          status?: string
+          summary?: string | null
+          threat_level?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string | null
+          client_id?: string | null
+          created_at?: string
+          embedding_centroid?: string | null
+          first_seen_at?: string
+          id?: string
+          key_entities?: string[] | null
+          key_locations?: string[] | null
+          last_updated_at?: string
+          metadata?: Json | null
+          signal_count?: number
+          status?: string
+          summary?: string | null
+          threat_level?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_storylines_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       signal_updates: {
         Row: {
           content: string
@@ -9067,6 +9177,66 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: []
+      }
+      structured_debate_arguments: {
+        Row: {
+          agent_call_sign: string
+          argument_type: string
+          claim: string
+          confidence: number | null
+          created_at: string
+          debate_id: string
+          evidence_ids: string[] | null
+          evidence_summary: string | null
+          id: string
+          metadata: Json | null
+          strength: string | null
+          targets_argument_id: string | null
+        }
+        Insert: {
+          agent_call_sign: string
+          argument_type: string
+          claim: string
+          confidence?: number | null
+          created_at?: string
+          debate_id: string
+          evidence_ids?: string[] | null
+          evidence_summary?: string | null
+          id?: string
+          metadata?: Json | null
+          strength?: string | null
+          targets_argument_id?: string | null
+        }
+        Update: {
+          agent_call_sign?: string
+          argument_type?: string
+          claim?: string
+          confidence?: number | null
+          created_at?: string
+          debate_id?: string
+          evidence_ids?: string[] | null
+          evidence_summary?: string | null
+          id?: string
+          metadata?: Json | null
+          strength?: string | null
+          targets_argument_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "structured_debate_arguments_debate_id_fkey"
+            columns: ["debate_id"]
+            isOneToOne: false
+            referencedRelation: "agent_debate_records"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "structured_debate_arguments_targets_argument_id_fkey"
+            columns: ["targets_argument_id"]
+            isOneToOne: false
+            referencedRelation: "structured_debate_arguments"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       task_force_agents: {
         Row: {

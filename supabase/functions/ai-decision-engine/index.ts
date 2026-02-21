@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { getLearningPromptBlock } from "../_shared/learning-context-builder.ts";
+import { classifySignalIntoStoryline } from "../_shared/storyline-engine.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -290,7 +291,7 @@ Deno.serve(async (req) => {
     });
     
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'openai/gpt-5.2',
       messages: [
         {
           role: 'system',
@@ -748,6 +749,23 @@ Generated: ${new Date().toISOString()}
     
     console.log(`Signal ${signal.id} updated successfully with AI decision`);
 
+    // ═══ STORYLINE CLUSTERING ═══
+    // Classify signal into an existing narrative thread or create a new one
+    let storylineResult = null;
+    try {
+      storylineResult = await classifySignalIntoStoryline(supabase, {
+        id: signal.id,
+        normalized_text: signal.normalized_text || '',
+        category: signal.category,
+        entity_tags: signal.entity_tags,
+        location: signal.location,
+        client_id: signal.client_id,
+      });
+      console.log(`[AI-Decision] Storyline: ${storylineResult.action} → ${storylineResult.storylineTitle || 'N/A'} (similarity: ${storylineResult.similarity})`);
+    } catch (slErr) {
+      console.warn('[AI-Decision] Non-fatal storyline classification error:', slErr);
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -755,6 +773,13 @@ Generated: ${new Date().toISOString()}
         incident_id,
         processing_method: 'ai',
         credits_used: true,
+        storyline: storylineResult ? {
+          action: storylineResult.action,
+          storyline_id: storylineResult.storylineId,
+          storyline_title: storylineResult.storylineTitle,
+          similarity: storylineResult.similarity,
+          is_new_development: storylineResult.isNewDevelopment,
+        } : null,
         pattern_analysis: {
           signals_analyzed: recentSignals?.length || 0,
           timeframe_days: 30,
