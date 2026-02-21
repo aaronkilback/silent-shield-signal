@@ -659,6 +659,97 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
       );
     }
 
+    // ===== SAME-STORY FILING: Catch moderate-similarity signals (50-70%) =====
+    // These aren't exact/near duplicates, but are about the SAME ongoing story.
+    // File them as signal_updates on the existing signal instead of creating noise.
+    if (dupCheck?.data?.duplicates && dupCheck.data.duplicates.length > 0) {
+      const topMatch = dupCheck.data.duplicates[0];
+      const similarity = topMatch?.similarity_score ?? 0;
+      
+      // 50-79% similarity range — same story, different article
+      if (similarity >= 0.50 && similarity < 0.80 && topMatch?.id) {
+        console.log(`[Same-Story] Moderate similarity ${(similarity * 100).toFixed(0)}% with signal ${topMatch.id} — checking if same story...`);
+        
+        try {
+          // Quick AI check: is this genuinely new intelligence or a rehash?
+          const existingTitle = topMatch.title || '';
+          const newTitle = (classification.normalized_text || signalText).substring(0, 300);
+          
+          const sameStoryCheck = await callAiGatewayJson({
+            model: 'google/gemini-2.5-flash-lite',
+            messages: [
+              {
+                role: 'system',
+                content: 'You determine if two intelligence signals are about the same ongoing story/event. Return JSON with: {"same_story": boolean, "has_new_intel": boolean, "reason": "brief explanation"}. "same_story" means they describe the same event, policy, or situation. "has_new_intel" means the new signal contains genuinely new facts, developments, or outcomes not present in the existing one.'
+              },
+              {
+                role: 'user',
+                content: `EXISTING SIGNAL: "${existingTitle}"\n\nNEW SIGNAL: "${newTitle}"\n\nAre these about the same story? Does the new one add genuinely new intelligence?`
+              }
+            ],
+            functionName: 'ingest-signal-same-story-check',
+          });
+
+          const sameStoryResult = sameStoryCheck as any;
+          
+          if (sameStoryResult?.same_story === true && sameStoryResult?.has_new_intel !== true) {
+            console.log(`[Same-Story] FILING as update on ${topMatch.id}: ${sameStoryResult.reason}`);
+            
+            // Generate content hash for the update
+            const updateHashData = new TextEncoder().encode(`same-story|${topMatch.id}|${contentHash}`);
+            const updateHashBuffer = await crypto.subtle.digest('SHA-256', updateHashData);
+            const updateHash = Array.from(new Uint8Array(updateHashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+            
+            // Check if this update already exists
+            const { data: existingUpdate } = await supabase
+              .from('signal_updates')
+              .select('id')
+              .eq('content_hash', updateHash)
+              .maybeSingle();
+            
+            if (!existingUpdate) {
+              await supabase.from('signal_updates').insert({
+                signal_id: topMatch.id,
+                content: (classification.normalized_text || signalText).substring(0, 2000),
+                source_name: 'same-story-filing',
+                content_hash: updateHash,
+                metadata: {
+                  filed_reason: sameStoryResult.reason,
+                  similarity_score: similarity,
+                  original_content_hash: contentHash,
+                  same_story_check: true,
+                },
+              });
+            }
+            
+            // Block the content hash so it doesn't come back
+            await supabase.from('rejected_content_hashes').upsert({
+              content_hash: contentHash,
+              client_id: clientId,
+              reason: 'same_story_filed',
+              original_signal_title: newTitle.substring(0, 200),
+            }, { onConflict: 'content_hash,client_id', ignoreDuplicates: true });
+            
+            return new Response(
+              JSON.stringify({
+                status: 'filed_as_update',
+                filed_on: topMatch.id,
+                similarity_score: similarity,
+                reason: sameStoryResult.reason,
+                message: 'Signal filed as update on existing signal (same story, no new intelligence)',
+              }),
+              { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          } else {
+            console.log(`[Same-Story] NEW intelligence detected — creating as new signal. Reason: ${sameStoryResult?.reason || 'has new intel'}`);
+          }
+        } catch (sameStoryErr) {
+          console.warn(`[Same-Story] AI check failed, proceeding with new signal:`, sameStoryErr);
+          // Fail open — create the signal rather than risk losing new intel
+        }
+      }
+    }
+
     // Generate title from normalized_text (first sentence or first 100 chars)
     const generateTitle = (text: string): string => {
       if (!text || text.length === 0) return 'Signal - ' + new Date().toISOString().slice(0, 16);
