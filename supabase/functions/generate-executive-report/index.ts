@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway, callAiGatewayJson } from "../_shared/ai-gateway.ts";
 import { logError } from "../_shared/error-logger.ts";
+import { generateReportVisuals, type ReportVisualType } from "../_shared/report-image-generator.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -560,8 +561,54 @@ Use executive-appropriate language.`;
         };
       });
 
-    console.log('Generating detailed narratives...');
-    const narratives = await Promise.all(narrativesPromises);
+    console.log('Generating detailed narratives and report visuals in parallel...');
+
+    // Determine threat categories and risk level for image generation
+    const threatCategories = Object.keys(signalsByCategory);
+    const clientLocations = client.locations || [];
+
+    // Generate narratives AND report visuals in parallel
+    const [narratives, reportVisuals] = await Promise.all([
+      Promise.all(narrativesPromises),
+      generateReportVisuals([
+        {
+          type: "header",
+          context: {
+            clientName: client.name,
+            reportTitle: `Executive Intelligence Brief`,
+            threatCategories,
+            riskLevel: overallRiskLevel as any,
+            locations: clientLocations,
+          },
+        },
+        {
+          type: "threat_landscape",
+          context: {
+            threatCategories,
+            riskLevel: overallRiskLevel as any,
+            period: `${period_days} days`,
+          },
+        },
+        {
+          type: "risk_heatmap",
+          context: {
+            riskLevel: overallRiskLevel as any,
+            threatCategories,
+          },
+        },
+      ]),
+    ]);
+
+    // Extract generated image URLs
+    const headerImage = reportVisuals.get("header");
+    const threatLandscapeImage = reportVisuals.get("threat_landscape");
+    const riskHeatmapImage = reportVisuals.get("risk_heatmap");
+
+    const headerImageUrl = headerImage?.imageUrl || headerImage?.base64Url || "";
+    const threatLandscapeUrl = threatLandscapeImage?.imageUrl || threatLandscapeImage?.base64Url || "";
+    const riskHeatmapUrl = riskHeatmapImage?.imageUrl || riskHeatmapImage?.base64Url || "";
+
+    console.log(`Report visuals: header=${!!headerImageUrl}, threat=${!!threatLandscapeUrl}, heatmap=${!!riskHeatmapUrl}`);
 
     // Format dates
     const reportDate = new Date().toLocaleDateString('en-US', { 
@@ -1031,10 +1078,43 @@ Use executive-appropriate language.`;
 
     .page-break { page-break-after: always; }
     @media print { .no-print { display: none; } }
+
+    /* AI-GENERATED VISUALS */
+    .report-hero-image {
+      width: 100%;
+      max-height: 260px;
+      overflow: hidden;
+      margin-bottom: 0;
+      border-radius: 6pt 6pt 0 0;
+    }
+    .report-hero-image img {
+      width: 100%;
+      height: auto;
+      display: block;
+      object-fit: cover;
+    }
+    .visual-section {
+      margin: 20pt 0;
+      text-align: center;
+    }
+    .visual-section img {
+      width: 100%;
+      max-height: 320px;
+      object-fit: cover;
+      border-radius: 4pt;
+      border: 1px solid #e0e0e0;
+    }
+    .visual-caption {
+      font-size: 8pt;
+      color: #888;
+      margin-top: 6pt;
+      font-style: italic;
+    }
   </style>
 </head>
 <body>
-  <div class="header">
+  ${headerImageUrl ? `<div class="report-hero-image" data-pdf-section><img src="${headerImageUrl}" alt="Executive Brief Header" crossorigin="anonymous" /></div>` : ""}
+  <div class="header" ${headerImageUrl ? 'style="border-radius: 0; margin-top: 0;"' : ''}>
     <div class="header-top">
       <div class="classification">SENSITIVE SECURITY INFORMATION</div>
       <div class="report-date">${reportDate}</div>
@@ -1096,6 +1176,22 @@ Use executive-appropriate language.`;
       ${executiveSummary.split('\n').map(p => `<p style="margin-bottom: 10pt;">${p}</p>`).join('')}
     </div>
   </div>
+
+  <!-- AI-GENERATED THREAT LANDSCAPE VISUAL -->
+  ${threatLandscapeUrl ? `
+  <div class="visual-section">
+    <h2 class="section-title">Threat Landscape Visualization</h2>
+    <img src="${threatLandscapeUrl}" alt="AI-generated threat landscape visualization" crossorigin="anonymous" />
+    <div class="visual-caption">AI-generated threat landscape — ${threatCategories.join(", ")} | Risk Level: ${overallRiskLevel}</div>
+  </div>` : ""}
+
+  <!-- AI-GENERATED RISK HEATMAP -->
+  ${riskHeatmapUrl ? `
+  <div class="visual-section">
+    <h2 class="section-title">Risk Assessment Visual</h2>
+    <img src="${riskHeatmapUrl}" alt="AI-generated risk heatmap" crossorigin="anonymous" />
+    <div class="visual-caption">AI-generated risk intensity map — Overall assessment: ${overallRiskLevel}</div>
+  </div>` : ""}
 
   <!-- P1/P2 INCIDENT DETAIL TABLE -->
   ${p1p2Incidents.length > 0 ? `
@@ -1398,7 +1494,12 @@ Use executive-appropriate language.`;
           risk_level: overallRiskLevel,
           executive_flash: executiveFlash,
           action_items_count: actionItems.length,
-          categories: Object.keys(signalsByCategory)
+          categories: Object.keys(signalsByCategory),
+          ai_visuals: {
+            header: { generated: !!headerImageUrl, url: headerImage?.imageUrl, durationMs: headerImage?.durationMs },
+            threat_landscape: { generated: !!threatLandscapeUrl, url: threatLandscapeImage?.imageUrl, durationMs: threatLandscapeImage?.durationMs },
+            risk_heatmap: { generated: !!riskHeatmapUrl, url: riskHeatmapImage?.imageUrl, durationMs: riskHeatmapImage?.durationMs },
+          }
         }
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
