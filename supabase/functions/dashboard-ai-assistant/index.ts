@@ -6641,6 +6641,47 @@ The signal is now in the database with status 'triaged' and rules have been appl
       return { success: true, message: "Alert preferences updated", preferences: data };
     }
 
+    case "generate_report_visual": {
+      const { types = ["header"], client_name: vizClientName, report_title, threat_categories = [], 
+              locations = [], risk_level = "moderate", incident_types = [], period, custom_prompt, high_quality = false } = args;
+      
+      try {
+        const { generateReportVisuals } = await import("../_shared/report-image-generator.ts");
+        const requests = (types as string[]).map((type: string) => ({
+          type: type as any,
+          context: {
+            clientName: vizClientName,
+            reportTitle: report_title,
+            threatCategories: threat_categories,
+            locations,
+            riskLevel: risk_level,
+            incidentTypes: incident_types,
+            period,
+            customPrompt: custom_prompt,
+          },
+          highQuality: high_quality,
+        }));
+
+        const results = await generateReportVisuals(requests);
+        const output: Record<string, any> = {};
+        for (const [type, result] of results.entries()) {
+          output[type] = {
+            success: !!result.imageUrl || !!result.base64Url,
+            url: result.imageUrl || result.base64Url,
+            error: result.error,
+            duration_ms: result.durationMs,
+          };
+        }
+        return { 
+          success: true, 
+          visuals: output,
+          message: `Generated ${Object.values(output).filter((v: any) => v.success).length}/${types.length} visuals successfully.`
+        };
+      } catch (err) {
+        return { error: `Visual generation failed: ${err instanceof Error ? err.message : String(err)}` };
+      }
+    }
+
     case "generate_fortress_report": {
       const { report_type, client_name, period_days, city, country, travel_dates,
               bulletin_title, bulletin_html, bulletin_classification, generate_header_image, image_prompt, bulletin_images } = args;

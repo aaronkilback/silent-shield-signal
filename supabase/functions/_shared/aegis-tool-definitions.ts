@@ -1506,6 +1506,36 @@ CRITICAL ANTI-FABRICATION RULES FOR BULLETINS:
     },
   },
   // ══════════════════════════════════════════════════════════════════════════
+  // AI REPORT VISUALS
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    type: "function",
+    function: {
+      name: "generate_report_visual",
+      description: "Generate AI-powered visuals for intelligence reports. Creates cinematic header images, threat landscape visualizations, situational maps, risk heatmaps, event timelines, and incident scene imagery. Use when generating reports or when the user requests visual intelligence products.",
+      parameters: {
+        type: "object",
+        properties: {
+          types: { 
+            type: "array", 
+            items: { type: "string", enum: ["header", "threat_landscape", "situational_map", "risk_heatmap", "timeline", "incident_scene"] },
+            description: "Visual types to generate (can request multiple)" 
+          },
+          client_name: { type: "string", description: "Client name for context" },
+          report_title: { type: "string", description: "Report title for context" },
+          threat_categories: { type: "array", items: { type: "string" }, description: "Threat categories (e.g., cyber, physical, fraud)" },
+          locations: { type: "array", items: { type: "string" }, description: "Geographic locations relevant to the visual" },
+          risk_level: { type: "string", enum: ["low", "moderate", "elevated", "high", "critical"], description: "Overall risk level" },
+          incident_types: { type: "array", items: { type: "string" }, description: "Types of incidents for scene generation" },
+          period: { type: "string", description: "Time period (e.g., 'past 7 days')" },
+          custom_prompt: { type: "string", description: "Custom image generation prompt (overrides template)" },
+          high_quality: { type: "boolean", description: "Use higher quality model (slower)" },
+        },
+        required: ["types"],
+      },
+    },
+  },
+  // ══════════════════════════════════════════════════════════════════════════
   // KNOWLEDGE & TECH RADAR
   // ══════════════════════════════════════════════════════════════════════════
   {
