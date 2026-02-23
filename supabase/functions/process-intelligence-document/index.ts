@@ -693,10 +693,13 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
         console.log(`[HistoricalGate] Skipping historical signal: ${signal.title}`);
         continue;
       }
-      // FIX 3: Generate content hash based on SOURCE URL + signal content for better deduplication
-      // This ensures the same RSS article always produces the same hash regardless of AI phrasing variations
-      const sourceUrl = document.metadata?.url || '';
-      const contentToHash = `${sourceUrl}|${signal.title || ''}|${signal.description || ''}`;
+      // FIX 3: Generate content hash based on SOURCE URL only (when available) for deduplication
+      // AI paraphrases title/description each run, so we hash on the stable source URL.
+      // Fallback to title+description only when no source URL exists.
+      const sourceUrl = document.metadata?.url || document.source_url || '';
+      const contentToHash = sourceUrl
+        ? `url:${sourceUrl}`
+        : `content:${(signal.title || '').toLowerCase().replace(/[^a-z0-9]/g, '')}|${(signal.description || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`;
       const encoder = new TextEncoder();
       const data = encoder.encode(contentToHash);
       const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -743,17 +746,18 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
           .gte('created_at', thirtyDaysAgo.toISOString())
           .limit(50);
         
-        // Simple similarity check - if any recent signal contains 80% of the same words, skip
+        // Simple similarity check - if any recent signal contains 60% of the same words, skip
+        // Lowered from 80% to catch AI-paraphrased duplicates of the same story
         let isNearDuplicate = false;
         if (recentSignals && recentSignals.length > 0) {
-          const signalWords = new Set((signal.description || '').toLowerCase().split(/\s+/));
+          const signalWords = new Set((signal.description || '').toLowerCase().split(/\s+/).filter(w => w.length > 3));
           for (const existing of recentSignals) {
             if (!existing.normalized_text) continue;
-            const existingWords = new Set(existing.normalized_text.toLowerCase().split(/\s+/));
+            const existingWords = new Set(existing.normalized_text.toLowerCase().split(/\s+/).filter(w => w.length > 3));
             const intersection = new Set([...signalWords].filter(w => existingWords.has(w)));
             const similarity = intersection.size / Math.min(signalWords.size, existingWords.size);
             
-            if (similarity > 0.8) {
+            if (similarity > 0.6) {
               console.log(`Skipping near-duplicate signal (${(similarity * 100).toFixed(0)}% similar): ${signal.title}`);
               isNearDuplicate = true;
               break; // Exit the comparison loop
