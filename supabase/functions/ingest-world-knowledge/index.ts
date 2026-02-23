@@ -97,6 +97,97 @@ const KNOWLEDGE_DOMAINS = [
       'Civil unrest prediction indicators and corporate response protocols',
       'Political instability risk assessment frameworks for corporate operations',
     ]
+  },
+  {
+    domain: 'maritime_security',
+    queries: [
+      'Maritime security best practices for port facility protection and ISPS Code compliance',
+      'Piracy and armed robbery at sea trends and counter-piracy measures 2025 2026',
+      'Maritime domain awareness and vessel tracking for corporate security',
+      'Offshore platform security and energy infrastructure maritime threats',
+    ]
+  },
+  {
+    domain: 'insider_threat',
+    queries: [
+      'Insider threat program design and implementation NITTF best practices',
+      'User and entity behavior analytics UEBA for insider threat detection',
+      'Insider threat kill chain modeling and early warning indicators',
+      'Privileged access management and data loss prevention for insider risk',
+    ]
+  },
+  {
+    domain: 'supply_chain_risk',
+    queries: [
+      'Supply chain risk management frameworks NIST 800-161 and C-SCRM best practices',
+      'Third-party vendor security assessment and continuous monitoring methodologies',
+      'Software bill of materials SBOM and software supply chain security',
+      'Critical infrastructure supply chain interdependencies and resilience planning',
+    ]
+  },
+  {
+    domain: 'counter_terrorism',
+    queries: [
+      'Current global terrorism threat assessment and emerging extremist ideologies 2025 2026',
+      'Counter-terrorism intelligence analysis methodologies and radicalization indicators',
+      'IED and CBRNE threat detection and protective security measures',
+      'Energy sector terrorism threats pipeline security and critical infrastructure protection',
+      'Lone wolf and domestic violent extremism detection and prevention strategies',
+    ]
+  },
+  {
+    domain: 'narcotics_organized_crime',
+    queries: [
+      'Transnational organized crime networks and narcotics trafficking routes 2025 2026',
+      'Synthetic opioid and fentanyl trafficking detection and interdiction strategies',
+      'Money laundering typologies connected to narcotics and organized crime',
+      'Cartel and organized crime group threat assessment for corporate operations in Latin America',
+    ]
+  },
+  {
+    domain: 'legal_regulatory',
+    queries: [
+      'GDPR and global privacy regulation security requirements for multinational corporations',
+      'Cross-border data transfer regulations and corporate compliance frameworks 2025 2026',
+      'Duty of care legal obligations for corporate security and employee safety',
+      'Whistleblower protection laws and corporate investigation legal constraints',
+    ]
+  },
+  {
+    domain: 'aviation_security',
+    queries: [
+      'Counter-drone and unmanned aerial system detection and mitigation technologies',
+      'Executive aviation security and private aircraft threat assessment',
+      'Airport and aviation facility security best practices ICAO Annex 17',
+      'Drone surveillance detection and airspace security for corporate campuses',
+    ]
+  },
+  {
+    domain: 'event_security',
+    queries: [
+      'Large-scale event security planning and crowd management best practices',
+      'Crowd dynamics modeling and stampede prevention for corporate events',
+      'VIP event security and protective operations for high-profile gatherings',
+      'Hostile vehicle mitigation and perimeter security for outdoor events',
+    ]
+  },
+  {
+    domain: 'fraud_social_engineering',
+    queries: [
+      'Business email compromise BEC and CEO fraud detection and prevention strategies 2025 2026',
+      'Deepfake fraud detection and synthetic media threat assessment',
+      'Social engineering attack methodologies and corporate awareness training best practices',
+      'Account takeover and identity fraud prevention for enterprise organizations',
+    ]
+  },
+  {
+    domain: 'ai_ml_security',
+    queries: [
+      'Adversarial machine learning attacks and AI model security best practices 2025 2026',
+      'LLM jailbreaking and prompt injection defense strategies',
+      'AI governance frameworks and responsible AI security guidelines NIST AI RMF',
+      'AI-powered threat detection evasion techniques and countermeasures',
+    ]
   }
 ];
 
