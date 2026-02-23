@@ -251,7 +251,7 @@ Current date: ${dateContext.currentDateISO}`,
 
     const prefMap = new Map((userPrefs || []).map(p => [p.user_id, p]));
 
-    // Check recent pushes to avoid spam — use a wider window (15 min = cron interval)
+    // DEDUP LAYER 1: Cooldown — skip users who received a push within the interval
     const cooldownCutoff = new Date(now.getTime() - MIN_PUSH_INTERVAL_MS).toISOString();
     const { data: recentPushes } = await supabase
       .from('agent_pending_messages')
@@ -260,6 +260,17 @@ Current date: ${dateContext.currentDateISO}`,
       .gte('created_at', cooldownCutoff);
 
     const recentPushUsers = new Set((recentPushes || []).map(p => p.recipient_user_id));
+
+    // DEDUP LAYER 2: Skip users who already have an undelivered proactive message
+    // This prevents unbounded accumulation when messages aren't consumed
+    const { data: undeliveredPushes } = await supabase
+      .from('agent_pending_messages')
+      .select('recipient_user_id')
+      .eq('trigger_event', 'proactive_intelligence')
+      .is('delivered_at', null)
+      .is('dismissed_at', null);
+
+    const usersWithUndelivered = new Set((undeliveredPushes || []).map(p => p.recipient_user_id));
 
     // Build batch insert array to avoid per-user round-trips
     const messagesToInsert: Array<{
@@ -273,6 +284,9 @@ Current date: ${dateContext.currentDateISO}`,
     for (const userId of eligibleUserIds) {
       // Skip if recently pushed (any proactive message, not just from AEGIS)
       if (recentPushUsers.has(userId)) continue;
+
+      // Skip if user already has an undelivered proactive message (prevent pile-up)
+      if (usersWithUndelivered.has(userId)) continue;
 
       // Skip if user disabled proactive messages
       const pref = prefMap.get(userId);
