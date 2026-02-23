@@ -305,9 +305,9 @@ async function runOSINTMonitorsInBackground(supabase: any) {
       'monitor-news',
       'monitor-social',
       'monitor-github',
-      'monitor-pastebin',
+      // 'monitor-pastebin',   // Disabled: consistently returns 0 results — saves ~2 function invocations/cycle
       'monitor-linkedin',
-      'monitor-darkweb',
+      // 'monitor-darkweb',    // Disabled: consistently returns 0 results — saves ~2 function invocations/cycle
       'monitor-domains',
       'monitor-social-unified',
       'monitor-community',
