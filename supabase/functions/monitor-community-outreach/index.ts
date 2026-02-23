@@ -25,19 +25,12 @@ const RSS_SOURCES: OutreachSource[] = [
   { name: 'BC Gov News', type: 'rss', url: 'https://news.gov.bc.ca/feed' },
 ];
 
-// Google Search queries for community outreach
+// Google Search queries for community outreach (consolidated to reduce API calls)
 const OUTREACH_SEARCH_QUERIES = [
-  // First Nations engagement
-  '"First Nations" (consultation OR engagement OR meeting OR gathering) "Fort St. John" OR "northeast BC" OR "Peace River"',
-  '(Treaty 8 OR "Blueberry River" OR "Doig River" OR "Halfway River" OR "Prophet River" OR "West Moberly") (meeting OR event OR consultation OR announcement)',
-  // Community events & outreach
-  '"Fort St. John" (community OR outreach OR "open house" OR "town hall" OR "public meeting" OR workshop)',
-  '"northeast British Columbia" (engagement OR consultation OR "community event" OR reconciliation)',
-  // Industry-community relations
-  '(LNG OR pipeline OR "Coastal GasLink" OR PRGT) (community OR engagement OR benefit OR agreement OR consultation) "British Columbia"',
-  // Local government & regional district
-  '"Peace River Regional District" (meeting OR event OR announcement OR consultation)',
-  '"City of Fort St. John" (event OR meeting OR engagement OR announcement)',
+  // Combined First Nations + community engagement (covers Treaty 8 nations + Fort St. John area)
+  '("First Nations" OR "Treaty 8" OR "Blueberry River" OR "Doig River" OR "West Moberly") (consultation OR engagement OR meeting OR announcement) ("Fort St. John" OR "northeast BC" OR "Peace River")',
+  // Industry-community + local government (covers LNG/pipeline + regional events)
+  '(LNG OR pipeline OR "Coastal GasLink" OR "Peace River Regional District" OR "City of Fort St. John") (community OR engagement OR "open house" OR consultation) "British Columbia"',
 ];
 
 // Keywords that indicate community outreach relevance
