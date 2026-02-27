@@ -65,6 +65,20 @@ const LOW_VALUE_PATTERNS = [
   /\bworking\s+together\s+to\s+hold\s+their\s+government\b/i,
   /\borganizing\s+in\s+their\s+communities\b/i,
   /\bbroad[\s-]based\s+(?:alliance|coalition|network)\b/i,
+  // Sports, entertainment, lifestyle noise
+  /\b(table\s+tennis|badminton|cricket|soccer|hockey)\s+(player|team|match|tournament)\b/i,
+  /\b(freestyle|snowboard|skiing)\s+(competition|championship|athlete|medal)\b/i,
+  /\bstanding\s+ovation\b/i,
+  /\bTV\s+Episode\s+Recaps?\b/i,
+  /\bscholarship\s+(night|award|ceremony)\b/i,
+  /\btrophy\s+tour\b/i,
+  // Job postings
+  /\b(job|career|hiring|position)\s+(opening|posting|listing|opportunity)\b/i,
+  /\b(Utility\s+Locator|Drill\s+Operator|Technician)\s+Job\b/i,
+  // Generic news aggregator titles
+  /^[A-Z]+\s*\|\s*[A-Z]/,  // "KYTV | KY3 | ..." style
+  /\bWeather\s+(forecast|update|report|alert)\b/i,
+  /\bdiagnostic\s+equipment\s+available\b/i,
 ];
 
 // ═══ TEMPORAL DECAY ═══
@@ -381,8 +395,8 @@ export async function scoreSignalRelevance(
   score = Math.max(0.0, Math.min(1.0, score));
   confidence = Math.max(0.0, Math.min(1.0, confidence));
 
-  let suppressBelow = 0.25;
-  let lowConfBelow = 0.45;
+  let suppressBelow = 0.35;
+  let lowConfBelow = 0.60;
 
   try {
     const { data: thresholdProfile } = await supabase
