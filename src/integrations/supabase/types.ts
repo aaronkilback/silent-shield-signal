@@ -8309,34 +8309,58 @@ export type Database = {
       }
       signal_clusters: {
         Row: {
+          agent_analysis: string | null
+          centroid_lat: number | null
+          centroid_lng: number | null
           cluster_label: string
           cluster_score: number | null
           created_at: string
           entity_overlap: string[] | null
+          event_type: string | null
           id: string
+          location_name: string | null
           metadata: Json | null
+          narrative: string | null
+          radius_km: number | null
+          severity: string | null
           signal_ids: string[]
           temporal_window_hours: number | null
           updated_at: string
         }
         Insert: {
+          agent_analysis?: string | null
+          centroid_lat?: number | null
+          centroid_lng?: number | null
           cluster_label: string
           cluster_score?: number | null
           created_at?: string
           entity_overlap?: string[] | null
+          event_type?: string | null
           id?: string
+          location_name?: string | null
           metadata?: Json | null
+          narrative?: string | null
+          radius_km?: number | null
+          severity?: string | null
           signal_ids?: string[]
           temporal_window_hours?: number | null
           updated_at?: string
         }
         Update: {
+          agent_analysis?: string | null
+          centroid_lat?: number | null
+          centroid_lng?: number | null
           cluster_label?: string
           cluster_score?: number | null
           created_at?: string
           entity_overlap?: string[] | null
+          event_type?: string | null
           id?: string
+          location_name?: string | null
           metadata?: Json | null
+          narrative?: string | null
+          radius_km?: number | null
+          severity?: string | null
           signal_ids?: string[]
           temporal_window_hours?: number | null
           updated_at?: string
