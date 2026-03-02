@@ -229,15 +229,17 @@ Deno.serve(async (req) => {
     // ═══════════════════════════════════════════════════════════════
 
     const totalFeedback = relevantSignals.length + irrelevantSignals.length;
-    let suppressBelow = 0.25;
-    let lowConfBelow = 0.45;
+    // Hardened defaults — never go below these floors
+    let suppressBelow = 0.35;
+    let lowConfBelow = 0.60;
 
     if (totalFeedback > 10) {
       const relevantRatio = relevantSignals.length / totalFeedback;
-      if (relevantRatio > 0.85) { suppressBelow = 0.15; lowConfBelow = 0.35; }
-      else if (relevantRatio > 0.7) { suppressBelow = 0.20; lowConfBelow = 0.40; }
-      else if (relevantRatio < 0.4) { suppressBelow = 0.35; lowConfBelow = 0.55; }
-      else if (relevantRatio < 0.6) { suppressBelow = 0.30; lowConfBelow = 0.50; }
+      // Only TIGHTEN thresholds further if noise ratio is high; never loosen below floors
+      if (relevantRatio < 0.4) { suppressBelow = 0.45; lowConfBelow = 0.70; }
+      else if (relevantRatio < 0.6) { suppressBelow = 0.40; lowConfBelow = 0.65; }
+      // If signal quality is very high (>85% relevant), we can slightly relax but NOT below floors
+      else if (relevantRatio > 0.85 && totalFeedback > 30) { suppressBelow = 0.30; lowConfBelow = 0.55; }
     }
 
     await supabase.from('learning_profiles').upsert({
