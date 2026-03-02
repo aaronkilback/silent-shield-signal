@@ -70,15 +70,34 @@ const LOW_VALUE_PATTERNS = [
   /\b(freestyle|snowboard|skiing)\s+(competition|championship|athlete|medal)\b/i,
   /\bstanding\s+ovation\b/i,
   /\bTV\s+Episode\s+Recaps?\b/i,
-  /\bscholarship\s+(night|award|ceremony)\b/i,
+  /\bscholarship\s+(night|award|ceremony|recipient)/i,
   /\btrophy\s+tour\b/i,
-  // Job postings
+  // Job postings & career noise
   /\b(job|career|hiring|position)\s+(opening|posting|listing|opportunity)\b/i,
   /\b(Utility\s+Locator|Drill\s+Operator|Technician)\s+Job\b/i,
+  /\bCareer\s+(Announcement|Milestone|related)/i,
+  /\bAnnounces\s+(Career|Scholarship)\b/i,
+  /\bHiring\s+(National|Organizer)\b/i,
+  /\bUrgent!\s+.*jobs\b/i,
+  /\b(SimplyHired|Indeed|Glassdoor|ZipRecruiter)\b/i,
   // Generic news aggregator titles
   /^[A-Z]+\s*\|\s*[A-Z]/,  // "KYTV | KY3 | ..." style
   /\bWeather\s+(forecast|update|report|alert)\b/i,
   /\bdiagnostic\s+equipment\s+available\b/i,
+  // Tourism, lifestyle, spam
+  /\b(spa|resort|getaway|vacation)\s+(escape|gallery|retreat|deal)\b/i,
+  /\b(forex|stock\s+market)\s+(or|which|better|trading)\b/i,
+  /\bhaunted\s+(places|destinations|locations)\b/i,
+  /\bspooky\s+destinations\b/i,
+  /\bToday\s+in\s+History\b/i,
+  /\bTravel\s+Advice\s+&\s+Safety\b/i,
+  /\bgrand\s+opening\s+(overshadowed|celebration)\b/i,
+  /\b(hoodie|ribbon\s+hoodie)\s+order\b/i,
+  /\bvegetable\s+oil\s+purification\b/i,
+  /\belectrophysical\s+method\b/i,
+  // Vague / truncated titles with no intel value
+  /^[A-Z]\.\s*$/,  // "U." style
+  /^Alerts\s+Archives\s*-/i,
 ];
 
 // ═══ TEMPORAL DECAY ═══
