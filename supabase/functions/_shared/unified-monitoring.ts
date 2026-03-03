@@ -145,6 +145,51 @@ export async function createSignal(
     }
   } catch { /* non-critical */ }
 
+  // Check false positive patterns to suppress known noise
+  try {
+    const { data: fpPatterns } = await supabase
+      .from('false_positive_patterns')
+      .select('id, pattern_type, pattern_value, category')
+      .eq('is_active', true)
+      .limit(200);
+
+    if (fpPatterns && fpPatterns.length > 0) {
+      const textLower = signalData.content.toLowerCase();
+      const titleLower = (signalData.title || '').toLowerCase();
+      const matchedPattern = fpPatterns.find((p: any) => {
+        // Category filter: skip if pattern is category-specific and doesn't match
+        if (p.category && p.category !== signalData.category) return false;
+
+        const val = p.pattern_value.toLowerCase();
+        switch (p.pattern_type) {
+          case 'keyword':
+            return textLower.includes(val) || titleLower.includes(val);
+          case 'phrase':
+            return textLower.includes(val);
+          case 'source':
+            return signalData.source?.toLowerCase() === val;
+          case 'location':
+            return (signalData.metadata?.location || '').toLowerCase().includes(val);
+          case 'regex':
+            try { return new RegExp(p.pattern_value, 'i').test(textLower); } catch { return false; }
+          default:
+            return false;
+        }
+      });
+
+      if (matchedPattern) {
+        console.log(`[createSignal] Blocked by false positive pattern: ${matchedPattern.pattern_type}="${matchedPattern.pattern_value}"`);
+        // Increment match count
+        await supabase.from('false_positive_patterns')
+          .update({ match_count: (matchedPattern as any).match_count + 1 || 1, last_matched_at: new Date().toISOString() })
+          .eq('id', matchedPattern.id);
+        return null;
+      }
+    }
+  } catch (fpErr) {
+    console.error('[createSignal] FP pattern check error (non-critical):', fpErr);
+  }
+
   // Resolve source_id from source name
   let sourceId: string | null = null;
   if (signalData.source) {
