@@ -334,3 +334,5 @@ const RuleApprovals = () => {
     </div>
   );
 };
+
+export default RuleApprovals;
