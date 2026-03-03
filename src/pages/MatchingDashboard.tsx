@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useIsEmbedded } from "@/hooks/useIsEmbedded";
 import { Header } from "@/components/Header";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate, Link } from "react-router-dom";
@@ -19,6 +20,7 @@ const MatchingDashboard = () => {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
   const [dateRange, setDateRange] = useState<string>("30d");
+  const isEmbedded = useIsEmbedded();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -149,17 +151,15 @@ const MatchingDashboard = () => {
     dismissed: { label: "Dismissed", color: "bg-gray-400" },
   };
 
-  return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      <main className="container mx-auto px-6 py-8 space-y-6">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-3xl font-bold">Match Confidence Dashboard</h1>
-            <p className="text-muted-foreground mt-2">
-              Monitor signal-to-client matching performance and identify areas for improvement
-            </p>
-          </div>
+  const dashContent = (
+    <>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-bold">Match Confidence Dashboard</h1>
+          <p className="text-muted-foreground mt-2">
+            Monitor signal-to-client matching performance and identify areas for improvement
+          </p>
+        </div>
           <div className="flex gap-4">
             <Select value={dateRange} onValueChange={setDateRange}>
               <SelectTrigger className="w-[180px]">
@@ -308,7 +308,19 @@ const MatchingDashboard = () => {
               ))}
             </div>
           </CardContent>
-        </Card>
+      </Card>
+    </>
+  );
+
+  if (isEmbedded) {
+    return <div className="space-y-6">{dashContent}</div>;
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <Header />
+      <main className="container mx-auto px-6 py-8 space-y-6">
+        {dashContent}
       </main>
     </div>
   );

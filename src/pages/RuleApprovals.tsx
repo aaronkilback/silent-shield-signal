@@ -1,4 +1,5 @@
 import { Header } from "@/components/Header";
+import { useIsEmbedded } from "@/hooks/useIsEmbedded";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
@@ -37,6 +38,7 @@ const RuleApprovals = () => {
   const [proposals, setProposals] = useState<RuleProposal[]>([]);
   const [loadingProposals, setLoadingProposals] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const isEmbedded = useIsEmbedded();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -139,18 +141,16 @@ const RuleApprovals = () => {
   const pendingProposals = proposals.filter(p => p.value.status === "pending_review");
   const reviewedProposals = proposals.filter(p => p.value.status !== "pending_review");
 
-  return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      <main className="container mx-auto px-6 py-8 space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold">Approvals</h1>
-          <p className="text-muted-foreground mt-2">
-            Review and approve AI-proposed actions
-          </p>
-        </div>
+  const rulesContent = (
+    <>
+      <div>
+        <h1 className="text-3xl font-bold">Approvals</h1>
+        <p className="text-muted-foreground mt-2">
+          Review and approve AI-proposed actions
+        </p>
+      </div>
 
-        <Tabs defaultValue="rules" className="space-y-6">
+      <Tabs defaultValue="rules" className="space-y-6">
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="rules">Categorization Rules</TabsTrigger>
             <TabsTrigger value="monitoring">Monitoring Updates</TabsTrigger>
@@ -318,9 +318,19 @@ const RuleApprovals = () => {
             {user && <SignalMergeProposals userId={user.id} />}
           </TabsContent>
         </Tabs>
+    </>
+  );
+
+  if (isEmbedded) {
+    return <div className="space-y-6">{rulesContent}</div>;
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <Header />
+      <main className="container mx-auto px-6 py-8 space-y-6">
+        {rulesContent}
       </main>
     </div>
   );
 };
-
-export default RuleApprovals;

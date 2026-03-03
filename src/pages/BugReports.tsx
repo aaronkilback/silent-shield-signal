@@ -1,4 +1,5 @@
 import { Header } from "@/components/Header";
+import { useIsEmbedded } from "@/hooks/useIsEmbedded";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
@@ -42,6 +43,7 @@ const BugReports = () => {
   const [activeTab, setActiveTab] = useState<string>("reports");
   const queryClient = useQueryClient();
   const { results: testResults } = useSystemTestRun();
+  const isEmbedded = useIsEmbedded();
   
   const testSummary = testResults ? getTestSummary(testResults) : null;
 
@@ -139,27 +141,25 @@ const BugReports = () => {
 
   const canManage = isAdmin || isAnalyst;
 
-  return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      <main className="container mx-auto px-6 py-8 space-y-6">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-3xl font-bold flex items-center gap-2">
-              <Bug className="w-8 h-8" />
-              System Stability
-            </h1>
-            <p className="text-muted-foreground mt-2">
-              Monitor errors, run tests, and track bug reports
-            </p>
-          </div>
+  const bugContent = (
+    <>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-bold flex items-center gap-2">
+            <Bug className="w-8 h-8" />
+            System Stability
+          </h1>
+          <p className="text-muted-foreground mt-2">
+            Monitor errors, run tests, and track bug reports
+          </p>
         </div>
+      </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList>
-            <TabsTrigger value="reports" className="gap-2">
-              <Bug className="h-4 w-4" /> Bug Reports
-            </TabsTrigger>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList>
+          <TabsTrigger value="reports" className="gap-2">
+            <Bug className="h-4 w-4" /> Bug Reports
+          </TabsTrigger>
             <TabsTrigger value="monitoring" className="gap-2">
               <Activity className="h-4 w-4" /> Error Monitoring
             </TabsTrigger>
@@ -385,6 +385,18 @@ const BugReports = () => {
           bugReportCount={bugReports?.length ?? 0}
           testResults={testSummary}
         />
+    </>
+  );
+
+  if (isEmbedded) {
+    return <div className="space-y-6">{bugContent}</div>;
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <Header />
+      <main className="container mx-auto px-6 py-8 space-y-6">
+        {bugContent}
       </main>
     </div>
   );

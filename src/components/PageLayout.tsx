@@ -2,6 +2,7 @@ import { ReactNode, useEffect } from "react";
 import { Header } from "@/components/Header";
 import { Loader2 } from "lucide-react";
 import { useActivityTracking } from "@/hooks/useActivityTracking";
+import { useIsEmbedded } from "@/hooks/useIsEmbedded";
 
 interface PageLayoutProps {
   children: ReactNode;
@@ -36,6 +37,7 @@ export const PageLayout = ({
   contentOverflow = "hidden",
 }: PageLayoutProps) => {
   const { trackPageView, isTracking } = useActivityTracking();
+  const isEmbedded = useIsEmbedded();
 
   // Track page view when component mounts (excludes super_admin)
   useEffect(() => {
@@ -43,6 +45,36 @@ export const PageLayout = ({
       trackPageView(pageName || title || 'Unknown Page');
     }
   }, [isTracking, pageName, title, trackPageView]);
+
+  // When embedded inside a parent page tab, render just the content
+  if (isEmbedded) {
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-4 sm:space-y-6">
+        {(title || headerContent) && (
+          <div className="mb-6 min-h-[60px] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            {title && (
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-bold">{title}</h1>
+                {description && (
+                  <p className="text-muted-foreground mt-1 text-sm sm:text-base">{description}</p>
+                )}
+              </div>
+            )}
+            {headerContent}
+          </div>
+        )}
+        {children}
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Header />
