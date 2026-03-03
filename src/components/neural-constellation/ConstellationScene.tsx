@@ -7,6 +7,8 @@ import { MilkyWayBand, PlanetParade, AsteroidBelt, Comets } from "./SolarSystemE
 import { EndorBattle } from "./EndorBattle";
 import type { AgentCommLink, ActiveDebate, ScanPulse, AgentActivityMetrics, KnowledgeGraphEdge, OperatorDevice, OperatorMessageActivity, KnowledgeGrowthData } from "@/hooks/useConstellationData";
 import type { FortressHealth } from "@/hooks/useFortressHealth";
+import type { GodsEyePin, GlobeDataType } from "@/hooks/useGodsEyeData";
+import { PIN_COLORS as GODS_EYE_COLORS, parseLocationCoords } from "@/hooks/useGodsEyeData";
 
 interface AgentNode {
   id: string;
@@ -36,6 +38,10 @@ interface ConstellationSceneProps {
   knowledgeGrowth?: KnowledgeGrowthData;
   fortressHealth?: FortressHealth;
   showBattle?: boolean;
+  godsEyePins?: GodsEyePin[];
+  godsEyeFilters?: Set<GlobeDataType>;
+  onGodsEyePinSelect?: (pin: GodsEyePin | null) => void;
+  onCameraViewChange?: (view: string) => void;
 }
 
 // Camera presets
@@ -1242,15 +1248,21 @@ const LOCATION_COORDS: Record<string, [number, number]> = {
   'canada': [56.13, -106.35],
 };
 
-// Glowing pin on the globe surface
-function SignalPin({ position, color, intensity = 1 }: {
+// Glowing pin on the globe surface — supports typed God's Eye colors
+function SignalPin({ position, color, intensity = 1, pinType, isHighRisk, onSelect }: {
   position: [number, number, number];
   color: string;
   intensity?: number;
+  pinType?: GlobeDataType;
+  isHighRisk?: boolean;
+  onSelect?: () => void;
 }) {
   const ref = useRef<THREE.Mesh>(null);
   const beamRef = useRef<THREE.Mesh>(null);
+  const pulseRingRef = useRef<THREE.Mesh>(null);
   const phaseRef = useRef(Math.random() * Math.PI * 2);
+  const effectiveColor = isHighRisk ? '#ff3333' : color;
+  const pinSize = pinType === 'cluster' ? 0.18 : pinType === 'incident' ? 0.15 : 0.12;
 
   useFrame((_, delta) => {
     phaseRef.current += delta * 2;
@@ -1263,9 +1275,14 @@ function SignalPin({ position, color, intensity = 1 }: {
       beamRef.current.scale.y = 1 + pulse * 0.5;
       (beamRef.current.material as THREE.MeshBasicMaterial).opacity = 0.15 + pulse * 0.1;
     }
+    // Pulsing ring for high-risk / incidents
+    if (pulseRingRef.current) {
+      const ringPulse = 1 + Math.sin(phaseRef.current * 1.5) * 0.5;
+      pulseRingRef.current.scale.setScalar(ringPulse);
+      (pulseRingRef.current.material as THREE.MeshBasicMaterial).opacity = 0.4 - (ringPulse - 1) * 0.4;
+    }
   });
 
-  // Calculate beam direction (points away from globe center)
   const dir = new THREE.Vector3(...position).normalize();
   const beamPos: [number, number, number] = [
     position[0] + dir.x * 0.4,
@@ -1275,20 +1292,41 @@ function SignalPin({ position, color, intensity = 1 }: {
 
   return (
     <group>
+      {/* Click target */}
+      {onSelect && (
+        <mesh position={position} onClick={onSelect}>
+          <sphereGeometry args={[0.3, 8, 8]} />
+          <meshBasicMaterial transparent opacity={0} />
+        </mesh>
+      )}
       {/* Pin dot */}
       <mesh ref={ref} position={position}>
-        <sphereGeometry args={[0.12 * intensity, 8, 8]} />
-        <meshBasicMaterial color={color} transparent opacity={0.8} />
+        <sphereGeometry args={[pinSize * intensity, 8, 8]} />
+        <meshBasicMaterial color={effectiveColor} transparent opacity={0.8} />
       </mesh>
-      {/* Glow around pin */}
+      {/* Glow */}
       <mesh position={position}>
         <sphereGeometry args={[0.25 * intensity, 8, 8]} />
-        <meshBasicMaterial color={color} transparent opacity={0.15} />
+        <meshBasicMaterial color={effectiveColor} transparent opacity={0.15} />
       </mesh>
-      {/* Light beam shooting up from pin */}
+      {/* Pulsing ring for high-risk/incidents */}
+      {(isHighRisk || pinType === 'incident') && (
+        <mesh ref={pulseRingRef} position={position}>
+          <sphereGeometry args={[0.2, 12, 12]} />
+          <meshBasicMaterial color={effectiveColor} transparent opacity={0.4} />
+        </mesh>
+      )}
+      {/* Cluster radius indicator */}
+      {pinType === 'cluster' && (
+        <mesh position={position}>
+          <sphereGeometry args={[0.35, 12, 12]} />
+          <meshBasicMaterial color="#ff00ff" transparent opacity={0.08} />
+        </mesh>
+      )}
+      {/* Light beam */}
       <mesh ref={beamRef} position={beamPos} quaternion={new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir)}>
         <cylinderGeometry args={[0.02, 0.06, 0.8, 6]} />
-        <meshBasicMaterial color={color} transparent opacity={0.2} />
+        <meshBasicMaterial color={effectiveColor} transparent opacity={0.2} />
       </mesh>
     </group>
   );
@@ -1315,10 +1353,13 @@ function getSunDirection(): THREE.Vector3 {
   return new THREE.Vector3(x, y, z).normalize();
 }
 
-// Earth with realistic real-time day/night cycle
-function EarthGlobe({ position, signalLocations = [] }: {
+// Earth with realistic real-time day/night cycle + God's Eye data layers
+function EarthGlobe({ position, signalLocations = [], godsEyePins = [], godsEyeFilters, onGodsEyePinSelect }: {
   position: [number, number, number];
   signalLocations?: string[];
+  godsEyePins?: GodsEyePin[];
+  godsEyeFilters?: Set<GlobeDataType>;
+  onGodsEyePinSelect?: (pin: GodsEyePin | null) => void;
 }) {
   const earthGroupRef = useRef<THREE.Group>(null);
   const earthRef = useRef<THREE.Mesh>(null);
@@ -1334,31 +1375,25 @@ function EarthGlobe({ position, signalLocations = [] }: {
     '/textures/earth-specular.png',
   ]);
 
-  // Earth's axial tilt ~23.44°
-  const axialTilt = 0.4091; // radians
+  const axialTilt = 0.4091;
 
   useFrame((_, delta) => {
-    // Rotate Earth at realistic-feeling speed (1 rotation ~= 4 minutes for visual interest)
     const rotSpeed = delta * 0.025;
     if (earthGroupRef.current) earthGroupRef.current.rotation.y += rotSpeed;
-    if (cloudsRef.current) cloudsRef.current.rotation.y += rotSpeed * 0.15; // clouds drift slightly faster than earth
+    if (cloudsRef.current) cloudsRef.current.rotation.y += rotSpeed * 0.15;
 
-    // Update sun position in real-time
     const sunDir = getSunDirection();
     const sunDist = 500;
     const sunPos = [sunDir.x * sunDist, sunDir.y * sunDist, sunDir.z * sunDist];
-    if (sunLightRef.current) {
-      sunLightRef.current.position.set(sunPos[0], sunPos[1], sunPos[2]);
-    }
-    if (sunMeshRef.current) {
-      sunMeshRef.current.position.set(sunPos[0], sunPos[1], sunPos[2]);
-    }
+    if (sunLightRef.current) sunLightRef.current.position.set(sunPos[0], sunPos[1], sunPos[2]);
+    if (sunMeshRef.current) sunMeshRef.current.position.set(sunPos[0], sunPos[1], sunPos[2]);
   });
 
   const earthRadius = 8;
 
-  // Resolve signal locations to pins
-  const pins = useMemo(() => {
+  // Legacy signal location pins (fallback when no God's Eye data)
+  const legacyPins = useMemo(() => {
+    if (godsEyePins.length > 0) return []; // God's Eye supersedes legacy pins
     const seen = new Set<string>();
     const result: { pos: [number, number, number]; color: string }[] = [];
     signalLocations.forEach((loc) => {
@@ -1378,40 +1413,46 @@ function EarthGlobe({ position, signalLocations = [] }: {
       }
     });
     return result;
-  }, [signalLocations, earthRadius]);
+  }, [signalLocations, earthRadius, godsEyePins.length]);
 
-  // Initial sun direction for light placement
+  // God's Eye typed pins — entities, signals, incidents, clusters, travel
+  const godsEyeRenderedPins = useMemo(() => {
+    const filters = godsEyeFilters || new Set<GlobeDataType>(['entity', 'signal', 'incident', 'cluster', 'travel']);
+    return godsEyePins
+      .filter(p => filters.has(p.type))
+      .map(pin => ({
+        pin,
+        pos: latLngToVector3(pin.lat, pin.lng, earthRadius * 1.01),
+        color: GODS_EYE_COLORS[pin.type]?.normal || '#f59e0b',
+        isHighRisk: pin.riskLevel === 'critical' || pin.riskLevel === 'high',
+      }));
+  }, [godsEyePins, godsEyeFilters, earthRadius]);
+
   const initialSunDir = useMemo(() => getSunDirection(), []);
 
   return (
     <group position={position}>
-      {/* Real-time sunlight — tracks actual sun position */}
       <directionalLight
         ref={sunLightRef}
         position={[initialSunDir.x * 500, initialSunDir.y * 500, initialSunDir.z * 500]}
         intensity={3.0}
         color="#fffaf0"
       />
-      {/* Very dim fill on the dark side */}
       <pointLight color="#112233" intensity={0.3} distance={40} position={[-initialSunDir.x * 20, -initialSunDir.y * 20, -initialSunDir.z * 20]} />
 
-      {/* Realistic Sun body — distant and large */}
       <group ref={sunMeshRef} position={[initialSunDir.x * 500, initialSunDir.y * 500, initialSunDir.z * 500]}>
         <mesh>
           <sphereGeometry args={[50, 48, 48]} />
           <meshBasicMaterial color="#fff8e0" />
         </mesh>
-        {/* Inner corona */}
         <mesh>
           <sphereGeometry args={[58, 32, 32]} />
           <meshBasicMaterial color="#ffee88" transparent opacity={0.12} side={THREE.BackSide} />
         </mesh>
-        {/* Outer corona */}
         <mesh>
           <sphereGeometry args={[70, 24, 24]} />
           <meshBasicMaterial color="#ffdd66" transparent opacity={0.05} side={THREE.BackSide} />
         </mesh>
-        {/* Distant glow haze */}
         <mesh>
           <sphereGeometry args={[90, 16, 16]} />
           <meshBasicMaterial color="#ffcc44" transparent opacity={0.02} side={THREE.BackSide} />
@@ -1419,9 +1460,7 @@ function EarthGlobe({ position, signalLocations = [] }: {
         <pointLight color="#fff8e0" intensity={8} distance={600} />
       </group>
 
-      {/* Rotating Earth group — earth, night lights, and signal pins all rotate together */}
       <group ref={earthGroupRef} rotation={[axialTilt, 0, 0]}>
-        {/* Earth — day side with specular oceans */}
         <mesh ref={earthRef}>
           <sphereGeometry args={[earthRadius, 64, 64]} />
           <meshPhongMaterial
@@ -1433,7 +1472,6 @@ function EarthGlobe({ position, signalLocations = [] }: {
             shininess={25}
           />
         </mesh>
-        {/* Night side city lights — additive blending makes them glow only in shadow */}
         <mesh ref={nightRef}>
           <sphereGeometry args={[earthRadius * 1.001, 64, 64]} />
           <meshBasicMaterial
@@ -1444,12 +1482,23 @@ function EarthGlobe({ position, signalLocations = [] }: {
             depthWrite={false}
           />
         </mesh>
-        {/* Signal origin pins — rotate with the Earth */}
-        {pins.map((pin, i) => (
-          <SignalPin key={i} position={pin.pos} color={pin.color} />
+        {/* Legacy signal pins */}
+        {legacyPins.map((pin, i) => (
+          <SignalPin key={`legacy-${i}`} position={pin.pos} color={pin.color} />
+        ))}
+        {/* God's Eye typed pins */}
+        {godsEyeRenderedPins.map((item) => (
+          <SignalPin
+            key={`ge-${item.pin.id}`}
+            position={item.pos}
+            color={item.color}
+            pinType={item.pin.type}
+            isHighRisk={item.isHighRisk}
+            intensity={item.pin.type === 'cluster' ? 1.3 : 1}
+            onSelect={onGodsEyePinSelect ? () => onGodsEyePinSelect(item.pin) : undefined}
+          />
         ))}
       </group>
-      {/* Cloud layer — rotates slightly differently for visual depth */}
       <mesh ref={cloudsRef} rotation={[axialTilt, 0, 0]}>
         <sphereGeometry args={[earthRadius * 1.008, 48, 48]} />
         <meshPhongMaterial
@@ -1459,7 +1508,6 @@ function EarthGlobe({ position, signalLocations = [] }: {
           depthWrite={false}
         />
       </mesh>
-      {/* Thin atmospheric rim */}
       <mesh>
         <sphereGeometry args={[earthRadius * 1.025, 48, 48]} />
         <meshBasicMaterial color="#4499ff" transparent opacity={0.035} side={THREE.BackSide} />
@@ -2110,8 +2158,16 @@ export function ConstellationScene({
   knowledgeGrowth,
   fortressHealth,
   showBattle = true,
+  godsEyePins = [],
+  godsEyeFilters,
+  onGodsEyePinSelect,
+  onCameraViewChange,
 }: ConstellationSceneProps) {
-  const [cameraView, setCameraView] = useState<CameraView>("constellation");
+  const [cameraView, setCameraViewState] = useState<CameraView>("constellation");
+  const setCameraView = useCallback((view: CameraView) => {
+    setCameraViewState(view);
+    onCameraViewChange?.(view);
+  }, [onCameraViewChange]);
   const controlsRef = useRef<any>(null);
 
   const handleClick = useCallback((agent: AgentNode) => { onNodeClick?.(agent); }, [onNodeClick]);
@@ -2202,7 +2258,13 @@ export function ConstellationScene({
         />
 
         {/* Earth & Moon — background celestial bodies */}
-        <EarthGlobe position={earthPosition} signalLocations={signalLocations} />
+        <EarthGlobe
+          position={earthPosition}
+          signalLocations={signalLocations}
+          godsEyePins={godsEyePins}
+          godsEyeFilters={godsEyeFilters}
+          onGodsEyePinSelect={onGodsEyePinSelect}
+        />
         <MoonBody earthPosition={earthPosition} />
         
 
