@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TravelersList } from "@/components/travel/TravelersList";
+import { useIsEmbedded } from "@/hooks/useIsEmbedded";
 import { ItinerariesList } from "@/components/travel/ItinerariesList";
 import { TravelAlertsPanel } from "@/components/travel/TravelAlertsPanel";
 import { TravelersMap } from "@/components/travel/TravelersMap";
@@ -17,6 +18,7 @@ export default function Travel() {
   const [activeTab, setActiveTab] = useState("travelers");
   const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const isEmbedded = useIsEmbedded();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -49,10 +51,8 @@ export default function Travel() {
     return null;
   }
 
-  return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      <main className="container mx-auto px-6 py-8 space-y-6">
+  const travelContent = (
+    <>
       <div>
         <h1 className="text-3xl font-bold">Travel Management</h1>
         <p className="text-muted-foreground">
@@ -123,6 +123,18 @@ export default function Travel() {
           <TravelersMap />
         </TabsContent>
       </Tabs>
+    </>
+  );
+
+  if (isEmbedded) {
+    return <div className="space-y-6">{travelContent}</div>;
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <Header />
+      <main className="container mx-auto px-6 py-8 space-y-6">
+        {travelContent}
       </main>
     </div>
   );

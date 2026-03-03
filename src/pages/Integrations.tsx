@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useIsEmbedded } from "@/hooks/useIsEmbedded";
 import { Header } from "@/components/Header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Key, Webhook, FileJson, Activity } from "lucide-react";
@@ -15,6 +16,7 @@ import { ApiUsageLogs } from "@/components/integrations/ApiUsageLogs";
 const Integrations = () => {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const isEmbedded = useIsEmbedded();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -34,18 +36,16 @@ const Integrations = () => {
     return null;
   }
 
-  return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      <main className="container mx-auto px-6 py-8 space-y-6">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold">Integrations</h1>
-          <p className="text-muted-foreground mt-2">
-            Manage API access, webhooks, and external system integrations
-          </p>
-        </div>
+  const intContent = (
+    <>
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold">Integrations</h1>
+        <p className="text-muted-foreground mt-2">
+          Manage API access, webhooks, and external system integrations
+        </p>
+      </div>
 
-        <Tabs defaultValue="api-keys" className="space-y-6">
+      <Tabs defaultValue="api-keys" className="space-y-6">
           <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="api-keys" className="flex items-center gap-2">
               <Key className="h-4 w-4" />
@@ -89,9 +89,19 @@ const Integrations = () => {
             </ErrorBoundary>
           </TabsContent>
         </Tabs>
+    </>
+  );
+
+  if (isEmbedded) {
+    return <div className="space-y-6">{intContent}</div>;
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <Header />
+      <main className="container mx-auto px-6 py-8 space-y-6">
+        {intContent}
       </main>
     </div>
   );
 };
-
-export default Integrations;

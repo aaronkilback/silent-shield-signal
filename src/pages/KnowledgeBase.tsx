@@ -1,4 +1,5 @@
 import { Header } from "@/components/Header";
+import { useIsEmbedded } from "@/hooks/useIsEmbedded";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
@@ -19,6 +20,7 @@ const KnowledgeBase = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<any | null>(null);
+  const isEmbedded = useIsEmbedded();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -74,12 +76,10 @@ const KnowledgeBase = () => {
     return null;
   }
 
-  return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      <main className="container mx-auto px-6 py-8 space-y-6">
-        <div className="flex items-center justify-between mb-6">
-          <div>
+  const kbContent = (
+    <>
+      <div className="flex items-center justify-between mb-6">
+        <div>
             <h1 className="text-3xl font-bold flex items-center gap-2">
               <BookOpen className="w-8 h-8" />
               Knowledge Base
@@ -172,9 +172,8 @@ const KnowledgeBase = () => {
                 No articles found. Try adjusting your search or category filter.
               </div>
             )}
-          </div>
         </div>
-      </main>
+      </div>
 
       {/* Article dialog */}
       <Dialog open={!!selectedArticle} onOpenChange={() => setSelectedArticle(null)}>
@@ -198,6 +197,19 @@ const KnowledgeBase = () => {
           </ScrollArea>
         </DialogContent>
       </Dialog>
+    </>
+  );
+
+  if (isEmbedded) {
+    return <div className="space-y-6">{kbContent}</div>;
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <Header />
+      <main className="container mx-auto px-6 py-8 space-y-6">
+        {kbContent}
+      </main>
     </div>
   );
 };
