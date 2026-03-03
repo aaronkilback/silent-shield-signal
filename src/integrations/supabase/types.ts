@@ -4132,6 +4132,59 @@ export type Database = {
           },
         ]
       }
+      false_positive_patterns: {
+        Row: {
+          category: string | null
+          client_id: string | null
+          created_at: string | null
+          created_by: string | null
+          id: string
+          is_active: boolean | null
+          last_matched_at: string | null
+          match_count: number | null
+          pattern_type: string
+          pattern_value: string
+          reason: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          category?: string | null
+          client_id?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_matched_at?: string | null
+          match_count?: number | null
+          pattern_type?: string
+          pattern_value: string
+          reason?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          category?: string | null
+          client_id?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_matched_at?: string | null
+          match_count?: number | null
+          pattern_type?: string
+          pattern_value?: string
+          reason?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "false_positive_patterns_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       feedback_events: {
         Row: {
           correction: string | null
@@ -11399,6 +11452,28 @@ export type Database = {
       enqueue_signal_processing: {
         Args: { priority_level?: number; signal_id: string }
         Returns: string
+      }
+      find_similar_signals_by_embedding: {
+        Args: {
+          p_embedding: string
+          p_exclude_signal_id?: string
+          p_max_results?: number
+          p_similarity_threshold?: number
+          p_time_window_hours?: number
+        }
+        Returns: {
+          category: string
+          confidence: number
+          correlation_group_id: string
+          created_at: string
+          id: string
+          is_primary_signal: boolean
+          location: string
+          normalized_text: string
+          severity: string
+          similarity: number
+          source_id: string
+        }[]
       }
       get_decayed_confidence: {
         Args: {
