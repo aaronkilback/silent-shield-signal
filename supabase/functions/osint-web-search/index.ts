@@ -1,6 +1,81 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 
+const FETCH_TIMEOUT_MS = 8000;
+const MAX_ARTICLE_LENGTH = 15000; // chars to keep from fetched articles
+
+/**
+ * Fetch full article text from a URL, stripping HTML to plain text.
+ * Returns snippet as fallback if fetch fails.
+ */
+async function fetchArticleContent(url: string, fallbackSnippet: string): Promise<string> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; FortressBot/1.0; +https://fortress.ai)',
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      console.log(`[ArticleFetch] HTTP ${response.status} for ${url}, using snippet`);
+      return fallbackSnippet;
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('text/html') && !contentType.includes('text/plain')) {
+      console.log(`[ArticleFetch] Non-HTML content (${contentType}) for ${url}, using snippet`);
+      await response.text(); // consume body
+      return fallbackSnippet;
+    }
+
+    const html = await response.text();
+
+    // Strip scripts, styles, nav/header/footer, then tags
+    const cleaned = html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
+      .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '')
+      .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
+      .replace(/<aside[^>]*>[\s\S]*?<\/aside>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (cleaned.length < 100) {
+      console.log(`[ArticleFetch] Extracted text too short (${cleaned.length} chars) for ${url}, using snippet`);
+      return fallbackSnippet;
+    }
+
+    const truncated = cleaned.length > MAX_ARTICLE_LENGTH
+      ? cleaned.substring(0, MAX_ARTICLE_LENGTH) + '...[truncated]'
+      : cleaned;
+
+    console.log(`[ArticleFetch] Extracted ${truncated.length} chars from ${url}`);
+    return truncated;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('abort')) {
+      console.log(`[ArticleFetch] Timeout fetching ${url}, using snippet`);
+    } else {
+      console.log(`[ArticleFetch] Error fetching ${url}: ${msg}, using snippet`);
+    }
+    return fallbackSnippet;
+  }
+}
+
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
@@ -14,13 +89,14 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const entityId = body.entity_id;
+    const skipArticleFetch = body.skip_article_fetch === true;
 
     if (!entityId) return errorResponse('entity_id is required', 400);
 
     const { data: entity, error: entityError } = await supabase.from('entities').select('*').eq('id', entityId).single();
     if (entityError || !entity) throw new Error('Entity not found');
 
-    console.log(`Performing OSINT web search for: ${entity.name}`);
+    console.log(`Performing OSINT web search for: ${entity.name}${skipArticleFetch ? ' (snippet-only mode)' : ' (full article fetch)'}`);
     
     const attributes = entity.attributes || {};
     const contactInfo = attributes.contact_info || {};
@@ -30,6 +106,7 @@ Deno.serve(async (req) => {
     let contentCreated = 0;
     let signalsCreated = 0;
     let duplicatesSkipped = 0;
+    let articlesFetched = 0;
 
     const extractKeywords = (name: string): string[] => {
       const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'for', 'of', 'in', 'on', 'at', 'to', 'with', 'by']);
@@ -57,11 +134,24 @@ Deno.serve(async (req) => {
 
         const searchData = await searchResponse.json();
         for (const item of searchData.items || []) {
+          // Fetch full article content unless skipped
+          const articleContent = skipArticleFetch
+            ? item.snippet
+            : await fetchArticleContent(item.link, item.snippet);
+          
+          const isFullArticle = articleContent.length > (item.snippet?.length || 0) + 50;
+          if (isFullArticle) articlesFetched++;
+
+          // Analyze with richer context when full article is available
+          const analysisContent = isFullArticle
+            ? `Analyze for entity "${entity.name}":\nTitle: ${item.title}\nURL: ${item.link}\nFull Article Content (first ${MAX_ARTICLE_LENGTH} chars):\n${articleContent}`
+            : `Analyze for entity "${entity.name}": Title: ${item.title}, URL: ${item.link}, Snippet: ${item.snippet}`;
+
           const aiResult = await callAiGateway({
             model: 'google/gemini-2.5-flash',
             messages: [
-              { role: 'system', content: 'Analyze web search results for relevance. Return JSON with: relevance_score (0-1), is_relevant (boolean), summary, sentiment, security_concerns array, create_signal (boolean), signal_severity.' },
-              { role: 'user', content: `Analyze for entity "${entity.name}": Title: ${item.title}, URL: ${item.link}, Snippet: ${item.snippet}` }
+              { role: 'system', content: 'Analyze web content for relevance to the target entity. Return JSON with: relevance_score (0-1), is_relevant (boolean), summary (2-3 sentence distillation of key facts), sentiment, security_concerns array, create_signal (boolean), signal_severity.' },
+              { role: 'user', content: analysisContent }
             ],
             functionName: 'osint-web-search',
             extraBody: { response_format: { type: 'json_object' } },
@@ -75,7 +165,7 @@ Deno.serve(async (req) => {
           const relevanceInt = Math.round((analysis.relevance_score || 0) * 100);
           const { error: contentError } = await supabase.from('entity_content').insert({
             entity_id: entityId, url: item.link, title: item.title, excerpt: item.snippet,
-            content_text: `${item.title}\n\n${item.snippet}`, content_type: 'web',
+            content_text: articleContent, content_type: 'web',
             source: new URL(item.link).hostname, relevance_score: relevanceInt, sentiment: analysis.sentiment
           });
 
@@ -90,11 +180,11 @@ Deno.serve(async (req) => {
               normalized_text: analysis.summary, signal_type: 'osint', severity_score: severityInt,
               severity: severityLabel, category: 'cybersecurity',
               status: 'new', relevance_score: analysis.relevance_score,
-              raw_json: { source_url: item.link, link: item.link, snippet: item.snippet },
+              raw_json: { source_url: item.link, link: item.link, snippet: item.snippet, has_full_article: isFullArticle },
             }).select('id').single();
             if (signalData) {
               signalsCreated++;
-              await supabase.from('entity_mentions').insert({ entity_id: entityId, signal_id: signalData.id, confidence: analysis.relevance_score, context: item.snippet });
+              await supabase.from('entity_mentions').insert({ entity_id: entityId, signal_id: signalData.id, confidence: analysis.relevance_score, context: analysis.summary || item.snippet });
             }
           }
         }
@@ -106,7 +196,7 @@ Deno.serve(async (req) => {
 
     await supabase.from('entities').update({ updated_at: new Date().toISOString() }).eq('id', entityId);
 
-    return successResponse({ success: true, entity: entity.name, content_created: contentCreated, duplicates_skipped: duplicatesSkipped, signals_created: signalsCreated });
+    return successResponse({ success: true, entity: entity.name, content_created: contentCreated, duplicates_skipped: duplicatesSkipped, signals_created: signalsCreated, articles_fetched: articlesFetched });
   } catch (error) {
     console.error('OSINT web search error:', error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
