@@ -69,46 +69,49 @@ const Signals = () => {
     setSearchParams(searchParams);
   };
 
-  // Fetch unmatched signals
+  // Fetch unmatched signals — server-side filtering
   const { data: unmatchedSignals, isLoading: signalsLoading } = useQuery({
     queryKey: ["unmatched-signals", searchTerm, dateRange],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("signal_correlation_groups")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(500);
-
-      if (error) throw error;
-
-      const allSignals = (data || []) as any[];
-      
-      // Filter for unmatched signals
-      let filtered = allSignals.filter(s => 
-        s.match_confidence === 'none' || s.match_confidence === null
-      );
-
-      // Date range filter
+      // Compute date cutoff server-side
       const now = new Date();
+      let cutoff: Date | null = null;
       if (dateRange === "24h") {
-        const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        filtered = filtered.filter(s => new Date(s.created_at) >= cutoff);
+        cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       } else if (dateRange === "7d") {
-        const cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        filtered = filtered.filter(s => new Date(s.created_at) >= cutoff);
+        cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       } else if (dateRange === "30d") {
-        const cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        filtered = filtered.filter(s => new Date(s.created_at) >= cutoff);
+        cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
       }
 
-      // Filter by search term
+      let query = supabase
+        .from("signal_correlation_groups")
+        .select("*")
+        .or('match_confidence.eq.none,match_confidence.is.null')
+        .order("created_at", { ascending: false })
+        .limit(100);
+
+      if (cutoff) {
+        query = query.gte('created_at', cutoff.toISOString());
+      }
+
+      if (searchTerm) {
+        query = query.ilike('normalized_text', `%${searchTerm}%`);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const filtered = (data || []) as any[];
+
+      // Additional client-side filtering for category/location (search term text match already done server-side)
       if (searchTerm) {
         const lowerSearch = searchTerm.toLowerCase();
-        filtered = filtered.filter(s => 
+        return filtered.filter(s => 
           s.normalized_text?.toLowerCase().includes(lowerSearch) ||
           s.category?.toLowerCase().includes(lowerSearch) ||
           s.location?.toLowerCase().includes(lowerSearch)
-        );
+        ) as UnmatchedSignal[];
       }
 
       return filtered as UnmatchedSignal[];

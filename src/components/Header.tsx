@@ -31,7 +31,7 @@ export const Header = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { isSuperAdmin, isAdmin } = useUserRole();
 
-  // Get pending entity suggestions count
+  // Get pending entity suggestions count — only for admins
   const { data: pendingSuggestions } = useQuery({
     queryKey: ['pending-entity-suggestions-count'],
     queryFn: async () => {
@@ -43,10 +43,11 @@ export const Header = () => {
       if (error) throw error;
       return count || 0;
     },
+    enabled: isAdmin || isSuperAdmin,
     refetchInterval: 30000
   });
 
-  // Get pending approvals count (monitoring proposals + rule proposals)
+  // Get pending approvals count — only for admins
   const { data: pendingApprovals } = useQuery({
     queryKey: ['pending-approvals-count'],
     queryFn: async () => {
@@ -62,12 +63,12 @@ export const Header = () => {
       ]);
       
       const monitoringCount = monitoringRes.count || 0;
-      // Filter rule proposals that are actually pending_review (status is inside JSONB value)
       const pendingRules = (rulesRes.data || []).filter(
         (r: any) => r.value?.status === 'pending_review'
       );
       return monitoringCount + pendingRules.length;
     },
+    enabled: isAdmin || isSuperAdmin,
     refetchInterval: 30000
   });
 
