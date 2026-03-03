@@ -15,6 +15,7 @@ import { EnsureDefaultRole } from "@/components/EnsureDefaultRole";
 import { TenantProvider } from "@/hooks/useTenant";
 import { PasswordExpiryGuard } from "@/components/PasswordExpiryGuard";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -98,42 +99,42 @@ const App = () => {
                   <PasswordExpiryGuard />
                   <Suspense fallback={<PageLoader />}>
                     <Routes>
-                      <Route path="/" element={<Index />} />
+                      <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
                       <Route path="/auth" element={<Auth />} />
                       <Route path="/reset-password" element={<ResetPassword />} />
                       <Route path="/welcome" element={<Welcome />} />
                       <Route path="/invite/accept" element={<AcceptInvite />} />
                       <Route path="/invite-required" element={<InviteRequired />} />
-                      <Route path="/tenant-admin" element={<TenantAdmin />} />
-                      <Route path="/super-admin" element={<SuperAdminDashboard />} />
-                      <Route path="/clients" element={<Clients />} />
-                      <Route path="/client/:id" element={<ClientDetail />} />
-                      <Route path="/incidents" element={<Incidents />} />
-                      <Route path="/signals" element={<Signals />} />
-                      <Route path="/sources" element={<Sources />} />
-                      <Route path="/entities" element={<Entities />} />
-                      <Route path="/reports" element={<Reports />} />
-                      <Route path="/investigations" element={<Investigations />} />
-                      <Route path="/investigation/:id" element={<InvestigationDetail />} />
-                      <Route path="/travel" element={<Travel />} />
-                      <Route path="/knowledge-base" element={<KnowledgeBase />} />
-                      <Route path="/bug-reports" element={<BugReports />} />
-                      <Route path="/rule-approvals" element={<RuleApprovals />} />
-                      <Route path="/user-management" element={<UserManagement />} />
-                      <Route path="/command-center" element={<CommandCenter />} />
-                      <Route path="/task-force" element={<TaskForce />} />
-                      <Route path="/threat-radar" element={<ThreatRadar />} />
-                      <Route path="/integrations" element={<Integrations />} />
-                      <Route path="/benchmark" element={<Benchmark />} />
-                      <Route path="/matching-dashboard" element={<MatchingDashboard />} />
-                      <Route path="/workspace/:id" element={<Workspace />} />
-                      <Route path="/vip-deep-scan" element={<VIPDeepScan />} />
-                      <Route path="/consortia" element={<Consortia />} />
-                      <Route path="/intelligence-hub" element={<IntelligenceHub />} />
-                      <Route path="/neural-constellation" element={<NeuralConstellation />} />
-                      <Route path="/knowledge-bank" element={<KnowledgeBank />} />
-                      <Route path="/briefing-feedback" element={<BriefingFeedback />} />
-                      <Route path="/security-advisor" element={<SecurityAdvisor />} />
+                      <Route path="/tenant-admin" element={<ProtectedRoute><TenantAdmin /></ProtectedRoute>} />
+                      <Route path="/super-admin" element={<ProtectedRoute><SuperAdminDashboard /></ProtectedRoute>} />
+                      <Route path="/clients" element={<ProtectedRoute><Clients /></ProtectedRoute>} />
+                      <Route path="/client/:id" element={<ProtectedRoute><ClientDetail /></ProtectedRoute>} />
+                      <Route path="/incidents" element={<ProtectedRoute><Incidents /></ProtectedRoute>} />
+                      <Route path="/signals" element={<ProtectedRoute><Signals /></ProtectedRoute>} />
+                      <Route path="/sources" element={<ProtectedRoute><Sources /></ProtectedRoute>} />
+                      <Route path="/entities" element={<ProtectedRoute><Entities /></ProtectedRoute>} />
+                      <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+                      <Route path="/investigations" element={<ProtectedRoute><Investigations /></ProtectedRoute>} />
+                      <Route path="/investigation/:id" element={<ProtectedRoute><InvestigationDetail /></ProtectedRoute>} />
+                      <Route path="/travel" element={<ProtectedRoute><Travel /></ProtectedRoute>} />
+                      <Route path="/knowledge-base" element={<ProtectedRoute><KnowledgeBase /></ProtectedRoute>} />
+                      <Route path="/bug-reports" element={<ProtectedRoute><BugReports /></ProtectedRoute>} />
+                      <Route path="/rule-approvals" element={<ProtectedRoute><RuleApprovals /></ProtectedRoute>} />
+                      <Route path="/user-management" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
+                      <Route path="/command-center" element={<ProtectedRoute><CommandCenter /></ProtectedRoute>} />
+                      <Route path="/task-force" element={<ProtectedRoute><TaskForce /></ProtectedRoute>} />
+                      <Route path="/threat-radar" element={<ProtectedRoute><ThreatRadar /></ProtectedRoute>} />
+                      <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
+                      <Route path="/benchmark" element={<ProtectedRoute><Benchmark /></ProtectedRoute>} />
+                      <Route path="/matching-dashboard" element={<ProtectedRoute><MatchingDashboard /></ProtectedRoute>} />
+                      <Route path="/workspace/:id" element={<ProtectedRoute><Workspace /></ProtectedRoute>} />
+                      <Route path="/vip-deep-scan" element={<ProtectedRoute><VIPDeepScan /></ProtectedRoute>} />
+                      <Route path="/consortia" element={<ProtectedRoute><Consortia /></ProtectedRoute>} />
+                      <Route path="/intelligence-hub" element={<ProtectedRoute><IntelligenceHub /></ProtectedRoute>} />
+                      <Route path="/neural-constellation" element={<ProtectedRoute><NeuralConstellation /></ProtectedRoute>} />
+                      <Route path="/knowledge-bank" element={<ProtectedRoute><KnowledgeBank /></ProtectedRoute>} />
+                      <Route path="/briefing-feedback" element={<ProtectedRoute><BriefingFeedback /></ProtectedRoute>} />
+                      <Route path="/security-advisor" element={<ProtectedRoute><SecurityAdvisor /></ProtectedRoute>} />
                       {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                       <Route path="*" element={<NotFound />} />
                     </Routes>

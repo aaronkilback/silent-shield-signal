@@ -72,10 +72,7 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
     isConnected: isVoiceConnected,
   } = useOpenAIRealtime({
     agentContext: agent.system_prompt || `You are ${agent.call_sign}, a specialized AI agent. Be concise and helpful.`,
-    conversationHistory: useMemo(
-      () => messagesRef.current.slice(-10).map(m => ({ role: m.role, content: m.content })),
-      []
-    ),
+    conversationHistory: messagesRef.current.slice(-10).map(m => ({ role: m.role, content: m.content })),
     onTranscript: (text, isFinal) => {
       if (isFinal && text.trim()) {
         const userMsg: Message = { role: "user", content: `🎙️ ${text}` };
@@ -126,8 +123,14 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
     toast.info("Starting voice session...");
   };
 
+  const pendingMessagesRef = useRef<Message[]>([]);
+
   const saveMessageToDb = async (message: Message) => {
-    if (!conversationId) return;
+    if (!conversationId) {
+      // Queue the message for later save
+      pendingMessagesRef.current.push(message);
+      return;
+    }
     try {
       await supabase.from("agent_messages").insert({
         conversation_id: conversationId,
@@ -138,6 +141,15 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
       console.error("Failed to save voice message:", error);
     }
   };
+
+  // Flush pending messages when conversationId becomes available
+  useEffect(() => {
+    if (conversationId && pendingMessagesRef.current.length > 0) {
+      const pending = [...pendingMessagesRef.current];
+      pendingMessagesRef.current = [];
+      pending.forEach(msg => saveMessageToDb(msg));
+    }
+  }, [conversationId]);
 
   const copyMessage = async (content: string, index: number) => {
     try {
