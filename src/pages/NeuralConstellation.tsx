@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { Switch } from "@/components/ui/switch";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
@@ -10,11 +10,13 @@ import { FortressNodeDetail } from "@/components/neural-constellation/FortressNo
 import { FortificationLegend } from "@/components/neural-constellation/FortificationLegend";
 import { FortressStatusBar } from "@/components/neural-constellation/FortressStatusBar";
 import { DraggablePanel } from "@/components/neural-constellation/DraggablePanel";
+import { GodsEyeOverlay } from "@/components/neural-constellation/GodsEyeOverlay";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMetrics, useKnowledgeGraphEdges, useOperatorDevices, useOperatorMessageActivity, useKnowledgeGrowthData } from "@/hooks/useConstellationData";
 import { useFortressHealth } from "@/hooks/useFortressHealth";
 import { useSystemHealth } from "@/hooks/useSystemHealth";
+import { useGodsEyeData, type GlobeDataType, type GodsEyePin } from "@/hooks/useGodsEyeData";
 
 // Map agents to 3D positions in a constellation layout
 function assignPositions(agents: any[]): AgentNode[] {
@@ -84,6 +86,19 @@ const NeuralConstellation = () => {
   const [selectedAgent, setSelectedAgent] = useState<AgentNode | null>(null);
   const [isExecutiveMode, setIsExecutiveMode] = useState(true);
   const [showBattle, setShowBattle] = useState(true);
+  const [cameraView, setCameraView] = useState<string>("constellation");
+  const [godsEyeFilters, setGodsEyeFilters] = useState<Set<GlobeDataType>>(
+    new Set(['entity', 'signal', 'incident', 'cluster', 'travel'])
+  );
+  const [selectedGodsEyePin, setSelectedGodsEyePin] = useState<GodsEyePin | null>(null);
+
+  const toggleGodsEyeFilter = useCallback((type: GlobeDataType) => {
+    setGodsEyeFilters(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type); else next.add(type);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!authLoading && !user) navigate("/auth");
@@ -142,6 +157,9 @@ const NeuralConstellation = () => {
   const { data: knowledgeGrowth } = useKnowledgeGrowthData(!!user);
   const { data: fortressHealth, isLoading: fortressLoading } = useFortressHealth(!!user);
   const { data: systemHealth } = useSystemHealth(!!user);
+
+  // God's Eye data — unified intelligence layers for the globe
+  const { data: godsEyeData } = useGodsEyeData(!!user);
 
   const agentNodes = useMemo(() => {
     if (!agents) return [];
@@ -217,8 +235,23 @@ const NeuralConstellation = () => {
             knowledgeGrowth={knowledgeGrowth}
             fortressHealth={fortressHealth}
             showBattle={showBattle}
+            godsEyePins={godsEyeData?.pins || []}
+            godsEyeFilters={godsEyeFilters}
+            onGodsEyePinSelect={setSelectedGodsEyePin}
+            onCameraViewChange={setCameraView}
           />
         </div>
+
+        {/* God's Eye Overlay — visible when Earth camera is active */}
+        <GodsEyeOverlay
+          pins={godsEyeData?.pins || []}
+          clusters={godsEyeData?.clusters || []}
+          activeFilters={godsEyeFilters}
+          onToggleFilter={toggleGodsEyeFilter}
+          selectedPin={selectedGodsEyePin}
+          onSelectPin={setSelectedGodsEyePin}
+          visible={cameraView === 'earth'}
+        />
 
         {/* Bottom status bar (draggable) */}
         <DraggablePanel className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10" style={{ pointerEvents: "auto" }}>
