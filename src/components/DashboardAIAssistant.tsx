@@ -30,6 +30,8 @@ type Message = {
   conversation_id?: string;
 };
 
+const debug = (...args: unknown[]) => { if (import.meta.env.DEV) console.log(...args); };
+
 export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: boolean }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -100,12 +102,12 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
 
       // Wait for auth to complete before trying to load messages
       if (authLoading) {
-        console.log("⏳ Waiting for authentication to complete...");
+        debug("⏳ Waiting for authentication to complete...");
         return;
       }
 
       if (!user) {
-        console.log("❌ No user session found - messages will not persist");
+        debug("❌ No user session found - messages will not persist");
         setMessages([defaultMessage]);
         setIsLoadingHistory(false);
         if (!hasLoadedOnceRef.current) {
@@ -116,7 +118,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
       }
 
       try {
-        console.log(`🔄 Loading chat history for user ${user.id}, mode: ${viewMode}`);
+        debug(`🔄 Loading chat history for user ${user.id}, mode: ${viewMode}`);
         setIsLoadingHistory(true);
         
         let query = supabase
@@ -167,14 +169,14 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
           if (lastConvId) {
             setCurrentConversationId(lastConvId);
           }
-          console.log(`✅ Loaded ${formattedMessages.length} messages for ${viewMode} view`);
+          debug(`✅ Loaded ${formattedMessages.length} messages for ${viewMode} view`);
         } else if (viewMode === "personal") {
           // Only migrate from localStorage for personal view
           const stored = localStorage.getItem(STORAGE_KEY);
           if (stored) {
             try {
               const parsed = JSON.parse(stored);
-              console.log(`🔄 Migrating ${parsed.length} messages from localStorage`);
+              debug(`🔄 Migrating ${parsed.length} messages from localStorage`);
               
               const newConvId = generateConversationId();
               const messagesToInsert = parsed.map((msg: Message) => ({
@@ -197,7 +199,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
                 setMessages(parsed);
                 setCurrentConversationId(newConvId);
                 localStorage.removeItem(STORAGE_KEY);
-                console.log("✅ Successfully migrated messages to database");
+                debug("✅ Successfully migrated messages to database");
               }
             } catch (parseError) {
               console.error("❌ Failed to parse localStorage:", parseError);
@@ -260,7 +262,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         toast.error("Failed to save message to history");
         return false;
       } else {
-        console.log(`✅ Message saved: ${message.role} for user ${user.id}, shared: ${isSharedConversation}`);
+        debug(`✅ Message saved: ${message.role} for user ${user.id}, shared: ${isSharedConversation}`);
         return true;
       }
     } catch (error) {
@@ -284,10 +286,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
     isConnected: isVoiceConnected,
   } = useOpenAIRealtime({
     agentContext: `You are Aegis, a strategic AI security advisor for Silent Shield. Be concise and helpful.`,
-    conversationHistory: useMemo(() => 
-      messagesRef.current.slice(-10).map(m => ({ role: m.role, content: m.content })), 
-      []
-    ),
+    conversationHistory: messagesRef.current.slice(-10).map(m => ({ role: m.role, content: m.content })),
     onTranscript: (text, isFinal) => {
       if (isFinal && text.trim()) {
         // User finished speaking - add to chat
@@ -325,7 +324,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
       setIsVoiceActive(false);
     },
     onStatusChange: (status) => {
-      console.log('Voice status:', status);
+      debug('Voice status:', status);
       // No longer save on idle - we save on onAgentResponseComplete instead
     },
   });
@@ -379,7 +378,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
   }, [messages, streamingContent]);
 
   const streamChat = async (userMessage: string) => {
-    console.log("streamChat called with:", userMessage);
+    debug("streamChat called with:", userMessage);
     const userMsg = { role: "user" as const, content: userMessage };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
@@ -408,7 +407,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
     };
 
     try {
-      console.log("Fetching from edge function...");
+      debug("Fetching from edge function...");
       
       // Only send recent messages to prevent context confusion
       // Keep first message (welcome) + last N messages for focused context
@@ -416,7 +415,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         ? [newMessages[0], ...newMessages.slice(-MAX_CONTEXT_MESSAGES)]
         : newMessages;
       
-      console.log(`Sending ${contextMessages.length} of ${newMessages.length} messages for focused context`);
+      debug(`Sending ${contextMessages.length} of ${newMessages.length} messages for focused context`);
       
       // Get the user's session token for authenticated memory tools
       const { data: { session } } = await supabase.auth.getSession();
@@ -434,7 +433,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         }
       );
 
-      console.log("Response status:", response.status);
+      debug("Response status:", response.status);
 
       if (response.status === 429) {
         toast.error("Rate limit exceeded. Please try again later.");
@@ -456,7 +455,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         return;
       }
 
-      console.log("Starting to read stream...");
+      debug("Starting to read stream...");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let textBuffer = "";
@@ -464,7 +463,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
-          console.log("Stream complete");
+          debug("Stream complete");
           break;
         }
         const chunk = decoder.decode(value, { stream: true });
@@ -518,7 +517,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         // Track AI interaction (excludes super_admin)
         trackAIInteraction('Aegis AI', 'user', currentConversationId || undefined);
       } else {
-        console.log("No content received from stream");
+        debug("No content received from stream");
         const errorMsg = { role: "assistant" as const, content: "I'm having trouble generating a response. Please try again." };
         setMessages([...newMessages, errorMsg]);
         await saveMessageToDb(errorMsg);
@@ -544,7 +543,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         clearTimeout(pendingUpdate);
       }
     } finally {
-      console.log("streamChat complete, setting isLoading to false");
+      debug("streamChat complete, setting isLoading to false");
       setIsLoading(false);
     }
   };
@@ -626,7 +625,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
     try {
       for (const file of attachments) {
         const fileSizeMB = file.size / (1024 * 1024);
-        console.log(`Uploading ${file.name} (${fileSizeMB.toFixed(2)}MB)...`);
+        debug(`Uploading ${file.name} (${fileSizeMB.toFixed(2)}MB)...`);
         
         // Upload to storage with retry
         const fileExt = file.name.split('.').pop();
@@ -702,7 +701,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
             
             // Process document - await for PDFs/Office docs to ensure success
             const processingPromise = (async () => {
-              console.log(`Starting processing for ${file.name} (ID: ${archivalDoc.id})`);
+              debug(`Starting processing for ${file.name} (ID: ${archivalDoc.id})`);
               
               const { data, error } = await invokeWithRetry('process-stored-document', {
                 documentId: archivalDoc.id,
@@ -732,10 +731,10 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
               } else if ((data as { skipped?: boolean })?.skipped) {
                 // Large file was stored but OCR skipped - this is NOT a failure
                 const resp = data as { skipped?: boolean; reason?: string; message?: string };
-                console.log(`Document ${file.name} stored but processing skipped:`, resp.reason);
+                debug(`Document ${file.name} stored but processing skipped:`, resp.reason);
                 toast.info(`${file.name} stored successfully. ${resp.message || 'Processing skipped due to size.'}`);
               } else {
-                console.log(`Document ${file.name} processed successfully:`, data);
+                debug(`Document ${file.name} processed successfully:`, data);
                 toast.success(`${file.name} processed and ready for analysis`);
               }
             })();
@@ -771,9 +770,9 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Form submitted, input:", input, "isLoading:", isLoading);
+    debug("Form submitted, input:", input, "isLoading:", isLoading);
     if ((!input.trim() && attachments.length === 0) || isLoading || isUploading) {
-      console.log("Form submission blocked - empty input or loading");
+      debug("Form submission blocked - empty input or loading");
       return;
     }
 
@@ -1212,7 +1211,7 @@ Type "help" anytime to see this again!`,
         
         // Save the default message
         await saveMessageToDb(defaultMessage);
-        console.log("Chat history cleared from database");
+        debug("Chat history cleared from database");
       } catch (error) {
         console.error("Failed to clear database history:", error);
         toast.error("Failed to clear chat history");

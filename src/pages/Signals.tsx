@@ -41,9 +41,8 @@ const Signals = () => {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   
-  // Get initial tab from URL or default to 'signals'
-  const initialTab = searchParams.get('tab') || 'signals';
-  const [activeTab, setActiveTab] = useState(initialTab);
+  // Derive tab state purely from URL params
+  const activeTab = searchParams.get('tab') || 'signals';
 
   // Unmatched signals state
   const [searchTerm, setSearchTerm] = useState("");
@@ -60,7 +59,6 @@ const Signals = () => {
 
   // Update URL when tab changes
   const handleTabChange = (value: string) => {
-    setActiveTab(value);
     if (value === 'signals') {
       searchParams.delete('tab');
     } else {
