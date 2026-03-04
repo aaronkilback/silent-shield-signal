@@ -6,7 +6,7 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   try {
-    // LOVABLE_API_KEY is handled by callAiGateway
+    // GEMINI_API_KEY is handled by callAiGateway
     
     const supabase = createServiceClient();
 
@@ -122,7 +122,7 @@ Generate a dynamic decision tree node that guides the analyst through optimal re
 
     // Call AI for decision guidance
     const aiResult = await callAiGateway({
-      model: "google/gemini-2.5-flash",
+      model: "gemini-2.5-flash",
       messages: [
         {
           role: "system",

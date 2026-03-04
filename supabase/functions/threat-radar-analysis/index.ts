@@ -38,7 +38,7 @@ Deno.serve(async (req) => {
 
     const supabase = createServiceClient();
 
-    // LOVABLE_API_KEY handled by callAiGateway
+    // GEMINI_API_KEY handled by callAiGateway
 
     const timeframeCutoff = new Date(Date.now() - timeframe_hours * 60 * 60 * 1000).toISOString();
 
@@ -319,7 +319,7 @@ Be specific, actionable, and ALWAYS cite the data source for each claim.`;
 
       try {
         const aiResult = await callAiGateway({
-          model: 'google/gemini-3-pro-preview',
+          model: 'gemini-3-pro-preview',
           messages: [
             { 
               role: 'system', 

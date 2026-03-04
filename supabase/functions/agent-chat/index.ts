@@ -377,9 +377,9 @@ Deno.serve(async (req) => {
 
     console.log('Agent chat request:', { agent_id, message_length: message?.length, client_id });
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    if (!GEMINI_API_KEY) {
+      throw new Error('GEMINI_API_KEY not configured');
     }
 
     // Detect simple acknowledgment messages that don't need full processing
@@ -409,7 +409,7 @@ Deno.serve(async (req) => {
       console.log("Detected simple acknowledgment, using fast response path");
       
       const ackResult = await callAiGateway({
-        model: 'google/gemini-2.5-flash-lite',
+        model: 'gemini-2.5-flash-lite',
         messages: [
           {
             role: 'system',
@@ -1226,7 +1226,7 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
     // Call AI Gateway with tools - using retry wrapper for reliability
     const makeAICall = async (msgs: any[], includeTools: boolean = true) => {
       const result = await callAiGateway({
-        model: 'google/gemini-3-flash-preview',
+        model: 'gemini-3-flash-preview',
         messages: msgs,
         functionName: 'agent-chat',
         retries: RELIABILITY_CONFIG.maxRetries - 1,

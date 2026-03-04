@@ -33,14 +33,14 @@ export async function storeAgentMemory(
 ): Promise<void> {
   // Generate embedding for the memory
   let embedding: number[] | null = null;
-  const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+  const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
 
-  if (LOVABLE_API_KEY) {
+  if (OPENAI_API_KEY) {
     try {
-      const embResponse = await fetch('https://ai.gateway.lovable.dev/v1/embeddings', {
+      const embResponse = await fetch('https://api.openai.com/v1/embeddings', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -80,15 +80,15 @@ export async function retrieveAgentMemories(
   queryText: string,
   maxResults: number = 5
 ): Promise<AgentMemory[]> {
-  const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-  if (!LOVABLE_API_KEY) return [];
+  const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+  if (!OPENAI_API_KEY) return [];
 
   try {
     // Generate query embedding
-    const embResponse = await fetch('https://ai.gateway.lovable.dev/v1/embeddings', {
+    const embResponse = await fetch('https://api.openai.com/v1/embeddings', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

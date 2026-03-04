@@ -173,9 +173,9 @@ serve(async (req) => {
       throw new Error('incident_id is required');
     }
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    if (!GEMINI_API_KEY) {
+      throw new Error('GEMINI_API_KEY not configured');
     }
 
     const supabase = createClient(
@@ -314,15 +314,15 @@ ${buildPersonalizationPrompt(analystPrefs)}
 
     // Tier 1: Use upgraded models based on agent specialization
     const AGENT_MODELS: Record<string, string> = {
-      'GLOBE-SAGE': 'google/gemini-3-pro-preview',
+      'GLOBE-SAGE': 'gemini-3-pro-preview',
       'AEGIS-CMD': 'openai/gpt-5.2',
       'LEX-MAGNA': 'openai/gpt-5.2',
-      'BIRD-DOG': 'google/gemini-3-pro-preview',
-      'LOCUS-INTEL': 'google/gemini-3-flash-preview',
-      'TIME-WARP': 'google/gemini-3-flash-preview',
+      'BIRD-DOG': 'gemini-3-pro-preview',
+      'LOCUS-INTEL': 'gemini-3-flash-preview',
+      'TIME-WARP': 'gemini-3-flash-preview',
       'PATTERN-SEEKER': 'openai/gpt-5.2',
     };
-    const agentModel = AGENT_MODELS[selectedAgent] || 'google/gemini-3-flash-preview';
+    const agentModel = AGENT_MODELS[selectedAgent] || 'gemini-3-flash-preview';
 
     // Intelligence upgrades: CoT + Evidence Citations
     const intelligenceUpgrade = getIntelligenceUpgradePrompt();

@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
     
     console.log(`Generating ${report_type} report for last ${period_hours} hours`);
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
 
     const periodStart = new Date();
     periodStart.setHours(periodStart.getHours() - (period_hours || 72));
@@ -95,11 +95,11 @@ Deno.serve(async (req) => {
     // Generate AI recommendations for top signals
     const signalsWithRecommendations = await Promise.all(
       (signals || []).slice(0, 20).map(async (signal) => {
-        if (!LOVABLE_API_KEY) return { ...signal, recommendations: 'AI recommendations unavailable' };
+        if (!GEMINI_API_KEY) return { ...signal, recommendations: 'AI recommendations unavailable' };
         
         try {
           const aiResult = await callAiGateway({
-            model: 'google/gemini-2.5-flash',
+            model: 'gemini-2.5-flash',
             messages: [
               { role: 'system', content: 'You are a cybersecurity analyst. Provide 3-4 brief, actionable recommendations for responding to this security signal. Be concise and specific.' },
               { role: 'user', content: `Signal: ${signal.normalized_text}\nSeverity: ${signal.severity}\nCategory: ${signal.category}\nLocation: ${signal.location || 'Unknown'}` }
@@ -138,7 +138,7 @@ Provide:
 Keep it executive-friendly and action-oriented.`;
 
     const summaryResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         { role: 'system', content: 'You are a security intelligence analyst creating executive briefings.' },
         { role: 'user', content: summaryPrompt }

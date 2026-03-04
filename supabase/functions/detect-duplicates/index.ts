@@ -273,7 +273,7 @@ Deno.serve(async (req) => {
 
       // 2) Semantic fallback (AI) when lexical similarity misses paraphrases
       if (duplicates.length === 0 && semanticEnabled && recentSignals && recentSignals.length > 0) {
-        const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+        const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
 
         const candidates = recentSignals
           .filter((s) => s.id !== id)
@@ -281,16 +281,16 @@ Deno.serve(async (req) => {
           .slice(0, 60)
           .map((s) => ({ id: s.id, text: (s.normalized_text || '').toString() }));
 
-        if (LOVABLE_API_KEY && candidates.length > 0) {
+        if (GEMINI_API_KEY && candidates.length > 0) {
           try {
-            const resp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+            const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
               method: 'POST',
               headers: {
-                Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                Authorization: `Bearer ${GEMINI_API_KEY}`,
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                model: 'google/gemini-2.5-flash',
+                model: 'gemini-2.5-flash',
                 messages: [
                   {
                     role: 'system',

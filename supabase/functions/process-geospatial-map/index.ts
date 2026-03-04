@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
           throw new Error(`Failed to get signed URL: ${signedUrlError?.message}`);
         }
 
-        const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY') || '';
+        const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') || '';
 
         // Use AI to extract asset information from the map
         const extractionPrompt = `You are analyzing a georeferenced PDF map of Petronas Canada assets. 
@@ -54,7 +54,7 @@ For each asset, provide:
 Return as JSON array of assets. Be thorough - extract every identifiable feature.`;
 
         const aiResult = await callAiGateway({
-          model: 'google/gemini-2.5-pro',
+          model: 'gemini-2.5-pro',
           messages: [
             { role: 'user', content: extractionPrompt }
           ],

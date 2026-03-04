@@ -199,15 +199,15 @@ export async function retrieveCrossAgentInsights(
   queryText: string,
   maxPerAgent: number = 3
 ): Promise<{ agentCallSign: string; content: string; confidence: number; memory_type: string }[]> {
-  const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-  if (!LOVABLE_API_KEY) return [];
+  const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+  if (!OPENAI_API_KEY) return [];
 
   try {
     // Generate query embedding
-    const embResponse = await fetch('https://ai.gateway.lovable.dev/v1/embeddings', {
+    const embResponse = await fetch('https://api.openai.com/v1/embeddings', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

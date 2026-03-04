@@ -23,7 +23,7 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
+    const lovableApiKey = Deno.env.get('GEMINI_API_KEY');
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -180,7 +180,7 @@ ${patterns.map(p => `- ${p.type}: ${p.content} (confidence: ${p.confidence.toFix
 Provide insights that would help ANY security team, without revealing specifics about individual organizations. Format as a JSON array of strings.`;
 
         const aiResult = await callAiGateway({
-          model: 'google/gemini-2.5-flash',
+          model: 'gemini-2.5-flash',
           messages: [
             { role: 'system', content: 'You are a security intelligence analyst. Provide actionable, anonymized insights based on aggregate patterns. Return only a JSON array of insight strings.' },
             { role: 'user', content: analysisPrompt }

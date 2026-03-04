@@ -71,9 +71,9 @@ serve(async (req) => {
     
     console.log(`Generating enhanced executive report for client ${client_id}, ${period_days} days`);
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    if (!GEMINI_API_KEY) {
+      throw new Error('GEMINI_API_KEY not configured');
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -341,7 +341,7 @@ Be specific, cite EXACT data from above, and use executive-appropriate language.
     };
 
     const flashResult = await callAiGatewayJson({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         { role: 'system', content: 'You are a security intelligence advisor. Always respond with valid JSON only, no markdown.' },
         { role: 'user', content: flashPrompt }
@@ -371,7 +371,7 @@ Provide exactly 3 impact ladders. Be specific and actionable. Use executive lang
     console.log('Generating impact ladders...');
     let impactLadders: ImpactLadder[] = [];
     const impactResult = await callAiGatewayJson<ImpactLadder[]>({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         { role: 'system', content: 'You are a strategic security advisor. Always respond with valid JSON only.' },
         { role: 'user', content: impactPrompt }
@@ -419,7 +419,7 @@ CRITICAL: Do NOT claim incidents "appeared" or "emerged" on dates other than the
     console.log('Generating executive summary...');
     let executiveSummary = 'Analysis in progress...';
     const summaryResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         { role: 'system', content: 'You are a professional security intelligence analyst writing for C-level executives. Use formal, business-appropriate language.' },
         { role: 'user', content: summaryPrompt }
@@ -454,7 +454,7 @@ Be specific and actionable. Max 5 items.`;
     console.log('Generating action items...');
     let actionItems: ActionItem[] = [];
     const actionsResult = await callAiGatewayJson({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         { role: 'system', content: 'You are a security operations advisor. Always respond with valid JSON only.' },
         { role: 'user', content: actionsPrompt }
@@ -517,7 +517,7 @@ Use professional executive language.`;
     console.log('Generating strategic deductions...');
     let deductions = 'Analysis in progress...';
     const deductionsResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         { role: 'system', content: 'You are a strategic security analyst providing executive-level threat assessment.' },
         { role: 'user', content: deductionsPrompt }
@@ -546,7 +546,7 @@ Write 2-3 paragraphs that:
 Use executive-appropriate language.`;
 
         const narrativeResult = await callAiGateway({
-          model: 'google/gemini-2.5-flash',
+          model: 'gemini-2.5-flash',
           messages: [
             { role: 'system', content: 'You are an intelligence analyst writing for executives.' },
             { role: 'user', content: narrativePrompt }

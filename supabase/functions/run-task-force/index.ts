@@ -496,9 +496,9 @@ Deno.serve(async (req) => {
     const { mission_id } = await req.json();
     console.log('Running task force mission with RoE:', mission_id);
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    if (!GEMINI_API_KEY) {
+      throw new Error('GEMINI_API_KEY not configured');
     }
 
     const supabase = createServiceClient();
@@ -576,7 +576,7 @@ Generate the Commander's Intent with:
 Keep response concise and actionable.`;
 
     const intentResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         { role: 'system', content: leader.ai_agents?.system_prompt || 'You are a tactical team leader.' },
         { role: 'user', content: commanderIntentPrompt }
@@ -623,7 +623,7 @@ RULES OF ENGAGEMENT:
 Provide your analysis for this mission. Include Confidence, Assumptions, Unknowns, and validation steps.`;
 
       const agentResult = await callAiGateway({
-        model: 'google/gemini-2.5-flash',
+        model: 'gemini-2.5-flash',
         messages: [
           { role: 'system', content: agent.ai_agents?.system_prompt || `You are ${agent.ai_agents?.codename}.` },
           { role: 'user', content: agentPrompt }
@@ -664,7 +664,7 @@ Create a consolidated mission report with:
 Ensure compliance with RoE - no absolute certainty claims, proper evidence tagging.`;
 
     const synthesisResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         { role: 'system', content: leader.ai_agents?.system_prompt || 'You are a tactical team leader.' },
         { role: 'user', content: synthesisPrompt }

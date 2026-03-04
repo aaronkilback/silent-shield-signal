@@ -20,10 +20,10 @@ const corsHeaders = {
 // Timeout for AI API calls (45 seconds - well under edge function limits)
 const AI_TIMEOUT_MS = 45000;
 
-// Helper to fetch with timeout — delegates to AI gateway wrappers for resilience
+// Helper to fetch with timeout — delegates to AI provider wrappers for resilience
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
-  // If this is an AI gateway call, use the resilient wrapper
-  if (url.includes('ai.gateway.lovable.dev')) {
+  // If this is a direct AI provider call, use the resilient wrapper
+  if (url.includes('generativelanguage.googleapis.com') || url.includes('api.perplexity.ai') || url.includes('api.openai.com/v1/chat')) {
     const bodyObj = JSON.parse(options.body as string);
     const isStreaming = bodyObj.stream === true;
     
@@ -35,7 +35,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
     if (isStreaming) {
       // Streaming call — return SSE stream
       const result = await callAiGatewayStream({
-        model: bodyObj.model || 'google/gemini-2.5-flash',
+        model: bodyObj.model || 'gemini-2.5-flash',
         messages: bodyObj.messages || [],
         functionName: 'dashboard-ai-assistant',
         timeoutMs,
@@ -53,7 +53,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
     } else {
       // Non-streaming call — return JSON response (for tool-use decisions)
       const result = await callAiGateway({
-        model: bodyObj.model || 'google/gemini-2.5-flash',
+        model: bodyObj.model || 'gemini-2.5-flash',
         messages: bodyObj.messages || [],
         functionName: 'dashboard-ai-assistant',
         retries: 2,
@@ -1023,9 +1023,9 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
           ai: {
             provider: 'Lovable AI Gateway',
             models: [
-              'google/gemini-3-pro-preview (primary - advanced reasoning)',
-              'google/gemini-2.5-flash (utility/summarization)',
-              'google/gemini-2.5-flash-lite (classification)',
+              'gemini-3-pro-preview (primary - advanced reasoning)',
+              'gemini-2.5-flash (utility/summarization)',
+              'gemini-2.5-flash-lite (classification)',
               'openai/gpt-5-mini (alternative)'
             ],
             uses: [
@@ -1627,9 +1627,9 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
       const fileSizeMB = fileBytes ? (fileBytes.byteLength / (1024 * 1024)) : inferredSizeMb;
       console.log(`Analyzing visual document: ${doc.filename} (${fileSizeMB.toFixed(1)}MB)`);
 
-      const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-      if (!LOVABLE_API_KEY) {
-        return { success: false, error: "LOVABLE_API_KEY not configured" };
+      const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+      if (!GEMINI_API_KEY) {
+        return { success: false, error: "GEMINI_API_KEY not configured" };
       }
 
       // Determine analysis prompt based on focus
@@ -1695,14 +1695,14 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
           const base64PDF = base64FromBytes(new Uint8Array(fileBytes));
           console.log(`Sending PDF as base64 data URL for analysis (${fileSizeMB.toFixed(1)}MB)`);
 
-          const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+          const visionResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+              'Authorization': `Bearer ${GEMINI_API_KEY}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              model: 'google/gemini-2.5-flash',
+              model: 'gemini-2.5-flash',
               messages: [{
                 role: 'user',
                 content: [
@@ -1757,14 +1757,14 @@ Be comprehensive - list all road names, milepost markers, facility names, pipeli
             imageUrl = `data:${mimeType};base64,${base64Image}`;
           }
 
-          const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+          const visionResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+              'Authorization': `Bearer ${GEMINI_API_KEY}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              model: 'google/gemini-2.5-pro',
+              model: 'gemini-2.5-pro',
               messages: [{
                 role: 'user',
                 content: [
@@ -3492,7 +3492,7 @@ Be thorough and include every piece of visible text and data.`,
           "Be ready to rollback if issues arise"
         ],
         generated_at: new Date().toISOString(),
-        ai_model: "google/gemini-2.5-flash"
+        ai_model: "gemini-2.5-flash"
       };
 
       // Update bug report with fix proposal
@@ -6704,7 +6704,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
       const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
       const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-      const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY") ?? "";
+      const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 
       // ═══════════════════════════════════════════════════════════════
       // SECURITY BULLETIN: Custom AI-composed bulletin with images
@@ -6723,19 +6723,19 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
           // Generate header image using Gemini Flash Image model
           let headerImageUrl = "";
-          if (generate_header_image !== false && LOVABLE_API_KEY) {
+          if (generate_header_image !== false && GEMINI_API_KEY) {
             try {
               const imgPrompt = image_prompt || `A wide cinematic header image for a corporate security intelligence bulletin titled "${bulletin_title}". Dark moody atmosphere, deep navy and charcoal tones with subtle cyan accent lighting. Abstract geometric grid patterns suggesting digital surveillance networks and data analysis. No text, no words, no letters. Photorealistic, ultra high resolution, 16:9 aspect ratio.`;
               console.log("Generating bulletin header image via Gemini Flash Image...");
               
-              const imgResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+              const imgResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
                 method: "POST",
                 headers: {
-                  "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+                  "Authorization": `Bearer ${GEMINI_API_KEY}`,
                   "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                  model: "google/gemini-2.5-flash-image",
+                  model: "gemini-2.5-flash-image",
                   messages: [{ role: "user", content: imgPrompt }],
                   modalities: ["image", "text"],
                 }),
@@ -7689,12 +7689,12 @@ Deno.serve(async (req) => {
       );
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY is not configured");
+    if (!GEMINI_API_KEY) {
+      throw new Error("GEMINI_API_KEY is not configured");
     }
 
     const supabaseClient = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
@@ -7908,14 +7908,14 @@ Deno.serve(async (req) => {
       console.log("Detected simple acknowledgment message, using fast response path");
       
       // Use lightweight AI call with minimal context for simple ack
-      const ackResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      const ackResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          Authorization: `Bearer ${GEMINI_API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "google/gemini-2.5-flash-lite",
+          model: "gemini-2.5-flash-lite",
           messages: [
             {
               role: "system",
@@ -8033,14 +8033,14 @@ The user's message is just a conversational acknowledgment - respond in kind, do
     );
 
     // First AI call with tools — use fast model for tool routing decision
-    const response = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const response = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        Authorization: `Bearer ${GEMINI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "gemini-2.5-flash",
         messages: [
           {
             role: "system",
@@ -8104,14 +8104,14 @@ The user's message is just a conversational acknowledgment - respond in kind, do
           },
         ];
 
-        const finalResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        const finalResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            Authorization: `Bearer ${GEMINI_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "google/gemini-2.5-flash",
+            model: "gemini-2.5-flash",
             messages: [
               {
                 role: "system",
@@ -8229,14 +8229,14 @@ RULES:
 CONTEXT:
 ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
 
-            const composeResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+            const composeResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
               method: "POST",
               headers: {
-                Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                Authorization: `Bearer ${GEMINI_API_KEY}`,
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
-                model: "google/gemini-2.5-flash",
+                model: "gemini-2.5-flash",
                 messages: [{ role: "user", content: extractionPrompt }],
                 stream: false,
               }),
@@ -8320,14 +8320,14 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
           },
         ];
 
-        const finalResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        const finalResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            Authorization: `Bearer ${GEMINI_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "google/gemini-2.5-flash",
+            model: "gemini-2.5-flash",
             messages: [
               {
                 role: "system",
@@ -8414,14 +8414,14 @@ RULES:
 CONTEXT:
 ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
 
-              const composeResponse2 = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+              const composeResponse2 = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
                 method: "POST",
                 headers: {
-                  Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                  Authorization: `Bearer ${GEMINI_API_KEY}`,
                   "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                  model: "google/gemini-2.5-flash",
+                  model: "gemini-2.5-flash",
                   messages: [{ role: "user", content: extractionPrompt2 }],
                   stream: false,
                 }),
@@ -8501,14 +8501,14 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
             },
           ];
 
-          const finalResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          const finalResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${LOVABLE_API_KEY}`,
+              Authorization: `Bearer ${GEMINI_API_KEY}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              model: "google/gemini-2.5-flash",
+              model: "gemini-2.5-flash",
               messages: [
                 {
                   role: "system",
@@ -8546,14 +8546,14 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
           },
         ];
 
-        const finalResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        const finalResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            Authorization: `Bearer ${GEMINI_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "google/gemini-2.5-flash",
+            model: "gemini-2.5-flash",
             messages: [
               {
                 role: "system",
@@ -8610,14 +8610,14 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
           },
         ];
 
-        const finalResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        const finalResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            Authorization: `Bearer ${GEMINI_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "google/gemini-2.5-flash",
+            model: "gemini-2.5-flash",
             messages: [
               {
                 role: "system",
@@ -8691,14 +8691,14 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
       );
 
       // Make second AI call with tool results - now with streaming (with timeout)
-      const finalResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      const finalResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          Authorization: `Bearer ${GEMINI_API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
+          model: "gemini-2.5-flash",
           messages: [
             {
               role: "system",
@@ -8722,14 +8722,14 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
     }
 
     // No tools needed, stream the response directly (with timeout)
-    const streamResponse = await fetchWithTimeout("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const streamResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        Authorization: `Bearer ${GEMINI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "gemini-2.5-flash",
         messages: [
           {
             role: "system",

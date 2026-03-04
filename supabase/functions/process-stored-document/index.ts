@@ -86,10 +86,10 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      console.error('LOVABLE_API_KEY not configured');
-      throw new Error('LOVABLE_API_KEY not configured');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    if (!GEMINI_API_KEY) {
+      console.error('GEMINI_API_KEY not configured');
+      throw new Error('GEMINI_API_KEY not configured');
     }
 
     // Get feedback-based learning context
@@ -358,14 +358,14 @@ Deno.serve(async (req) => {
             }
 
             if (docxRef) {
-              const visionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+              const visionResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
                 method: 'POST',
                 headers: {
-                  'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                  'Authorization': `Bearer ${GEMINI_API_KEY}`,
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                  model: 'google/gemini-2.5-flash',
+                  model: 'gemini-2.5-flash',
                   messages: [
                     {
                       role: 'user',
@@ -516,15 +516,15 @@ Deno.serve(async (req) => {
 
           // Use only 1 retry to avoid OOM from multiple in-flight requests
           const extractResp = await fetchWithRetry(
-            'https://ai.gateway.lovable.dev/v1/chat/completions',
+            'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
             {
               method: 'POST',
               headers: {
-                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                'Authorization': `Bearer ${GEMINI_API_KEY}`,
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                model: 'google/gemini-2.5-flash',
+                model: 'gemini-2.5-flash',
                 messages: [{
                   role: 'user',
                   content: [
@@ -645,15 +645,15 @@ INSTRUCTIONS:
           console.log(`Sending image for vision analysis: ${imageSizeMB.toFixed(2)}MB`);
           
           const visionResp = await fetchWithRetry(
-            'https://ai.gateway.lovable.dev/v1/chat/completions',
+            'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
             {
               method: 'POST',
               headers: {
-                'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                'Authorization': `Bearer ${GEMINI_API_KEY}`,
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                model: 'google/gemini-2.5-flash',
+                model: 'gemini-2.5-flash',
                 messages: [{
                   role: 'user',
                   content: [
@@ -700,15 +700,15 @@ Return the full extracted text and/or description.`
             // Try Pro model as fallback
             console.log('Trying Gemini Pro fallback for image analysis...');
             const proResp = await fetchWithRetry(
-              'https://ai.gateway.lovable.dev/v1/chat/completions',
+              'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
               {
                 method: 'POST',
                 headers: {
-                  'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+                  'Authorization': `Bearer ${GEMINI_API_KEY}`,
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                  model: 'google/gemini-2.5-pro',
+                  model: 'gemini-2.5-pro',
                   messages: [{
                     role: 'user',
                     content: [
@@ -844,14 +844,14 @@ Return the full extracted text and/or description.`
 
     console.log('Calling Lovable AI for entity extraction (with retry)...');
 
-    const aiResponse = await fetchWithRetry('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const aiResponse = await fetchWithRetry('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Authorization': `Bearer ${GEMINI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-pro', // Use more powerful model for better extraction
+        model: 'gemini-2.5-pro', // Use more powerful model for better extraction
         messages: [
           {
             role: 'system',

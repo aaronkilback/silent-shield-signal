@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
 
     console.log('[ClusterDetector] Starting proactive threat cluster scan...');
 
@@ -238,20 +238,20 @@ Deno.serve(async (req) => {
     let aiAssessment: string | null = null;
     const highRiskClusters = clusters.filter(c => c.risk_score >= 60);
 
-    if (LOVABLE_API_KEY && highRiskClusters.length > 0) {
+    if (GEMINI_API_KEY && highRiskClusters.length > 0) {
       try {
         const clusterSummary = highRiskClusters.slice(0, 5).map((c, i) => 
           `${i + 1}. [${c.cluster_type.toUpperCase()}] ${c.description} — Risk: ${c.risk_score}/100`
         ).join('\n');
 
-        const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+            'Authorization': `Bearer ${GEMINI_API_KEY}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: 'google/gemini-3-pro-preview',
+            model: 'gemini-3-pro-preview',
             messages: [
               {
                 role: 'system',

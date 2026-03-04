@@ -1,13 +1,18 @@
 /**
- * Resilient AI Gateway Client
- * 
- * Wraps all calls to ai.gateway.lovable.dev with:
+ * Resilient AI Client — Direct Provider Routing
+ *
+ * Routes chat-completion calls directly to the appropriate AI provider:
+ *   - google/* or gemini-*  → Google Generative AI (OpenAI-compatible endpoint)  GEMINI_API_KEY
+ *   - sonar*                → Perplexity AI                                       PERPLEXITY_API_KEY
+ *   - openai/* or gpt-*    → OpenAI                                               OPENAI_API_KEY
+ *
+ * Also provides:
  * - Circuit breaker protection
  * - Automatic retries with exponential backoff
  * - Structured error logging
  * - Dead letter queue for critical failures
- * - **Universal anti-hallucination guardrails** (auto-injected into every call)
- * 
+ * - Universal anti-hallucination guardrails (auto-injected into every call)
+ *
  * Usage:
  *   import { callAiGateway } from "../_shared/ai-gateway.ts";
  *   const result = await callAiGateway({ model, messages, functionName });
@@ -103,18 +108,62 @@ function injectGuardrails(messages: Array<{ role: string; content: string }>): A
   return result;
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  PROVIDER ROUTING
+//  Resolves the correct API endpoint, API key env var, and
+//  normalised model name from the model string passed by callers.
+// ═══════════════════════════════════════════════════════════════
+interface ProviderConfig {
+  url: string;
+  apiKey: string;
+  model: string;
+  keyName: string; // for error messages
+}
+
+function getProviderConfig(model: string): ProviderConfig {
+  // Google Gemini — OpenAI-compatible endpoint
+  if (model.startsWith('google/') || model.startsWith('gemini-')) {
+    const modelName = model.startsWith('google/') ? model.slice('google/'.length) : model;
+    return {
+      url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      apiKey: Deno.env.get('GEMINI_API_KEY') ?? '',
+      model: modelName,
+      keyName: 'GEMINI_API_KEY',
+    };
+  }
+
+  // Perplexity Sonar
+  if (model.startsWith('sonar')) {
+    return {
+      url: 'https://api.perplexity.ai/chat/completions',
+      apiKey: Deno.env.get('PERPLEXITY_API_KEY') ?? '',
+      model,
+      keyName: 'PERPLEXITY_API_KEY',
+    };
+  }
+
+  // OpenAI (explicit prefix or bare gpt-* names)
+  const modelName = model.startsWith('openai/') ? model.slice('openai/'.length) : model;
+  return {
+    url: 'https://api.openai.com/v1/chat/completions',
+    apiKey: Deno.env.get('OPENAI_API_KEY') ?? '',
+    model: modelName,
+    keyName: 'OPENAI_API_KEY',
+  };
+}
+
 /**
- * Call the AI Gateway with full resilience stack + anti-hallucination guardrails.
+ * Call the AI provider directly with full resilience stack + anti-hallucination guardrails.
  * Returns { content, raw, error, circuitOpen, hallucinationWarnings } — never throws.
  */
 export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewayResponse> {
-  const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-  if (!LOVABLE_API_KEY) {
-    await logError(new Error('LOVABLE_API_KEY not configured'), {
+  const provider = getProviderConfig(request.model);
+  if (!provider.apiKey) {
+    await logError(new Error(`${provider.keyName} not configured`), {
       functionName: request.functionName,
       severity: 'critical',
     });
-    return { content: null, raw: null, error: 'LOVABLE_API_KEY not configured', circuitOpen: false };
+    return { content: null, raw: null, error: `${provider.keyName} not configured`, circuitOpen: false };
   }
 
   // Auto-inject anti-hallucination guardrails unless explicitly skipped
@@ -128,15 +177,15 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
       request.functionName,
       async () => {
         const body: Record<string, unknown> = {
-          model: request.model,
+          model: provider.model,
           messages,
           ...request.extraBody,
         };
 
-        const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        const response = await fetch(provider.url, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+            'Authorization': `Bearer ${provider.apiKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(body),
@@ -204,13 +253,13 @@ export async function callAiGatewayStream(request: AiGatewayRequest & {
   error: string | null;
   circuitOpen: boolean;
 }> {
-  const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-  if (!LOVABLE_API_KEY) {
-    await logError(new Error('LOVABLE_API_KEY not configured'), {
+  const provider = getProviderConfig(request.model);
+  if (!provider.apiKey) {
+    await logError(new Error(`${provider.keyName} not configured`), {
       functionName: request.functionName,
       severity: 'critical',
     });
-    return { stream: null, error: 'LOVABLE_API_KEY not configured', circuitOpen: false };
+    return { stream: null, error: `${provider.keyName} not configured`, circuitOpen: false };
   }
 
   const cb = new (await import("./circuit-breaker.ts")).CircuitBreaker('ai-gateway');
@@ -226,18 +275,18 @@ export async function callAiGatewayStream(request: AiGatewayRequest & {
         const guardedMessages = request.skipGuardrails
           ? request.messages
           : injectGuardrails(request.messages);
-          
+
         const body: Record<string, unknown> = {
-          model: request.model,
+          model: provider.model,
           messages: guardedMessages,
           stream: true,
           ...request.extraBody,
         };
 
-        const resp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        const resp = await fetch(provider.url, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+            'Authorization': `Bearer ${provider.apiKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(body),

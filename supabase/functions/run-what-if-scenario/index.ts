@@ -162,7 +162,7 @@ Deno.serve(async (req) => {
     }
 
     const supabase = createServiceClient();
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
 
     // Get principal profile
     const principalProfile = await getPrincipalProfile(supabase, entity_id);
@@ -213,7 +213,7 @@ Deno.serve(async (req) => {
 
     // Call AI to synthesize scenario impact
     let aiAnalysis = null;
-    if (LOVABLE_API_KEY) {
+    if (GEMINI_API_KEY) {
       const prompt = `You are a corporate security intelligence analyst. Analyze this what-if scenario for a VIP principal:
 
 PRINCIPAL PROFILE:
@@ -250,14 +250,14 @@ Provide a structured scenario assessment with:
 Format your response as valid JSON.`;
 
       try {
-        const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        const aiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+            "Authorization": `Bearer ${GEMINI_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "google/gemini-2.5-flash",
+            model: "gemini-2.5-flash",
             messages: [
               { role: "system", content: "You are a corporate security analyst. Respond only with valid JSON." },
               { role: "user", content: prompt }

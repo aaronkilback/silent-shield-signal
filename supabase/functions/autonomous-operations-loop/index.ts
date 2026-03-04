@@ -42,8 +42,8 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY not configured');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
 
     const dateContext = getCriticalDateContext();
     console.log(`[AutonomousLoop] Starting OODA cycle at ${dateContext.currentDateTimeLocal}`);
@@ -183,7 +183,7 @@ Deno.serve(async (req) => {
         // Generate a quick situational briefing
         try {
           const briefingResult = await callAiGateway({
-            model: 'google/gemini-3-flash-preview',
+            model: 'gemini-3-flash-preview',
             messages: [
               {
                 role: 'system',

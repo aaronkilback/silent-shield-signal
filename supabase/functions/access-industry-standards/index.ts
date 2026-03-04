@@ -125,7 +125,7 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
+    const lovableApiKey = Deno.env.get('GEMINI_API_KEY');
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const { 
@@ -257,13 +257,13 @@ Format as structured JSON:
 
     if (!lovableApiKey) {
       return new Response(
-        JSON.stringify({ error: 'LOVABLE_API_KEY not configured' }),
+        JSON.stringify({ error: 'GEMINI_API_KEY not configured' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-pro',
+      model: 'gemini-2.5-pro',
       messages: [
         { role: 'system', content: 'You are an industry standards expert with deep knowledge of security, safety, and compliance frameworks across Canadian industries. Provide accurate, actionable guidance.' },
         { role: 'user', content: standardsPrompt }

@@ -11,7 +11,7 @@ Deno.serve(async (req) => {
 
     const supabase = createServiceClient();
 
-    // LOVABLE_API_KEY handled by callAiGateway
+    // GEMINI_API_KEY handled by callAiGateway
 
     // Fetch comprehensive client data
     const { data: client, error: clientError } = await supabase
@@ -99,7 +99,7 @@ Design an optimized, layered defense strategy combining technical, physical, and
 Consider client-specific constraints (industry regulations, operational requirements, budget) and ensure recommendations are practical and implementable.`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         { role: 'system', content: 'You are an expert strategic defense architect specializing in comprehensive security program design and optimization.' },
         { role: 'user', content: optimizationPrompt }

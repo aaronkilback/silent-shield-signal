@@ -11,9 +11,9 @@ Deno.serve(async (req) => {
 
     const supabase = createServiceClient();
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    if (!GEMINI_API_KEY) {
+      throw new Error('GEMINI_API_KEY not configured');
     }
 
     // Fetch client data
@@ -121,7 +121,7 @@ Develop a strategic security investment portfolio prioritized by risk reduction 
 Tailor recommendations to client industry, threat profile, and operational requirements. Focus on practical, defensible investments that directly address observed threat patterns.`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         { role: 'system', content: 'You are an expert strategic security investment advisor specializing in security capital planning and ROI optimization.' },
         { role: 'user', content: proposalPrompt }

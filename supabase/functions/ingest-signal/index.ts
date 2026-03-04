@@ -230,7 +230,7 @@ Deno.serve(async (req) => {
 
         // Enhanced AI analysis with better prompting (resilient)
         const analysisResult = await callAiGateway({
-          model: 'google/gemini-2.5-flash',
+          model: 'gemini-2.5-flash',
           messages: [
             {
               role: 'system',
@@ -332,7 +332,7 @@ Be specific and concise. Focus on facts, not speculation.`
     };
 
     const classResult = await callAiGatewayJson({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         {
           role: 'system',
@@ -505,7 +505,7 @@ Respond ONLY with valid JSON.`
       if (!clientId) {
         console.log('No keyword match found, trying AI matching...');
         
-        const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+        const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
         
         // Build client context for AI matching
         const clientsContext = clients.map(c => ({
@@ -519,14 +519,14 @@ Respond ONLY with valid JSON.`
         }));
         
         try {
-          const matchResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+          const matchResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+              'Authorization': `Bearer ${GEMINI_API_KEY}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              model: 'google/gemini-2.5-flash',
+              model: 'gemini-2.5-flash',
               messages: [
                 {
                   role: 'system',
@@ -676,7 +676,7 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
           const newTitle = (classification.normalized_text || signalText).substring(0, 300);
           
           const sameStoryCheck = await callAiGatewayJson({
-            model: 'google/gemini-2.5-flash-lite',
+            model: 'gemini-2.5-flash-lite',
             messages: [
               {
                 role: 'system',
@@ -785,7 +785,7 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
 
         if (clientForGate) {
           const gateResult = await callAiGatewayJson({
-            model: 'google/gemini-2.5-flash-lite',
+            model: 'gemini-2.5-flash-lite',
             messages: [
               {
                 role: 'system',

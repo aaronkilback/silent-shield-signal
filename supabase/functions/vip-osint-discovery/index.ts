@@ -174,7 +174,7 @@ Deno.serve(async (req) => {
         
         const GOOGLE_API_KEY = Deno.env.get("GOOGLE_SEARCH_API_KEY");
         const GOOGLE_CX = Deno.env.get("GOOGLE_SEARCH_ENGINE_ID");
-        const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+        const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
         const HIBP_API_KEY = Deno.env.get("HIBP_API_KEY");
 
         console.log(`[DEEP-SCAN] ════════════════════════════════════════════════════`);
@@ -182,7 +182,7 @@ Deno.serve(async (req) => {
         console.log(`[DEEP-SCAN] Name parts: first="${firstName}" last="${lastName}"`);
         console.log(`[DEEP-SCAN] Industry: ${industry || "not specified"}`);
         console.log(`[DEEP-SCAN] Google API: ${!!GOOGLE_API_KEY && !!GOOGLE_CX ? "configured" : "NOT configured"}`);
-        console.log(`[DEEP-SCAN] Lovable AI: ${!!LOVABLE_API_KEY ? "configured" : "NOT configured"}`);
+        console.log(`[DEEP-SCAN] Lovable AI: ${!!GEMINI_API_KEY ? "configured" : "NOT configured"}`);
         console.log(`[DEEP-SCAN] ════════════════════════════════════════════════════`);
 
         const discoveries: Discovery[] = [];
@@ -449,7 +449,7 @@ Return as JSON array: [{ title, description, risk_level, source }]`;
         send({ type: "progress", data: { percent: 75 } });
 
         let aiAnalysis = null;
-        if (LOVABLE_API_KEY && discoveries.length > 0) {
+        if (GEMINI_API_KEY && discoveries.length > 0) {
           try {
             const analysisPrompt = `You are a corporate security intelligence analyst conducting a VIP deep scan. Analyze these OSINT discoveries for ${fullName}:
 
@@ -468,14 +468,14 @@ Provide a structured security assessment:
 
 Be direct and actionable.`;
 
-            const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+            const aiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
               method: "POST",
               headers: {
-                "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+                "Authorization": `Bearer ${GEMINI_API_KEY}`,
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
-                model: "google/gemini-2.5-flash",
+                model: "gemini-2.5-flash",
                 messages: [
                   { role: "system", content: "You are a corporate security intelligence analyst." },
                   { role: "user", content: analysisPrompt }

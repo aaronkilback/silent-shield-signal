@@ -111,9 +111,9 @@ Deno.serve(async (req) => {
     }
 
     // 4. Use AI to analyze gaps and generate proposals
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      return errorResponse('LOVABLE_API_KEY not configured', 500);
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    if (!GEMINI_API_KEY) {
+      return errorResponse('GEMINI_API_KEY not configured', 500);
     }
 
     let totalProposals = 0;
@@ -159,14 +159,14 @@ STRICT RULES — VIOLATIONS WILL BE REJECTED:
 - Confidence scores MUST be honest: 0.9+ only for keywords directly naming client assets, operations, or known threats.
 - If no high-quality proposals exist, return an EMPTY array. Do not pad with generic terms.`;
 
-      const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      const aiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+          'Authorization': `Bearer ${GEMINI_API_KEY}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'google/gemini-2.5-flash',
+          model: 'gemini-2.5-flash',
           messages: [
             { role: 'system', content: 'You are a security intelligence analyst. Return structured proposals only. Quality over quantity — an empty proposal list is better than noisy suggestions.' },
             { role: 'user', content: prompt }

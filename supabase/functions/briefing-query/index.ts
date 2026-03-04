@@ -24,11 +24,11 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-    if (!LOVABLE_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    if (!GEMINI_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
       throw new Error("Missing required environment variables");
     }
 
@@ -54,11 +54,11 @@ Deno.serve(async (req) => {
     const { action } = body;
 
     if (action === "ask") {
-      return await handleAskQuestion(body, user.id, supabaseAdmin, LOVABLE_API_KEY);
+      return await handleAskQuestion(body, user.id, supabaseAdmin, GEMINI_API_KEY);
     } else if (action === "respond_escalation") {
       return await handleEscalationResponse(body, user.id, supabaseAdmin);
     } else if (action === "agent_followup") {
-      return await handleAgentFollowup(body, user.id, supabaseAdmin, LOVABLE_API_KEY);
+      return await handleAgentFollowup(body, user.id, supabaseAdmin, GEMINI_API_KEY);
     } else {
       throw new Error("Invalid action");
     }
@@ -237,14 +237,14 @@ ${entities?.length > 0
 ${parentContext}`;
 
   // Call AI
-  const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const aiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+      model: "gemini-3-flash-preview",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: question },
@@ -501,14 +501,14 @@ ${agentReports.length > 0
   ? agentReports.map((r: any) => `[${r.agent}]: ${r.report}`).join("\n\n")
   : "No team reports yet."}`;
 
-  const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const aiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+      model: "gemini-3-flash-preview",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: `${askingAgent?.codename || "Team member"} asks: ${question}` },

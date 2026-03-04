@@ -40,9 +40,9 @@ serve(async (req) => {
 
     console.log('Briefing chat response request:', { briefing_id, agent_id, is_group_question, scope });
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    if (!GEMINI_API_KEY) {
+      throw new Error('GEMINI_API_KEY not configured');
     }
 
     // Detect simple acknowledgment messages that don't need full processing
@@ -72,7 +72,7 @@ serve(async (req) => {
       console.log("Detected simple acknowledgment in briefing chat, using fast response path");
       
       const ackResult = await callAiGateway({
-        model: 'google/gemini-2.5-flash-lite',
+        model: 'gemini-2.5-flash-lite',
         messages: [
           {
             role: 'system',
@@ -485,7 +485,7 @@ RESPONSE GUIDELINES:
 
     // Call AI Gateway (resilient)
     const mainResult = await callAiGateway({
-      model: 'google/gemini-3-flash-preview',
+      model: 'gemini-3-flash-preview',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessageForModel }
@@ -541,7 +541,7 @@ RESPONSE GUIDELINES:
       ].join('\n');
 
       const correctionResult = await callAiGateway({
-        model: 'google/gemini-3-flash-preview',
+        model: 'gemini-3-flash-preview',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: correctionUserMessage },

@@ -9,7 +9,7 @@ Deno.serve(async (req) => {
     const { jurisdiction, industry_sector } = await req.json();
     console.log('[RegulatoryChanges] Monitoring for:', jurisdiction, industry_sector);
 
-    // LOVABLE_API_KEY handled by callAiGateway
+    // GEMINI_API_KEY handled by callAiGateway
 
     const analysisPrompt = `You are a regulatory compliance analyst tracking security, privacy, and environmental regulations for a specific industry and jurisdiction.
 
@@ -62,7 +62,7 @@ Identify and analyze recent regulatory changes and upcoming requirements that im
 Focus on regulations with direct security, privacy, or operational risk implications.`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         { role: 'system', content: 'You are an expert regulatory compliance analyst specializing in security, privacy, and environmental regulations.' },
         { role: 'user', content: analysisPrompt }

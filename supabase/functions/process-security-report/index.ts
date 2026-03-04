@@ -68,14 +68,14 @@ async function extractTextFromWord(blob: Blob, apiKey: string, filename?: string
     try {
       console.log(`Word extraction attempt ${attempt}/${maxRetries}...`);
       
-      const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'google/gemini-2.5-pro',
+          model: 'gemini-2.5-pro',
           messages: [
             {
               role: 'user',
@@ -180,14 +180,14 @@ async function extractTextWithOCR(
   let lastError: Error | null = null;
   
   // Use Pro model for larger files (better at handling complex documents)
-  const model = pdfBlob.size > 10 * 1024 * 1024 ? 'google/gemini-2.5-pro' : 'google/gemini-2.5-flash';
+  const model = pdfBlob.size > 10 * 1024 * 1024 ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
   console.log(`Using model: ${model}`);
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`OCR attempt ${attempt}/${maxRetries}...`);
       
-      const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
@@ -358,9 +358,9 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    if (!GEMINI_API_KEY) {
+      throw new Error('GEMINI_API_KEY not configured');
     }
 
     let content = textContent;
@@ -441,7 +441,7 @@ Deno.serve(async (req) => {
               console.log('PDF is scanned/image-based. Attempting OCR with Gemini Vision...');
               
               try {
-                content = await extractTextWithOCR(fileData, LOVABLE_API_KEY);
+                content = await extractTextWithOCR(fileData, GEMINI_API_KEY);
                 console.log(`OCR successfully extracted ${content.length} characters`);
                 
                 // Update metadata to indicate OCR was used
@@ -493,7 +493,7 @@ Deno.serve(async (req) => {
           // Word document extraction
           console.log('Extracting text from Word document using AI...');
           try {
-            content = await extractTextFromWord(fileData, LOVABLE_API_KEY, doc.filename);
+            content = await extractTextFromWord(fileData, GEMINI_API_KEY, doc.filename);
             console.log(`Extracted ${content.length} characters from Word document`);
             
             // Update metadata to indicate AI extraction was used
@@ -571,14 +571,14 @@ Deno.serve(async (req) => {
     // Limit content for AI processing
     const sampleText = content.slice(0, 100000);
 
-    const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const aiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Authorization': `Bearer ${GEMINI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-pro',
+        model: 'gemini-2.5-pro',
         messages: [
           {
             role: 'system',

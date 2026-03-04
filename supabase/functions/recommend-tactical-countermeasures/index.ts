@@ -11,9 +11,9 @@ Deno.serve(async (req) => {
 
     const supabase = createServiceClient();
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    if (!GEMINI_API_KEY) {
+      throw new Error('GEMINI_API_KEY not configured');
     }
 
     // Fetch signal details
@@ -94,7 +94,7 @@ Focus on practical, implementable measures across:
 Format your response as a structured JSON array of countermeasures.`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         { role: 'system', content: 'You are an expert tactical security advisor specializing in threat mitigation and defense optimization.' },
         { role: 'user', content: analysisPrompt }

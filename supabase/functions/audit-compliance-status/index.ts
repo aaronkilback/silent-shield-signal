@@ -20,7 +20,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // LOVABLE_API_KEY handled by callAiGateway
+    // GEMINI_API_KEY handled by callAiGateway
 
     // Fetch client data
     const { data: client, error: clientError } = await supabase
@@ -167,7 +167,7 @@ Conduct a comprehensive compliance audit for the specified policy area. Provide:
 Provide evidence-based findings derived from the operational data provided.`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         { role: 'system', content: 'You are an expert compliance auditor specializing in security and operational compliance assessments.' },
         { role: 'user', content: auditPrompt }

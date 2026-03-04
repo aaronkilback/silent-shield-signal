@@ -13,7 +13,7 @@ Deno.serve(async (req) => {
     }
 
     const supabase = createServiceClient();
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
     const GOOGLE_API_KEY = Deno.env.get('GOOGLE_SEARCH_API_KEY');
     const GOOGLE_CX = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
 
@@ -228,7 +228,7 @@ Deno.serve(async (req) => {
         }
 
         // AI verification
-        if (LOVABLE_API_KEY) {
+        if (GEMINI_API_KEY) {
           const base64Image = btoa(
             new Uint8Array(imageBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
           );
@@ -282,7 +282,7 @@ Deno.serve(async (req) => {
           }
 
           const verifyResult = await callAiGateway({
-            model: 'google/gemini-2.5-flash',
+            model: 'gemini-2.5-flash',
             messages: [{ role: 'user', content: aiContent }],
             functionName: 'scan-entity-photos',
             extraBody: { max_tokens: 10 },

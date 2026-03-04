@@ -92,7 +92,7 @@ Deno.serve(async (req) => {
     const GOOGLE_CX = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
     const HIBP_API_KEY = Deno.env.get('HIBP_API_KEY');
     const PERPLEXITY_API_KEY = Deno.env.get('PERPLEXITY_API_KEY');
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
 
     // Get entity attributes for additional context
     const attributes = (entity.attributes as Record<string, unknown>) || {};
@@ -328,7 +328,7 @@ Deno.serve(async (req) => {
     // PHASE 5: RELATIONSHIP & NETWORK ANALYSIS (AI-Powered)
     // ═══════════════════════════════════════════════════════════════════════════
     
-    if (LOVABLE_API_KEY || PERPLEXITY_API_KEY) {
+    if (GEMINI_API_KEY || PERPLEXITY_API_KEY) {
       try {
         let analysisPrompt = `Analyze the entity "${entity.name}" (${entity.type}). `;
         if (entity.description) analysisPrompt += `Description: ${entity.description}. `;
@@ -344,9 +344,9 @@ Deno.serve(async (req) => {
         
         Return as JSON array with objects containing: name, relationship_type, description, risk_level (critical/high/medium/low), confidence (0-100)`;
 
-        const apiUrl = PERPLEXITY_API_KEY ? 'https://api.perplexity.ai/chat/completions' : 'https://ai.gateway.lovable.dev/v1/chat/completions';
-        const apiKey = PERPLEXITY_API_KEY || LOVABLE_API_KEY;
-        const model = PERPLEXITY_API_KEY ? 'sonar' : 'google/gemini-2.5-flash';
+        const apiUrl = PERPLEXITY_API_KEY ? 'https://api.perplexity.ai/chat/completions' : 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+        const apiKey = PERPLEXITY_API_KEY || GEMINI_API_KEY;
+        const model = PERPLEXITY_API_KEY ? 'sonar' : 'gemini-2.5-flash';
 
         const aiResponse = await fetchWithRetry(apiUrl, {
           method: 'POST',
@@ -486,7 +486,7 @@ Return as JSON array with objects: { finding_type, title, description, risk_leve
     // PHASE 5C: SANCTIONS & REGISTRY SCREENING
     // ═══════════════════════════════════════════════════════════════════════════
     
-    if (PERPLEXITY_API_KEY || LOVABLE_API_KEY) {
+    if (PERPLEXITY_API_KEY || GEMINI_API_KEY) {
       try {
         console.log(`[DEEP-SCAN] Running sanctions/registry screening for ${entity.name}`);
         const sanctionsPrompt = `Check "${entity.name}" (${entity.type}) against:
@@ -501,9 +501,9 @@ Return as JSON array with objects: { finding_type, title, description, risk_leve
 Return as JSON array with objects: { check_type, entity_matched, list_name, match_confidence (0-100), description, risk_level (critical/high/medium/low/info), is_exact_match (boolean) }
 If no matches found for a category, include an entry with risk_level "info" confirming clean status.`;
 
-        const apiUrl = PERPLEXITY_API_KEY ? 'https://api.perplexity.ai/chat/completions' : 'https://ai.gateway.lovable.dev/v1/chat/completions';
-        const apiKey = PERPLEXITY_API_KEY || LOVABLE_API_KEY;
-        const model = PERPLEXITY_API_KEY ? 'sonar' : 'google/gemini-2.5-flash';
+        const apiUrl = PERPLEXITY_API_KEY ? 'https://api.perplexity.ai/chat/completions' : 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+        const apiKey = PERPLEXITY_API_KEY || GEMINI_API_KEY;
+        const model = PERPLEXITY_API_KEY ? 'sonar' : 'gemini-2.5-flash';
 
         const sanctionsResponse = await fetchWithRetry(apiUrl, {
           method: 'POST',

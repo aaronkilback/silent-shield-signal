@@ -120,25 +120,25 @@ export async function generateReportVisual(
   request: GenerateVisualRequest
 ): Promise<GenerateVisualResult> {
   const startTime = Date.now();
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  
-  if (!LOVABLE_API_KEY) {
-    return { imageUrl: null, base64Url: null, error: "LOVABLE_API_KEY not configured", durationMs: 0 };
+  const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+
+  if (!GEMINI_API_KEY) {
+    return { imageUrl: null, base64Url: null, error: "GEMINI_API_KEY not configured", durationMs: 0 };
   }
 
   // Build prompt
   const prompt = request.context.customPrompt || PROMPT_TEMPLATES[request.type](request.context);
-  const model = request.highQuality 
-    ? "google/gemini-3-pro-image-preview" 
-    : "google/gemini-2.5-flash-image";
+  const model = request.highQuality
+    ? "gemini-3-pro-image-preview"
+    : "gemini-2.5-flash-image";
 
   console.log(`[ReportVisuals] Generating ${request.type} image via ${model}...`);
 
   try {
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+        "Authorization": `Bearer ${GEMINI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -150,7 +150,7 @@ export async function generateReportVisual(
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error(`[ReportVisuals] AI gateway error ${response.status}: ${errText.substring(0, 200)}`);
+      console.error(`[ReportVisuals] Google AI error ${response.status}: ${errText.substring(0, 200)}`);
       return { 
         imageUrl: null, base64Url: null, 
         error: `Image generation failed (${response.status})`, 

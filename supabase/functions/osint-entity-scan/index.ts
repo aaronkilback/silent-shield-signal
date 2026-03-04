@@ -14,12 +14,12 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
+    const lovableApiKey = Deno.env.get('GEMINI_API_KEY');
     const googleApiKey = Deno.env.get('GOOGLE_SEARCH_API_KEY');
     const googleEngineId = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
 
     if (!lovableApiKey) {
-      console.error('LOVABLE_API_KEY not configured');
+      console.error('GEMINI_API_KEY not configured');
       return new Response(
         JSON.stringify({ error: 'AI service not configured' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -149,7 +149,7 @@ Deno.serve(async (req) => {
                 if (allPartsPresent) {
                   // Use AI to verify this is actually about the same person
                   const verifyResult = await callAiGateway({
-                    model: 'google/gemini-2.5-flash',
+                    model: 'gemini-2.5-flash',
                     messages: [
                       { role: 'system', content: 'You are verifying if a web search result is actually about a specific person. Respond with only "YES" or "NO".' },
                       { role: 'user', content: `Is this search result about the person "${entity.name}"?\n\nDescription: ${entity.description || 'No description available'}\n\nSearch result title: ${item.title}\nSearch result snippet: ${item.snippet || 'No snippet'}\nURL: ${item.link}\n\nAnswer YES only if this content is clearly about the same specific individual named "${entity.name}". Answer NO if it's about a different person who happens to have a similar name, or if it's unrelated content.` }
@@ -217,7 +217,7 @@ Deno.serve(async (req) => {
 
         // PART 2: Perform AI-powered relationship analysis
         const relationshipResult = await callAiGateway({
-          model: 'google/gemini-2.5-flash',
+          model: 'gemini-2.5-flash',
           messages: [
             { role: 'system', content: 'You are an OSINT analyst expert. Analyze the provided entity and identify potential relationships with other entities based on open-source intelligence. Return structured data about relationships.' },
             { role: 'user', content: `Analyze this entity for OSINT intelligence and identify potential relationships:\n\nEntity Name: ${entity.name}\nEntity Type: ${entity.type}\nDescription: ${entity.description || 'Not provided'}\nAliases: ${entity.aliases?.join(', ') || 'None'}\nRisk Level: ${entity.risk_level || 'Unknown'}\nThreat Indicators: ${entity.threat_indicators?.join(', ') || 'None'}\n\nIdentify up to 5 potential entities this might be related to and the type of relationship. Consider:\n- Professional associations\n- Geographic connections\n- Organizational memberships\n- Communication patterns\n- Transaction history\n- Social connections\n\nFormat your response as a JSON array of relationship suggestions with this structure:\n[\n  {\n    "target_entity_name": "name of related entity",\n    "target_entity_type": "person|organization|location|infrastructure|domain|ip_address|email|phone|vehicle|other",\n    "relationship_type": "associated_with|works_for|reports_to|owns|located_at|communicates_with|etc",\n    "description": "brief description of the relationship",\n    "confidence": 0.0-1.0\n  }\n]` }

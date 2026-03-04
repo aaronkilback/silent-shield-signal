@@ -7,7 +7,7 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
-    // LOVABLE_API_KEY handled by callAiGateway;
+    // GEMINI_API_KEY handled by callAiGateway;
 
     const { client_operation_flow, threat_scenario } = await req.json();
 
@@ -134,7 +134,7 @@ ANALYSIS REQUIREMENTS:
 Provide a structured, actionable failure point analysis with specific technical and operational details.`;
 
     const aiResult = await callAiGateway({
-      model: "google/gemini-2.5-flash",
+      model: "gemini-2.5-flash",
       messages: [
         {
           role: "system",

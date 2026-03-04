@@ -220,10 +220,10 @@ async function resizeImageWithAI(
   }
 ): Promise<{ resizedBase64: string; newSizeMB: number; error?: string }> {
   try {
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
+    const lovableApiKey = Deno.env.get('GEMINI_API_KEY');
     
     if (!lovableApiKey) {
-      return { resizedBase64: '', newSizeMB: 0, error: 'LOVABLE_API_KEY not configured' };
+      return { resizedBase64: '', newSizeMB: 0, error: 'GEMINI_API_KEY not configured' };
     }
 
     const arrayBuffer = await content.arrayBuffer();
@@ -245,14 +245,14 @@ async function resizeImageWithAI(
     console.log(`Resizing image: ${originalSizeMB.toFixed(2)}MB -> target ${targetSizeMB}MB, max ${maxWidth}x${maxHeight}`);
 
     // Use Lovable AI to resize/optimize the image
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${lovableApiKey}`,
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash-image-preview',
+        model: 'gemini-2.5-flash-image-preview',
         messages: [
           {
             role: 'user',
@@ -341,10 +341,10 @@ async function extractTextWithVisionAI(
   filename?: string
 ): Promise<{ text: string; error?: string }> {
   try {
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
+    const lovableApiKey = Deno.env.get('GEMINI_API_KEY');
     
     if (!lovableApiKey) {
-      return { text: '', error: 'LOVABLE_API_KEY not configured' };
+      return { text: '', error: 'GEMINI_API_KEY not configured' };
     }
 
     // Convert blob to base64
@@ -360,14 +360,14 @@ async function extractTextWithVisionAI(
     const base64Content = safeBase64Encode(arrayBuffer);
     
     // Use Lovable AI with vision capabilities
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${lovableApiKey}`,
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'gemini-2.5-flash',
         messages: [
           {
             role: 'user',
@@ -431,7 +431,7 @@ async function extractTextFromDocx(content: Blob): Promise<{ text: string; error
     // For now, we'll use Lovable AI to extract from the raw content
     // This is more reliable than parsing DOCX XML manually
     
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
+    const lovableApiKey = Deno.env.get('GEMINI_API_KEY');
     
     if (!lovableApiKey) {
       // Fallback: try to extract any readable text from the binary
@@ -450,20 +450,20 @@ async function extractTextFromDocx(content: Blob): Promise<{ text: string; error
         return { text: extractedText };
       }
       
-      return { text: '', error: 'LOVABLE_API_KEY not configured and fallback extraction failed' };
+      return { text: '', error: 'GEMINI_API_KEY not configured and fallback extraction failed' };
     }
 
     // Convert to base64 and use AI
     const base64Content = btoa(String.fromCharCode(...uint8Array));
     
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${lovableApiKey}`,
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'gemini-2.5-flash',
         messages: [
           {
             role: 'user',
@@ -518,9 +518,9 @@ async function extractTextFromLargePdfWithSignedUrl(
   mimeType: string
 ): Promise<{ text: string; error?: string }> {
   try {
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
+    const lovableApiKey = Deno.env.get('GEMINI_API_KEY');
     if (!lovableApiKey) {
-      return { text: '', error: 'LOVABLE_API_KEY not configured' };
+      return { text: '', error: 'GEMINI_API_KEY not configured' };
     }
 
     console.log(`Processing large PDF via signed URL: ${filePath}`);
@@ -567,14 +567,14 @@ async function extractTextFromLargePdfWithSignedUrl(
     }
 
     // Use Gemini with the signed URL to extract text
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${lovableApiKey}`,
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: 'gemini-2.5-flash',
         messages: [
           {
             role: 'user',

@@ -11,7 +11,7 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   try {
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
     const supabase = createServiceClient();
 
     const { incident_id, batch_mode = false, limit = 20 } = await req.json();
@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
         }
 
         const aiResult = await callAiGateway({
-          model: 'google/gemini-2.5-flash',
+          model: 'gemini-2.5-flash',
           messages: [
             {
               role: 'system',

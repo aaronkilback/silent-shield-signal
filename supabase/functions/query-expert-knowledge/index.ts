@@ -90,12 +90,12 @@ Deno.serve(async (req) => {
     }
 
     // Step 4: Synthesize all knowledge into a unified expert briefing
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
     let synthesizedBriefing: string | null = null;
 
-    if (LOVABLE_API_KEY && (localKnowledge?.length || liveExpertise)) {
+    if (GEMINI_API_KEY && (localKnowledge?.length || liveExpertise)) {
       synthesizedBriefing = await synthesizeExpertBriefing(
-        LOVABLE_API_KEY,
+        GEMINI_API_KEY,
         question,
         localKnowledge || [],
         globalInsights || [],
@@ -218,7 +218,7 @@ Write in a direct, authoritative tone suitable for senior security leadership.`;
 
   try {
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
       messages: [
         { role: 'system', content: 'You are AEGIS, a senior security intelligence advisor. Synthesize multiple knowledge sources into unified, authoritative expert briefings.' },
         { role: 'user', content: prompt }

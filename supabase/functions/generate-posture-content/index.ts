@@ -12,8 +12,8 @@ serve(async (req) => {
   try {
     const { highPrioritySignals, criticalIncidents, openIncidents, recentShot } = await req.json();
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+    if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured");
 
     // Fetch doctrine library content
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -65,7 +65,7 @@ Respond ONLY with valid JSON. No markdown. No explanation.`;
 
     const { callAiGateway } = await import("../_shared/ai-gateway.ts");
     const aiResult = await callAiGateway({
-      model: "google/gemini-2.5-flash",
+      model: "gemini-2.5-flash",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: "Generate today's doctrine anchor and exposure question." },
