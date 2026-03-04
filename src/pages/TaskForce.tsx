@@ -181,9 +181,12 @@ export default function TaskForce() {
   });
 
   const deleteMission = async (missionId: string) => {
-    await supabase.from("task_force_agents").delete().eq("mission_id", missionId);
-    await supabase.from("task_force_contributions").delete().eq("mission_id", missionId);
-    await supabase.from("briefing_queries").delete().eq("mission_id", missionId);
+    const { error: agentsError } = await supabase.from("task_force_agents").delete().eq("mission_id", missionId);
+    if (agentsError) throw agentsError;
+    const { error: contribError } = await supabase.from("task_force_contributions").delete().eq("mission_id", missionId);
+    if (contribError) throw contribError;
+    const { error: queriesError } = await supabase.from("briefing_queries").delete().eq("mission_id", missionId);
+    if (queriesError) throw queriesError;
     const { error } = await supabase.from("task_force_missions").delete().eq("id", missionId);
     if (error) throw error;
     refetchMissions();

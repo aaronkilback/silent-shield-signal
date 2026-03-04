@@ -12,6 +12,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Loader2, Flame, Wind, Thermometer, AlertTriangle, RefreshCw, Layers, MapPin, Mountain, Satellite, Map as MapIcon, Fuel } from 'lucide-react';
 import { toast } from 'sonner';
 
+/** Escape user/DB-sourced strings before injecting into innerHTML. */
+const esc = (str: string): string =>
+  String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+
 interface FirePoint {
   latitude: number;
   longitude: number;
@@ -1172,7 +1181,7 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
             box-shadow: 0 3px 12px rgba(0,0,0,0.4);
             border: 2px solid #fbbf24;
             white-space: nowrap;
-          ">${infra.name}</div>
+          ">${esc(infra.name)}</div>
           <div style="
             width: 0;
             height: 0;
@@ -1217,19 +1226,21 @@ export function WildfireMap({ clientId, region = 'world' }: WildfireMapProps) {
 
       const typeLabel = infra.type.charAt(0).toUpperCase() + infra.type.slice(1).replace('gasplant', 'Gas Plant').replace('wellpad', 'Well Pad');
       
+      const statusColor = infra.status === 'active' ? '#10b981' : infra.status === 'planned' ? '#f59e0b' : infra.status === 'exploration' ? '#a855f7' : '#3b82f6';
+      const statusLabel = esc(infra.status.charAt(0).toUpperCase() + infra.status.slice(1).replace('_', ' '));
       const popup = new mapboxgl.Popup({ offset: 25, maxWidth: '320px' }).setHTML(`
         <div style="font-family: system-ui; padding: 8px;">
           <h4 style="margin: 0 0 8px; color: ${iconConfig.color}; font-weight: 600;">
-            ${iconConfig.icon} ${infra.name}
+            ${iconConfig.icon} ${esc(infra.name)}
             ${isPetronasCanada ? '<span style="background: #fbbf24; color: #000; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px;">🇨🇦 Canada</span>' : ''}
           </h4>
           <div style="font-size: 12px; color: #666;">
-            <p style="margin: 4px 0;"><strong>Type:</strong> ${typeLabel}</p>
-            <p style="margin: 4px 0;"><strong>Operator:</strong> ${infra.operator}</p>
-            ${infra.capacity ? `<p style="margin: 4px 0;"><strong>Capacity:</strong> ${infra.capacity}</p>` : ''}
-            <p style="margin: 4px 0;"><strong>Status:</strong> 
-              <span style="color: ${infra.status === 'active' ? '#10b981' : infra.status === 'planned' ? '#f59e0b' : infra.status === 'exploration' ? '#a855f7' : '#3b82f6'}">
-                ${infra.status.charAt(0).toUpperCase() + infra.status.slice(1).replace('_', ' ')}
+            <p style="margin: 4px 0;"><strong>Type:</strong> ${esc(typeLabel)}</p>
+            <p style="margin: 4px 0;"><strong>Operator:</strong> ${esc(infra.operator)}</p>
+            ${infra.capacity ? `<p style="margin: 4px 0;"><strong>Capacity:</strong> ${esc(infra.capacity)}</p>` : ''}
+            <p style="margin: 4px 0;"><strong>Status:</strong>
+              <span style="color: ${statusColor}">
+                ${statusLabel}
               </span>
             </p>
             <p style="margin: 4px 0;"><strong>Coords:</strong> ${infra.latitude.toFixed(4)}°N, ${Math.abs(infra.longitude).toFixed(4)}°W</p>

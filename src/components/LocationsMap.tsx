@@ -200,6 +200,9 @@ export const LocationsMap = ({ locations }: LocationsMapProps) => {
       const response = await fetch(
         `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(searchQuery)}.json?access_token=${mapboxToken}&country=CA&limit=1`
       );
+      if (!response.ok) {
+        throw new Error(`Mapbox geocoding failed: ${response.status} ${response.statusText}`);
+      }
       const data = await response.json();
       
       console.log(`Geocoding result for "${locationStr}":`, data.features?.[0]?.place_name);

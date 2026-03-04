@@ -419,7 +419,11 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
       
       // Get the user's session token for authenticated memory tools
       const { data: { session } } = await supabase.auth.getSession();
-      const authToken = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      if (!session?.access_token) {
+        toast.error("Session expired. Please sign in again.");
+        return;
+      }
+      const authToken = session.access_token;
       
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dashboard-ai-assistant`,
