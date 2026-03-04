@@ -12,6 +12,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Loader2, AlertTriangle, Search, Filter, ClipboardList, Trash2 } from "lucide-react";
+import { AskAegisButton } from "@/components/AskAegisButton";
 import { IncidentActionDialog } from "@/components/IncidentActionDialog";
 import { DeleteIncidentDialog } from "@/components/DeleteIncidentDialog";
 import { useToast } from "@/hooks/use-toast";
@@ -548,6 +549,11 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
                             </>
                           )}
                         </Button>
+                        <AskAegisButton
+                          context={`Incident: ${incident.priority?.toUpperCase()} priority, status ${incident.status}, client ${incident.clients?.name || 'unknown'}`}
+                          variant="outline"
+                          size="sm"
+                        />
                         <Button variant="outline" size="sm">
                           View Details
                         </Button>

@@ -23,6 +23,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DuplicateDetectionPanel } from "@/components/DuplicateDetectionPanel";
 import { EntitySuggestionsPanel } from "@/components/EntitySuggestionsPanel";
 import { EntityUnifiedProfile } from "@/components/EntityUnifiedProfile";
+import { AskAegisButton } from "@/components/AskAegisButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/useAuth";
@@ -540,6 +541,11 @@ export default function Entities() {
                       >
                         View Details
                       </Button>
+                      <AskAegisButton
+                        context={`Entity: ${entity.name} (${entity.type}), risk level ${entity.risk_level || 'unknown'}${entity.description ? ` — ${entity.description.slice(0, 80)}` : ''}`}
+                        variant="outline"
+                        size="sm"
+                      />
                       <Button
                         size="sm"
                         variant="outline"
@@ -614,6 +620,11 @@ export default function Entities() {
                       <span className="text-xs text-muted-foreground w-24 text-right">
                         {formatDistanceToNow(new Date(entity.created_at), { addSuffix: true })}
                       </span>
+                      <AskAegisButton
+                        context={`Entity: ${entity.name} (${entity.type}), risk level ${entity.risk_level || 'unknown'}`}
+                        variant="outline"
+                        size="sm"
+                      />
                       <Button
                         size="sm"
                         variant="outline"
