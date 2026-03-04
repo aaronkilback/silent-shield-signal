@@ -2,6 +2,7 @@ import { PageLayout } from "@/components/PageLayout";
 import { ClientOnboarding } from "@/components/ClientOnboarding";
 import { ClientRiskSnapshot } from "@/components/ClientRiskSnapshot";
 import { ClientSelector } from "@/components/ClientSelector";
+import { RiskTrendChart } from "@/components/RiskTrendChart";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
@@ -25,6 +26,7 @@ const Clients = () => {
       <ClientOnboarding />
       <ClientSelector mode="navigate" />
       <ClientRiskSnapshot />
+      <RiskTrendChart />
     </PageLayout>
   );
 };

@@ -3,6 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 import { MinimalHeader } from "@/components/MinimalHeader";
+import { ThreatStatusBar } from "@/components/ThreatStatusBar";
 import { Loader2 } from "lucide-react";
 
 const Index = () => {
@@ -30,6 +31,7 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <MinimalHeader />
+      <ThreatStatusBar />
       <main className="flex-1 flex flex-col overflow-hidden">
         <DashboardAIAssistant fullScreen />
       </main>

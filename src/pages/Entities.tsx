@@ -11,7 +11,7 @@ import { EntityDetailDialog } from "@/components/EntityDetailDialog";
 import { SecurityBulletinGenerator } from "@/components/SecurityBulletinGenerator";
 import { EntityCrossReferenceDialog } from "@/components/EntityCrossReferenceDialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Search, Users, MapPin, Building2, Globe, Upload, LayoutGrid, List, FileText, Trash2, GitCompare, Map } from "lucide-react";
+import { Plus, Search, Users, MapPin, Building2, Globe, Upload, LayoutGrid, List, FileText, Trash2, GitCompare, Map, Network } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { formatDistanceToNow } from "date-fns";
@@ -28,10 +28,12 @@ import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
+import { useUserRole } from "@/hooks/useUserRole";
 
 export default function Entities() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const { isAdmin, isSuperAdmin } = useUserRole();
   const { selectedClientId, isContextReady } = useClientSelection();
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
@@ -284,7 +286,16 @@ export default function Entities() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button 
+          {(isAdmin || isSuperAdmin) && (
+            <Button
+              variant="outline"
+              onClick={() => navigate("/neural-constellation")}
+            >
+              <Network className="w-4 h-4 mr-2" />
+              Neural Map
+            </Button>
+          )}
+          <Button
             variant="outline"
             disabled={loading}
             onClick={() => setCrossReferenceDialogOpen(true)}

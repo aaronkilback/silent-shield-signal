@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, History, Clock, Heart, MessageCircle, Eye, Hash, AtSign, Instagram, Twitter, Facebook, FileText } from "lucide-react";
+import { AskAegisButton } from "@/components/AskAegisButton";
 import { SignalManualOverride } from "./SignalManualOverride";
 import { format, differenceInDays } from "date-fns";
 import { SignalAgeBadge } from "./SignalAgeBadge";
@@ -122,10 +123,19 @@ export function SignalDetailSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-lg">
         <SheetHeader>
-          <SheetTitle>Signal Details</SheetTitle>
-          <SheetDescription>
-            Review the signal details and decide how to handle it
-          </SheetDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <SheetTitle>Signal Details</SheetTitle>
+              <SheetDescription>
+                Review the signal details and decide how to handle it
+              </SheetDescription>
+            </div>
+            <AskAegisButton
+              context={`Signal: ${signal.severity || 'Unknown'} severity ${signal.category || 'signal'} — ${signal.normalized_text?.slice(0, 100) || 'No description'}`}
+              variant="outline"
+              size="sm"
+            />
+          </div>
         </SheetHeader>
 
         <ScrollArea className="h-[calc(100vh-200px)] mt-6 pr-4">

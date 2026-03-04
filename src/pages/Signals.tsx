@@ -20,7 +20,9 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { AssignClientDialog } from "@/components/signals/AssignClientDialog";
 import { SignalDetailSheet } from "@/components/signals/SignalDetailSheet";
-import { Search, CheckCircle, XCircle, UserPlus, Loader2, FileSearch } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Search, CheckCircle, XCircle, UserPlus, Loader2, FileSearch, VolumeX } from "lucide-react";
 
 interface UnmatchedSignal {
   id: string;
@@ -47,6 +49,8 @@ const Signals = () => {
   // Unmatched signals state
   const [searchTerm, setSearchTerm] = useState("");
   const [dateRange, setDateRange] = useState<string>("7d");
+  const [minConfidence, setMinConfidence] = useState<string>("all");
+  const [hideOld, setHideOld] = useState(false);
   const [selectedSignal, setSelectedSignal] = useState<UnmatchedSignal | null>(null);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
@@ -138,6 +142,41 @@ const Signals = () => {
     onError: (error) => {
       toast.error("Failed to dismiss signal: " + error.message);
     },
+  });
+
+  // Mark as noise mutation
+  const noiseMutation = useMutation({
+    mutationFn: async (signalId: string) => {
+      const { error } = await supabase
+        .from("signal_correlation_groups")
+        .update({
+          match_confidence: "noise",
+          match_timestamp: new Date().toISOString(),
+          assigned_by_user_id: user?.id,
+        } as any)
+        .eq("id", signalId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["unmatched-signals"] });
+      toast.success("Signal marked as noise");
+    },
+    onError: (error) => {
+      toast.error("Failed to mark signal as noise: " + error.message);
+    },
+  });
+
+  // Client-side quality filters applied after fetch
+  const filteredSignals = (unmatchedSignals || []).filter((s) => {
+    if (hideOld) {
+      const cutoff72h = Date.now() - 72 * 3600 * 1000;
+      if (new Date(s.created_at).getTime() < cutoff72h) return false;
+    }
+    if (minConfidence !== "all") {
+      const threshold = minConfidence === "medium" ? 50 : minConfidence === "high" ? 75 : 90;
+      if (((s as any).confidence ?? 0) < threshold) return false;
+    }
+    return true;
   });
 
   const getSeverityColor = (severity: string | null) => {
@@ -234,27 +273,50 @@ const Signals = () => {
             {/* Filters */}
             <Card>
               <CardContent className="pt-6">
-                <div className="flex flex-col md:flex-row gap-4">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search signals..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-10"
-                    />
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col md:flex-row gap-4">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Search signals..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="pl-10"
+                      />
+                    </div>
+                    <Select value={dateRange} onValueChange={setDateRange}>
+                      <SelectTrigger className="w-[180px]">
+                        <SelectValue placeholder="Date range" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="24h">Last 24 hours</SelectItem>
+                        <SelectItem value="7d">Last 7 days</SelectItem>
+                        <SelectItem value="30d">Last 30 days</SelectItem>
+                        <SelectItem value="all">All time</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select value={minConfidence} onValueChange={setMinConfidence}>
+                      <SelectTrigger className="w-[180px]">
+                        <SelectValue placeholder="Min confidence" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All confidence</SelectItem>
+                        <SelectItem value="medium">Medium+ (≥50%)</SelectItem>
+                        <SelectItem value="high">High+ (≥75%)</SelectItem>
+                        <SelectItem value="critical">Critical (≥90%)</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <Select value={dateRange} onValueChange={setDateRange}>
-                    <SelectTrigger className="w-[180px]">
-                      <SelectValue placeholder="Date range" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="24h">Last 24 hours</SelectItem>
-                      <SelectItem value="7d">Last 7 days</SelectItem>
-                      <SelectItem value="30d">Last 30 days</SelectItem>
-                      <SelectItem value="all">All time</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="hide-old"
+                      checked={hideOld}
+                      onCheckedChange={setHideOld}
+                    />
+                    <Label htmlFor="hide-old" className="text-sm text-muted-foreground cursor-pointer">
+                      Hide signals older than 72h
+                    </Label>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -275,14 +337,14 @@ const Signals = () => {
                   <div className="flex justify-center py-8">
                     <Loader2 className="h-8 w-8 animate-spin text-primary" />
                   </div>
-                ) : unmatchedSignals?.length === 0 ? (
+                ) : filteredSignals.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
                     <CheckCircle className="h-12 w-12 mx-auto mb-4 text-green-500" />
                     <p>All signals have been reviewed!</p>
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {unmatchedSignals?.map((signal) => (
+                    {filteredSignals.map((signal) => (
                       <div
                         key={signal.id}
                         className="border rounded-lg p-4 hover:bg-muted/50 transition-colors cursor-pointer"
@@ -338,6 +400,19 @@ const Signals = () => {
                             >
                               <XCircle className="h-4 w-4 mr-1" />
                               Dismiss
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                noiseMutation.mutate(signal.id);
+                              }}
+                              disabled={noiseMutation.isPending}
+                              className="text-muted-foreground"
+                            >
+                              <VolumeX className="h-4 w-4 mr-1" />
+                              Noise
                             </Button>
                           </div>
                         </div>

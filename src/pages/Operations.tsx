@@ -2,8 +2,9 @@ import { lazy, Suspense } from "react";
 import { PageLayout } from "@/components/PageLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSearchParams } from "react-router-dom";
-import { Radio, AlertTriangle, Loader2 } from "lucide-react";
+import { Radio, AlertTriangle, GitMerge, Loader2 } from "lucide-react";
 import { EmbeddedProvider } from "@/hooks/useIsEmbedded";
+import { EscalationPipeline } from "@/components/EscalationPipeline";
 
 const SignalsContent = lazy(() => import("./Signals"));
 const IncidentsContent = lazy(() => import("./Incidents"));
@@ -47,6 +48,10 @@ const Operations = () => {
               <AlertTriangle className="h-3.5 w-3.5" />
               Incidents
             </TabsTrigger>
+            <TabsTrigger value="escalation" className="gap-2">
+              <GitMerge className="h-3.5 w-3.5" />
+              Escalation Pipeline
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="signals">
@@ -63,6 +68,10 @@ const Operations = () => {
                 <IncidentsContent />
               </EmbeddedProvider>
             </Suspense>
+          </TabsContent>
+
+          <TabsContent value="escalation">
+            <EscalationPipeline />
           </TabsContent>
         </Tabs>
       </div>
