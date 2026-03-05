@@ -18,7 +18,7 @@
  *   const result = await callAiGateway({ model, messages, functionName });
  */
 
-import { protectedApiCall, CircuitOpenError } from "./circuit-breaker.ts";
+// Circuit breaker import removed — direct provider calls use simple retry instead
 import { logError } from "./error-logger.ts";
 import { getCriticalDateContext, validateAIOutput } from "./anti-hallucination.ts";
 
@@ -171,70 +171,60 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
     ? request.messages
     : injectGuardrails(request.messages);
 
-  try {
-    const data = await protectedApiCall(
-      'ai-gateway',
-      request.functionName,
-      async () => {
-        const body: Record<string, unknown> = {
-          model: provider.model,
-          messages,
-          ...request.extraBody,
-        };
+  const maxRetries = request.retries ?? 2;
 
-        const response = await fetch(provider.url, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${provider.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(body),
-        });
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const body: Record<string, unknown> = {
+        model: provider.model,
+        messages,
+        ...request.extraBody,
+      };
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          const err = new Error(`AI Gateway ${response.status}: ${errorText.substring(0, 200)}`);
-          (err as any).status = response.status;
-          (err as any).code = response.status;
-          throw err;
+      const response = await fetch(provider.url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${provider.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        const err = new Error(`${provider.keyName} ${response.status}: ${errorText.substring(0, 200)}`);
+        (err as any).status = response.status;
+        throw err;
+      }
+
+      const data = await response.json();
+      const content = data?.choices?.[0]?.message?.content || null;
+
+      let hallucinationWarnings: string[] = [];
+      if (content && !request.skipGuardrails) {
+        const validation = validateAIOutput(content, {});
+        if (!validation.isValid) {
+          hallucinationWarnings = validation.warnings;
+          console.warn(`[${request.functionName}] ⚠️ Hallucination warnings:`, validation.warnings.join('; '));
         }
-
-        return await response.json();
-      },
-      {
-        retries: request.retries ?? 2,
-        dlqPayload: request.dlqOnFailure ? (request.dlqPayload || {
-          model: request.model,
-          messages: request.messages,
-          functionName: request.functionName,
-        }) : undefined,
       }
-    );
 
-    const content = data?.choices?.[0]?.message?.content || null;
-    
-    // Post-response hallucination validation
-    let hallucinationWarnings: string[] = [];
-    if (content && !request.skipGuardrails) {
-      const validation = validateAIOutput(content, {});
-      if (!validation.isValid) {
-        hallucinationWarnings = validation.warnings;
-        console.warn(`[${request.functionName}] ⚠️ Hallucination warnings:`, validation.warnings.join('; '));
+      return { content, raw: data, error: null, circuitOpen: false, hallucinationWarnings };
+
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      if (attempt < maxRetries) {
+        const delay = 1000 * Math.pow(2, attempt);
+        console.warn(`[${request.functionName}] Attempt ${attempt + 1} failed, retrying in ${delay}ms: ${errMsg}`);
+        await new Promise(r => setTimeout(r, delay));
+      } else {
+        console.error(`[${request.functionName}] All attempts failed: ${errMsg}`);
+        return { content: null, raw: null, error: errMsg, circuitOpen: false };
       }
     }
-    
-    return { content, raw: data, error: null, circuitOpen: false, hallucinationWarnings };
-
-  } catch (error) {
-    if (error instanceof CircuitOpenError) {
-      console.warn(`[${request.functionName}] AI Gateway circuit is OPEN — skipping call`);
-      return { content: null, raw: null, error: error.message, circuitOpen: true };
-    }
-
-    const errMsg = error instanceof Error ? error.message : String(error);
-    console.error(`[${request.functionName}] AI Gateway call failed:`, errMsg);
-    return { content: null, raw: null, error: errMsg, circuitOpen: false };
   }
+
+  return { content: null, raw: null, error: 'Unreachable', circuitOpen: false };
 }
 
 /**
@@ -262,72 +252,50 @@ export async function callAiGatewayStream(request: AiGatewayRequest & {
     return { stream: null, error: `${provider.keyName} not configured`, circuitOpen: false };
   }
 
-  const cb = new (await import("./circuit-breaker.ts")).CircuitBreaker('ai-gateway');
   const timeoutMs = request.timeoutMs ?? 45000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await cb.execute(async () => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const guardedMessages = request.skipGuardrails
+      ? request.messages
+      : injectGuardrails(request.messages);
 
-      try {
-        // Inject guardrails into streaming calls too
-        const guardedMessages = request.skipGuardrails
-          ? request.messages
-          : injectGuardrails(request.messages);
+    const body: Record<string, unknown> = {
+      model: provider.model,
+      messages: guardedMessages,
+      stream: true,
+      ...request.extraBody,
+    };
 
-        const body: Record<string, unknown> = {
-          model: provider.model,
-          messages: guardedMessages,
-          stream: true,
-          ...request.extraBody,
-        };
-
-        const resp = await fetch(provider.url, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${provider.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!resp.ok) {
-          const errorText = await resp.text();
-          const err = new Error(`AI Gateway ${resp.status}: ${errorText.substring(0, 200)}`);
-          (err as any).status = resp.status;
-          (err as any).code = resp.status;
-          throw err;
-        }
-
-        return resp;
-      } catch (error) {
-        clearTimeout(timeoutId);
-        if (error instanceof Error && error.name === 'AbortError') {
-          throw new Error(`AI Gateway stream timed out after ${timeoutMs / 1000}s`);
-        }
-        throw error;
-      }
+    const resp = await fetch(provider.url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${provider.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
     });
 
-    return { stream: response.body!, error: null, circuitOpen: false };
-  } catch (error) {
-    if ((error as any)?.name === 'CircuitOpenError') {
-      console.warn(`[${request.functionName}] AI Gateway circuit is OPEN — skipping stream call`);
-      return { stream: null, error: (error as Error).message, circuitOpen: true };
+    clearTimeout(timeoutId);
+
+    if (!resp.ok) {
+      const errorText = await resp.text();
+      const errMsg = `${provider.keyName} stream ${resp.status}: ${errorText.substring(0, 200)}`;
+      console.error(`[${request.functionName}] ${errMsg}`);
+      return { stream: null, error: errMsg, circuitOpen: false };
     }
 
-    const errMsg = error instanceof Error ? error.message : String(error);
-    console.error(`[${request.functionName}] AI Gateway stream call failed:`, errMsg);
+    return { stream: resp.body!, error: null, circuitOpen: false };
 
-    await logError(error, {
-      functionName: request.functionName,
-      severity: 'error',
-    });
-
+  } catch (error) {
+    clearTimeout(timeoutId);
+    const errMsg = error instanceof Error
+      ? (error.name === 'AbortError' ? `Stream timed out after ${timeoutMs / 1000}s` : error.message)
+      : String(error);
+    console.error(`[${request.functionName}] Stream call failed:`, errMsg);
+    await logError(error, { functionName: request.functionName, severity: 'error' });
     return { stream: null, error: errMsg, circuitOpen: false };
   }
 }
