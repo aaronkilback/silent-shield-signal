@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
+import React from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +27,7 @@ export const ArchivalDocumentUpload = () => {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [clientId, setClientId] = useState<string>("");
+  const cancelRef = useRef(false);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []);
@@ -90,15 +92,21 @@ export const ArchivalDocumentUpload = () => {
     }
 
     setUploading(true);
+    cancelRef.current = false;
     const tagArray = tags.split(',').map(t => t.trim()).filter(t => t);
     let successCount = 0;
     let errorCount = 0;
-    
+
     // Process 1 file at a time with 1 second delays
     const BATCH_SIZE = 1;
     const DELAY_MS = 1000;
-    
+
     for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      if (cancelRef.current) {
+        toast.info(`Upload cancelled. ${successCount} file(s) uploaded before cancel.`);
+        break;
+      }
+
       const batch = files.slice(i, i + BATCH_SIZE);
       const file = batch[0];
       
@@ -238,7 +246,16 @@ export const ArchivalDocumentUpload = () => {
           <div className="space-y-2 p-4 bg-muted rounded-lg">
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Uploading documents...</span>
-              <span className="font-medium">{Math.round(progress)}%</span>
+              <div className="flex items-center gap-3">
+                <span className="font-medium">{Math.round(progress)}%</span>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => { cancelRef.current = true; }}
+                >
+                  <X className="w-3 h-3 mr-1" /> Cancel
+                </Button>
+              </div>
             </div>
             <Progress value={progress} className="h-2" />
           </div>
@@ -315,12 +332,11 @@ export const ArchivalDocumentUpload = () => {
                         )}
                       </div>
                     </div>
-                    {f.status === 'pending' && (
+                    {(f.status === 'pending' || f.status === 'error') && (
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => removeFile(f.id)}
-                        disabled={uploading}
                       >
                         <X className="w-4 h-4" />
                       </Button>
