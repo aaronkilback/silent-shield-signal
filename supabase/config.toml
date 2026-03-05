@@ -122,7 +122,7 @@ verify_jwt = false
 verify_jwt = true
 
 [functions.create-archival-record]
-verify_jwt = true
+verify_jwt = false
 
 [functions.process-stored-document]
 verify_jwt = true
