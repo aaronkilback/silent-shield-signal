@@ -1,6 +1,9 @@
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Alias uuid_generate_v4 into public schema (needed on hosted Supabase where it lives in extensions schema)
+CREATE OR REPLACE FUNCTION public.uuid_generate_v4() RETURNS uuid LANGUAGE sql AS $$ SELECT extensions.uuid_generate_v4(); $$;
+
 -- Create custom types
 CREATE TYPE app_role AS ENUM ('admin', 'analyst', 'viewer');
 CREATE TYPE signal_status AS ENUM ('new', 'triaged', 'investigating', 'resolved', 'false_positive');
