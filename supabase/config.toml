@@ -140,7 +140,7 @@ verify_jwt = false
 verify_jwt = true
 
 [functions.dashboard-ai-assistant]
-verify_jwt = true
+verify_jwt = false
 
 [functions.ai-tools-query]
 verify_jwt = false
