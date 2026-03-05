@@ -352,7 +352,7 @@ async function extractTextWithVisionAI(
     
     // Check file size - if too large, return error with guidance
     const fileSizeMB = arrayBuffer.byteLength / (1024 * 1024);
-    if (fileSizeMB > 10) {
+    if (fileSizeMB > 20) {
       return { text: '', error: `File too large for vision processing (${fileSizeMB.toFixed(1)}MB). Consider processing pages individually.` };
     }
     
@@ -374,17 +374,23 @@ async function extractTextWithVisionAI(
             content: [
               {
                 type: 'text',
-                text: `You are a document text extraction specialist. Extract ALL text content from this document image/file. 
-                
-Instructions:
-- Extract every piece of readable text, including headers, footers, tables, and captions
-- Preserve the logical reading order and structure
-- For tables, use markdown table format
-- Include any metadata visible (dates, document numbers, etc.)
-- If the document is multi-page, note page breaks with "--- Page Break ---"
-- Do NOT add any commentary or analysis - only extract the raw text
+                text: `You are a document intelligence specialist. Extract ALL content from this document image/file.
 
-Return ONLY the extracted text content, nothing else.`
+TEXT EXTRACTION:
+- Extract every piece of readable text: headers, footers, body, captions, labels, watermarks
+- Preserve logical reading order and document structure
+- Use markdown table format for any tables
+- Include visible metadata (dates, document numbers, page numbers, reference codes)
+- Note page breaks with "--- Page Break ---"
+
+IMAGE & VISUAL CONTENT:
+- For each photograph, diagram, chart, map, or graphic: write "[IMAGE: <description>]" inline where it appears
+- Describe what the image shows in 1-2 sentences (people, locations, objects, data trends, etc.)
+- For charts/graphs: describe the data shown (e.g. "[IMAGE: Bar chart showing monthly threat incidents Jan-Dec 2024, peak in October at 47 incidents]")
+- For maps: note geographic area and any marked locations
+- For faces/people: describe visible attributes relevant to identification
+
+Return ONLY the extracted content — no commentary, no preamble.`
               },
               {
                 type: 'image_url',
@@ -581,18 +587,23 @@ async function extractTextFromLargePdfWithSignedUrl(
             content: [
               {
                 type: 'text',
-                text: `You are a document text extraction specialist. Extract ALL text content from this PDF document.
+                text: `You are a document intelligence specialist. Extract ALL content from this PDF document.
 
-Instructions:
-- Extract every piece of readable text, including headers, footers, tables, and captions
-- Preserve the logical reading order and structure
-- For tables, use markdown table format
-- Include any metadata visible (dates, document numbers, page numbers, etc.)
+TEXT EXTRACTION:
+- Extract every piece of readable text: headers, footers, body, captions, labels, watermarks
+- Preserve logical reading order and document structure
+- Use markdown table format for any tables
+- Include visible metadata (dates, document numbers, page numbers, reference codes)
 - Note page breaks with "--- Page Break ---" between pages
-- Extract text from ALL pages in the document
-- Do NOT add any commentary or analysis - only extract the raw text
+- Process ALL pages
 
-Return ONLY the extracted text content, nothing else.`
+IMAGE & VISUAL CONTENT:
+- For each photograph, diagram, chart, map, or graphic: write "[IMAGE: <description>]" inline where it appears
+- Describe what the image shows in 1-2 sentences (people, locations, objects, data trends, etc.)
+- For charts/graphs: describe the data shown
+- For maps: note geographic area and any marked locations
+
+Return ONLY the extracted content — no commentary, no preamble.`
               },
               {
                 type: 'file',
@@ -641,8 +652,21 @@ async function convertDocument(
     case 'text':
       return { text: await extractTextFromPlainText(content) };
     
-    case 'pdf':
-      return await extractTextFromPdf(content);
+    case 'pdf': {
+      const pdfResult = await extractTextFromPdf(content);
+      // Scanned/image-only PDF: fall back to Gemini Vision OCR
+      if (!pdfResult.text && pdfResult.error) {
+        console.log(`PDF text layer empty, falling back to Gemini Vision OCR: ${pdfResult.error}`);
+        const visionResult = await extractTextWithVisionAI(content, mimeType, filename);
+        if (visionResult.text) {
+          console.log(`Vision OCR fallback succeeded: ${visionResult.text.length} characters`);
+          return visionResult;
+        }
+        // Return original pdf.js error if vision also failed
+        return pdfResult;
+      }
+      return pdfResult;
+    }
 
     case 'image':
       return await extractTextWithVisionAI(content, mimeType, filename);
