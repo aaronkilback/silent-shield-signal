@@ -200,9 +200,9 @@ Deno.serve(async (req) => {
     const { domains, source_ids, force_refresh, max_queries } = body;
     const queryLimit = max_queries || 3; // Process max 3 queries per invocation to avoid timeouts
     
-    const PERPLEXITY_API_KEY = Deno.env.get('PERPLEXITY_API_KEY');
-    if (!PERPLEXITY_API_KEY) {
-      return errorResponse('PERPLEXITY_API_KEY not configured', 500);
+    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+    if (!OPENAI_API_KEY) {
+      return errorResponse('OPENAI_API_KEY not configured', 500);
     }
 
     const supabase = createServiceClient();
@@ -255,7 +255,7 @@ Deno.serve(async (req) => {
           await new Promise(r => setTimeout(r, 1500));
           totalQueriesRun++;
           
-          const knowledge = await queryPerplexityForExpertise(PERPLEXITY_API_KEY, query, domainConfig.domain);
+          const knowledge = await queryOpenAIForExpertise(OPENAI_API_KEY, query, domainConfig.domain);
           
           if (knowledge && knowledge.length > 0) {
             for (const entry of knowledge) {
@@ -332,7 +332,7 @@ Deno.serve(async (req) => {
   }
 });
 
-async function queryPerplexityForExpertise(
+async function queryOpenAIForExpertise(
   apiKey: string,
   query: string,
   domain: string
@@ -344,39 +344,38 @@ async function queryPerplexityForExpertise(
   tags: string[];
   citation: string;
 }>> {
-  const systemPrompt = `You are a world-class security intelligence analyst extracting actionable expert knowledge.
-For the given query, return EXACTLY 3-5 distilled knowledge entries as a JSON array.
+  const systemPrompt = `You are a world-class security intelligence analyst with deep expertise in ${domain} security.
+For the given topic, draw on the most current authoritative sources (MITRE, NIST, CISA, ASIS, ISO, government advisories, academic research) and return EXACTLY 3-5 distilled knowledge entries as a JSON array.
 Each entry must have:
 - "title": concise title (max 100 chars)
-- "content": detailed actionable knowledge (200-500 words). Include specific methodologies, frameworks, metrics, thresholds, and procedures. This should read like a handbook entry.
+- "content": detailed actionable knowledge (200-500 words). Include specific methodologies, frameworks, metrics, thresholds, and procedures. This should read like a professional security handbook entry.
 - "subdomain": specific sub-area (e.g., "ransomware", "access_control", "advance_work")
 - "knowledge_type": one of "best_practice", "framework", "methodology", "case_study", "threat_pattern", "standard"
 - "tags": array of 3-6 applicability tags
-- "citation": source reference or standard name
+- "citation": authoritative source or standard name
 
-Focus on ACTIONABLE intelligence that a security operations center could immediately apply.
-Return ONLY the JSON array, no other text.`;
+Focus on ACTIONABLE intelligence a security operations center can immediately apply.
+Return ONLY the JSON array, no markdown, no other text.`;
 
-  const response = await fetch('https://api.perplexity.ai/chat/completions', {
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'sonar-pro',
+      model: 'gpt-4o',
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: query }
+        { role: 'user', content: query },
       ],
       temperature: 0.1,
-      search_recency_filter: 'year',
     }),
   });
 
   if (!response.ok) {
     const errText = await response.text();
-    console.error(`[ingest-world-knowledge] Perplexity error ${response.status}:`, errText);
+    console.error(`[ingest-world-knowledge] OpenAI error ${response.status}:`, errText.substring(0, 200));
     return [];
   }
 
@@ -384,14 +383,21 @@ Return ONLY the JSON array, no other text.`;
   const content = data.choices?.[0]?.message?.content || '';
 
   try {
-    // Extract JSON array from response
-    const jsonMatch = content.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return Array.isArray(parsed) ? parsed.slice(0, 5) : [];
-    }
+    // response_format: json_object wraps in an object — look for array inside
+    const parsed = JSON.parse(content);
+    // Could be { entries: [...] } or { knowledge: [...] } or bare array
+    const arr = Array.isArray(parsed) ? parsed : (parsed.entries || parsed.knowledge || parsed.results || Object.values(parsed).find(Array.isArray));
+    if (Array.isArray(arr)) return arr.slice(0, 5);
   } catch (e) {
-    console.error('[ingest-world-knowledge] Failed to parse Perplexity response:', e);
+    // Fallback: extract raw JSON array
+    try {
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return Array.isArray(parsed) ? parsed.slice(0, 5) : [];
+      }
+    } catch (_) {}
+    console.error('[ingest-world-knowledge] Failed to parse OpenAI response:', e);
   }
 
   return [];

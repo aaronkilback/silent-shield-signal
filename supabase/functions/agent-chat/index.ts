@@ -592,6 +592,59 @@ Respond naturally and briefly.`
       // Non-fatal — proceed without corrections
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // WORLD EXPERTISE INJECTION — pulls live from expert_knowledge table
+    // Makes every agent a world expert in their specialty domain
+    // ═══════════════════════════════════════════════════════════════
+    let expertiseBlock = "";
+    try {
+      const specialty = (agent.specialty || '').toLowerCase();
+      // Map specialty keywords to knowledge domains
+      const domainMap: Record<string, string[]> = {
+        cyber: ['cyber', 'ai_ml_security', 'insider_threat', 'fraud_social_engineering'],
+        physical: ['physical_security', 'event_security', 'aviation_security'],
+        executive: ['executive_protection', 'travel_security'],
+        crisis: ['crisis_management'],
+        threat: ['threat_intelligence', 'counter_terrorism'],
+        travel: ['travel_security', 'geopolitical'],
+        compliance: ['compliance', 'legal_regulatory'],
+        geopolitical: ['geopolitical', 'counter_terrorism'],
+        maritime: ['maritime_security'],
+        insider: ['insider_threat'],
+        supply: ['supply_chain_risk'],
+        terrorism: ['counter_terrorism'],
+        narcotics: ['narcotics_organized_crime'],
+        fraud: ['fraud_social_engineering'],
+        osint: ['threat_intelligence', 'cyber'],
+        intelligence: ['threat_intelligence', 'geopolitical', 'counter_terrorism'],
+        financial: ['fraud_social_engineering', 'narcotics_organized_crime', 'compliance'],
+        signal: ['threat_intelligence', 'cyber', 'geopolitical'],
+      };
+      const matchedDomains = new Set<string>();
+      for (const [keyword, domains] of Object.entries(domainMap)) {
+        if (specialty.includes(keyword)) domains.forEach(d => matchedDomains.add(d));
+      }
+      // Fallback: if no match, load general threat intelligence
+      if (matchedDomains.size === 0) {
+        ['threat_intelligence', 'cyber', 'geopolitical'].forEach(d => matchedDomains.add(d));
+      }
+
+      const { data: expertKnowledge } = await supabase
+        .from('expert_knowledge')
+        .select('title, content, domain, knowledge_type, citation')
+        .in('domain', [...matchedDomains])
+        .eq('is_active', true)
+        .gte('confidence_score', 0.75)
+        .order('confidence_score', { ascending: false })
+        .limit(8);
+
+      if (expertKnowledge && expertKnowledge.length > 0) {
+        expertiseBlock = `\n\n═══ YOUR WORLD EXPERTISE (CONTINUOUSLY UPDATED) ═══\nYou are a world-class expert in your domain. The following represents your current knowledge base, sourced from authoritative frameworks, live research, and field intelligence. Draw on this expertise confidently in every response.\n\n${expertKnowledge.map(e => `▸ [${e.knowledge_type.toUpperCase()} | ${e.domain}] ${e.title}\n${e.content.substring(0, 400)}...\n  Source: ${e.citation || 'Intelligence database'}`).join('\n\n')}\n\nThis knowledge is regularly refreshed. Apply it to every analysis, recommendation, and assessment you make.\n`;
+      }
+    } catch (_e) {
+      // Non-fatal — proceed without expertise injection
+    }
+
     // Load undelivered pending messages for this agent (broadcasts, directives, etc.)
     let pendingMessagesBlock = "";
     try {
@@ -618,7 +671,7 @@ Respond naturally and briefly.`
       // Non-fatal — proceed without pending messages
     }
     
-    const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}${behavioralCorrectionBlock}${pendingMessagesBlock}
+    const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}${expertiseBlock}${behavioralCorrectionBlock}${pendingMessagesBlock}
 
 Your Mission: ${agent.mission_scope}
 Your Call Sign: ${agent.call_sign}

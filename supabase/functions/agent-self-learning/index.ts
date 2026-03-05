@@ -51,10 +51,11 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({})) as LearningRequest;
     const { mode = 'proactive', agent_call_sign, topic, context, incident_id, max_queries, domain_focus } = body;
 
-    const PERPLEXITY_API_KEY = Deno.env.get('PERPLEXITY_API_KEY');
-    if (!PERPLEXITY_API_KEY) {
-      return errorResponse('PERPLEXITY_API_KEY not configured', 500);
+    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+    if (!OPENAI_API_KEY) {
+      return errorResponse('OPENAI_API_KEY not configured', 500);
     }
+    const PERPLEXITY_API_KEY = OPENAI_API_KEY; // Route through OpenAI
 
     const supabase = createServiceClient();
     const queryLimit = max_queries || (mode === 'deep_dive' ? 5 : mode === 'literature_review' ? 6 : 3);
@@ -243,31 +244,30 @@ Return ONLY the JSON array.`;
     : `Research this topic thoroughly: ${topic}`;
 
   try {
-    const response = await fetch('https://api.perplexity.ai/chat/completions', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'sonar-pro',
+        model: 'gpt-4o',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.1,
-        search_recency_filter: 'month',
       }),
     });
 
     if (!response.ok) {
-      console.error(`[agent-self-learning] Perplexity error ${response.status}`);
+      console.error(`[agent-self-learning] OpenAI error ${response.status}`);
       return;
     }
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || '';
-    const citations = data.citations || [];
+    const citations: string[] = [];
 
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     if (!jsonMatch) return;
@@ -408,14 +408,14 @@ Return your findings as a JSON array of 3-5 knowledge entries. Each entry:
 Return ONLY the JSON array.`;
 
   try {
-    const response = await fetch('https://api.perplexity.ai/chat/completions', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'sonar-pro',
+        model: 'gpt-4o',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: `${context}\n\n${topic}` }
@@ -425,13 +425,13 @@ Return ONLY the JSON array.`;
     });
 
     if (!response.ok) {
-      console.error(`[agent-self-learning] Literature research Perplexity error ${response.status}`);
+      console.error(`[agent-self-learning] Literature research OpenAI error ${response.status}`);
       return;
     }
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || '';
-    const citations = data.citations || [];
+    const citations: string[] = [];
 
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     if (!jsonMatch) return;
