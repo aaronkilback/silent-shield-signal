@@ -558,6 +558,36 @@ Deno.serve(async (req) => {
       };
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // PHASE 14: Universal feedback learning (briefings, reports, travel alerts, etc.)
+    // Must run before building learnings object to avoid temporal dead zone
+    // ═══════════════════════════════════════════════════════════════
+
+    const { data: universalFeedback } = await supabase
+      .from('feedback_events')
+      .select('object_type, feedback, notes, correction, feedback_context, source_function, created_at')
+      .neq('object_type', 'signal')
+      .order('created_at', { ascending: false })
+      .limit(500);
+
+    const universalStats: Record<string, { positive: number; negative: number; total: number; corrections: string[] }> = {};
+
+    for (const fb of (universalFeedback || [])) {
+      const type = fb.object_type || 'unknown';
+      if (!universalStats[type]) universalStats[type] = { positive: 0, negative: 0, total: 0, corrections: [] };
+      universalStats[type].total++;
+
+      if (['positive', 'relevant', 'confirmed', 'approved'].includes(fb.feedback)) {
+        universalStats[type].positive++;
+      } else {
+        universalStats[type].negative++;
+      }
+
+      if (fb.correction) {
+        universalStats[type].corrections.push(fb.correction);
+      }
+    }
+
     const qualityScore = Math.min(1.0, totalFeedback / 50);
 
     const learnings = {
@@ -608,35 +638,6 @@ Deno.serve(async (req) => {
         last_updated: new Date().toISOString(),
         weight: 1.0
       }, { onConflict: 'profile_type' });
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // PHASE 14: Universal feedback learning (briefings, reports, travel alerts, etc.)
-    // ═══════════════════════════════════════════════════════════════
-
-    const { data: universalFeedback } = await supabase
-      .from('feedback_events')
-      .select('object_type, feedback, notes, correction, feedback_context, source_function, created_at')
-      .neq('object_type', 'signal')
-      .order('created_at', { ascending: false })
-      .limit(500);
-
-    const universalStats: Record<string, { positive: number; negative: number; total: number; corrections: string[] }> = {};
-    
-    for (const fb of (universalFeedback || [])) {
-      const type = fb.object_type || 'unknown';
-      if (!universalStats[type]) universalStats[type] = { positive: 0, negative: 0, total: 0, corrections: [] };
-      universalStats[type].total++;
-      
-      if (['positive', 'relevant', 'confirmed', 'approved'].includes(fb.feedback)) {
-        universalStats[type].positive++;
-      } else {
-        universalStats[type].negative++;
-      }
-      
-      if (fb.correction) {
-        universalStats[type].corrections.push(fb.correction);
-      }
     }
 
     // Upsert quality profiles for each object type
