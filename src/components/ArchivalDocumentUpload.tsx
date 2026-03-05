@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import React from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +23,7 @@ interface FileWithPreview {
 
 export const ArchivalDocumentUpload = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [files, setFiles] = useState<FileWithPreview[]>([]);
   const [tags, setTags] = useState<string>("archival,historical");
   const [uploading, setUploading] = useState(false);
@@ -214,12 +216,12 @@ export const ArchivalDocumentUpload = () => {
         { duration: 8000 }
       );
       
-      // Clear successful uploads after a delay
+      // Navigate to Library tab to show uploaded documents
       setTimeout(() => {
         setFiles(prev => prev.filter(f => f.status !== 'success'));
         setProgress(0);
-        window.location.reload(); // Refresh to show new documents
-      }, 3000);
+        navigate('/signals?tab=documents');
+      }, 2000);
     } else if (errorCount > 0) {
       toast.error(`❌ All ${errorCount} upload${errorCount > 1 ? 's' : ''} failed. Please check file sizes and try again.`);
     }
