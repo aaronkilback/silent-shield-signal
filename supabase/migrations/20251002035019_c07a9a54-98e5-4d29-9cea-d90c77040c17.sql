@@ -72,8 +72,8 @@ SELECT cron.schedule(
   '*/30 * * * *',
   $$
   SELECT net.http_post(
-    url := 'https://udbjjeppbgwjlqmaeftn.supabase.co/functions/v1/monitor-social',
-    headers := '{"Content-Type": "application/json", "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkYmpqZXBwYmd3amxxbWFlZnRuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkzNDkwNjQsImV4cCI6MjA3NDkyNTA2NH0.4wtCRvIKYPcl8gQLSC86PoWvbVKFJPmRzOKDW9tV-Ec"}'::jsonb,
+    url := 'https://kpuqukppbmwebiptqmog.supabase.co/functions/v1/monitor-social',
+    headers := '{"Content-Type": "application/json", "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwdXF1a3BwYm13ZWJpcHRxbW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2NjMwMjAsImV4cCI6MjA4ODIzOTAyMH0.x36k-kAUtPXmmZloojPc0-b1sd67d7-5pBOViN0EmXc"}'::jsonb,
     body := '{}'::jsonb
   );
   $$
@@ -85,8 +85,8 @@ SELECT cron.schedule(
   '0 * * * *',
   $$
   SELECT net.http_post(
-    url := 'https://udbjjeppbgwjlqmaeftn.supabase.co/functions/v1/monitor-threat-intel',
-    headers := '{"Content-Type": "application/json", "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVkYmpqZXBwYmd3amxxbWFlZnRuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkzNDkwNjQsImV4cCI6MjA3NDkyNTA2NH0.4wtCRvIKYPcl8gQLSC86PoWvbVKFJPmRzOKDW9tV-Ec"}'::jsonb,
+    url := 'https://kpuqukppbmwebiptqmog.supabase.co/functions/v1/monitor-threat-intel',
+    headers := '{"Content-Type": "application/json", "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwdXF1a3BwYm13ZWJpcHRxbW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2NjMwMjAsImV4cCI6MjA4ODIzOTAyMH0.x36k-kAUtPXmmZloojPc0-b1sd67d7-5pBOViN0EmXc"}'::jsonb,
     body := '{}'::jsonb
   );
   $$

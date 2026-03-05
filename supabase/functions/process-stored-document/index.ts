@@ -130,8 +130,9 @@ Deno.serve(async (req) => {
       await supabase
         .from('archival_documents')
         .update({
-          content_text: document.content_text && document.content_text.length > 100 
-            ? document.content_text 
+          processing_status: 'completed',
+          content_text: document.content_text && document.content_text.length > 100
+            ? document.content_text
             : `[Large document: ${document.filename} (${fileSizeMB.toFixed(1)}MB). This file exceeds the ${MAX_SAFE_SIZE_MB}MB processing limit for in-memory analysis. The file is stored and accessible but text extraction was skipped to prevent system resource exhaustion. For full content analysis, please split into smaller files or use external document processing services.]`,
           metadata: {
             ...(document.metadata ?? {}),
@@ -212,6 +213,7 @@ Deno.serve(async (req) => {
       await supabase
         .from('archival_documents')
         .update({
+          processing_status: 'failed',
           content_text:
             document.content_text ??
             `[Document processing failed: could not download the file from storage. path=${document.storage_path}]`,
@@ -1299,6 +1301,7 @@ Think like a professional intelligence analyst reading an opposition research do
     await supabase
       .from('archival_documents')
       .update({
+        processing_status: 'completed',
         content_text: textContent, // Store the extracted text for AI analysis
         entity_mentions: entityNames,
         metadata: {

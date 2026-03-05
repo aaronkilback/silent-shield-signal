@@ -1,5 +1,8 @@
 -- Backfill content_hash for existing signals and remove duplicates
 
+-- Ensure pgcrypto is available
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
+
 -- First, create a function to calculate SHA256 hash
 CREATE OR REPLACE FUNCTION calculate_signal_hash(text_content TEXT)
 RETURNS TEXT AS $$
@@ -7,7 +10,7 @@ DECLARE
   hash_result TEXT;
 BEGIN
   -- Use pgcrypto extension for SHA256 hashing
-  hash_result := encode(digest(text_content, 'sha256'), 'hex');
+  hash_result := encode(extensions.digest(text_content, 'sha256'), 'hex');
   RETURN hash_result;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;

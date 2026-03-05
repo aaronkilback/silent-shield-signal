@@ -1,6 +1,7 @@
 -- Create entity_photos storage bucket
 INSERT INTO storage.buckets (id, name, public)
-VALUES ('entity-photos', 'entity-photos', true);
+VALUES ('entity-photos', 'entity-photos', true)
+ON CONFLICT (id) DO NOTHING;
 
 -- RLS policies for entity_photos bucket
 CREATE POLICY "Analysts and admins can view entity photos"

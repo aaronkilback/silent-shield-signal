@@ -1,6 +1,9 @@
 -- Fix entities RLS policies to use same pattern as other tables
 -- The entities table currently checks profiles.client_id but should use current_setting('app.current_client_id')
 
+-- Ensure client_id column exists on entities
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS client_id UUID REFERENCES clients(id) ON DELETE SET NULL;
+
 -- Drop the conflicting/redundant policies
 DROP POLICY IF EXISTS "Users can view entities for their client" ON entities;
 DROP POLICY IF EXISTS "Users can manage entities for their client" ON entities;

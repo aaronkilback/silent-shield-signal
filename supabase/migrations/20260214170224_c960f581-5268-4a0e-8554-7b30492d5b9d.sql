@@ -1,2 +1,8 @@
 -- Remove stale cron job calling non-existent monitor-canadian-sources-enhanced
-SELECT cron.unschedule(9);
+DO $$
+BEGIN
+  PERFORM cron.unschedule(9);
+EXCEPTION WHEN OTHERS THEN
+  -- Job may not exist on fresh deployments, ignore error
+  NULL;
+END $$;
