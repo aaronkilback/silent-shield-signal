@@ -87,9 +87,9 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-    if (!GEMINI_API_KEY) {
-      console.error('GEMINI_API_KEY not configured');
-      throw new Error('GEMINI_API_KEY not configured');
+    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+    if (!GEMINI_API_KEY && !OPENAI_API_KEY) {
+      throw new Error('No AI API key configured (GEMINI_API_KEY or OPENAI_API_KEY required)');
     }
 
     // Get feedback-based learning context
@@ -846,14 +846,9 @@ Return the full extracted text and/or description.`
 
     console.log('Calling Lovable AI for entity extraction (with retry)...');
 
-    const aiResponse = await fetchWithRetry('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${GEMINI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gemini-2.5-pro', // Use more powerful model for better extraction
+    // Build the entity extraction request body (shared between Gemini and OpenAI)
+    const entityExtractionBody = {
+      model: GEMINI_API_KEY ? 'gemini-2.5-flash' : 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
@@ -1123,20 +1118,42 @@ Think like a professional intelligence analyst reading an opposition research do
           }
         ],
         tool_choice: { type: "function", function: { name: "extract_entities_and_relationships" } }
-      }),
-    }, 3, 'Entity Extraction');
+    };
+
+    // Try Gemini first, fall back to OpenAI if rate limited
+    const callEntityExtractionAI = async (useOpenAIFallback = false): Promise<Response> => {
+      const endpoint = (!GEMINI_API_KEY || useOpenAIFallback)
+        ? 'https://api.openai.com/v1/chat/completions'
+        : 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+      const key = (!GEMINI_API_KEY || useOpenAIFallback) ? OPENAI_API_KEY! : GEMINI_API_KEY!;
+      const model = (!GEMINI_API_KEY || useOpenAIFallback) ? 'gpt-4o-mini' : 'gemini-2.5-flash';
+      console.log(`Calling ${useOpenAIFallback ? 'OpenAI' : 'Gemini'} for entity extraction...`);
+      return fetchWithRetry(endpoint, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...entityExtractionBody, model }),
+      }, 3, `Entity Extraction (${useOpenAIFallback ? 'OpenAI' : 'Gemini'})`);
+    };
+
+    let aiResponse = await callEntityExtractionAI();
+
+    // Fall back to OpenAI if Gemini is rate limited
+    if (!aiResponse.ok && aiResponse.status === 429 && GEMINI_API_KEY && OPENAI_API_KEY) {
+      console.log('Gemini rate limited, falling back to OpenAI gpt-4o-mini...');
+      aiResponse = await callEntityExtractionAI(true);
+    }
 
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
       console.error('AI API error:', aiResponse.status, errorText);
-      
+
       if (aiResponse.status === 429) {
         throw new Error('Rate limit exceeded - please try again later');
       }
       if (aiResponse.status === 402) {
         throw new Error('AI credits exhausted - please add credits to continue');
       }
-      
+
       throw new Error(`AI API error: ${aiResponse.status}`);
     }
 
