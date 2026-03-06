@@ -55,7 +55,7 @@ export function useFortressHealth(enabled: boolean = true) {
         supabase.from("hypothesis_trees").select("id", { count: "exact", head: true }).gte("created_at", now24h),
         supabase.from("agent_debate_records").select("id", { count: "exact", head: true }).gte("created_at", now24h),
         supabase.from("autonomous_scan_results").select("id", { count: "exact", head: true }).gte("created_at", now24h),
-        supabase.from("briefing_sessions").select("id", { count: "exact", head: true }).gte("created_at", now24h),
+        supabase.from("ai_assistant_messages").select("id", { count: "exact", head: true }).eq("role", "assistant").gte("created_at", now24h),
         supabase.from("auto_escalation_rules").select("id", { count: "exact", head: true }).eq("is_active", true),
         // Signal integrity - last 7 days
         supabase.from("signals").select("source_id, title, signal_type").gte("created_at", new Date(Date.now() - 7 * 86400000).toISOString()),
@@ -78,7 +78,7 @@ export function useFortressHealth(enabled: boolean = true) {
         { name: "Hypothesis Trees", runs: c(hypothesisRes), layer: "learning" },
         { name: "Debate Records", runs: c(debateRes), layer: "learning" },
         { name: "Scan Results", runs: c(scanRes), layer: "observability" },
-        { name: "Briefing Sessions", runs: c(briefingRes), layer: "reliability" },
+        { name: "AEGIS Briefings", runs: c(briefingRes), layer: "reliability" },
         { name: "Escalation Rules", runs: c(escalationRes), layer: "safety", minForClosed: 3 },
       ];
 

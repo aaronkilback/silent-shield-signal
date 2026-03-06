@@ -229,10 +229,65 @@ Deno.serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // LOOP 4: BRIEFING SESSIONS — Skipped (no synthetic data generation)
-    // Real briefing sessions are created by analysts via the UI.
+    // LOOP 4: ESCALATION RULES — Seed default rules if none exist
+    // These are system-level safety rules, not user-created content.
     // ═══════════════════════════════════════════════════════════════════
-    results.briefing_sessions = { skipped: 'Real briefings only — no synthetic generation' };
+    try {
+      const { count: existingRules } = await supabase
+        .from('auto_escalation_rules')
+        .select('id', { count: 'exact', head: true })
+        .eq('is_active', true);
+
+      if ((existingRules || 0) < 3) {
+        const defaultRules = [
+          {
+            name: 'Critical Severity Auto-Escalate',
+            description: 'Automatically escalate any critical severity signal to P1 incident',
+            trigger_type: 'threshold',
+            conditions: { severity: 'critical', threshold: 1 },
+            actions: { create_incident: true, priority: 'p1', notify_aegis: true },
+            cooldown_minutes: 15,
+            is_active: true,
+          },
+          {
+            name: 'High-Risk Entity Alert',
+            description: 'Escalate signals involving high-threat-score entities to P2',
+            trigger_type: 'entity_risk',
+            conditions: { entity_risk_score_min: 75, severity_in: ['critical', 'high'] },
+            actions: { create_incident: true, priority: 'p2', assign_agent: 'CERBERUS' },
+            cooldown_minutes: 30,
+            is_active: true,
+          },
+          {
+            name: 'Scan Alert Burst',
+            description: 'Escalate if 3+ high-severity scan alerts arrive within 30 minutes',
+            trigger_type: 'burst',
+            conditions: { severity: 'high', count_threshold: 3, window_minutes: 30 },
+            actions: { create_incident: true, priority: 'p2', trigger_debate: true },
+            cooldown_minutes: 60,
+            is_active: true,
+          },
+        ];
+
+        // Only insert rules that don't already exist by name
+        for (const rule of defaultRules) {
+          const { count: nameExists } = await supabase
+            .from('auto_escalation_rules')
+            .select('id', { count: 'exact', head: true })
+            .eq('name', rule.name);
+          if ((nameExists || 0) === 0) {
+            await supabase.from('auto_escalation_rules').insert(rule);
+          }
+        }
+        results.escalation_rules = { seeded: true };
+      } else {
+        results.escalation_rules = { active_rules: existingRules };
+      }
+      console.log(`[LoopCloser] Escalation Rules: ${existingRules || 0} active`);
+    } catch (err) {
+      console.error('[LoopCloser] Escalation Rules error:', err);
+      results.escalation_rules = { error: String(err) };
+    }
 
     // ═══════════════════════════════════════════════════════════════════
     // LOOP 5: SPECIALIST AGENT LEARNING — Trigger real learning for agents
