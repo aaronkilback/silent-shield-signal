@@ -47,8 +47,8 @@ Deno.serve(async (req) => {
     const searchEngineId = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
 
     if (!searchApiKey || !searchEngineId) {
-      console.error('Google Search API credentials not configured');
-      return errorResponse('Search API not configured', 500);
+      console.log('Google Search API credentials not configured, skipping entity proximity monitor');
+      return successResponse({ success: true, message: 'Search API not configured', entities_scanned: 0, signals_created: 0 });
     }
 
     // Monitor each entity

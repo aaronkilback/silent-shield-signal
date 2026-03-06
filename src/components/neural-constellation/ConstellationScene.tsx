@@ -5,7 +5,7 @@ import { OrbitControls, Line, Html, useTexture } from "@react-three/drei";
 import * as THREE from "three";
 import { MilkyWayBand, PlanetParade, AsteroidBelt, Comets } from "./SolarSystemElements";
 import { EndorBattle } from "./EndorBattle";
-import type { AgentCommLink, ActiveDebate, ScanPulse, AgentActivityMetrics, KnowledgeGraphEdge, OperatorDevice, OperatorMessageActivity, KnowledgeGrowthData } from "@/hooks/useConstellationData";
+import type { AgentCommLink, ActiveDebate, ScanPulse, AgentActivityMetrics, KnowledgeGraphEdge, OperatorDevice, OperatorMessageActivity, KnowledgeGrowthData, ConstellationEntity, ConstellationEntityRelationship } from "@/hooks/useConstellationData";
 import type { FortressHealth } from "@/hooks/useFortressHealth";
 import type { GodsEyePin, GlobeDataType } from "@/hooks/useGodsEyeData";
 import { PIN_COLORS as GODS_EYE_COLORS, parseLocationCoords } from "@/hooks/useGodsEyeData";
@@ -42,6 +42,12 @@ interface ConstellationSceneProps {
   godsEyeFilters?: Set<GlobeDataType>;
   onGodsEyePinSelect?: (pin: GodsEyePin | null) => void;
   onCameraViewChange?: (view: string) => void;
+  // Entity layer
+  entityNodes?: (ConstellationEntity & { position: [number, number, number] })[];
+  entityRelationships?: ConstellationEntityRelationship[];
+  // Realtime effects
+  signalBurst?: { agentCallSign: string; severity: string } | null;
+  aegisPulse?: boolean;
 }
 
 // Camera presets
@@ -305,7 +311,12 @@ function PerformanceHalo({ position, activityScore, color, size }: {
 
   if (activityScore < 0.05) return null;
 
-  return null;
+  return (
+    <mesh ref={ringRef} position={position}>
+      <torusGeometry args={[size * 2.0, size * 0.06, 8, 32]} />
+      <meshBasicMaterial color={haloColor} transparent opacity={haloOpacity} side={THREE.DoubleSide} />
+    </mesh>
+  );
 }
 
 // AEGIS Command Hub — unique central node with orbital rings
@@ -2142,6 +2153,271 @@ function FortificationRings({ agents, fortressHealth }: { agents: AgentNode[]; f
     </group>
   );
 }
+// ── Entity & Realtime Effect Components ──
+
+function entityColor(type: string, riskLevel: string | null): string {
+  if (riskLevel === "critical") return "#ef4444";
+  if (riskLevel === "high") return "#f97316";
+  if (type === "person" || type === "organization") return "#f59e0b";
+  if (type === "infrastructure" || type === "ip_address" || type === "domain") return "#22d3ee";
+  if (type === "location") return "#a855f7";
+  return "#94a3b8";
+}
+
+function entitySize(threatScore: number | null, riskLevel: string | null): number {
+  if (riskLevel === "critical") return 0.55;
+  if (riskLevel === "high") return 0.42;
+  if (threatScore != null && threatScore > 60) return 0.42;
+  if (threatScore != null && threatScore > 30) return 0.32;
+  return 0.22;
+}
+
+/** Entity node — gold/red diamond-ish sphere positioned in outer orbit */
+function EntityNode({
+  entity,
+  onHover,
+  onUnhover,
+}: {
+  entity: ConstellationEntity & { position: [number, number, number] };
+  onHover?: (entity: ConstellationEntity) => void;
+  onUnhover?: () => void;
+}) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const glowRef = useRef<THREE.Mesh>(null);
+  const pulseRef = useRef(Math.random() * Math.PI * 2);
+  const [hovered, setHovered] = useState(false);
+
+  const color = entityColor(entity.type, entity.riskLevel);
+  const size = entitySize(entity.threatScore, entity.riskLevel);
+  const isThreat = entity.riskLevel === "critical" || entity.riskLevel === "high";
+
+  useFrame((_, delta) => {
+    pulseRef.current += delta * (isThreat ? 2.5 : 1.2);
+    const pulse = Math.sin(pulseRef.current);
+    if (meshRef.current) {
+      meshRef.current.scale.setScalar(1 + pulse * (isThreat ? 0.1 : 0.05));
+    }
+    if (glowRef.current) {
+      glowRef.current.scale.setScalar(2.5 + pulse * 0.3);
+      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.08 + pulse * 0.04;
+    }
+  });
+
+  const threeColor = new THREE.Color(color);
+
+  return (
+    <group position={entity.position}>
+      <mesh ref={glowRef}>
+        <sphereGeometry args={[size, 12, 12]} />
+        <meshBasicMaterial color={threeColor} transparent opacity={0.08} />
+      </mesh>
+      <mesh
+        ref={meshRef}
+        onPointerOver={() => { setHovered(true); onHover?.(entity); document.body.style.cursor = "pointer"; }}
+        onPointerOut={() => { setHovered(false); onUnhover?.(); document.body.style.cursor = "auto"; }}
+      >
+        <octahedronGeometry args={[size, 0]} />
+        <meshStandardMaterial
+          color={threeColor}
+          emissive={threeColor}
+          emissiveIntensity={isThreat ? 1.2 : 0.6}
+          roughness={0.3}
+          metalness={0.7}
+        />
+      </mesh>
+      <pointLight color={color} intensity={isThreat ? 0.8 : 0.3} distance={3} />
+      {hovered && (
+        <Html distanceFactor={18} style={{ pointerEvents: "none" }}>
+          <div
+            style={{
+              fontFamily: "Share Tech Mono, monospace",
+              background: "rgba(2,4,8,0.92)",
+              border: `1px solid ${color}60`,
+              borderRadius: "6px",
+              padding: "6px 10px",
+              color: color,
+              whiteSpace: "nowrap",
+              fontSize: "10px",
+              minWidth: "120px",
+            }}
+          >
+            <div style={{ fontFamily: "Orbitron, sans-serif", fontSize: "9px", opacity: 0.7, marginBottom: "2px" }}>
+              {entity.type.toUpperCase().replace("_", " ")}
+            </div>
+            <div style={{ fontWeight: "bold", fontSize: "11px" }}>{entity.name}</div>
+            {entity.riskLevel && (
+              <div style={{ fontSize: "8px", opacity: 0.8, marginTop: "2px" }}>
+                RISK: {entity.riskLevel.toUpperCase()}
+                {entity.threatScore != null && ` · SCORE ${entity.threatScore}`}
+              </div>
+            )}
+          </div>
+        </Html>
+      )}
+    </group>
+  );
+}
+
+/** Draw lines between entity nodes based on relationships */
+function EntityRelationshipLines({
+  entityNodes,
+  relationships,
+}: {
+  entityNodes: (ConstellationEntity & { position: [number, number, number] })[];
+  relationships: ConstellationEntityRelationship[];
+}) {
+  const posMap = useMemo(() => {
+    const m = new Map<string, [number, number, number]>();
+    entityNodes.forEach((e) => m.set(e.id, e.position));
+    return m;
+  }, [entityNodes]);
+
+  return (
+    <>
+      {relationships.map((rel) => {
+        const posA = posMap.get(rel.entityAId);
+        const posB = posMap.get(rel.entityBId);
+        if (!posA || !posB) return null;
+        const strength = rel.strength ?? 0.5;
+        const opacity = 0.1 + strength * 0.25;
+        const lineColor =
+          rel.relationshipType.includes("threat") || rel.relationshipType.includes("hostile")
+            ? "#ef4444"
+            : rel.relationshipType.includes("associ") || rel.relationshipType.includes("member")
+            ? "#f59e0b"
+            : "#a855f7";
+        return (
+          <Line
+            key={rel.id}
+            points={[new THREE.Vector3(...posA), new THREE.Vector3(...posB)]}
+            color={lineColor}
+            transparent
+            opacity={opacity}
+            lineWidth={0.5 + strength * 0.5}
+            dashed
+            dashSize={0.5}
+            dashOffset={0}
+            gapSize={0.3}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+/** Expanding ring pulse from AEGIS when new message arrives */
+function AegisPulseRing({ aegisPosition, triggered }: {
+  aegisPosition: [number, number, number];
+  triggered: boolean;
+}) {
+  const ringRef = useRef<THREE.Mesh>(null);
+  const scaleRef = useRef(0.1);
+  const opacityRef = useRef(0);
+  const activeRef = useRef(false);
+
+  useEffect(() => {
+    if (triggered) {
+      scaleRef.current = 0.5;
+      opacityRef.current = 0.8;
+      activeRef.current = true;
+    }
+  }, [triggered]);
+
+  useFrame((_, delta) => {
+    if (!activeRef.current || !ringRef.current) return;
+    scaleRef.current += delta * 8;
+    opacityRef.current -= delta * 1.2;
+    if (opacityRef.current <= 0) {
+      activeRef.current = false;
+      opacityRef.current = 0;
+      scaleRef.current = 0.1;
+    }
+    ringRef.current.scale.setScalar(scaleRef.current);
+    (ringRef.current.material as THREE.MeshBasicMaterial).opacity = Math.max(0, opacityRef.current);
+  });
+
+  return (
+    <mesh ref={ringRef} position={aegisPosition} rotation={[Math.PI / 2, 0, 0]}>
+      <torusGeometry args={[1.2, 0.05, 8, 32]} />
+      <meshBasicMaterial color="#f59e0b" transparent opacity={0} side={THREE.DoubleSide} />
+    </mesh>
+  );
+}
+
+/** Particle burst from nebula toward a target agent when new signal arrives */
+function SignalBurstEffect({ targetPosition, color, triggered }: {
+  targetPosition: [number, number, number] | null;
+  color: string;
+  triggered: boolean;
+}) {
+  const COUNT = 12;
+  const positionsRef = useRef<Float32Array>(new Float32Array(COUNT * 3));
+  const velocitiesRef = useRef<THREE.Vector3[]>([]);
+  const lifeRef = useRef(0);
+  const activeRef = useRef(false);
+  const pointsRef = useRef<THREE.Points>(null);
+
+  // Nebula center — approximate position
+  const NEBULA_POS = new THREE.Vector3(0, 8, -5);
+
+  useEffect(() => {
+    if (!triggered || !targetPosition) return;
+    const target = new THREE.Vector3(...targetPosition);
+    // Initialize particles flying from nebula toward target
+    velocitiesRef.current = Array.from({ length: COUNT }, () => {
+      const dir = target.clone().sub(NEBULA_POS).normalize();
+      const spread = new THREE.Vector3(
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2
+      );
+      return dir.add(spread.multiplyScalar(0.3)).normalize().multiplyScalar(6 + Math.random() * 4);
+    });
+    // Start positions at nebula
+    for (let i = 0; i < COUNT; i++) {
+      positionsRef.current[i * 3] = NEBULA_POS.x + (Math.random() - 0.5) * 1.5;
+      positionsRef.current[i * 3 + 1] = NEBULA_POS.y + (Math.random() - 0.5) * 1.5;
+      positionsRef.current[i * 3 + 2] = NEBULA_POS.z + (Math.random() - 0.5) * 1.5;
+    }
+    lifeRef.current = 1.0;
+    activeRef.current = true;
+    if (pointsRef.current) {
+      (pointsRef.current.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+    }
+  }, [triggered]);
+
+  useFrame((_, delta) => {
+    if (!activeRef.current || !pointsRef.current) return;
+    lifeRef.current -= delta * 0.8;
+    if (lifeRef.current <= 0) { activeRef.current = false; return; }
+
+    const vel = velocitiesRef.current;
+    for (let i = 0; i < COUNT; i++) {
+      positionsRef.current[i * 3] += vel[i]?.x * delta ?? 0;
+      positionsRef.current[i * 3 + 1] += vel[i]?.y * delta ?? 0;
+      positionsRef.current[i * 3 + 2] += vel[i]?.z * delta ?? 0;
+    }
+    (pointsRef.current.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+    (pointsRef.current.material as THREE.PointsMaterial).opacity = lifeRef.current * 0.9;
+  });
+
+  if (!activeRef.current && lifeRef.current <= 0) return null;
+
+  return (
+    <points ref={pointsRef}>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          count={COUNT}
+          array={positionsRef.current}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <pointsMaterial color={color} size={0.18} transparent opacity={0} sizeAttenuation />
+    </points>
+  );
+}
+
 export function ConstellationScene({
   agents,
   onNodeClick,
@@ -2162,6 +2438,10 @@ export function ConstellationScene({
   godsEyeFilters,
   onGodsEyePinSelect,
   onCameraViewChange,
+  entityNodes = [],
+  entityRelationships = [],
+  signalBurst,
+  aegisPulse = false,
 }: ConstellationSceneProps) {
   const [cameraView, setCameraViewState] = useState<CameraView>("constellation");
   const setCameraView = useCallback((view: CameraView) => {
@@ -2358,6 +2638,41 @@ export function ConstellationScene({
             onUnhover={() => setHoveredAgent(null)}
           />
         ))}
+
+        {/* Entity nodes — outer orbit, octahedra colored by type/risk */}
+        {entityNodes.map((entity) => (
+          <EntityNode key={`entity-${entity.id}`} entity={entity} />
+        ))}
+
+        {/* Entity relationship lines */}
+        {entityNodes.length > 0 && entityRelationships.length > 0 && (
+          <EntityRelationshipLines entityNodes={entityNodes} relationships={entityRelationships} />
+        )}
+
+        {/* AEGIS pulse ring on new message */}
+        {(() => {
+          const aegis = visibleAgents.find((a) => a.callSign === "AEGIS-CMD");
+          const pos: [number, number, number] = (aegis?.position ?? [0, 0, 0]) as [number, number, number];
+          return <AegisPulseRing aegisPosition={pos} triggered={aegisPulse} />;
+        })()}
+
+        {/* Signal burst effect — particles fly from nebula to target agent */}
+        {(() => {
+          if (!signalBurst) return null;
+          const targetAgent = visibleAgents.find((a) => a.callSign === signalBurst.agentCallSign);
+          const targetPos = (targetAgent?.position ?? null) as [number, number, number] | null;
+          const burstColor =
+            signalBurst.severity === "critical" ? "#ef4444"
+            : signalBurst.severity === "high" ? "#f97316"
+            : "#22d3ee";
+          return (
+            <SignalBurstEffect
+              targetPosition={targetPos}
+              color={burstColor}
+              triggered={true}
+            />
+          );
+        })()}
 
         <OrbitControls
           ref={controlsRef}

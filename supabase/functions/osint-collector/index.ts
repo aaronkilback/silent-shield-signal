@@ -34,6 +34,7 @@
  *   monitor-entity-proximity — Entity proximity monitoring
  *   web-search               — OSINT web search
  *   manual-scan              — Manual scan trigger
+ *   discover-sources         — AI-powered autonomous source discovery
  */
 
 import { corsHeaders, handleCors, errorResponse } from "../_shared/supabase-client.ts";
@@ -68,6 +69,7 @@ const ACTION_TO_FUNCTION: Record<string, string> = {
   'manual-scan': 'manual-scan-trigger',
   'entity-scan': 'osint-entity-scan',
   'test-connectivity': 'test-osint-source-connectivity',
+  'discover-sources': 'autonomous-source-discovery',
 };
 
 Deno.serve(async (req) => {

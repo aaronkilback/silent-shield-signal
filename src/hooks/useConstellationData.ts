@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 export interface AgentCommLink {
@@ -439,6 +440,150 @@ export function useOperatorMessageActivity(enabled: boolean) {
     enabled,
     refetchInterval: 10000,
   });
+}
+
+// ── Entity + Relationship Data ──
+
+export interface ConstellationEntity {
+  id: string;
+  name: string;
+  type: string;
+  riskLevel: string | null;
+  threatScore: number | null;
+  description: string | null;
+  isActive: boolean;
+}
+
+export interface ConstellationEntityRelationship {
+  id: string;
+  entityAId: string;
+  entityBId: string;
+  relationshipType: string;
+  strength: number | null;
+}
+
+/** Fetch entities and their relationships for the constellation map */
+export function useConstellationEntities(enabled: boolean) {
+  return useQuery({
+    queryKey: ["constellation-entities"],
+    queryFn: async () => {
+      const [entitiesRes, relsRes] = await Promise.all([
+        supabase
+          .from("entities")
+          .select("id, name, type, risk_level, threat_score, description, is_active")
+          .eq("is_active", true)
+          .limit(60),
+        supabase
+          .from("entity_relationships")
+          .select("id, entity_a_id, entity_b_id, relationship_type, strength")
+          .limit(100),
+      ]);
+
+      const entities: ConstellationEntity[] = (entitiesRes.data || []).map((e) => ({
+        id: e.id,
+        name: e.name,
+        type: e.type,
+        riskLevel: e.risk_level,
+        threatScore: e.threat_score,
+        description: e.description,
+        isActive: e.is_active ?? true,
+      }));
+
+      const relationships: ConstellationEntityRelationship[] = (relsRes.data || []).map((r) => ({
+        id: r.id,
+        entityAId: r.entity_a_id,
+        entityBId: r.entity_b_id,
+        relationshipType: r.relationship_type,
+        strength: r.strength,
+      }));
+
+      return { entities, relationships };
+    },
+    enabled,
+    refetchInterval: 60000,
+  });
+}
+
+// ── Realtime Signal/Message hooks ──
+
+export interface SignalBurstEvent {
+  id: string;
+  signalType: string | null;
+  severity: string | null;
+  title: string | null;
+  sourceId: string | null;
+  createdAt: string;
+}
+
+export interface MessageBurstEvent {
+  id: string;
+  role: string | null;
+  content: string | null;
+  createdAt: string;
+}
+
+/** Subscribe to new signals via realtime; calls onNewSignal for each INSERT */
+export function useSignalRealtime(
+  enabled: boolean,
+  onNewSignal: (event: SignalBurstEvent) => void
+) {
+  const callbackRef = useRef(onNewSignal);
+  callbackRef.current = onNewSignal;
+
+  useEffect(() => {
+    if (!enabled) return;
+    const channel = supabase
+      .channel("constellation-signals-realtime")
+      .on(
+        "postgres_changes" as any,
+        { event: "INSERT", schema: "public", table: "signals" },
+        (payload: any) => {
+          const row = payload.new;
+          callbackRef.current({
+            id: row.id,
+            signalType: row.signal_type ?? null,
+            severity: row.severity ?? null,
+            title: row.title ?? null,
+            sourceId: row.source_id ?? null,
+            createdAt: row.created_at ?? new Date().toISOString(),
+          });
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [enabled]);
+}
+
+/** Subscribe to new AI assistant messages; calls onNewMessage for each INSERT */
+export function useMessageRealtime(
+  enabled: boolean,
+  onNewMessage: (event: MessageBurstEvent) => void
+) {
+  const callbackRef = useRef(onNewMessage);
+  callbackRef.current = onNewMessage;
+
+  useEffect(() => {
+    if (!enabled) return;
+    const channel = supabase
+      .channel("constellation-messages-realtime")
+      .on(
+        "postgres_changes" as any,
+        { event: "INSERT", schema: "public", table: "ai_assistant_messages" },
+        (payload: any) => {
+          const row = payload.new;
+          callbackRef.current({
+            id: row.id,
+            role: row.role ?? null,
+            content: row.content ?? null,
+            createdAt: row.created_at ?? new Date().toISOString(),
+          });
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [enabled]);
 }
 
 // ── Knowledge Growth Data ──

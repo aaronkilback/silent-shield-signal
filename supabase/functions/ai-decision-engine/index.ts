@@ -496,35 +496,133 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
         const selectInitialAgent = (signalData: any, decisionData: any): { agentCallSign: string; agentId: string; prompt: string } => {
           const text = (signalData.normalized_text || '').toLowerCase();
           const category = (signalData.category || '').toLowerCase();
-          const location = signalData.location || '';
-          
-          // Priority-based agent selection
-          if (location && (text.includes('location') || text.includes('area') || text.includes('site'))) {
-            return { 
-              agentCallSign: 'LOCUS-INTEL', 
-              agentId: '4fffd95a-c603-4f9d-857c-21de38e78747',
-              prompt: `Conduct location-based threat analysis for this ${decisionData.threat_level} severity incident. Focus on geographic patterns, regional threats, and proximity to client assets.`
+          const tags = (signalData.entity_tags || []).join(' ').toLowerCase();
+          const combined = `${text} ${category} ${tags}`;
+
+          // ── Cyber / technical threats ──────────────────────────────────────
+          if (category.includes('cyber') || category.includes('malware') || category.includes('ransomware') ||
+              category.includes('phishing') || category.includes('intrusion') || category.includes('data_exfil') ||
+              /\b(malware|ransomware|phishing|exploit|zero.?day|cve|vulnerability|breach|hacker|ddos|botnet)\b/.test(combined)) {
+            return {
+              agentCallSign: '0DAY',
+              agentId: 'b233fa1a-455e-4d93-b9d6-274a8e0a9d16',
+              prompt: `Conduct offensive security and cyber threat analysis for this ${decisionData.threat_level} incident. Identify TTPs, affected systems, CVEs, and recommend technical containment steps.`
             };
           }
-          if (category.includes('legal') || text.includes('lawsuit') || text.includes('regulation')) {
-            return { 
-              agentCallSign: 'LEX-MAGNA', 
+
+          // ── Social media / SOCMINT ─────────────────────────────────────────
+          if (category.includes('social') || category.includes('socmint') ||
+              /\b(instagram|twitter|facebook|telegram|tiktok|reddit|hashtag|viral|post|repost|thread|influencer)\b/.test(combined)) {
+            return {
+              agentCallSign: 'ECHO-WATCH',
+              agentId: 'eca2452b-7ea5-478e-ac34-fd103df7a754',
+              prompt: `Perform social media intelligence (SOCMINT) analysis for this ${decisionData.threat_level} incident. Assess narrative spread, influencer amplification, engagement metrics, and coordination indicators.`
+            };
+          }
+
+          // ── Financial crime / sanctions ────────────────────────────────────
+          if (category.includes('financial') || category.includes('finint') || category.includes('sanctions') ||
+              /\b(fraud|money.?laundering|sanctions|ofac|wire.?transfer|crypto|bitcoin|dark.?web|bribery|corruption)\b/.test(combined)) {
+            return {
+              agentCallSign: 'FININT',
+              agentId: '7651f918-49d8-4f0a-9ff7-6a0ab401396b',
+              prompt: `Conduct financial crime and sanctions intelligence analysis for this ${decisionData.threat_level} incident. Trace financial flows, identify sanctions exposure, and assess money laundering indicators.`
+            };
+          }
+
+          // ── Narcotics / drug trade ─────────────────────────────────────────
+          if (category.includes('narco') || category.includes('drug') ||
+              /\b(fentanyl|narco|cartel|drug.?trafficking|methamphetamine|cocaine|opioid|smuggling)\b/.test(combined)) {
+            return {
+              agentCallSign: 'NARCO-INTEL',
+              agentId: '471c17c4-75e7-4d52-989b-cd51d2e98ab0',
+              prompt: `Conduct narcotics and organized crime intelligence analysis for this ${decisionData.threat_level} incident. Map trafficking networks, identify cartel connections, and assess regional drug trade implications.`
+            };
+          }
+
+          // ── Counterterrorism / energy sector threats ───────────────────────
+          if (category.includes('terrorism') || category.includes('counterterrorism') ||
+              /\b(terrorism|extremist|radicali[sz]ation|jihad|isis|al.?qaeda|pipeline.+attack|sabotage.+infrastructure|lng.+attack)\b/.test(combined)) {
+            return {
+              agentCallSign: 'VERIDIAN-TANGO',
+              agentId: 'e154cece-b070-40ce-ac38-cad235c71cac',
+              prompt: `Conduct counterterrorism and energy infrastructure threat analysis for this ${decisionData.threat_level} incident. Assess extremist indicators, attack vectors, and critical infrastructure vulnerability.`
+            };
+          }
+
+          // ── Supply chain risk ──────────────────────────────────────────────
+          if (category.includes('supply_chain') || category.includes('vendor') ||
+              /\b(supply.?chain|third.?party|vendor|contractor|logistics|procurement|counterfeit)\b/.test(combined)) {
+            return {
+              agentCallSign: 'CHAIN-WATCH',
+              agentId: 'f9a7dc0c-2e97-467f-83dd-dac8c598480f',
+              prompt: `Conduct supply chain risk intelligence analysis for this ${decisionData.threat_level} incident. Assess vendor exposure, counterfeit risks, and third-party vulnerability in the supply chain.`
+            };
+          }
+
+          // ── Insider threat ─────────────────────────────────────────────────
+          if (category.includes('insider') ||
+              /\b(insider.?threat|disgruntled|employee.+(theft|leak|espionage)|data.+exfil.+employee|unauthorized.+access)\b/.test(combined)) {
+            return {
+              agentCallSign: 'INSIDE-EYE',
+              agentId: 'de3f1f25-a8d1-421e-a882-746f869e3b6a',
+              prompt: `Conduct insider threat analysis for this ${decisionData.threat_level} incident. Identify behavioral indicators, access anomalies, and potential data exfiltration pathways.`
+            };
+          }
+
+          // ── Legal / regulatory ─────────────────────────────────────────────
+          if (category.includes('legal') || category.includes('regulatory') || category.includes('compliance') ||
+              /\b(lawsuit|litigation|regulation|compliance|fine|penalty|court|injunction|tribunal|investigation.+government)\b/.test(combined)) {
+            return {
+              agentCallSign: 'LEX-MAGNA',
               agentId: 'd0d43def-fec5-4ae5-a32c-34980097b1c1',
-              prompt: `Analyze legal and regulatory implications for this incident. Identify applicable laws, potential liability, and compliance requirements.`
+              prompt: `Analyze legal and regulatory implications for this ${decisionData.threat_level} incident. Identify applicable laws, potential liability, compliance requirements, and recommended legal actions.`
             };
           }
-          if (category.includes('geopolitical') || text.includes('government') || text.includes('political')) {
-            return { 
-              agentCallSign: 'GLOBE-SAGE', 
+
+          // ── Geopolitical / state actor ─────────────────────────────────────
+          if (category.includes('geopolitical') || category.includes('political') ||
+              /\b(government|state.?actor|nation.?state|election|foreign.+interference|espionage|diplomatic|geopolit)\b/.test(combined)) {
+            return {
+              agentCallSign: 'GLOBE-SAGE',
               agentId: '664916cb-9395-47e1-b581-70dccad01f7c',
-              prompt: `Provide geopolitical analysis for this incident. Assess strategic implications, potential state actor involvement, and sector-wide impacts.`
+              prompt: `Provide geopolitical intelligence analysis for this ${decisionData.threat_level} incident. Assess strategic implications, state actor involvement, diplomatic context, and sector-wide geopolitical impacts.`
             };
           }
-          // Default to pattern analysis
-          return { 
-            agentCallSign: 'BIRD-DOG', 
+
+          // ── Physical security / theft / access ─────────────────────────────
+          if (category.includes('physical') || category.includes('theft') || category.includes('trespass') ||
+              /\b(copper.?theft|break.?and.?enter|vandalism|trespass|intrusion|access.?control|camera|surveillance.+physical|perimeter)\b/.test(combined)) {
+            return {
+              agentCallSign: 'SENTINEL-OPS',
+              agentId: '93369424-b632-4bfd-84e0-8528ab5ead4e',
+              prompt: `Conduct physical security analysis for this ${decisionData.threat_level} incident. Assess access control gaps, physical vulnerability indicators, and recommend hardening measures.`
+            };
+          }
+
+          // ── Location-based / geographic ────────────────────────────────────
+          if (signalData.location && signalData.location.length > 2) {
+            return {
+              agentCallSign: 'LOCUS-INTEL',
+              agentId: '4fffd95a-c603-4f9d-857c-21de38e78747',
+              prompt: `Conduct location-based threat analysis for this ${decisionData.threat_level} incident in ${signalData.location}. Map geographic patterns, regional threat actors, proximity to client assets, and terrain factors.`
+            };
+          }
+
+          // ── P1/P2 high-stakes: route to BRAVO-1 (major case management) ───
+          if (decisionData.incident_priority === 'p1' || decisionData.incident_priority === 'p2') {
+            return {
+              agentCallSign: 'BRAVO-1',
+              agentId: '07dada1e-a4e0-4e80-8176-01633cedc2de',
+              prompt: `Lead major case management for this ${decisionData.threat_level} priority incident. Coordinate the investigation response, assign specialist agents, and maintain incident command structure.`
+            };
+          }
+
+          // ── Default: MATRIX (pattern detection & behavioral analysis) ──────
+          return {
+            agentCallSign: 'MATRIX',
             agentId: 'b304c547-ab87-41a6-805c-e65330ee0f05',
-            prompt: `Conduct pattern analysis for this ${decisionData.threat_level} severity incident. Identify behavioral indicators, anomalies, and potential coordinated activity.`
+            prompt: `Conduct pattern detection and behavioral analysis for this ${decisionData.threat_level} incident. Identify behavioral indicators, anomalies, emerging patterns, and potential coordinated threat activity.`
           };
         };
 
@@ -581,6 +679,13 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
         if (incident) {
           incident_id = incident.id;
           console.log(`Incident created successfully: ${incident_id}`);
+
+          // Close the predictive feedback loop: mark any prior prediction for this signal as verified
+          await supabase
+            .from('predictive_incident_scores')
+            .update({ outcome_verified: true, actual_escalated: true })
+            .eq('signal_id', signal.id)
+            .eq('outcome_verified', false);
         
         // Update automation metrics - increment incidents_created
         const today = new Date().toISOString().split('T')[0];
@@ -824,6 +929,15 @@ Generated: ${new Date().toISOString()}
       console.log(`[AI-Decision] Storyline: ${storylineResult.action} → ${storylineResult.storylineTitle || 'N/A'} (similarity: ${storylineResult.similarity})`);
     } catch (slErr) {
       console.warn('[AI-Decision] Non-fatal storyline classification error:', slErr);
+    }
+
+    // Mark predictions that did NOT escalate as verified (actual_escalated: false)
+    if (!decision.should_create_incident) {
+      await supabase
+        .from('predictive_incident_scores')
+        .update({ outcome_verified: true, actual_escalated: false })
+        .eq('signal_id', signal.id)
+        .eq('outcome_verified', false);
     }
 
     return new Response(

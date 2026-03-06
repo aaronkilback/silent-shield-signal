@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { Switch } from "@/components/ui/switch";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
@@ -7,13 +7,20 @@ import { MinimalHeader } from "@/components/MinimalHeader";
 import { Loader2 } from "lucide-react";
 import { ConstellationScene, type AgentNode } from "@/components/neural-constellation/ConstellationScene";
 import { FortressNodeDetail } from "@/components/neural-constellation/FortressNodeDetail";
-import { FortificationLegend } from "@/components/neural-constellation/FortificationLegend";
 import { FortressStatusBar } from "@/components/neural-constellation/FortressStatusBar";
+import { FortressHUD } from "@/components/neural-constellation/FortressHUD";
 import { DraggablePanel } from "@/components/neural-constellation/DraggablePanel";
 import { GodsEyeOverlay } from "@/components/neural-constellation/GodsEyeOverlay";
+import { AgentListPanel } from "@/components/neural-constellation/AgentListPanel";
+import { ActivityFeedPanel } from "@/components/neural-constellation/ActivityFeedPanel";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMetrics, useKnowledgeGraphEdges, useOperatorDevices, useOperatorMessageActivity, useKnowledgeGrowthData } from "@/hooks/useConstellationData";
+import {
+  useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMetrics,
+  useKnowledgeGraphEdges, useOperatorDevices, useOperatorMessageActivity, useKnowledgeGrowthData,
+  useConstellationEntities, useSignalRealtime, useMessageRealtime,
+  type SignalBurstEvent, type MessageBurstEvent,
+} from "@/hooks/useConstellationData";
 import { useFortressHealth } from "@/hooks/useFortressHealth";
 import { useSystemHealth } from "@/hooks/useSystemHealth";
 import { useGodsEyeData, type GlobeDataType, type GodsEyePin } from "@/hooks/useGodsEyeData";
@@ -80,6 +87,30 @@ function assignPositions(agents: any[]): AgentNode[] {
   return nodes;
 }
 
+/** Assign 3D positions to entities in outer orbit rings around the constellation */
+function assignEntityPositions(
+  entities: { id: string; name: string; type: string; riskLevel: string | null; threatScore: number | null; description: string | null; isActive: boolean }[]
+) {
+  return entities.map((entity, i) => {
+    // Spread across two outer rings (radius 18-26) with vertical variation
+    const ringIndex = i % 2; // alternate between inner (18) and outer (23) entity ring
+    const radius = ringIndex === 0 ? 18 : 23;
+    const totalInRing = entities.filter((_, j) => j % 2 === ringIndex).length;
+    const indexInRing = Math.floor(i / 2);
+    const angle = (indexInRing / Math.max(totalInRing, 1)) * Math.PI * 2 + ringIndex * 0.5;
+    const yVariation = Math.sin(angle * 2.3 + i) * 3;
+    const zVariation = Math.cos(angle * 1.7 + i * 0.4) * 4;
+    return {
+      ...entity,
+      position: [
+        Math.cos(angle) * radius,
+        yVariation,
+        Math.sin(angle) * radius * 0.7 + zVariation,
+      ] as [number, number, number],
+    };
+  });
+}
+
 const NeuralConstellation = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -91,6 +122,12 @@ const NeuralConstellation = () => {
     new Set(['entity', 'signal', 'incident', 'cluster', 'travel'])
   );
   const [selectedGodsEyePin, setSelectedGodsEyePin] = useState<GodsEyePin | null>(null);
+  // Realtime state
+  const [latestSignal, setLatestSignal] = useState<SignalBurstEvent | null>(null);
+  const [latestMessage, setLatestMessage] = useState<MessageBurstEvent | null>(null);
+  const [signalBurst, setSignalBurst] = useState<{ agentCallSign: string; severity: string } | null>(null);
+  const [aegisPulse, setAegisPulse] = useState(false);
+  const aegisPulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const toggleGodsEyeFilter = useCallback((type: GlobeDataType) => {
     setGodsEyeFilters(prev => {
@@ -161,10 +198,39 @@ const NeuralConstellation = () => {
   // God's Eye data — unified intelligence layers for the globe
   const { data: godsEyeData } = useGodsEyeData(!!user);
 
+  // Entity layer
+  const { data: entityData } = useConstellationEntities(!!user);
+
+  // Realtime subscriptions
+  useSignalRealtime(!!user, (event) => {
+    setLatestSignal(event);
+    // Route burst to AEGIS-CMD by default; in future, could map source_id -> agent
+    setSignalBurst({ agentCallSign: "AEGIS-CMD", severity: event.severity ?? "low" });
+    setTimeout(() => setSignalBurst(null), 2000);
+  });
+
+  useMessageRealtime(!!user, (event) => {
+    setLatestMessage(event);
+    setAegisPulse(true);
+    if (aegisPulseTimeoutRef.current) clearTimeout(aegisPulseTimeoutRef.current);
+    aegisPulseTimeoutRef.current = setTimeout(() => setAegisPulse(false), 100);
+  });
+
+  useEffect(() => {
+    return () => {
+      if (aegisPulseTimeoutRef.current) clearTimeout(aegisPulseTimeoutRef.current);
+    };
+  }, []);
+
   const agentNodes = useMemo(() => {
     if (!agents) return [];
     return assignPositions(agents);
   }, [agents]);
+
+  const entityPositionedNodes = useMemo(() => {
+    if (!entityData?.entities) return [];
+    return assignEntityPositions(entityData.entities);
+  }, [entityData?.entities]);
 
   const connectionCount = useMemo(() => {
     const realLinks = commLinks.length;
@@ -196,7 +262,7 @@ const NeuralConstellation = () => {
         <div className="absolute left-1/2 -translate-x-1/2 z-10 text-center pointer-events-none" style={{ top: "48px" }}>
           <h1 className={`text-lg font-bold tracking-[0.25em] uppercase transition-colors duration-500 ${
             isExecutiveMode ? "text-amber-300" : "text-foreground"
-          }`}>
+          }`} style={{ fontFamily: "Orbitron, sans-serif" }}>
             {isExecutiveMode ? "Command Network" : "Neural Constellation Map"}
           </h1>
           <p className={`text-[10px] tracking-wider mt-0.5 transition-colors duration-500 ${
@@ -209,11 +275,17 @@ const NeuralConstellation = () => {
           </p>
         </div>
 
-        {/* Battle toggle */}
-        <div className="absolute top-14 left-4 z-20">
+        {/* Scene controls — battle sim + view mode toggles */}
+        <div className="absolute top-14 left-4 z-20 flex flex-col gap-1.5">
           <label className="flex items-center gap-2 bg-card/70 backdrop-blur-xl border border-border rounded px-3 py-2 cursor-pointer">
             <Switch checked={showBattle} onCheckedChange={setShowBattle} />
             <span className="text-[10px] tracking-widest uppercase text-muted-foreground">Battle Sim</span>
+          </label>
+          <label className="flex items-center gap-2 bg-card/70 backdrop-blur-xl border border-border rounded px-3 py-2 cursor-pointer">
+            <Switch checked={isExecutiveMode} onCheckedChange={setIsExecutiveMode} />
+            <span className="text-[10px] tracking-widest uppercase text-muted-foreground">
+              {isExecutiveMode ? "CMD View" : "All Nodes"}
+            </span>
           </label>
         </div>
 
@@ -239,6 +311,10 @@ const NeuralConstellation = () => {
             godsEyeFilters={godsEyeFilters}
             onGodsEyePinSelect={setSelectedGodsEyePin}
             onCameraViewChange={setCameraView}
+            entityNodes={entityPositionedNodes}
+            entityRelationships={entityData?.relationships || []}
+            signalBurst={signalBurst}
+            aegisPulse={aegisPulse}
           />
         </div>
 
@@ -277,6 +353,11 @@ const NeuralConstellation = () => {
             </div>
             <div className="w-px h-4 bg-border" />
             <div className="text-[10px] tracking-widest uppercase">
+              <span className="text-muted-foreground">Entities: </span>
+              <span className="font-bold" style={{ color: "#f59e0b" }}>{entityPositionedNodes.length}</span>
+            </div>
+            <div className="w-px h-4 bg-border" />
+            <div className="text-[10px] tracking-widest uppercase">
               <span className="text-muted-foreground">Knowledge: </span>
               <span className="font-bold" style={{ color: "#a855f7" }}>{knowledgeGrowth?.totalEntries || 0}</span>
               {(knowledgeGrowth?.todayEntries || 0) > 0 && (
@@ -286,17 +367,40 @@ const NeuralConstellation = () => {
           </div>
         </DraggablePanel>
 
-        {/* Left Panel — Fortification Legend (replaces old ConstellationLegend) */}
-        <FortificationLegend health={fortressHealth} isLoading={fortressLoading} />
-
-        {/* Right Panel — Node detail on click */}
-        <FortressNodeDetail
-          agent={selectedAgent}
-          onClose={() => setSelectedAgent(null)}
+        {/* Left Panel — Live agent list */}
+        <AgentListPanel
+          agents={agentNodes}
           activityMetrics={activityMetrics}
-          scanPulses={scanPulses}
-          fortressHealth={fortressHealth}
+          onSelectAgent={(callSign) => {
+            const node = agentNodes.find((a) => a.callSign === callSign);
+            if (node) setSelectedAgent(node);
+          }}
         />
+
+        {/* Right Panel — activity feed when no node selected; node detail when agent clicked */}
+        {selectedAgent ? (
+          <FortressNodeDetail
+            agent={selectedAgent}
+            onClose={() => setSelectedAgent(null)}
+            activityMetrics={activityMetrics}
+            scanPulses={scanPulses}
+            fortressHealth={fortressHealth}
+          />
+        ) : (
+          <ActivityFeedPanel
+            latestSignal={latestSignal}
+            latestMessage={latestMessage}
+            recentScans={scanPulses.map((s) => ({
+              agentCallSign: s.agentCallSign,
+              scanType: s.scanType,
+              alertsGenerated: s.alertsGenerated,
+              createdAt: s.createdAt,
+            }))}
+          />
+        )}
+
+        {/* Fortress HUD — loop health drilldown, top right */}
+        <FortressHUD health={fortressHealth} isLoading={fortressLoading} />
       </main>
     </div>
   );

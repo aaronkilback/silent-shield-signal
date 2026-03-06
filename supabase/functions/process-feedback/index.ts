@@ -154,6 +154,53 @@ async function handleSignalFeedback(supabase: ReturnType<typeof createServiceCli
   if (Object.keys(updates).length > 0) {
     await supabase.from('signals').update(updates).eq('id', objectId);
   }
+
+  // Update source_reliability_metrics so scoreSignalRelevance Phase 2 has data
+  if (feedback === 'relevant' || feedback === 'irrelevant') {
+    try {
+      const { data: signal } = await supabase
+        .from('signals')
+        .select('source_id')
+        .eq('id', objectId)
+        .single();
+
+      if (signal?.source_id) {
+        const { data: src } = await supabase
+          .from('sources')
+          .select('name')
+          .eq('id', signal.source_id)
+          .single();
+
+        if (src?.name) {
+          const isAccurate = feedback === 'relevant';
+          // Upsert: increment the relevant counter and recompute reliability_score
+          const { data: existing } = await supabase
+            .from('source_reliability_metrics')
+            .select('total_signals, accurate_signals, false_positives')
+            .eq('source_name', src.name)
+            .maybeSingle();
+
+          const total = (existing?.total_signals ?? 0) + 1;
+          const accurate = (existing?.accurate_signals ?? 0) + (isAccurate ? 1 : 0);
+          const fp = (existing?.false_positives ?? 0) + (isAccurate ? 0 : 1);
+          const reliability = total > 0 ? accurate / total : 0.5;
+
+          await supabase.from('source_reliability_metrics').upsert({
+            source_name: src.name,
+            total_signals: total,
+            accurate_signals: accurate,
+            false_positives: fp,
+            reliability_score: reliability,
+            last_updated: new Date().toISOString(),
+          }, { onConflict: 'source_name' });
+
+          console.log(`[SourceReliability] Updated ${src.name}: reliability=${reliability.toFixed(2)} (${accurate}/${total})`);
+        }
+      }
+    } catch (err) {
+      console.error('[SourceReliability] Error updating source metrics:', err);
+    }
+  }
 }
 
 async function handleIncidentFeedback(supabase: ReturnType<typeof createServiceClient>, objectId: string, feedback: string) {
@@ -162,6 +209,29 @@ async function handleIncidentFeedback(supabase: ReturnType<typeof createServiceC
       status: 'resolved',
       resolved_at: new Date().toISOString(),
     }).eq('id', objectId);
+  }
+
+  // Record incident outcome so calibrate_analyst_accuracy() has data to work with
+  try {
+    const isFalsePositive = feedback === 'irrelevant' || feedback === 'false_positive';
+    const wasAccurate = feedback === 'relevant' || feedback === 'confirmed';
+    const outcomeType = feedback === 'irrelevant' ? 'false_alarm'
+                      : feedback === 'relevant'   ? 'mitigated'
+                      : feedback === 'confirmed'  ? 'contained'
+                      : 'dismissed';
+
+    await supabase.from('incident_outcomes').insert({
+      incident_id: objectId,
+      outcome_type: outcomeType,
+      was_accurate: wasAccurate,
+      false_positive: isFalsePositive,
+    });
+
+    // Recalibrate analyst accuracy weights now that we have new outcome data
+    await supabase.rpc('calibrate_analyst_accuracy');
+    console.log(`[FeedbackLoop] Recorded incident outcome (${outcomeType}) and recalibrated analyst accuracy`);
+  } catch (err) {
+    console.error('[FeedbackLoop] Error recording incident outcome:', err);
   }
 }
 

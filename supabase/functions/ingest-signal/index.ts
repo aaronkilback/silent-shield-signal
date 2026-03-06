@@ -871,7 +871,8 @@ Is this signal actionable intelligence for this specific client?`
       supabase,
       classification.normalized_text || signalText,
       classification.category || null,
-      severityNum
+      severityNum,
+      source_key || null  // Pass source key so Phase 2 (source reliability) activates
     );
     
     console.log(`[Relevance] Score: ${relevanceResult.score.toFixed(2)}, Recommendation: ${relevanceResult.recommendation}, Patterns: ${relevanceResult.matchedPatterns.join(', ')}`);
@@ -932,6 +933,27 @@ Is this signal actionable intelligence for this specific client?`
       }
     }
 
+    // Compute severity_score (0-100) from text severity + relevance adjustment
+    const severityScore = (() => {
+      const base = classification.severity === 'critical' ? 90
+                 : classification.severity === 'high'     ? 70
+                 : classification.severity === 'medium'   ? 40
+                 : 20; // low
+      const adjustment = Math.round((relevanceResult.score - 0.5) * 20);
+      return Math.max(0, Math.min(100, base + adjustment));
+    })();
+
+    // Compute quality_score (0-1) from metadata completeness
+    const qualityScore = (() => {
+      let q = 0;
+      if (signalRaw?.url || signalRaw?.source_url || signalRaw?.link) q += 0.25;
+      if ((classification.entity_tags?.length ?? 0) > 0) q += 0.25;
+      if (classification.location) q += 0.25;
+      if (classification.category) q += 0.125;
+      if ((classification.normalized_text?.length ?? 0) > 50) q += 0.125;
+      return q;
+    })();
+
     // Insert signal WITH content_hash and title from the start
     // Include match metadata for audit trail and potential re-assignment
     const { data: signal, error: insertError } = await supabase
@@ -954,6 +976,8 @@ Is this signal actionable intelligence for this specific client?`
         location: classification.location,
         category: classification.category,
         severity: classification.severity,
+        severity_score: severityScore,
+        quality_score: qualityScore,
         confidence: classification.confidence,
         relevance_score: relevanceResult.score,
         status: signalStatus,
