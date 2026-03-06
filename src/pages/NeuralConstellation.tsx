@@ -197,6 +197,17 @@ const NeuralConstellation = () => {
   const { data: commLinks = [] } = useAgentCommLinks(!!user);
   const { data: activeDebates = [] } = useActiveDebates(deferredEnabled);
   const { data: scanPulses = [] } = useScanPulses(!!user);
+
+  // Stable shape for ActivityFeedPanel — avoids new array ref every render
+  const recentScans = useMemo(
+    () => scanPulses.map((s) => ({
+      agentCallSign: s.agentCallSign,
+      scanType: s.scanType,
+      alertsGenerated: s.alertsGenerated,
+      createdAt: s.createdAt,
+    })),
+    [scanPulses]
+  );
   const { data: activityMetrics = [] } = useAgentActivityMetrics(deferredEnabled);
   const { data: knowledgeGraphEdges = [] } = useKnowledgeGraphEdges(deferredEnabled);
   const { data: operatorDevices = [] } = useOperatorDevices(deferredEnabled);
@@ -411,12 +422,7 @@ const NeuralConstellation = () => {
           <ActivityFeedPanel
             latestSignal={latestSignal}
             latestMessage={latestMessage}
-            recentScans={scanPulses.map((s) => ({
-              agentCallSign: s.agentCallSign,
-              scanType: s.scanType,
-              alertsGenerated: s.alertsGenerated,
-              createdAt: s.createdAt,
-            }))}
+            recentScans={recentScans}
           />
         )}
 

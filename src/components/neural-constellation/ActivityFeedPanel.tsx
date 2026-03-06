@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Activity, Radio, Cpu, AlertTriangle, GripHorizontal } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { DraggablePanel } from "./DraggablePanel";
 import type { SignalBurstEvent, MessageBurstEvent } from "@/hooks/useConstellationData";
 
@@ -16,7 +18,7 @@ interface FeedItem {
 interface ActivityFeedPanelProps {
   latestSignal: SignalBurstEvent | null;
   latestMessage: MessageBurstEvent | null;
-  /** Recent scan pulses to seed the feed */
+  /** Recent scan pulses to show in feed */
   recentScans?: { agentCallSign: string; scanType: string; alertsGenerated: number; createdAt: string }[];
   visible?: boolean;
 }
@@ -38,10 +40,38 @@ function formatAgo(ts: string) {
 }
 
 export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [], visible = true }: ActivityFeedPanelProps) {
-  const [items, setItems] = useState<FeedItem[]>(() => {
-    // Seed with recent scans
-    return recentScans.slice(0, 8).map((s) => ({
-      id: `scan-${s.createdAt}`,
+  // Self-contained signal query — doesn't depend on parent timing
+  const { data: signals = [] } = useQuery({
+    queryKey: ["activity-feed-signals"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("signals")
+        .select("id, signal_type, title, severity, created_at")
+        .order("created_at", { ascending: false })
+        .limit(30);
+      if (error) throw error;
+      return data || [];
+    },
+    refetchInterval: 30_000,
+  });
+
+  // Only new realtime events live in state
+  const [realtimeItems, setRealtimeItems] = useState<FeedItem[]>([]);
+
+  // Historical seed — always derived from latest query data
+  const seedItems = useMemo<FeedItem[]>(() => {
+    const signalItems: FeedItem[] = signals.slice(0, 20).map((s: any) => ({
+      id: `sig-${s.id}`,
+      type: "signal" as const,
+      icon: (s.severity === "critical" || s.severity === "high" ? AlertTriangle : Radio) as typeof Activity,
+      color: SEV_COLOR[s.severity ?? "low"] ?? "#22d3ee",
+      label: s.signal_type ?? "Signal",
+      detail: s.title ?? "Signal ingested",
+      timestamp: s.created_at,
+    }));
+
+    const scanItems: FeedItem[] = recentScans.slice(0, 8).map((s) => ({
+      id: `scan-${s.createdAt}-${s.agentCallSign}`,
       type: "scan" as const,
       icon: Cpu,
       color: "#6366f1",
@@ -49,9 +79,20 @@ export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [
       detail: `${s.scanType} · ${s.alertsGenerated} alerts`,
       timestamp: s.createdAt,
     }));
-  });
 
-  // Ingest new signals
+    return [...signalItems, ...scanItems]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 20);
+  }, [signals, recentScans]);
+
+  // Combined: realtime first, then historical seed (deduplicated)
+  const items = useMemo(() => {
+    const realtimeIds = new Set(realtimeItems.map((i) => i.id));
+    const deduped = seedItems.filter((i) => !realtimeIds.has(i.id));
+    return [...realtimeItems, ...deduped].slice(0, 40);
+  }, [realtimeItems, seedItems]);
+
+  // Ingest new signals via realtime
   useEffect(() => {
     if (!latestSignal) return;
     const item: FeedItem = {
@@ -63,13 +104,13 @@ export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [
       detail: latestSignal.title ?? "New signal ingested",
       timestamp: latestSignal.createdAt,
     };
-    setItems((prev) => [item, ...prev].slice(0, 40));
+    setRealtimeItems((prev) => [item, ...prev].slice(0, 40));
   }, [latestSignal]);
 
-  // Ingest new messages
+  // Ingest new AI messages via realtime
   useEffect(() => {
     if (!latestMessage) return;
-    if (latestMessage.role === "user") return; // only show AI responses
+    if (latestMessage.role === "user") return;
     const item: FeedItem = {
       id: `msg-${latestMessage.id}`,
       type: "message",
@@ -79,7 +120,7 @@ export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [
       detail: (latestMessage.content ?? "").slice(0, 60) + ((latestMessage.content ?? "").length > 60 ? "…" : ""),
       timestamp: latestMessage.createdAt,
     };
-    setItems((prev) => [item, ...prev].slice(0, 40));
+    setRealtimeItems((prev) => [item, ...prev].slice(0, 40));
   }, [latestMessage]);
 
   if (!visible) return null;
