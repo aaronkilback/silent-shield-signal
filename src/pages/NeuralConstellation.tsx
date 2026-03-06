@@ -1,11 +1,14 @@
-import { useState, useMemo, useCallback, useRef } from "react";
+import { useState, useMemo, useCallback, useRef, lazy, Suspense } from "react";
 import { Switch } from "@/components/ui/switch";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useEffect } from "react";
 import { MinimalHeader } from "@/components/MinimalHeader";
 import { Loader2 } from "lucide-react";
-import { ConstellationScene, type AgentNode } from "@/components/neural-constellation/ConstellationScene";
+import type { AgentNode } from "@/components/neural-constellation/ConstellationScene";
+const ConstellationScene = lazy(() =>
+  import("@/components/neural-constellation/ConstellationScene").then((m) => ({ default: m.ConstellationScene }))
+);
 import { FortressNodeDetail } from "@/components/neural-constellation/FortressNodeDetail";
 import { FortressStatusBar } from "@/components/neural-constellation/FortressStatusBar";
 import { FortressHUD } from "@/components/neural-constellation/FortressHUD";
@@ -116,7 +119,7 @@ const NeuralConstellation = () => {
   const navigate = useNavigate();
   const [selectedAgent, setSelectedAgent] = useState<AgentNode | null>(null);
   const [isExecutiveMode, setIsExecutiveMode] = useState(true);
-  const [showBattle, setShowBattle] = useState(true);
+  const [showBattle, setShowBattle] = useState(false);
   const [cameraView, setCameraView] = useState<string>("constellation");
   const [godsEyeFilters, setGodsEyeFilters] = useState<Set<GlobeDataType>>(
     new Set(['entity', 'signal', 'incident', 'cluster', 'travel'])
@@ -183,14 +186,21 @@ const NeuralConstellation = () => {
     enabled: !!user,
   });
 
-  // Real data hooks
+  // Real data hooks — stagger loading to avoid hammering Supabase on mount
+  const [deferredEnabled, setDeferredEnabled] = useState(false);
+  useEffect(() => {
+    if (!user) return;
+    const t = setTimeout(() => setDeferredEnabled(true), 1500);
+    return () => clearTimeout(t);
+  }, [!!user]);
+
   const { data: commLinks = [] } = useAgentCommLinks(!!user);
-  const { data: activeDebates = [] } = useActiveDebates(!!user);
+  const { data: activeDebates = [] } = useActiveDebates(deferredEnabled);
   const { data: scanPulses = [] } = useScanPulses(!!user);
-  const { data: activityMetrics = [] } = useAgentActivityMetrics(!!user);
-  const { data: knowledgeGraphEdges = [] } = useKnowledgeGraphEdges(!!user);
-  const { data: operatorDevices = [] } = useOperatorDevices(!!user);
-  const { data: operatorMessageActivity } = useOperatorMessageActivity(!!user);
+  const { data: activityMetrics = [] } = useAgentActivityMetrics(deferredEnabled);
+  const { data: knowledgeGraphEdges = [] } = useKnowledgeGraphEdges(deferredEnabled);
+  const { data: operatorDevices = [] } = useOperatorDevices(deferredEnabled);
+  const { data: operatorMessageActivity } = useOperatorMessageActivity(deferredEnabled);
   const { data: knowledgeGrowth } = useKnowledgeGrowthData(!!user);
   const { data: fortressHealth, isLoading: fortressLoading } = useFortressHealth(!!user);
   const { data: systemHealth } = useSystemHealth(!!user);
@@ -289,8 +299,18 @@ const NeuralConstellation = () => {
           </label>
         </div>
 
-        {/* 3D Scene */}
+        {/* 3D Scene — lazy loaded so it doesn't block the initial React render */}
         <div className="absolute inset-0">
+          <Suspense fallback={
+            <div className="w-full h-full flex items-center justify-center bg-[#020408]">
+              <div className="text-center">
+                <Loader2 className="w-8 h-8 animate-spin text-cyan-400 mx-auto mb-3" />
+                <div className="text-[11px] tracking-[0.3em] uppercase text-cyan-400/60" style={{ fontFamily: "Orbitron, sans-serif" }}>
+                  Initializing Constellation
+                </div>
+              </div>
+            </div>
+          }>
           <ConstellationScene
             agents={agentNodes}
             onNodeClick={setSelectedAgent}
@@ -316,6 +336,7 @@ const NeuralConstellation = () => {
             signalBurst={signalBurst}
             aegisPulse={aegisPulse}
           />
+          </Suspense>
         </div>
 
         {/* God's Eye Overlay — visible when Earth camera is active */}

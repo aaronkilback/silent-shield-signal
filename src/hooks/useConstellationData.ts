@@ -472,11 +472,12 @@ export function useConstellationEntities(enabled: boolean) {
           .from("entities")
           .select("id, name, type, risk_level, threat_score, description, is_active")
           .eq("is_active", true)
-          .limit(60),
+          .order("threat_score", { ascending: false })
+          .limit(30),
         supabase
           .from("entity_relationships")
           .select("id, entity_a_id, entity_b_id, relationship_type, strength")
-          .limit(100),
+          .limit(50),
       ]);
 
       const entities: ConstellationEntity[] = (entitiesRes.data || []).map((e) => ({

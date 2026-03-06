@@ -568,7 +568,7 @@ function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, o
         <meshBasicMaterial color={isInDebate ? "#f59e0b" : color} transparent opacity={0.15} />
       </mesh>
       <mesh ref={meshRef}>
-        <sphereGeometry args={[size, 32, 32]} />
+        <sphereGeometry args={[size, agent.tier === "primary" ? 20 : 12, agent.tier === "primary" ? 20 : 12]} />
         <meshStandardMaterial
           color={color}
           emissive={emissiveColor}
@@ -577,24 +577,15 @@ function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, o
           metalness={0.8}
         />
       </mesh>
-      <pointLight
-        color={isInDebate ? "#f59e0b" : agent.color}
-        intensity={isInDebate ? 2.0 : (agent.tier === "primary" ? 1.2 : agent.tier === "secondary" ? 0.5 : 0.2) + activityScore * 1.0}
-        distance={isInDebate ? 12 : (agent.tier === "primary" ? 10 : agent.tier === "secondary" ? 6 : 3) + activityScore * 4}
-      />
-      {/* Tier label */}
-      <Html center distanceFactor={22} style={{ pointerEvents: "none" }}>
-        <div className="text-center" style={{ transform: "translateY(22px)" }}>
-          <div className="text-[9px] font-bold tracking-[0.15em] uppercase" style={{
-            color: agent.color,
-            textShadow: `0 0 8px ${agent.color}`,
-            opacity: 0.85,
-          }}>
-            {agent.callSign}
-          </div>
-        </div>
-      </Html>
-      {/* Hover tooltip */}
+      {/* pointLight only on primary/debating agents — too expensive for all 28+ nodes */}
+      {(agent.tier === "primary" || isInDebate) && (
+        <pointLight
+          color={isInDebate ? "#f59e0b" : agent.color}
+          intensity={isInDebate ? 2.0 : 0.8 + activityScore * 0.6}
+          distance={isInDebate ? 12 : 8}
+        />
+      )}
+      {/* Label + hover tooltip — only rendered on hover to reduce Html DOM overhead */}
       {hovered && (
         <Html center distanceFactor={18} style={{ pointerEvents: "none" }}>
           <div className="bg-card/95 backdrop-blur-xl border border-border rounded-lg px-3 py-2 min-w-[160px] shadow-2xl" style={{ transform: "translateY(-40px)" }}>
@@ -2225,7 +2216,6 @@ function EntityNode({
           metalness={0.7}
         />
       </mesh>
-      <pointLight color={color} intensity={isThreat ? 0.8 : 0.3} distance={3} />
       {hovered && (
         <Html distanceFactor={18} style={{ pointerEvents: "none" }}>
           <div
