@@ -1,7 +1,8 @@
 import { useRef, useMemo, useCallback, useState, useEffect, forwardRef, useImperativeHandle } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Line, Html, useTexture } from "@react-three/drei";
-// Post-processing removed due to R3F v8 compatibility issues
+import { EffectComposer, Bloom, Vignette, ChromaticAberration } from "@react-three/postprocessing";
+import { BlendFunction } from "postprocessing";
 import * as THREE from "three";
 import { MilkyWayBand, PlanetParade, AsteroidBelt, Comets } from "./SolarSystemElements";
 import { EndorBattle } from "./EndorBattle";
@@ -294,8 +295,9 @@ function PerformanceHalo({ position, activityScore, color, size }: {
   const pulseRef = useRef(Math.random() * Math.PI * 2);
 
   // Halo color based on activity: green=high, cyan=medium, dim=low
-  const haloColor = activityScore > 0.7 ? "#10b981" : activityScore > 0.3 ? "#22d3ee" : "#475569";
-  const haloOpacity = 0.15 + activityScore * 0.35;
+  // Higher opacity since bloom will create a visible glow aura from these
+  const haloColor = activityScore > 0.7 ? "#10b981" : activityScore > 0.3 ? "#22d3ee" : "#334466";
+  const haloOpacity = 0.35 + activityScore * 0.45;
 
   useFrame((_, delta) => {
     pulseRef.current += delta * (1 + activityScore * 2);
@@ -382,25 +384,33 @@ function AegisCommandHub({ agent, onClick, activityScore = 0, onHover, onUnhover
         <sphereGeometry args={[2.5, 12, 12]} />
         <meshBasicMaterial transparent opacity={0} />
       </mesh>
-      {/* Ambient glow */}
+      {/* Wide nebula glow — bloom will amplify this */}
       <mesh ref={glowRef}>
         <sphereGeometry args={[size, 16, 16]} />
-        <meshBasicMaterial color="#f59e0b" transparent opacity={0.12} />
+        <meshBasicMaterial color="#f59e0b" transparent opacity={0.25} />
       </mesh>
-      {/* Core sphere */}
+      {/* Mid glow layer */}
+      <mesh>
+        <sphereGeometry args={[size * 1.6, 12, 12]} />
+        <meshBasicMaterial color="#f97316" transparent opacity={0.08} />
+      </mesh>
+      {/* Core sphere — MeshPhysicalMaterial for glass-like quality */}
       <mesh ref={coreRef}>
         <sphereGeometry args={[size, 32, 32]} />
-        <meshStandardMaterial
+        <meshPhysicalMaterial
           color={color}
           emissive={color}
-          emissiveIntensity={1.8}
-          roughness={0.1}
-          metalness={0.9}
+          emissiveIntensity={3.5}
+          roughness={0.05}
+          metalness={0.2}
+          clearcoat={1.0}
+          clearcoatRoughness={0.1}
+          transmission={0.1}
         />
       </mesh>
-      {/* Strong point light — AEGIS illuminates the constellation */}
-      <pointLight color="#f59e0b" intensity={3.0} distance={25} />
-      <pointLight color="#fbbf24" intensity={1.0} distance={15} />
+      {/* AEGIS illuminates the constellation */}
+      <pointLight color="#f59e0b" intensity={4.0} distance={28} />
+      <pointLight color="#ff8c00" intensity={1.5} distance={14} />
       {/* Hover tooltip */}
       {hovered && (
         <Html center distanceFactor={18} style={{ pointerEvents: "none" }}>
@@ -555,7 +565,8 @@ function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, o
   }, [onUnhover]);
 
   const emissiveColor = isInDebate ? new THREE.Color("#f59e0b") : color;
-  const emissiveIntensity = isInDebate ? 1.5 : 0.5 + activityScore * 1.0;
+  // Higher emissive intensity so bloom post-processing creates visible glow halos
+  const emissiveIntensity = isInDebate ? 3.0 : 1.2 + activityScore * 2.5;
 
   return (
     <group position={agent.position}>
@@ -700,11 +711,12 @@ function ConnectionLines({ agents, commLinks = [], activityMetrics = [] }: {
     return conns;
   }, [agents, commLinks, activityMap]);
 
+  // Richer colors + higher opacity — bloom amplifies these into visible glowing veins
   const edgeVisuals: Record<string, { color: string; opacity: number; lineWidth: number; dashed: boolean; dashScale: number; dashSize: number; gapSize: number }> = {
-    inactive:       { color: "#ef4444", opacity: 0.25, lineWidth: 0.8, dashed: true,  dashScale: 1, dashSize: 0.3, gapSize: 0.3 },
-    active:         { color: "#f59e0b", opacity: 0.4,  lineWidth: 1.2, dashed: true,  dashScale: 1, dashSize: 0.6, gapSize: 0.2 },
-    'battle-tested': { color: "#10b981", opacity: 0.55, lineWidth: 1.8, dashed: false, dashScale: 1, dashSize: 1,   gapSize: 0 },
-    redundant:      { color: "#22d3ee", opacity: 0.65, lineWidth: 2.5, dashed: false, dashScale: 1, dashSize: 1,   gapSize: 0 },
+    inactive:        { color: "#ff2244", opacity: 0.18, lineWidth: 0.6,  dashed: true,  dashScale: 1, dashSize: 0.2, gapSize: 0.4 },
+    active:          { color: "#ffaa00", opacity: 0.55, lineWidth: 1.4,  dashed: true,  dashScale: 1, dashSize: 0.7, gapSize: 0.15 },
+    'battle-tested': { color: "#00ff88", opacity: 0.75, lineWidth: 2.0,  dashed: false, dashScale: 1, dashSize: 1,   gapSize: 0 },
+    redundant:       { color: "#00eeff", opacity: 0.85, lineWidth: 3.0,  dashed: false, dashScale: 1, dashSize: 1,   gapSize: 0 },
   };
 
   return (
@@ -924,13 +936,14 @@ function IncidentHeatTrails({ agents, activeDebates = [], scanPulses = [] }: {
 // Each particle type has distinct color, size, and speed signatures
 type ActivityType = "signal_ingest" | "scan_sweep" | "learning" | "message" | "alert" | "idle";
 
+// Boosted particle colors — bloom multiplies these so they need high values
 const ACTIVITY_VISUALS: Record<ActivityType, { color: [number, number, number]; size: number; speed: number; label: string }> = {
-  signal_ingest: { color: [0.0, 1.0, 1.0],   size: 0.6, speed: 0.12, label: "Signal Ingestion" },    // Bright Cyan
-  scan_sweep:    { color: [0.3, 0.5, 1.0],    size: 0.7, speed: 0.07, label: "OSINT Scan" },           // Blue
-  learning:      { color: [0.6, 0.2, 1.0],    size: 0.5, speed: 0.05, label: "Knowledge Acquisition" },// Violet
-  message:       { color: [0.0, 1.0, 0.5],    size: 0.6, speed: 0.15, label: "Agent Comms" },          // Green
-  alert:         { color: [1.0, 0.2, 0.1],    size: 0.9, speed: 0.20, label: "Alert Escalation" },     // Red — large + fast
-  idle:          { color: [0.4, 0.5, 0.65],    size: 0.25, speed: 0.03, label: "Standby" },              // Slate
+  signal_ingest: { color: [0.0, 1.0, 1.2],   size: 0.75, speed: 0.12, label: "Signal Ingestion" },    // Bright Cyan
+  scan_sweep:    { color: [0.4, 0.6, 1.5],    size: 0.85, speed: 0.07, label: "OSINT Scan" },           // Electric Blue
+  learning:      { color: [0.8, 0.2, 1.4],    size: 0.65, speed: 0.05, label: "Knowledge Acquisition" },// Vivid Violet
+  message:       { color: [0.0, 1.3, 0.6],    size: 0.70, speed: 0.15, label: "Agent Comms" },          // Bright Green
+  alert:         { color: [1.4, 0.15, 0.1],   size: 1.1,  speed: 0.22, label: "Alert Escalation" },     // Hot Red
+  idle:          { color: [0.25, 0.35, 0.55], size: 0.22, speed: 0.03, label: "Standby" },               // Dim Slate
 };
 
 // Programmatic circular glow texture for particles — created lazily
@@ -2211,9 +2224,9 @@ function EntityNode({
         <meshStandardMaterial
           color={threeColor}
           emissive={threeColor}
-          emissiveIntensity={isThreat ? 1.2 : 0.6}
-          roughness={0.3}
-          metalness={0.7}
+          emissiveIntensity={isThreat ? 2.8 : 1.4}
+          roughness={0.2}
+          metalness={0.8}
         />
       </mesh>
       {hovered && (
@@ -2490,17 +2503,39 @@ export function ConstellationScene({
         camera={{ position: [0, 2, 20], fov: 55 }}
         style={{ background: "#020408" }}
         gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
-        dpr={[1, 2]}
+        dpr={[1, 1.5]}
         onCreated={({ gl }) => {
           gl.toneMapping = THREE.ACESFilmicToneMapping;
-          gl.toneMappingExposure = 1.2;
+          gl.toneMappingExposure = 1.4;
         }}
       >
         <CameraController view={cameraView} controlsRef={controlsRef} />
 
-        <ambientLight intensity={0.15} />
+        {/* Scene lighting — warmer, deeper space atmosphere */}
+        <ambientLight intensity={0.08} color="#0a0a1a" />
+        <ambientLight intensity={0.06} color="#001428" />
+        <directionalLight position={[-70, 20, -80]} intensity={1.2} color="#fff4e0" />
+        <pointLight position={[0, 30, 0]} intensity={0.4} color="#1a0533" distance={80} />
 
-        <directionalLight position={[-70, 20, -80]} intensity={1.5} color="#fffaf0" />
+        {/* Post-processing — bloom is the #1 visual upgrade */}
+        <EffectComposer multisampling={0}>
+          <Bloom
+            intensity={1.8}
+            luminanceThreshold={0.15}
+            luminanceSmoothing={0.9}
+            mipmapBlur
+            radius={0.8}
+          />
+          <Vignette
+            offset={0.3}
+            darkness={0.7}
+            blendFunction={BlendFunction.NORMAL}
+          />
+          <ChromaticAberration
+            offset={[0.0008, 0.0008] as any}
+            blendFunction={BlendFunction.NORMAL}
+          />
+        </EffectComposer>
         <DeepSpaceField neutralizedCount={neutralizedCount} />
         <ShootingStars />
         <MilkyWayBand />
