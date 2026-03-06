@@ -251,7 +251,86 @@ function createMonCalGeometry(): THREE.BufferGeometry {
 }
 
 function createFighterGeometry(isXWing: boolean): THREE.BufferGeometry {
-  return isXWing ? new THREE.BoxGeometry(0.1, 0.02, 0.15) : new THREE.BoxGeometry(0.12, 0.12, 0.04);
+  const positions: number[] = [];
+  const normals: number[] = [];
+  function addGeo(g: THREE.BufferGeometry) {
+    const p = g.attributes.position.array;
+    const n = g.attributes.normal.array;
+    for (let i = 0; i < p.length; i++) { positions.push(p[i]); normals.push(n[i]); }
+  }
+
+  if (isXWing) {
+    // === X-WING FIGHTER — nose faces +Z, S-Foils in attack position ===
+    // Central fuselage
+    const fuselage = new THREE.BoxGeometry(0.05, 0.045, 0.28);
+    addGeo(fuselage);
+    // Rear engine block (slightly wider/taller)
+    const engineBlock = new THREE.BoxGeometry(0.065, 0.065, 0.055);
+    engineBlock.translate(0, 0, -0.145);
+    addGeo(engineBlock);
+    // Nose cone (tapered 4-sided pyramid)
+    const nose = new THREE.CylinderGeometry(0, 0.025, 0.07, 4);
+    nose.rotateX(Math.PI / 2);
+    nose.translate(0, 0, 0.175);
+    addGeo(nose);
+    // 4 S-Foil wings spread in X pattern — top pair angled up, bottom pair angled down
+    const wingDefs: [number, number][] = [[-0.1, 0.075], [0.1, 0.075], [-0.1, -0.075], [0.1, -0.075]];
+    const wingAngles = [-0.42, 0.42, 0.42, -0.42];
+    wingDefs.forEach(([wx, wy], i) => {
+      const wing = new THREE.BoxGeometry(0.16, 0.008, 0.09);
+      wing.rotateZ(wingAngles[i]);
+      wing.translate(wx, wy, -0.02);
+      addGeo(wing);
+      // Engine nacelle at each wingtip
+      const nac = new THREE.CylinderGeometry(0.02, 0.018, 0.11, 5);
+      nac.rotateX(Math.PI / 2);
+      nac.translate(wx < 0 ? wx - 0.12 : wx + 0.12, wy < 0 ? wy - 0.025 : wy + 0.025, -0.1);
+      addGeo(nac);
+    });
+  } else {
+    // === TIE FIGHTER — solar panels extend along X, nose faces +Z ===
+    // Center ball cockpit
+    const cockpit = new THREE.SphereGeometry(0.09, 7, 6);
+    addGeo(cockpit);
+    // Front viewport hemisphere (forward-facing flat dome)
+    const viewport = new THREE.SphereGeometry(0.05, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2);
+    viewport.rotateX(-Math.PI / 2);
+    viewport.translate(0, 0, 0.09);
+    addGeo(viewport);
+    // Connection struts — cylinders rotated to extend along X
+    const strutL = new THREE.CylinderGeometry(0.012, 0.012, 0.14, 4);
+    strutL.rotateZ(Math.PI / 2);
+    strutL.translate(-0.155, 0, 0);
+    addGeo(strutL);
+    const strutR = new THREE.CylinderGeometry(0.012, 0.012, 0.14, 4);
+    strutR.rotateZ(Math.PI / 2);
+    strutR.translate(0.155, 0, 0);
+    addGeo(strutR);
+    // Hexagonal solar panels — flat hex discs perpendicular to X axis
+    const panelL = new THREE.CylinderGeometry(0.19, 0.19, 0.012, 6);
+    panelL.rotateZ(Math.PI / 2);
+    panelL.translate(-0.23, 0, 0);
+    addGeo(panelL);
+    const panelR = new THREE.CylinderGeometry(0.19, 0.19, 0.012, 6);
+    panelR.rotateZ(Math.PI / 2);
+    panelR.translate(0.23, 0, 0);
+    addGeo(panelR);
+    // Cross-brace pattern on each panel face (horizontal + vertical bars)
+    for (const px of [-0.23, 0.23]) {
+      const braceH = new THREE.BoxGeometry(0.012, 0.38, 0.009);
+      braceH.translate(px, 0, 0);
+      addGeo(braceH);
+      const braceV = new THREE.BoxGeometry(0.012, 0.009, 0.38);
+      braceV.translate(px, 0, 0);
+      addGeo(braceV);
+    }
+  }
+
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  merged.computeBoundingSphere();
+  return merged;
 }
 
 function createMillenniumFalconGeometry(): THREE.BufferGeometry {
@@ -869,10 +948,12 @@ function FighterSwarm({
   return (
     <>
       <instancedMesh ref={rebelRef} args={[rebelGeo, undefined, FIGHTER_COUNT / 2]}>
-        <meshStandardMaterial color="#cccccc" emissive="#ff6644" emissiveIntensity={1.2} roughness={0.35} metalness={0.7} toneMapped={false} />
+        {/* X-Wing: off-white hull, warm orange engine glow amplified by bloom */}
+        <meshStandardMaterial color="#d8d8c8" emissive="#ff7722" emissiveIntensity={2.5} roughness={0.4} metalness={0.6} toneMapped={false} />
       </instancedMesh>
       <instancedMesh ref={imperialRef} args={[imperialGeo, undefined, FIGHTER_COUNT / 2]}>
-        <meshStandardMaterial color="#555566" emissive="#4466aa" emissiveIntensity={1.2} roughness={0.4} metalness={0.8} toneMapped={false} />
+        {/* TIE Fighter: dark grey hull, electric blue ion engine glow */}
+        <meshStandardMaterial color="#3a3a44" emissive="#2255ff" emissiveIntensity={2.0} roughness={0.35} metalness={0.9} toneMapped={false} />
       </instancedMesh>
     </>
   );
