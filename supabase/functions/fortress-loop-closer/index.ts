@@ -486,6 +486,46 @@ Deno.serve(async (req) => {
       results.aegis_briefings = { error: String(err) };
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // LOOP 6: DEBATE RECORDS — Trigger multi-agent-debate for critical
+    //         open incidents that have no debate in the last 24h
+    // ═══════════════════════════════════════════════════════════════════
+    try {
+      const { data: debatableIncidents } = await supabase
+        .from('incidents')
+        .select('id, priority')
+        .eq('status', 'open')
+        .in('priority', ['p1', 'p2'])
+        .order('priority', { ascending: true })
+        .limit(5);
+
+      let debatesTriggered = 0;
+      for (const incident of debatableIncidents || []) {
+        const { count: recentDebates } = await supabase
+          .from('agent_debate_records')
+          .select('id', { count: 'exact', head: true })
+          .eq('incident_id', incident.id)
+          .gte('created_at', new Date(Date.now() - 86400000).toISOString());
+
+        if ((recentDebates || 0) > 0) continue;
+
+        supabase.functions.invoke('multi-agent-debate', {
+          body: { incident_id: incident.id },
+        }).catch((err: Error) =>
+          console.error(`[LoopCloser] Debate trigger failed for ${incident.id}:`, err)
+        );
+
+        debatesTriggered++;
+        if (debatesTriggered >= 2) break; // Cap at 2 per run to avoid excess AI usage
+        await new Promise(r => setTimeout(r, 3000));
+      }
+      results.debate_records = { triggered: debatesTriggered };
+      console.log(`[LoopCloser] Debate Records: ${debatesTriggered} debates triggered`);
+    } catch (err) {
+      console.error('[LoopCloser] Debate Records error:', err);
+      results.debate_records = { error: String(err) };
+    }
+
     console.log(`[LoopCloser] Complete:`, JSON.stringify(results));
     return successResponse({ success: true, results });
   } catch (error) {
