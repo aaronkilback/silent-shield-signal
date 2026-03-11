@@ -258,7 +258,7 @@ export function useGodsEyeData(enabled: boolean) {
       try {
         const { data: travel } = await supabase
           .from("travel_itineraries" as any)
-          .select("id, destination, travel_start, travel_end, risk_level, vip_id")
+          .select("id, destination, travel_start, travel_end, risk_level, client_id")
           .gte("travel_end", new Date().toISOString())
           .order("travel_start", { ascending: true })
           .limit(30);
