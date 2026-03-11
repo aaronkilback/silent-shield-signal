@@ -40,6 +40,7 @@ export default function Entities() {
   const [searchTerm, setSearchTerm] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<string | null>(null);
+  const [showAutoCreated, setShowAutoCreated] = useState(false);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [bulletinDialogOpen, setBulletinDialogOpen] = useState(false);
@@ -55,7 +56,7 @@ export default function Entities() {
 
   // Filter entities by the selected client
   const { data: entities = [], refetch } = useQuery({
-    queryKey: ['entities', searchTerm, selectedType, selectedClientId],
+    queryKey: ['entities', searchTerm, selectedType, selectedClientId, showAutoCreated],
     enabled: !!user && isContextReady,
     queryFn: async () => {
       let query = supabase
@@ -77,6 +78,10 @@ export default function Entities() {
         query = query.eq('type', selectedType as any);
       }
 
+      if (showAutoCreated) {
+        query = query.ilike('description', 'Auto-created from%');
+      }
+
       const { data, error } = await query;
       if (error) throw error;
       return data;
@@ -85,18 +90,22 @@ export default function Entities() {
 
   // Get entity count for selected client
   const { data: totalCount = 0 } = useQuery({
-    queryKey: ['entities-total-count', selectedClientId],
+    queryKey: ['entities-total-count', selectedClientId, showAutoCreated],
     enabled: !!user && isContextReady,
     queryFn: async () => {
       let query = supabase
         .from('entities')
         .select('*', { count: 'exact', head: true })
         .eq('is_active', true);
-      
+
       if (selectedClientId) {
         query = query.eq('client_id', selectedClientId);
       }
-      
+
+      if (showAutoCreated) {
+        query = query.ilike('description', 'Auto-created from%');
+      }
+
       const { count, error } = await query;
       if (error) throw error;
       return count || 0;
@@ -349,9 +358,9 @@ export default function Entities() {
           <div className="flex items-center justify-between">
             <div className="flex gap-2 flex-wrap">
               <Button
-                variant={selectedType === null ? "default" : "outline"}
+                variant={selectedType === null && !showAutoCreated ? "default" : "outline"}
                 size="sm"
-                onClick={() => setSelectedType(null)}
+                onClick={() => { setSelectedType(null); setShowAutoCreated(false); }}
               >
                 All
               </Button>
@@ -360,11 +369,18 @@ export default function Entities() {
                   key={type.value}
                   variant={selectedType === type.value ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setSelectedType(type.value)}
+                  onClick={() => { setSelectedType(type.value); setShowAutoCreated(false); }}
                 >
                   {type.label}
                 </Button>
               ))}
+              <Button
+                variant={showAutoCreated ? "destructive" : "outline"}
+                size="sm"
+                onClick={() => { setShowAutoCreated(!showAutoCreated); setSelectedType(null); }}
+              >
+                Auto-Created (Unapproved)
+              </Button>
             </div>
             <div className="flex gap-1">
               <Button
@@ -391,7 +407,7 @@ export default function Entities() {
             <div className="flex items-center gap-2">
               <Users className="w-5 h-5 text-primary" />
               <span className="font-semibold text-lg">
-                {searchTerm || selectedType ? (
+                {searchTerm || selectedType || showAutoCreated ? (
                   <>
                     Showing {entities.length} of {totalCount} entities
                   </>
@@ -402,13 +418,14 @@ export default function Entities() {
                 )}
               </span>
             </div>
-            {(searchTerm || selectedType) && (
+            {(searchTerm || selectedType || showAutoCreated) && (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => {
                   setSearchTerm('');
                   setSelectedType(null);
+                  setShowAutoCreated(false);
                 }}
               >
                 Clear Filters

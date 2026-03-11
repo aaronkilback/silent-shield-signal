@@ -148,7 +148,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
 
         if (error) {
           console.error("❌ Error loading messages from database:", error);
-          toast.error("Failed to load chat history");
+          // Don't show error toast — just start fresh so the user can keep working
           setMessages([defaultMessage]);
           setIsLoadingHistory(false);
           return;
@@ -219,7 +219,6 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         }
       } catch (error) {
         console.error("❌ Failed to load chat history:", error);
-        toast.error("Failed to load chat history");
         setMessages([defaultMessage]);
       } finally {
         setIsLoadingHistory(false);

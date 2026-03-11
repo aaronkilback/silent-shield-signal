@@ -245,7 +245,6 @@ export const SignalHistory = () => {
       
       setSignals(dataWithSources as any);
       await fetchUpdateCounts((dataWithSources || []).map((s: any) => s.id));
-      console.error('Error loading signals:', error);
     } finally {
       setLoading(false);
     }

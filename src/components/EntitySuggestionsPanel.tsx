@@ -8,7 +8,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CheckCircle, XCircle, Users, AlertCircle, ExternalLink, GitMerge } from "lucide-react";
+import { CheckCircle, XCircle, Users, AlertCircle, ExternalLink, GitMerge, Trash2 } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
@@ -23,6 +24,7 @@ export const EntitySuggestionsPanel = () => {
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [selectedEntityForMerge, setSelectedEntityForMerge] = useState<string>("");
   const [selectedSuggestions, setSelectedSuggestions] = useState<Set<string>>(new Set());
+  const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false);
 
   const getSourceLink = (sourceType: string, sourceId: string) => {
     switch (sourceType) {
@@ -45,11 +47,29 @@ export const EntitySuggestionsPanel = () => {
         .select('*')
         .eq('status', 'pending')
         .order('created_at', { ascending: false });
-      
+
       if (error) throw error;
       return data;
     },
     refetchInterval: 30000 // Refetch every 30 seconds
+  });
+
+  const deleteAllMutation = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase
+        .from('entity_suggestions')
+        .delete()
+        .eq('status', 'pending');
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['entity-suggestions'] });
+      toast.success('All pending suggestions deleted');
+      setSelectedSuggestions(new Set());
+    },
+    onError: () => {
+      toast.error('Failed to delete all suggestions');
+    }
   });
 
   const { data: entities } = useQuery({
@@ -321,11 +341,24 @@ export const EntitySuggestionsPanel = () => {
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center gap-2">
-          <Users className="w-5 h-5 text-primary" />
-          <CardTitle>Entity Suggestions</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Users className="w-5 h-5 text-primary" />
+            <CardTitle>Entity Suggestions</CardTitle>
+            {suggestions && suggestions.length > 0 && (
+              <Badge variant="secondary">{suggestions.length} pending</Badge>
+            )}
+          </div>
           {suggestions && suggestions.length > 0 && (
-            <Badge variant="secondary">{suggestions.length} pending</Badge>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => setDeleteAllDialogOpen(true)}
+              disabled={deleteAllMutation.isPending}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete All ({suggestions.length})
+            </Button>
           )}
         </div>
         <CardDescription>
@@ -464,6 +497,27 @@ export const EntitySuggestionsPanel = () => {
           )}
         </ScrollArea>
       </CardContent>
+
+      <AlertDialog open={deleteAllDialogOpen} onOpenChange={setDeleteAllDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete All Pending Suggestions</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete all {suggestions?.length ?? 0} pending suggestions. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteAllMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { setDeleteAllDialogOpen(false); deleteAllMutation.mutate(); }}
+              disabled={deleteAllMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteAllMutation.isPending ? 'Deleting...' : 'Delete All'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={mergeDialogOpen} onOpenChange={setMergeDialogOpen}>
         <DialogContent>

@@ -52,14 +52,15 @@ export const ClientSelector = ({
 
   useEffect(() => {
     let channel: ReturnType<typeof supabase.channel> | null = null;
+    let initialized = false;
 
-    const init = async () => {
-      // Wait for auth session before querying RLS-protected table
-      const { data: { session } } = await supabase.auth.getSession();
+    const init = async (session: any) => {
       if (!session?.user) {
         setLoading(false);
         return;
       }
+      if (initialized) return;
+      initialized = true;
 
       await fetchClients();
 
@@ -79,9 +80,15 @@ export const ClientSelector = ({
         .subscribe();
     };
 
-    init();
+    // Check current session first, then listen for auth changes
+    supabase.auth.getSession().then(({ data: { session } }) => init(session));
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      init(session);
+    });
 
     return () => {
+      subscription.unsubscribe();
       if (channel) supabase.removeChannel(channel);
     };
   }, []);

@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
-import { AlertCircle, Building2, MapPin, Shield, TrendingUp } from "lucide-react";
+import { AlertCircle, Building2, MapPin, Shield, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/hooks/useAuth";
 
 interface Client {
   id: string;
@@ -19,29 +20,23 @@ interface Client {
 }
 
 export const ClientRiskSnapshot = () => {
-  const [clients, setClients] = useState<Client[]>([]);
-  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+  const { user } = useAuth();
 
-  useEffect(() => {
-    fetchClients();
-  }, []);
-
-  const fetchClients = async () => {
-    try {
+  const { data: clients = [], isLoading: loading } = useQuery({
+    queryKey: ["clients-risk-snapshot"],
+    queryFn: async () => {
       const { data, error } = await supabase
         .from("clients")
         .select("*")
         .order("created_at", { ascending: false });
-
       if (error) throw error;
-      setClients(data || []);
-    } catch (error) {
-      console.error("Error fetching clients:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+      return (data || []) as Client[];
+    },
+    enabled: !!user,
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
 
   const getRiskColor = (score: number) => {
     if (score >= 75) return "text-red-500";
@@ -58,7 +53,11 @@ export const ClientRiskSnapshot = () => {
   };
 
   if (loading) {
-    return <div>Loading clients...</div>;
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
+    );
   }
 
   return (
