@@ -240,11 +240,15 @@ export default function Entities() {
         .delete()
         .in('entity_id', idsToDelete);
 
-      // Delete entity relationships
+      // Delete entity relationships (use separate queries to avoid filter parser issues with large ID sets)
       await supabase
         .from('entity_relationships')
         .delete()
-        .or(`entity_a_id.in.(${idsToDelete.join(',')}),entity_b_id.in.(${idsToDelete.join(',')})`);
+        .in('entity_a_id', idsToDelete);
+      await supabase
+        .from('entity_relationships')
+        .delete()
+        .in('entity_b_id', idsToDelete);
 
       // Delete entity notifications
       await supabase
