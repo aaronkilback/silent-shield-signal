@@ -290,12 +290,15 @@ export const EntitySuggestionsPanel = () => {
 
   const deleteMutation = useMutation({
     mutationFn: async (suggestionIds: string[]) => {
-      const { error } = await supabase
-        .from('entity_suggestions')
-        .delete()
-        .in('id', suggestionIds);
-
-      if (error) throw error;
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < suggestionIds.length; i += BATCH_SIZE) {
+        const batch = suggestionIds.slice(i, i + BATCH_SIZE);
+        const { error } = await supabase
+          .from('entity_suggestions')
+          .delete()
+          .in('id', batch);
+        if (error) throw error;
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['entity-suggestions'] });

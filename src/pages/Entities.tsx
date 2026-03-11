@@ -228,39 +228,33 @@ export default function Entities() {
         await supabase.storage.from('entity-photos').remove(paths);
       }
 
+      // Helper to delete in batches to avoid URL length limits
+      const batchDelete = async (table: string, column: string, ids: string[]) => {
+        const BATCH_SIZE = 100;
+        for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+          const batch = ids.slice(i, i + BATCH_SIZE);
+          await supabase.from(table as any).delete().in(column, batch);
+        }
+      };
+
       // Delete photos metadata
-      await supabase
-        .from('entity_photos')
-        .delete()
-        .in('entity_id', idsToDelete);
+      await batchDelete('entity_photos', 'entity_id', idsToDelete);
 
       // Delete entity mentions
-      await supabase
-        .from('entity_mentions')
-        .delete()
-        .in('entity_id', idsToDelete);
+      await batchDelete('entity_mentions', 'entity_id', idsToDelete);
 
       // Delete entity relationships (use separate queries to avoid filter parser issues with large ID sets)
-      await supabase
-        .from('entity_relationships')
-        .delete()
-        .in('entity_a_id', idsToDelete);
-      await supabase
-        .from('entity_relationships')
-        .delete()
-        .in('entity_b_id', idsToDelete);
+      await batchDelete('entity_relationships', 'entity_a_id', idsToDelete);
+      await batchDelete('entity_relationships', 'entity_b_id', idsToDelete);
 
       // Delete entity notifications
-      await supabase
-        .from('entity_notifications')
-        .delete()
-        .in('entity_id', idsToDelete);
+      await batchDelete('entity_notifications', 'entity_id', idsToDelete);
 
       // Delete entities
-      const { error } = await supabase
-        .from('entities')
-        .delete()
-        .in('id', idsToDelete);
+      const { error } = await supabase.from('entities').delete().in('id', idsToDelete.slice(0, 100));
+      for (let i = 100; i < idsToDelete.length; i += 100) {
+        await supabase.from('entities').delete().in('id', idsToDelete.slice(i, i + 100));
+      }
 
       if (error) throw error;
 
