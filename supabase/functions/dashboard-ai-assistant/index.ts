@@ -8218,11 +8218,11 @@ Deno.serve(async (req) => {
         return recentMsgs;
       }
       
-      // Otherwise, keep first message (often context) and last N-1 messages
-      const firstMsg = msgs[0];
-      const recentMsgs = msgs.slice(-(maxMessages - 1));
+      // Pure tail slice — preserves the natural role-alternating sequence Gemini requires.
+      // Keeping first + recent-N creates a role-sequence gap that causes Gemini 400s.
+      const recentMsgs = msgs.slice(-maxMessages);
       console.log(`Truncating message history from ${msgs.length} to ${maxMessages} messages`);
-      return [firstMsg, ...recentMsgs];
+      return recentMsgs;
     };
 
     // Helper to truncate tool results
@@ -8349,8 +8349,9 @@ The user's message is just a conversational acknowledgment - respond in kind, do
     // the AI from copying them instead of calling generate_fortress_report fresh
     const processedMessages = await Promise.all(
       limitedMessages.map(async (msg: any) => {
+        // Normalize null content — Gemini rejects null in any message position
         // Truncate excessively long messages
-        let content = typeof msg.content === 'string' ? truncateContent(msg.content, 20000) : msg.content;
+        let content = typeof msg.content === 'string' ? truncateContent(msg.content, 20000) : (msg.content ?? '');
         
         // Strip old report/storage URLs from assistant messages to prevent hallucination
         if (msg.role === 'assistant' && typeof content === 'string') {
@@ -8474,7 +8475,9 @@ The user's message is just a conversational acknowledgment - respond in kind, do
       );
     }
     const firstMessage = firstResult.choices[0].message;
-    
+    // Gemini rejects null content in messages sent back as context — normalize to empty string
+    if (firstMessage && firstMessage.content === null) firstMessage.content = '';
+
     // CRITICAL DEBUG: Log whether AI chose to use tools or just respond with text
     console.log("AI first response - has tool_calls:", !!firstMessage.tool_calls);
     console.log("AI first response - tool_calls count:", firstMessage.tool_calls?.length || 0);
