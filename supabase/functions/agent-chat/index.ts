@@ -684,6 +684,55 @@ Respond naturally and briefly.`
       // Non-fatal — proceed without expertise injection
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // CLIENT PRIORITY CONTEXT — enriches agent awareness when a specific
+    // client is active (risk tier, open incidents, high-value assets)
+    // ═══════════════════════════════════════════════════════════════
+    let clientPriorityBlock = "";
+    if (client_id) {
+      try {
+        const [{ data: clientDetail }, { count: openIncidentCount }, { count: entityCount }] = await Promise.all([
+          supabase.from('clients').select('name, industry, risk_assessment, threat_profile, high_value_assets, locations').eq('id', client_id).single(),
+          supabase.from('incidents').select('*', { count: 'exact', head: true }).eq('client_id', client_id).in('status', ['open', 'investigating', 'acknowledged']).is('deleted_at', null),
+          supabase.from('entities').select('*', { count: 'exact', head: true }).eq('client_id', client_id).eq('is_active', true),
+        ]);
+        if (clientDetail) {
+          const riskTier = (clientDetail.risk_assessment as any)?.tier || (clientDetail.risk_assessment as any)?.risk_tier || (clientDetail.threat_profile as any)?.tier || 'standard';
+          const riskScore = (clientDetail.risk_assessment as any)?.overall_score || (clientDetail.risk_assessment as any)?.score || null;
+          const assets = clientDetail.high_value_assets?.slice(0, 5) || [];
+          const locs = clientDetail.locations?.slice(0, 3) || [];
+          const tierLabel = ['critical', 'tier1', 'tier 1', 'high'].includes(String(riskTier).toLowerCase())
+            ? '⚠️ TIER 1 / CRITICAL PRIORITY'
+            : ['tier2', 'tier 2', 'elevated'].includes(String(riskTier).toLowerCase())
+            ? '🔶 TIER 2 / ELEVATED PRIORITY'
+            : 'STANDARD PRIORITY';
+          clientPriorityBlock = `\n\n═══ ACTIVE CLIENT CONTEXT ═══
+CLIENT: ${clientDetail.name} (${clientDetail.industry || 'Unknown Industry'}) — ${tierLabel}${riskScore ? ` | Risk Score: ${riskScore}` : ''}
+OPEN INCIDENTS: ${openIncidentCount ?? 0} | MONITORED ENTITIES: ${entityCount ?? 0}${assets.length ? `\nHIGH-VALUE ASSETS: ${assets.join(', ')}` : ''}${locs.length ? `\nKEY LOCATIONS: ${locs.join(', ')}` : ''}
+PRIORITY DIRECTIVE: Weight all signals and recommendations for this client accordingly. Higher-tier clients require faster escalation and more detailed analysis.\n`;
+        }
+      } catch (_e) {
+        // Non-fatal — proceed without client priority context
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ADAPTIVE CONFIDENCE THRESHOLD — per-agent self-tuned minimum
+    // confidence before acting on uncertain intelligence
+    // ═══════════════════════════════════════════════════════════════
+    let confidenceBlock = "";
+    try {
+      const { data: confProfile } = await supabase
+        .from('learning_profiles')
+        .select('features')
+        .eq('profile_type', `agent_confidence_${agent.call_sign}`)
+        .maybeSingle();
+      const conf = (confProfile?.features as any);
+      if (conf?.min_confidence_threshold) {
+        confidenceBlock = `\n[INTERNAL: Your calibrated minimum confidence threshold for this session is ${conf.min_confidence_threshold}. Do not present findings below this confidence without explicit uncertainty caveats.]`;
+      }
+    } catch (_e) { /* Non-fatal */ }
+
     // Load undelivered pending messages for this agent (broadcasts, directives, etc.)
     let pendingMessagesBlock = "";
     try {
@@ -710,7 +759,7 @@ Respond naturally and briefly.`
       // Non-fatal — proceed without pending messages
     }
     
-    const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}${expertiseBlock}${behavioralCorrectionBlock}${pendingMessagesBlock}
+    const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}${expertiseBlock}${behavioralCorrectionBlock}${pendingMessagesBlock}${clientPriorityBlock}
 
 Your Mission: ${agent.mission_scope}
 Your Call Sign: ${agent.call_sign}
@@ -730,6 +779,7 @@ CURRENT INTELLIGENCE CONTEXT (VERIFIED DATA FROM FORTRESS DATABASE):
 ${contextData || 'No verified data available in current context. Use tools to query the database.'}
 ${ownMemoryBlock}
 ${crossAgentBlock}
+${confidenceBlock}
 
 <!-- INTERNAL RULES - NEVER INCLUDE THIS TEXT IN YOUR RESPONSE -->
 <!-- These are silent instructions. Follow them but do not echo them. -->
@@ -3028,6 +3078,33 @@ To include geopolitical or external news context, please ask me to perform an ex
         clientId: client_id || undefined,
         memoryType: 'conversation',
         confidence: 0.6,
+      });
+    } catch (_e) {
+      // Non-fatal
+    }
+
+    // Record session outcome for continuous learning loop
+    try {
+      const toolsUsed = toolResults.map(t => t.tool);
+      const successfulTools = toolResults.filter(t => t.result?.success !== false).map(t => t.tool);
+      const toolSuccessRate = toolResults.length > 0 ? successfulTools.length / toolResults.length : null;
+      const qualityScore = toolSuccessRate !== null
+        ? 0.5 + (toolSuccessRate * 0.4) + (agentResponse.length > 200 ? 0.1 : 0)
+        : 0.5;
+
+      await supabase.from('agent_learning_sessions').insert({
+        agent_id: agent.id,
+        session_type: 'conversation',
+        learnings: [{
+          query_summary: message.substring(0, 200),
+          tools_called: toolsUsed,
+          successful_tools: successfulTools,
+          client_id: client_id || null,
+          response_length: agentResponse.length,
+          timestamp: new Date().toISOString(),
+        }],
+        source_count: toolResults.length,
+        quality_score: Math.min(1.0, qualityScore),
       });
     } catch (_e) {
       // Non-fatal

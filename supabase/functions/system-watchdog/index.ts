@@ -159,6 +159,13 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - TELEMETRY: Calibrated analyst count, avg accuracy, uncalibrated analysts with 5+ feedback
 - REMEDIATION: calibrate_analyst_accuracy (calls DB function)
 
+### Agent Performance (NEW)
+- TELEMETRY: agentPerformance.lowAccuracyAgents (accuracy < 0.6), avgAccuracy, totalAgentsTracked
+- EXPECTED: All tracked agents should have accuracy_score >= 0.6. Lower = agent needs recalibration.
+- FINDING: If lowAccuracyAgents is non-empty, flag each agent with accuracy below threshold.
+- FINDING: If avgAccuracy < 0.55 across all agents, flag as systemic performance degradation.
+- REMEDIATION: calibrate_analyst_accuracy (recalibrates accuracy metrics via DB function)
+
 ### Edge Functions (150+)
 - 5 CRITICAL: get-user-tenants, agent-chat, dashboard-ai-assistant, system-health-check, ingest-signal
 - REMEDIATION: Cannot redeploy — flag for human attention
@@ -180,7 +187,7 @@ Respond with ONLY valid JSON (no markdown):
   "severity": "healthy" | "monitoring" | "degraded" | "critical",
   "findings": [
     {
-      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan" | "Communications" | "Investigation Autopilot" | "Signal Contradictions" | "Knowledge Freshness" | "Analyst Calibration" | "Dead Letter Queue" | "Schema Validation",
+      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan" | "Communications" | "Investigation Autopilot" | "Signal Contradictions" | "Knowledge Freshness" | "Analyst Calibration" | "Dead Letter Queue" | "Schema Validation" | "Agent Performance",
       "severity": "critical" | "warning" | "info",
       "title": "Short title",
       "analysis": "What you observed and WHY it matters (2-3 sentences). Reference learnings if relevant.",
@@ -364,6 +371,11 @@ interface TelemetryData {
   selfValidation: {
     allProbesHealthy: boolean;
     failedProbes: string[];
+  };
+  agentPerformance: {
+    lowAccuracyAgents: { call_sign: string; accuracy: number; weakestCategory: string }[];
+    avgAccuracy: number;
+    totalAgentsTracked: number;
   };
 }
 
@@ -882,6 +894,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     schemaErrors: await collectSchemaErrorTelemetry(supabase),
     circuitBreakers: await collectCircuitBreakerTelemetry(supabase),
     selfValidation: await collectSelfValidation(supabase),
+    agentPerformance: await collectAgentPerformanceTelemetry(supabase),
   };
 }
 
@@ -973,6 +986,23 @@ async function collectSelfValidation(supabase: any): Promise<TelemetryData['self
     allProbesHealthy: failedProbes.length === 0,
     failedProbes,
   };
+}
+
+async function collectAgentPerformanceTelemetry(supabase: any): Promise<TelemetryData['agentPerformance']> {
+  const { data: metrics } = await supabase
+    .from('agent_accuracy_metrics')
+    .select('agent_call_sign, accuracy_score, weakest_category, last_calibrated')
+    .order('accuracy_score', { ascending: true });
+
+  const all = metrics || [];
+  const lowAccuracyAgents = all
+    .filter((m: any) => m.accuracy_score < 0.6)
+    .map((m: any) => ({ call_sign: m.agent_call_sign, accuracy: Math.round(m.accuracy_score * 100) / 100, weakestCategory: m.weakest_category || 'unknown' }));
+  const avgAccuracy = all.length > 0
+    ? Math.round(all.reduce((s: number, m: any) => s + (m.accuracy_score || 0), 0) / all.length * 100) / 100
+    : 0;
+
+  return { lowAccuracyAgents, avgAccuracy, totalAgentsTracked: all.length };
 }
 
 // ═══════════════════════════════════════════════════════════════
