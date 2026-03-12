@@ -8282,13 +8282,14 @@ Deno.serve(async (req) => {
         }
       }
 
-      const digestMsg = {
-        role: 'system',
-        content: `[PRIOR CONVERSATION DIGEST — ${older.length} messages condensed]\n${digestLines.join('\n')}`,
-      };
+      // Use 'user'/'assistant' pair — Gemini rejects 'system' role mid-conversation
+      const digestPair = [
+        { role: 'user', content: `[PRIOR CONVERSATION DIGEST — ${older.length} earlier messages condensed]\n${digestLines.join('\n')}` },
+        { role: 'assistant', content: 'Understood. Continuing with full context from prior conversation.' },
+      ];
 
-      console.log(`Compressed message history: ${msgs.length} → ${1 + keepRecent} (digest + ${keepRecent} recent)`);
-      return [digestMsg, ...recent];
+      console.log(`Compressed message history: ${msgs.length} → ${2 + keepRecent} (digest pair + ${keepRecent} recent)`);
+      return [...digestPair, ...recent];
     };
 
     // Limit incoming messages to prevent token overflow

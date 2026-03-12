@@ -1321,8 +1321,10 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           digestLines.push(`Assistant: ${content.substring(0, 150)}${content.length > 150 ? '...' : ''}`);
         }
       }
+      // Use 'user'/'assistant' pair — Gemini rejects 'system' role mid-conversation
       return [
-        { role: 'system', content: `[PRIOR CONVERSATION DIGEST — ${older.length} messages condensed]\n${digestLines.join('\n')}` },
+        { role: 'user', content: `[PRIOR CONVERSATION DIGEST — ${older.length} earlier messages condensed]\n${digestLines.join('\n')}` },
+        { role: 'assistant', content: 'Understood. Continuing with full context from prior conversation.' },
         ...recent,
       ];
     };
