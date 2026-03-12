@@ -1,5 +1,11 @@
 project_id = "kpuqukppbmwebiptqmog"
 
+[functions.send-daily-briefing]
+verify_jwt = false
+
+[functions.generate-daily-briefing]
+verify_jwt = false
+
 [functions.briefing-feedback]
 verify_jwt = false
 

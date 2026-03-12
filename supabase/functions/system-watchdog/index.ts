@@ -1189,14 +1189,54 @@ async function executeRemediation(
       case 'trigger_briefing': {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 30000);
-        const resp = await fetch(`${supabaseUrl}/functions/v1/send-daily-briefing`, {
-          method: 'POST',
-          headers: { 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ triggered_by: 'watchdog' }),
-          signal: controller.signal,
-        });
+        let resp: Response;
+        try {
+          resp = await fetch(`${supabaseUrl}/functions/v1/send-daily-briefing`, {
+            method: 'POST',
+            headers: { 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ triggered_by: 'watchdog' }),
+            signal: controller.signal,
+          });
+        } catch (fetchErr) {
+          clearTimeout(timeout);
+          const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+          console.error('[Watchdog] trigger_briefing fetch failed:', errMsg);
+          // Emit alert signal so operator can see the failure
+          await supabase.from('signals').insert({
+            category: 'system_alert', severity: 'high', status: 'new',
+            title: 'Watchdog: trigger_briefing Failed — Network Error',
+            normalized_text: `Daily briefing could not be triggered by watchdog: ${errMsg}`,
+            confidence: 0.99,
+            raw_json: { action: 'trigger_briefing', error: errMsg, source: 'system-watchdog' },
+          });
+          return { action, finding, success: false, details: `Briefing trigger network error: ${errMsg}` };
+        }
         clearTimeout(timeout);
-        return { action, finding, success: resp.ok, details: resp.ok ? 'Daily briefing re-triggered successfully' : `Briefing trigger returned ${resp.status}` };
+
+        // Read body for diagnostic details regardless of status
+        let bodyText = '';
+        try { bodyText = await resp.text(); } catch { /* ignore */ }
+
+        if (!resp.ok) {
+          console.error(`[Watchdog] trigger_briefing HTTP ${resp.status}:`, bodyText.substring(0, 500));
+          // Emit alert signal so operator sees the failure
+          await supabase.from('signals').insert({
+            category: 'system_alert', severity: 'high', status: 'new',
+            title: `Watchdog: trigger_briefing Failed — HTTP ${resp.status}`,
+            normalized_text: `Daily briefing trigger returned HTTP ${resp.status}. Response: ${bodyText.substring(0, 300)}`,
+            confidence: 0.99,
+            raw_json: { action: 'trigger_briefing', http_status: resp.status, response_body: bodyText.substring(0, 1000), source: 'system-watchdog' },
+          });
+          return { action, finding, success: false, details: `Briefing trigger returned ${resp.status}: ${bodyText.substring(0, 200)}` };
+        }
+
+        // Parse result to distinguish sent vs skipped vs deduplicated
+        let result: any = {};
+        try { result = JSON.parse(bodyText); } catch { /* non-JSON body */ }
+        const detail = result.deduplicated ? 'Briefing already sent within 20h (dedup)' :
+          result.skipped ? 'Briefing skipped — no new activity' :
+          `Daily briefing triggered successfully (sent: ${result.sent ?? '?'})`;
+        return { action, finding, success: true, details: detail };
       }
 
       case 'fix_orphaned_signals': {
