@@ -427,89 +427,81 @@ Return ONLY the extracted content — no commentary, no preamble.`
 // Extract text from DOCX files
 async function extractTextFromDocx(content: Blob): Promise<{ text: string; error?: string }> {
   try {
-    // DOCX is a ZIP file containing XML
-    // We'll extract the document.xml which contains the main content
-    
+    // DOCX is a ZIP file containing word/document.xml
+    // Strategy:
+    //   1. Unzip with fflate to get the real XML (not raw compressed bytes)
+    //   2. Extract text from <w:t> elements
+    //   3. Optionally pass raw text to Gemini as TEXT (not image) for cleanup
+
     const arrayBuffer = await content.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
-    
-    // Use JSZip-like approach or parse manually
-    // For now, we'll use Lovable AI to extract from the raw content
-    // This is more reliable than parsing DOCX XML manually
-    
-    const lovableApiKey = Deno.env.get('GEMINI_API_KEY');
-    
-    if (!lovableApiKey) {
-      // Fallback: try to extract any readable text from the binary
-      const textDecoder = new TextDecoder('utf-8', { fatal: false });
-      const rawText = textDecoder.decode(uint8Array);
-      
-      // Extract text between XML tags (crude but works for simple docs)
-      const textMatches = rawText.match(/<w:t[^>]*>([^<]*)<\/w:t>/g) || [];
-      const extractedText = textMatches
-        .map(match => match.replace(/<[^>]+>/g, ''))
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      
-      if (extractedText.length > 50) {
-        return { text: extractedText };
+
+    // Step 1: Unzip to get word/document.xml
+    let xmlText: string | null = null;
+    try {
+      const { unzipSync } = await import('https://esm.sh/fflate@0.8.2');
+      const files = unzipSync(uint8Array);
+      // Primary content is always in word/document.xml
+      const docXml = files['word/document.xml'];
+      if (docXml) {
+        xmlText = new TextDecoder().decode(docXml);
+      } else {
+        // Some tools write it as word\\document.xml or with BOM — scan all entries
+        const xmlKey = Object.keys(files).find(k => k.toLowerCase().endsWith('document.xml'));
+        if (xmlKey) xmlText = new TextDecoder().decode(files[xmlKey]);
       }
-      
-      return { text: '', error: 'GEMINI_API_KEY not configured and fallback extraction failed' };
+    } catch (_zipErr) {
+      console.warn('fflate unzip failed, trying raw binary regex fallback');
+      // ZIP parse failed — attempt raw regex on the binary
+      // Works only if XML is stored uncompressed (rare but possible)
+      xmlText = new TextDecoder('utf-8', { fatal: false }).decode(uint8Array);
     }
 
-    // Convert to base64 and use AI
-    const base64Content = btoa(String.fromCharCode(...uint8Array));
-    
-    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${lovableApiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gemini-2.5-flash',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: `Extract all text content from this DOCX document. 
-Preserve structure, headings, lists, and tables (use markdown format for tables).
-Return ONLY the extracted text, no commentary.`
-              },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${base64Content}`
-                }
-              }
-            ]
-          }
-        ],
-        max_tokens: 16000,
-        temperature: 0
-      }),
-    });
-
-    if (!response.ok) {
-      // Fallback to XML extraction
-      const textDecoder = new TextDecoder('utf-8', { fatal: false });
-      const rawText = textDecoder.decode(uint8Array);
-      const textMatches = rawText.match(/<w:t[^>]*>([^<]*)<\/w:t>/g) || [];
-      const extractedText = textMatches
-        .map(match => match.replace(/<[^>]+>/g, ''))
+    // Step 2: Extract <w:t> text nodes from XML
+    const extractFromXml = (xml: string): string => {
+      const matches = xml.match(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g) || [];
+      return matches
+        .map(m => m.replace(/<[^>]+>/g, '').trim())
+        .filter(t => t.length > 0)
         .join(' ')
         .replace(/\s+/g, ' ')
         .trim();
-      
-      return { text: extractedText || '', error: 'AI extraction failed, used fallback' };
+    };
+
+    const rawExtracted = xmlText ? extractFromXml(xmlText) : '';
+
+    if (rawExtracted.length < 20) {
+      return { text: '', error: 'DOCX text extraction yielded no content — document may be empty, image-based, or corrupt' };
     }
 
-    const result = await response.json();
-    return { text: result.choices?.[0]?.message?.content || '' };
+    // Step 3: Optional Gemini text-cleanup pass (text-only, NOT image)
+    const apiKey = Deno.env.get('GEMINI_API_KEY');
+    if (apiKey) {
+      try {
+        const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model: 'gemini-2.5-flash-lite',
+            messages: [{
+              role: 'user',
+              content: `Clean up the following raw text extracted from a Word DOCX document. Fix spacing, restore paragraph breaks, preserve headings and lists using markdown. Remove XML artifacts. Return ONLY the cleaned document text.\n\n${rawExtracted.substring(0, 30000)}`,
+            }],
+            max_tokens: 8000,
+            temperature: 0,
+          }),
+        });
+        if (resp.ok) {
+          const result = await resp.json();
+          const cleaned = result.choices?.[0]?.message?.content || '';
+          if (cleaned.length > 50) return { text: cleaned };
+        }
+      } catch (_e) {
+        // Non-fatal — return raw extraction
+      }
+    }
+
+    return { text: rawExtracted };
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     console.error('DOCX extraction error:', err);

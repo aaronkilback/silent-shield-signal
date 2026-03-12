@@ -1352,11 +1352,11 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
           },
         },
         note: placeholder
-          ? "Only placeholder text is stored for this document (it has not been processed yet)."
+          ? "Only placeholder text is stored for this document (it has not been processed yet). Call process_document to extract content."
           : (!contentText || contentText.trim().length === 0
-            ? "No extracted text is stored for this document (common with map/image-based PDFs)."
+            ? "No extracted text is stored for this document. Call process_document to extract content."
             : undefined),
-        suggestion: placeholder
+        suggestion: (placeholder || !contentText || contentText.trim().length === 0)
           ? {
               tool: "process_document",
               document_id: docId,
