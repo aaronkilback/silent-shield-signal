@@ -1307,29 +1307,15 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
       },
     ];
 
-    // Compress conversation history: condense older messages into a digest, keep last 10 full
-    const compressHistory = (history: any[], keepRecent: number = 10): any[] => {
-      if (!history || history.length <= keepRecent) return history;
-      const recent = history.slice(-keepRecent);
-      const older = history.slice(0, history.length - keepRecent);
-      const digestLines: string[] = [];
-      for (const m of older) {
-        const content = typeof m.content === 'string' ? m.content : '';
-        if (m.role === 'user') {
-          digestLines.push(`User: ${content.substring(0, 300)}`);
-        } else if (m.role === 'assistant' && content.length > 0) {
-          digestLines.push(`Assistant: ${content.substring(0, 150)}${content.length > 150 ? '...' : ''}`);
-        }
-      }
-      // Use 'user'/'assistant' pair — Gemini rejects 'system' role mid-conversation
-      return [
-        { role: 'user', content: `[PRIOR CONVERSATION DIGEST — ${older.length} earlier messages condensed]\n${digestLines.join('\n')}` },
-        { role: 'assistant', content: 'Understood. Continuing with full context from prior conversation.' },
-        ...recent,
-      ];
+    // Trim conversation history to last 15 exchanges — no synthetic messages injected
+    // (Gemini enforces strict role-alternation; digest injection causes consecutive-role 400s)
+    const trimHistory = (history: any[], keep: number = 15): any[] => {
+      if (!history || history.length <= keep) return history;
+      console.log(`Trimming agent conversation history: ${history.length} → ${keep} messages`);
+      return history.slice(-keep);
     };
 
-    const compressedHistory = compressHistory(conversation_history);
+    const compressedHistory = trimHistory(conversation_history, 15);
 
     // Helper to truncate tool results before storing in message history
     const truncateToolResult = (result: any, maxChars: number = 10000): string => {

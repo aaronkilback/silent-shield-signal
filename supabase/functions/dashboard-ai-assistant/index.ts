@@ -8262,38 +8262,9 @@ Deno.serve(async (req) => {
       return resultStr.substring(0, maxChars) + "\n\n... [Result truncated. Use specific filters for complete data.]";
     };
 
-    // Compress message history: keep last 10 full-fidelity, condense older into a digest
-    const compressMessageHistory = (msgs: any[], keepRecent: number = 10): any[] => {
-      if (!msgs || !Array.isArray(msgs)) return [];
-      if (msgs.length <= keepRecent) return msgs;
-
-      const recent = msgs.slice(-keepRecent);
-      const older = msgs.slice(0, msgs.length - keepRecent);
-
-      // Build a compact digest from older messages (user msgs in full, assistant msgs truncated)
-      const digestLines: string[] = [];
-      for (const m of older) {
-        const role = m.role === 'user' ? 'User' : 'Assistant';
-        const content = typeof m.content === 'string' ? m.content : '';
-        if (m.role === 'user') {
-          digestLines.push(`${role}: ${content.substring(0, 300)}`);
-        } else if (m.role === 'assistant' && content.length > 0) {
-          digestLines.push(`${role}: ${content.substring(0, 150)}${content.length > 150 ? '...' : ''}`);
-        }
-      }
-
-      // Use 'user'/'assistant' pair — Gemini rejects 'system' role mid-conversation
-      const digestPair = [
-        { role: 'user', content: `[PRIOR CONVERSATION DIGEST — ${older.length} earlier messages condensed]\n${digestLines.join('\n')}` },
-        { role: 'assistant', content: 'Understood. Continuing with full context from prior conversation.' },
-      ];
-
-      console.log(`Compressed message history: ${msgs.length} → ${2 + keepRecent} (digest pair + ${keepRecent} recent)`);
-      return [...digestPair, ...recent];
-    };
-
     // Limit incoming messages to prevent token overflow
-    const limitedMessages = compressMessageHistory(messages, 10);
+    // Gemini enforces strict role-alternation — no synthetic messages injected
+    const limitedMessages = limitMessageHistory(messages, 15);
     
     // Detect simple acknowledgment messages that don't need full processing
     const isSimpleAcknowledgment = (msgs: any[]): boolean => {
