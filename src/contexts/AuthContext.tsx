@@ -17,7 +17,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Set up auth state listener FIRST (single subscription for the whole app)
+    // onAuthStateChange fires INITIAL_SESSION on subscription (supabase-js v2.23+),
+    // so we do NOT call getSession() separately — concurrent lock acquisition caused
+    // "Lock not released within 5000ms" warnings whenever authReady triggered data queries.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (event === 'TOKEN_REFRESHED' && !session) {
@@ -35,13 +37,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setLoading(false);
       }
     );
-
-    // THEN check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
 
     return () => subscription.unsubscribe();
   }, []);

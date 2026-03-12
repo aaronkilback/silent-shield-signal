@@ -352,138 +352,11 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Also ensure real scan data exists — run actual signal analysis for agents without scans
-      const { data: activeAgents } = await supabase
-        .from('ai_agents')
-        .select('call_sign')
-        .eq('is_active', true);
-
-      let scansCreated = 0;
-      if (activeAgents) {
-        for (const agent of activeAgents) {
-          const { count: scanCount } = await supabase
-            .from('autonomous_scan_results')
-            .select('id', { count: 'exact', head: true })
-            .eq('agent_call_sign', agent.call_sign)
-            .gte('created_at', new Date(Date.now() - 86400000).toISOString());
-
-          if ((scanCount || 0) > 0) continue;
-
-          // Create a REAL scan based on actual signal data
-          const agentDomainMap: Record<string, string[]> = {
-            '0DAY': ['cyber', 'data_exposure', 'vulnerability', 'exploit', 'phishing', 'ransomware'],
-            'NEO': ['cyber', 'data_exposure'],
-            'CERBERUS': ['theft', 'fraud', 'financial'],
-            'SPECTER': ['threat', 'insider'],
-            'MERIDIAN': ['protest', 'geopolitical', 'wildfire', 'weather'],
-            'ARGUS': ['surveillance', 'sabotage', 'physical'],
-            'VIPER': ['narcotics', 'trafficking'],
-          };
-
-          const relevantCategories = agentDomainMap[agent.call_sign] || [];
-          let signalsAnalyzed = 0;
-          let alertsGenerated = 0;
-          let riskScore = 0;
-
-          if (relevantCategories.length > 0) {
-            // Count actual signals in this agent's domain from last 24h
-            for (const cat of relevantCategories) {
-              const { count } = await supabase
-                .from('signals')
-                .select('id', { count: 'exact', head: true })
-                .ilike('category', `%${cat}%`)
-                .gte('created_at', new Date(Date.now() - 86400000).toISOString());
-              signalsAnalyzed += (count || 0);
-            }
-
-            // Count high-severity signals as alerts
-            for (const cat of relevantCategories) {
-              const { count } = await supabase
-                .from('signals')
-                .select('id', { count: 'exact', head: true })
-                .ilike('category', `%${cat}%`)
-                .in('severity', ['critical', 'high'])
-                .gte('created_at', new Date(Date.now() - 86400000).toISOString());
-              alertsGenerated += (count || 0);
-            }
-
-            // Risk score based on signal density and severity
-            riskScore = Math.min(100, Math.round(
-              (signalsAnalyzed > 0 ? 30 : 10) +
-              (alertsGenerated * 10) +
-              (signalsAnalyzed > 20 ? 20 : signalsAnalyzed)
-            ));
-          }
-
-          await supabase.from('autonomous_scan_results').insert({
-            agent_call_sign: agent.call_sign,
-            scan_type: 'domain_signal_analysis',
-            signals_analyzed: signalsAnalyzed,
-            alerts_generated: alertsGenerated,
-            risk_score: riskScore,
-            status: 'completed',
-            findings: {
-              summary: `Domain signal analysis: ${signalsAnalyzed} signals reviewed, ${alertsGenerated} high-severity alerts in scope`,
-              categories_scanned: relevantCategories,
-              data_driven: true,
-            },
-          });
-          scansCreated++;
-        }
-      }
-
-      results.specialist_learning = { learning_triggered: learningTriggered, scans_created: scansCreated };
-      console.log(`[LoopCloser] Specialist Learning: ${learningTriggered} agents triggered, ${scansCreated} real scans created`);
+      results.specialist_learning = { learning_triggered: learningTriggered };
+      console.log(`[LoopCloser] Specialist Learning: ${learningTriggered} agents triggered`);
     } catch (err) {
       console.error('[LoopCloser] Specialist Learning error:', err);
       results.specialist_learning = { error: String(err) };
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // LOOP 5: AEGIS BRIEFINGS — Insert a system briefing message so the
-    //         ai_assistant_messages 24h count stays ≥ 1
-    // ═══════════════════════════════════════════════════════════════════
-    try {
-      const now24h = new Date(Date.now() - 86400000).toISOString();
-      // Count existing briefing messages in last 24h (service role sees all)
-      const { count: existingBriefings } = await supabase
-        .from('ai_assistant_messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('role', 'assistant')
-        .gte('created_at', now24h);
-
-      if ((existingBriefings || 0) === 0) {
-        // Get first super_admin user to own the message
-        const { data: adminUser } = await supabase
-          .from('user_roles')
-          .select('user_id')
-          .eq('role', 'super_admin')
-          .limit(1)
-          .single();
-
-        if (adminUser) {
-          const { data: signals } = await supabase
-            .from('signals')
-            .select('severity')
-            .gte('created_at', now24h);
-          const critical = (signals || []).filter(s => s.severity === 'critical').length;
-          const high = (signals || []).filter(s => s.severity === 'high').length;
-
-          await supabase.from('ai_assistant_messages').insert({
-            user_id: adminUser.user_id,
-            role: 'assistant',
-            content: `AEGIS Fortress daily briefing: ${(signals || []).length} signals ingested in the last 24h (${critical} critical, ${high} high severity). All intelligence loops are active. Threat posture is being continuously monitored.`,
-            conversation_id: crypto.randomUUID(),
-            is_shared: false,
-          });
-          results.aegis_briefings = { inserted: 1 };
-        }
-      } else {
-        results.aegis_briefings = { existing: existingBriefings };
-      }
-    } catch (err) {
-      console.error('[LoopCloser] AEGIS Briefings error:', err);
-      results.aegis_briefings = { error: String(err) };
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -524,6 +397,70 @@ Deno.serve(async (req) => {
     } catch (err) {
       console.error('[LoopCloser] Debate Records error:', err);
       results.debate_records = { error: String(err) };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // LOOP 7: HYPOTHESIS TREES FOR UNESCALATED HIGH-SEVERITY SIGNALS
+    // Generates competing hypotheses for critical/high signals that have
+    // NOT yet become incidents — catches threats before they escalate.
+    // ═══════════════════════════════════════════════════════════════════
+    try {
+      const now24h = new Date(Date.now() - 86400000).toISOString();
+
+      // Find critical/high signals from last 24h with no incident and no hypothesis tree
+      const { data: highSeveritySignals } = await supabase
+        .from('signals')
+        .select('id, normalized_text, category, severity, location, entity_tags')
+        .in('severity', ['critical', 'high'])
+        .gte('created_at', now24h)
+        .limit(20);
+
+      // Filter: no existing incident
+      const signalIds = (highSeveritySignals || []).map((s: any) => s.id);
+      const { data: escalatedIds } = await supabase
+        .from('incidents')
+        .select('signal_id')
+        .in('signal_id', signalIds.length > 0 ? signalIds : ['none']);
+
+      const escalatedSet = new Set((escalatedIds || []).map((i: any) => i.signal_id));
+
+      // Filter: no hypothesis tree in last 24h
+      const { data: existingTrees } = await supabase
+        .from('hypothesis_trees')
+        .select('signal_id')
+        .in('signal_id', signalIds.length > 0 ? signalIds : ['none'])
+        .gte('created_at', now24h);
+
+      const treeSet = new Set((existingTrees || []).map((t: any) => t.signal_id));
+
+      const candidates = (highSeveritySignals || []).filter((s: any) =>
+        !escalatedSet.has(s.id) && !treeSet.has(s.id)
+      );
+
+      let signalTreesGenerated = 0;
+      for (const signal of candidates.slice(0, 3)) {
+        const context = `Signal: ${signal.normalized_text?.substring(0, 400) || 'N/A'}\nCategory: ${signal.category} | Severity: ${signal.severity}\nLocation: ${signal.location || 'Unknown'}\nEntities: ${signal.entity_tags?.join(', ') || 'None'}`;
+        const question = `What are the most likely threat scenarios for this ${signal.severity?.toUpperCase()} signal: "${signal.normalized_text?.substring(0, 100) || signal.category}"?`;
+
+        const tree = await generateHypothesisTree(
+          supabase,
+          'NEO',
+          question,
+          context,
+          null,
+          signal.id,
+          'google/gemini-2.5-flash'
+        );
+
+        if (tree.treeId) signalTreesGenerated++;
+        await new Promise(r => setTimeout(r, 1500));
+      }
+
+      results.signal_hypothesis_trees = { generated: signalTreesGenerated, candidates: candidates.length };
+      console.log(`[LoopCloser] Signal Hypothesis Trees: ${signalTreesGenerated}/${candidates.length} candidates processed`);
+    } catch (err) {
+      console.error('[LoopCloser] Signal Hypothesis Trees error:', err);
+      results.signal_hypothesis_trees = { error: String(err) };
     }
 
     console.log(`[LoopCloser] Complete:`, JSON.stringify(results));

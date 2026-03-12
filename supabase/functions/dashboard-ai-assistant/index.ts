@@ -5193,6 +5193,91 @@ The signal is now in the database with status 'triaged' and rules have been appl
         results.monitoring_history = monData || [];
       }
 
+      // Query autonomous actions log (agent activity)
+      if (query_type === 'autonomous_actions' || query_type === 'comprehensive') {
+        const { data: actData } = await supabaseClient
+          .from('autonomous_actions_log')
+          .select('id, action_type, trigger_source, status, result, error_message, created_at')
+          .order('created_at', { ascending: false })
+          .limit(limit);
+        results.autonomous_actions = actData || [];
+      }
+
+      // Query agent performance / debates / learning
+      if (query_type === 'agent_performance' || query_type === 'comprehensive') {
+        const { data: accData } = await supabaseClient
+          .from('agent_accuracy_metrics')
+          .select('agent_call_sign, accuracy_score, total_assessments, correct_assessments, domain, updated_at')
+          .order('updated_at', { ascending: false })
+          .limit(limit);
+        results.agent_accuracy = accData || [];
+
+        const { data: debateData } = await supabaseClient
+          .from('agent_debate_records')
+          .select('id, incident_id, debate_type, consensus_reached, winning_position, participant_agents, created_at')
+          .order('created_at', { ascending: false })
+          .limit(limit);
+        results.agent_debates = debateData || [];
+
+        const { data: learnData } = await supabaseClient
+          .from('agent_learning_sessions')
+          .select('id, agent_call_sign, session_type, insights_gained, created_at')
+          .order('created_at', { ascending: false })
+          .limit(limit);
+        results.agent_learning = learnData || [];
+      }
+
+      // Query briefing sessions
+      if (query_type === 'briefings' || query_type === 'comprehensive') {
+        const { data: briefData } = await supabaseClient
+          .from('briefing_sessions')
+          .select('id, title, status, created_by, participant_count, created_at, updated_at')
+          .order('created_at', { ascending: false })
+          .limit(limit);
+        results.briefing_sessions = briefData || [];
+      }
+
+      // Query task force / workspace tasks
+      if (query_type === 'tasks' || query_type === 'comprehensive') {
+        const { data: taskData } = await supabaseClient
+          .from('workspace_tasks')
+          .select('id, title, status, priority, assigned_to, due_date, created_at')
+          .order('created_at', { ascending: false })
+          .limit(limit);
+        results.workspace_tasks = taskData || [];
+      }
+
+      // Query investigation workspace entries
+      if (query_type === 'investigation_entries' || query_type === 'comprehensive') {
+        const { data: invEntries } = await supabaseClient
+          .from('investigation_entries')
+          .select('id, investigation_id, entry_type, content, author_id, created_at')
+          .order('created_at', { ascending: false })
+          .limit(limit);
+        results.investigation_entries = invEntries || [];
+      }
+
+      // Query signal contradictions
+      if (query_type === 'signal_contradictions' || query_type === 'comprehensive') {
+        let contraQ = supabaseClient
+          .from('signal_contradictions')
+          .select('id, entity_name, signal_a_id, signal_b_id, signal_a_summary, signal_b_summary, contradiction_type, severity, confidence, resolution_status, detected_at, resolved_at, resolution_notes');
+        if (filters.status) contraQ = contraQ.eq('resolution_status', filters.status);
+        if (filters.severity) contraQ = contraQ.eq('severity', filters.severity);
+        const { data: contraData } = await contraQ.order('detected_at', { ascending: false }).limit(limit);
+        results.signal_contradictions = contraData || [];
+      }
+
+      // Query watchdog effectiveness
+      if (query_type === 'watchdog_effectiveness' || query_type === 'comprehensive') {
+        const { data: effectivenessData } = await supabaseClient
+          .from('watchdog_effectiveness')
+          .select('finding_category, remediation_action, total_attempts, successes, failures, avg_effectiveness, recurring_issues, last_seen')
+          .order('total_attempts', { ascending: false })
+          .limit(30);
+        results.watchdog_effectiveness = effectivenessData || [];
+      }
+
       // Query travel (itineraries)
       if (query_type === 'travel' || query_type === 'comprehensive') {
         let travelQ = supabaseClient
@@ -7663,6 +7748,283 @@ The signal is now in the database with status 'triaged' and rules have been appl
       };
     }
 
+    case "check_agent_status": {
+      const { agent_call_sign, include_memory = true, limit: statusLimit = 10 } = args;
+
+      // 1. Fetch active agents
+      let agentQuery = supabaseClient
+        .from("ai_agents")
+        .select("id, call_sign, codename, header_name, specialty, mission_scope, is_active, is_client_facing, avatar_color, created_at, updated_at")
+        .eq("is_active", true)
+        .order("call_sign");
+      if (agent_call_sign) {
+        agentQuery = agentQuery.ilike("call_sign", `%${agent_call_sign}%`);
+      }
+      const { data: agents } = await agentQuery;
+
+      // 2. Fetch recent autonomous actions log
+      let actionsQuery = supabaseClient
+        .from("autonomous_actions_log")
+        .select("id, action_type, trigger_source, status, result, error_message, created_at")
+        .order("created_at", { ascending: false })
+        .limit(statusLimit);
+      const { data: recentActions } = await actionsQuery;
+
+      // 3. Fetch recent investigation memories
+      let memoryData: any[] = [];
+      if (include_memory) {
+        let memQuery = supabaseClient
+          .from("agent_investigation_memory")
+          .select("agent_call_sign, memory_type, content, confidence, entities, created_at")
+          .order("created_at", { ascending: false })
+          .limit(statusLimit);
+        if (agent_call_sign) {
+          memQuery = memQuery.ilike("agent_call_sign", `%${agent_call_sign}%`);
+        }
+        const { data: mem } = await memQuery;
+        memoryData = mem || [];
+      }
+
+      // 4. Fetch recent agent conversations
+      let convoQuery = supabaseClient
+        .from("agent_conversations")
+        .select("agent_id, last_message_at, message_count, ai_agents(call_sign, codename)")
+        .order("last_message_at", { ascending: false })
+        .limit(statusLimit);
+      const { data: conversations } = await convoQuery;
+
+      // 5. Fetch agent accuracy metrics
+      let accuracyQuery = supabaseClient
+        .from("agent_accuracy_metrics")
+        .select("agent_call_sign, accuracy_score, total_assessments, domain, updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(statusLimit);
+      if (agent_call_sign) accuracyQuery = accuracyQuery.ilike("agent_call_sign", `%${agent_call_sign}%`);
+      const { data: accuracyData } = await accuracyQuery;
+
+      // 6. Fetch recent debates
+      const { data: debateData } = await supabaseClient
+        .from("agent_debate_records")
+        .select("id, incident_id, debate_type, consensus_reached, participant_agents, created_at")
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      const agentList = (agents || []).map((a: any) => ({
+        call_sign: a.call_sign,
+        codename: a.codename,
+        header_name: a.header_name,
+        specialty: a.specialty,
+        mission_scope: a.mission_scope,
+        is_active: a.is_active,
+        last_updated: a.updated_at,
+      }));
+
+      return {
+        agents: agentList,
+        agent_count: agentList.length,
+        recent_autonomous_actions: recentActions || [],
+        recent_investigation_memories: memoryData,
+        recent_conversations: (conversations || []).map((c: any) => ({
+          agent: c.ai_agents?.call_sign || c.agent_id,
+          last_message_at: c.last_message_at,
+          message_count: c.message_count,
+        })),
+        agent_accuracy: accuracyData || [],
+        recent_debates: debateData || [],
+        summary: `${agentList.length} active agent(s). ${(recentActions || []).length} recent autonomous actions. ${memoryData.length} recent investigation memory entries. ${(accuracyData || []).length} accuracy records.`,
+      };
+    }
+
+    case "suggest_system_improvements": {
+      const { focus_area = "all", max_suggestions = 10 } = args;
+
+      const [
+        effectivenessResult,
+        accuracyResult,
+        contradictionsResult,
+        thresholdProfileResult,
+        actionsResult,
+        learningSessionsResult,
+      ] = await Promise.all([
+        // Watchdog remediation effectiveness
+        supabaseClient
+          .from("watchdog_effectiveness")
+          .select("finding_category, remediation_action, total_attempts, successes, failures, avg_effectiveness, recurring_issues, last_seen")
+          .order("total_attempts", { ascending: false })
+          .limit(20),
+        // Agent accuracy by category
+        supabaseClient
+          .from("agent_accuracy_metrics")
+          .select("agent_call_sign, accuracy_score, weakest_category, strongest_category, category_accuracy, total_predictions, last_calibrated")
+          .order("accuracy_score", { ascending: true })
+          .limit(20),
+        // Unresolved contradictions
+        supabaseClient
+          .from("signal_contradictions")
+          .select("id, entity_name, severity, contradiction_type, confidence, detected_at, resolution_status")
+          .eq("resolution_status", "unresolved")
+          .order("detected_at", { ascending: true })
+          .limit(20),
+        // Current adaptive thresholds
+        supabaseClient
+          .from("learning_profiles")
+          .select("features, last_updated")
+          .eq("profile_type", "adaptive_thresholds")
+          .maybeSingle(),
+        // Recent autonomous action outcomes
+        supabaseClient
+          .from("autonomous_actions_log")
+          .select("action_type, status, error_message, created_at")
+          .order("created_at", { ascending: false })
+          .limit(50),
+        // Recent learning sessions
+        supabaseClient
+          .from("agent_learning_sessions")
+          .select("created_at, quality_score, learnings")
+          .order("created_at", { ascending: false })
+          .limit(5),
+      ]);
+
+      const effectiveness = effectivenessResult.data || [];
+      const accuracy = accuracyResult.data || [];
+      const contradictions = contradictionsResult.data || [];
+      const thresholds = (thresholdProfileResult.data?.features as Record<string, any>) || {};
+      const actions = actionsResult.data || [];
+      const learningSessions = learningSessionsResult.data || [];
+
+      // Synthesize improvement signals
+      const suggestions: Array<{
+        area: string;
+        priority: "critical" | "high" | "medium" | "low";
+        title: string;
+        rationale: string;
+        metric: string;
+        action: string;
+      }> = [];
+
+      // 1. Failing remediations
+      const failingRemediations = effectiveness.filter((e: any) => e.failures > 0 && (e.failures / e.total_attempts) > 0.3);
+      for (const rem of failingRemediations.slice(0, 3)) {
+        suggestions.push({
+          area: "watchdog",
+          priority: rem.avg_effectiveness < 0.4 ? "critical" : "high",
+          title: `Remediation failure: ${rem.remediation_action}`,
+          rationale: `${rem.failures}/${rem.total_attempts} attempts failed (${Math.round((rem.failures / rem.total_attempts) * 100)}% failure rate) in category "${rem.finding_category}"`,
+          metric: `avg_effectiveness: ${rem.avg_effectiveness}, recurring_issues: ${rem.recurring_issues}`,
+          action: `Investigate root cause of "${rem.remediation_action}" failures. Consider adding fallback strategy or alerting human operator when failure rate exceeds 30%.`,
+        });
+      }
+
+      // 2. Low-accuracy agents
+      const lowAccuracyAgents = accuracy.filter((a: any) => a.accuracy_score < 0.6 && a.total_predictions > 5);
+      for (const agent of lowAccuracyAgents.slice(0, 3)) {
+        suggestions.push({
+          area: "agents",
+          priority: agent.accuracy_score < 0.4 ? "critical" : "high",
+          title: `Low accuracy: ${agent.agent_call_sign}`,
+          rationale: `Accuracy score ${(agent.accuracy_score * 100).toFixed(0)}% — weakest in "${agent.weakest_category || 'unknown'}" category`,
+          metric: `accuracy_score: ${agent.accuracy_score}, total_predictions: ${agent.total_predictions}`,
+          action: `Retrain ${agent.agent_call_sign} with additional examples in "${agent.weakest_category}". Consider adding specialized knowledge entries to expert_knowledge table for this domain.`,
+        });
+      }
+
+      // 3. Stale contradictions
+      const staleContradictions = contradictions.filter((c: any) => {
+        const ageDays = (Date.now() - new Date(c.detected_at).getTime()) / 86400000;
+        return ageDays > 3;
+      });
+      if (staleContradictions.length > 0) {
+        suggestions.push({
+          area: "contradictions",
+          priority: staleContradictions.length > 5 ? "high" : "medium",
+          title: `${staleContradictions.length} unresolved signal contradiction(s) older than 3 days`,
+          rationale: `Contradictions degrade intelligence quality. Oldest: entity "${staleContradictions[0]?.entity_name}" (${Math.round((Date.now() - new Date(staleContradictions[0]?.detected_at).getTime()) / 86400000)} days)`,
+          metric: `unresolved_count: ${contradictions.length}, stale_count: ${staleContradictions.length}`,
+          action: `Run 'run_contradiction_scan' to auto-assign high-severity contradictions to multi-agent debate. Consider lowering auto-resolution threshold from 'high' to 'medium' severity.`,
+        });
+      }
+
+      // 4. Autonomous action failure rate
+      const failedActions = actions.filter((a: any) => a.status === "failed");
+      if (failedActions.length > 5 && (failedActions.length / actions.length) > 0.15) {
+        const topFailureType = failedActions.reduce((acc: any, a: any) => {
+          acc[a.action_type] = (acc[a.action_type] || 0) + 1;
+          return acc;
+        }, {});
+        const topType = Object.entries(topFailureType).sort((a: any, b: any) => b[1] - a[1])[0];
+        suggestions.push({
+          area: "watchdog",
+          priority: "high",
+          title: `High autonomous action failure rate: ${Math.round((failedActions.length / actions.length) * 100)}%`,
+          rationale: `${failedActions.length}/${actions.length} recent actions failed. Top failure type: "${topType?.[0]}" (${topType?.[1]} failures)`,
+          metric: `total: ${actions.length}, failed: ${failedActions.length}`,
+          action: `Investigate "${topType?.[0]}" action failures. Check edge function deployment status and API key validity for affected monitors.`,
+        });
+      }
+
+      // 5. Learning session quality
+      if (learningSessions.length > 0) {
+        const avgQuality = learningSessions.reduce((sum: number, s: any) => sum + (s.quality_score || 0), 0) / learningSessions.length;
+        if (avgQuality < 0.5) {
+          suggestions.push({
+            area: "data_quality",
+            priority: "medium",
+            title: `Low learning session quality (avg ${(avgQuality * 100).toFixed(0)}%)`,
+            rationale: `Recent ${learningSessions.length} learning sessions averaging ${(avgQuality * 100).toFixed(0)}% quality score`,
+            metric: `avg_quality: ${avgQuality.toFixed(2)}, sessions_checked: ${learningSessions.length}`,
+            action: `Increase analyst feedback volume — learning quality improves with more labeled signal approvals/rejections. Consider enabling auto-feedback for high-confidence signals.`,
+          });
+        }
+      }
+
+      // 6. Missing threshold overrides (thresholds at defaults)
+      if (Object.keys(thresholds).length === 0) {
+        suggestions.push({
+          area: "thresholds",
+          priority: "low",
+          title: "No custom adaptive thresholds configured",
+          rationale: "All watchdog thresholds are using computed defaults. Platform-specific tuning would improve alert accuracy.",
+          metric: "persisted_overrides: 0",
+          action: "Allow the watchdog to run 'adjust_thresholds' remediations over several cycles — it will learn optimal values from your specific signal volume patterns.",
+        });
+      }
+
+      // Recurring issues
+      const recurringIssues = effectiveness.filter((e: any) => e.recurring_issues > 2);
+      if (recurringIssues.length > 0) {
+        suggestions.push({
+          area: "watchdog",
+          priority: "medium",
+          title: `${recurringIssues.length} recurring issue(s) not fully resolved`,
+          rationale: recurringIssues.map((e: any) => `"${e.finding_category}: ${e.remediation_action}" (${e.recurring_issues} recurrences)`).join("; "),
+          metric: `recurring_remediations: ${recurringIssues.length}`,
+          action: "Review these recurring issues — they indicate root causes not addressed by current remediation strategies. May require schema changes or configuration fixes.",
+        });
+      }
+
+      // Filter by focus_area if specified
+      const filtered = focus_area === "all"
+        ? suggestions
+        : suggestions.filter(s => s.area === focus_area);
+
+      const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+      const sorted = filtered.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]).slice(0, max_suggestions);
+
+      return {
+        total_suggestions: sorted.length,
+        focus_area,
+        suggestions: sorted,
+        data_summary: {
+          watchdog_remediations_analyzed: effectiveness.length,
+          agents_assessed: accuracy.length,
+          unresolved_contradictions: contradictions.length,
+          recent_actions_checked: actions.length,
+          threshold_overrides_active: Object.keys(thresholds).length,
+        },
+        generated_at: new Date().toISOString(),
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
@@ -7678,9 +8040,22 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { messages } = await req.json();
+    const { messages: rawMessages } = await req.json();
 
-    // Input validation
+    // Sanitize: truncate any oversized message content rather than rejecting.
+    // Long AEGIS responses (detailed assessments, reports) can exceed 20k chars and
+    // would otherwise cause a hard 400 on the next request.
+    const MAX_CONTENT = 50_000;
+    const messages = Array.isArray(rawMessages)
+      ? rawMessages.map((m: any) => ({
+          ...m,
+          content: typeof m.content === 'string' && m.content.length > MAX_CONTENT
+            ? m.content.substring(0, MAX_CONTENT) + '\n[... truncated for context window ...]'
+            : m.content,
+        }))
+      : rawMessages;
+
+    // Input validation (role/structure check only — content length already handled above)
     const msgValidation = validateMessages(messages, 'messages', { required: true, maxMessages: 100 });
     if (!msgValidation.valid) {
       return new Response(
@@ -7800,6 +8175,23 @@ Deno.serve(async (req) => {
       console.warn("[AEGIS] Agent roster unavailable — fallback anti-hallucination rule active");
     }
 
+    // Rate limiting: 10 requests per user per minute
+    const rateLimitUserId = authenticatedUserId || req.headers.get('cf-connecting-ip') || req.headers.get('x-forwarded-for') || 'anonymous';
+    const rateLimitWindow = new Date();
+    rateLimitWindow.setSeconds(0, 0);
+    const { data: rateLimitData } = await supabaseClient.rpc('upsert_rate_limit', {
+      p_user_id: rateLimitUserId,
+      p_function_name: 'dashboard-ai-assistant',
+      p_window_start: rateLimitWindow.toISOString(),
+      p_max_requests: 10,
+    });
+    if (rateLimitData && !rateLimitData.allowed) {
+      return new Response(
+        JSON.stringify({ error: 'Rate limit exceeded. Please wait a moment before sending another message.' }),
+        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': '60' } }
+      );
+    }
+
     const truncateContent = (content: string, maxChars: number = 50000): string => {
       if (content.length <= maxChars) return content;
       return content.substring(0, maxChars) + "\n\n... [Content truncated due to size limits. Query with more specific filters for complete results.]";
@@ -7870,8 +8262,37 @@ Deno.serve(async (req) => {
       return resultStr.substring(0, maxChars) + "\n\n... [Result truncated. Use specific filters for complete data.]";
     };
 
+    // Compress message history: keep last 10 full-fidelity, condense older into a digest
+    const compressMessageHistory = (msgs: any[], keepRecent: number = 10): any[] => {
+      if (!msgs || !Array.isArray(msgs)) return [];
+      if (msgs.length <= keepRecent) return msgs;
+
+      const recent = msgs.slice(-keepRecent);
+      const older = msgs.slice(0, msgs.length - keepRecent);
+
+      // Build a compact digest from older messages (user msgs in full, assistant msgs truncated)
+      const digestLines: string[] = [];
+      for (const m of older) {
+        const role = m.role === 'user' ? 'User' : 'Assistant';
+        const content = typeof m.content === 'string' ? m.content : '';
+        if (m.role === 'user') {
+          digestLines.push(`${role}: ${content.substring(0, 300)}`);
+        } else if (m.role === 'assistant' && content.length > 0) {
+          digestLines.push(`${role}: ${content.substring(0, 150)}${content.length > 150 ? '...' : ''}`);
+        }
+      }
+
+      const digestMsg = {
+        role: 'system',
+        content: `[PRIOR CONVERSATION DIGEST — ${older.length} messages condensed]\n${digestLines.join('\n')}`,
+      };
+
+      console.log(`Compressed message history: ${msgs.length} → ${1 + keepRecent} (digest + ${keepRecent} recent)`);
+      return [digestMsg, ...recent];
+    };
+
     // Limit incoming messages to prevent token overflow
-    const limitedMessages = limitMessageHistory(messages, 12);
+    const limitedMessages = compressMessageHistory(messages, 10);
     
     // Detect simple acknowledgment messages that don't need full processing
     const isSimpleAcknowledgment = (msgs: any[]): boolean => {
@@ -8068,7 +8489,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
       }
       const errorText = await response.text();
       console.error("AI gateway error:", response.status, errorText);
-      throw new Error(`AI gateway error: ${response.status}`);
+      throw new Error(`AI gateway error: ${response.status} — ${errorText.substring(0, 500)}`);
     }
 
     const firstResult = await response.json();
@@ -8671,7 +9092,7 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
               tool_call_id: toolCall.id,
               role: "tool",
               name: toolCall.function.name,
-              content: truncateToolResult(result, 25000),
+              content: truncateToolResult(result, 10000),
             };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";

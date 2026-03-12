@@ -9,7 +9,7 @@ const corsHeaders = {
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Fetch with retry logic
-async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3): Promise<Response> {
+async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 2): Promise<Response> {
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -23,6 +23,7 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3)
       return response;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      console.log(`Attempt ${attempt}/${maxRetries} failed: ${lastError.message}`);
       if (attempt < maxRetries) {
         await delay(1000 * attempt);
       }
@@ -48,23 +49,32 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Deadline: stop launching new phases after 110s so we always finish before Supabase's 150s limit
+  const DEADLINE = Date.now() + 110_000;
+  const budgetOk = () => Date.now() < DEADLINE;
+
+  // Collect results outside try so the catch can return partial results
+  const results: DeepScanResult[] = [];
+  let entity: Record<string, any> | null = null;
+  let entity_id = '';
+
   try {
     const body = await req.json();
-    
+
     // Health check endpoint for pipeline tests
     if (body.health_check) {
       return new Response(
-        JSON.stringify({ 
-          status: 'healthy', 
+        JSON.stringify({
+          status: 'healthy',
           function: 'entity-deep-scan',
-          timestamp: new Date().toISOString() 
+          timestamp: new Date().toISOString()
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-    
-    const { entity_id } = body;
-    
+
+    entity_id = body.entity_id;
+
     if (!entity_id) {
       throw new Error('entity_id is required');
     }
@@ -75,19 +85,19 @@ Deno.serve(async (req) => {
     );
 
     // Fetch entity details
-    const { data: entity, error: entityError } = await supabase
+    const { data: entityData, error: entityError } = await supabase
       .from('entities')
       .select('*')
       .eq('id', entity_id)
       .single();
 
-    if (entityError || !entity) {
-      throw new Error('Entity not found');
+    if (entityError || !entityData) {
+      const dbErr = entityError?.message || entityError?.code || 'no data returned';
+      throw new Error(`Entity not found (id=${entity_id}, db_error=${dbErr})`);
     }
+    entity = entityData;
 
     console.log(`Starting deep scan for entity: ${entity.name} (${entity.type})`);
-
-    const results: DeepScanResult[] = [];
     const GOOGLE_API_KEY = Deno.env.get('GOOGLE_SEARCH_API_KEY');
     const GOOGLE_CX = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
     const HIBP_API_KEY = Deno.env.get('HIBP_API_KEY');
@@ -149,7 +159,7 @@ Deno.serve(async (req) => {
               commentary: 'No breaches currently detected. Continue monitoring as new breaches are regularly discovered.'
             });
           }
-          await delay(1500); // HIBP rate limit
+          await delay(1000); // HIBP rate limit
 
           // Paste check
           const pasteResponse = await fetchWithRetry(
@@ -177,7 +187,7 @@ Deno.serve(async (req) => {
               });
             }
           }
-          await delay(1500);
+          await delay(500);
         } catch (e) {
           console.error(`HIBP check failed for ${email}:`, e);
         }
@@ -185,150 +195,213 @@ Deno.serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // PHASE 2: DARK WEB & UNDERGROUND MENTIONS
+    // PHASE 2: DARK WEB & UNDERGROUND MENTIONS (Perplexity Sonar)
     // ═══════════════════════════════════════════════════════════════════════════
-    
-    if (GOOGLE_API_KEY && GOOGLE_CX) {
-      // Dark web related searches
-      const darkWebQueries = [
-        `"${entity.name}" site:pastebin.com OR site:doxbin.org OR site:reddit.com/r/leak`,
-        `"${entity.name}" "dox" OR "doxxed" OR "exposed"`,
-        `"${entity.name}" "breach" OR "hacked" OR "leaked"`
-      ];
 
-      for (const query of darkWebQueries) {
-        try {
-          const searchUrl = new URL('https://www.googleapis.com/customsearch/v1');
-          searchUrl.searchParams.set('key', GOOGLE_API_KEY);
-          searchUrl.searchParams.set('cx', GOOGLE_CX);
-          searchUrl.searchParams.set('q', query);
-          searchUrl.searchParams.set('num', '5');
+    if (PERPLEXITY_API_KEY && budgetOk()) {
+      try {
+        console.log(`[DEEP-SCAN] Phase 2: Dark web & underground mentions for ${entity.name}`);
+        const darkWebQuery = `Search for any mentions of "${entity.name}" on dark web monitoring sources, Pastebin, leak sites, doxing forums, or hacker forums. Has this entity been doxxed, had their data leaked, or been mentioned in underground channels? Search for: "${entity.name}" site:pastebin.com OR dox OR leaked credentials OR data breach OR dark web`;
 
-          const response = await fetchWithRetry(searchUrl.toString(), {});
-          if (response.ok) {
-            const data = await response.json();
-            for (const item of data.items || []) {
-              const hostname = new URL(item.link).hostname.toLowerCase();
-              const isDarkWeb = hostname.includes('pastebin') || hostname.includes('doxbin') || 
-                               hostname.includes('reddit.com/r/leak');
-              
-              results.push({
-                category: 'dark_web',
-                type: isDarkWeb ? 'dark_web_mention' : 'exposure_mention',
-                label: `${isDarkWeb ? '🚨' : '⚠️'} ${item.title?.slice(0, 60)}`,
-                value: item.snippet || 'No description available',
-                source: hostname,
-                confidence: 70,
-                riskLevel: isDarkWeb ? 'critical' : 'high',
-                url: item.link,
-                commentary: isDarkWeb ? 'Found on known data exposure platform' : 'Potential exposure mention'
-              });
-            }
+        const darkWebResponse = await fetchWithRetry('https://api.perplexity.ai/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'sonar',
+            messages: [
+              { role: 'user', content: darkWebQuery }
+            ],
+            max_tokens: 800
+          })
+        });
+
+        if (darkWebResponse.ok) {
+          const darkWebData = await darkWebResponse.json();
+          const darkWebContent: string = darkWebData.choices?.[0]?.message?.content || '';
+          const darkWebLower = darkWebContent.toLowerCase();
+          const NEGATIVE_INDICATORS = [
+            'no recent', 'no specific', 'no information about', 'no information regarding',
+            'do not contain', 'does not contain', 'no relevant', 'no evidence of',
+            'no reports of', 'no mentions of', 'no data about', 'no significant',
+            'could not find', 'unable to find', 'nothing found', 'no results',
+            'there is no information', 'there are no reports', 'no news about',
+            'no public discussions', 'no social media', 'not found any',
+            'no threats', 'no incidents', 'no breaches',
+            'i cannot identify', 'cannot identify any', 'i could not find', 'i did not find',
+            'there are no specific', 'there is no specific', 'no direct',
+            'not aware of any', 'i cannot find any information', 'i was unable to find',
+            'no relevant information', 'no specific information',
+            'there doesn\'t appear to be', 'there does not appear to be',
+            'i found no evidence', 'no evidence of', 'no indication of', 'no mention of',
+            'no actionable', 'no matching',
+          ];
+          const isNegative = NEGATIVE_INDICATORS.some(p => darkWebLower.includes(p));
+
+          if (!isNegative && darkWebContent.length >= 100) {
+            const hasCritical = /dox|doxxed|leaked credentials|data breach|dark web|pastebin|hacker forum|exposed/i.test(darkWebContent);
+            const citations: string[] = darkWebData.citations || [];
+            results.push({
+              category: 'dark_web',
+              type: hasCritical ? 'dark_web_mention' : 'exposure_mention',
+              label: hasCritical ? 'Dark Web / Underground Mention Detected' : 'Potential Exposure Mention',
+              value: darkWebContent.substring(0, 500),
+              source: citations[0] || 'Perplexity Sonar (Dark Web Intelligence)',
+              confidence: 70,
+              riskLevel: hasCritical ? 'critical' : 'high',
+              url: citations[0] || undefined,
+              commentary: `Perplexity Sonar dark web scan. ${citations.length > 0 ? `Sources: ${citations.slice(0, 3).join(', ')}` : 'No direct source URLs available.'}`
+            });
+          } else {
+            console.log(`[DEEP-SCAN] Phase 2: No dark web findings for ${entity.name}`);
           }
-          await delay(500);
-        } catch (e) {
-          console.error('Dark web search error:', e);
         }
+      } catch (e) {
+        console.error('[DEEP-SCAN] Phase 2 dark web error:', e);
       }
+      await delay(500);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // PHASE 3: SOCIAL MEDIA & DIGITAL FOOTPRINT
+    // PHASE 3: SOCIAL MEDIA & DIGITAL FOOTPRINT (Perplexity Sonar)
     // ═══════════════════════════════════════════════════════════════════════════
-    
-    if (GOOGLE_API_KEY && GOOGLE_CX) {
-      const socialPlatforms = [
-        { query: `"${entity.name}" site:linkedin.com`, platform: 'LinkedIn', icon: '💼' },
-        { query: `"${entity.name}" site:twitter.com OR site:x.com`, platform: 'Twitter/X', icon: '🐦' },
-        { query: `"${entity.name}" site:facebook.com`, platform: 'Facebook', icon: '📘' },
-        { query: `"${entity.name}" site:instagram.com`, platform: 'Instagram', icon: '📸' }
-      ];
 
-      for (const { query, platform, icon } of socialPlatforms) {
-        try {
-          const searchUrl = new URL('https://www.googleapis.com/customsearch/v1');
-          searchUrl.searchParams.set('key', GOOGLE_API_KEY);
-          searchUrl.searchParams.set('cx', GOOGLE_CX);
-          searchUrl.searchParams.set('q', query);
-          searchUrl.searchParams.set('num', '3');
+    if (PERPLEXITY_API_KEY && budgetOk()) {
+      try {
+        console.log(`[DEEP-SCAN] Phase 3: Social media footprint for ${entity.name}`);
+        const socialQuery = `Find the social media presence and digital footprint of "${entity.name}". Search across Twitter/X, LinkedIn, Facebook, Instagram, YouTube, Reddit, and TikTok. What accounts exist, what are they posting about, and are there any concerning posts, threats, or reputational issues?`;
 
-          const response = await fetchWithRetry(searchUrl.toString(), {});
-          if (response.ok) {
-            const data = await response.json();
-            for (const item of data.items || []) {
-              results.push({
-                category: 'digital_footprint',
-                type: 'social_media',
-                label: `${icon} ${platform}: ${item.title?.slice(0, 50)}`,
-                value: item.snippet || 'No description available',
-                source: platform,
-                confidence: 75,
-                riskLevel: 'low',
-                url: item.link,
-                commentary: `${platform} presence detected`
-              });
-            }
+        const socialResponse = await fetchWithRetry('https://api.perplexity.ai/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'sonar',
+            messages: [
+              { role: 'user', content: socialQuery }
+            ],
+            max_tokens: 800
+          })
+        });
+
+        if (socialResponse.ok) {
+          const socialData = await socialResponse.json();
+          const socialContent: string = socialData.choices?.[0]?.message?.content || '';
+          const socialLower = socialContent.toLowerCase();
+          const NEGATIVE_INDICATORS_2 = [
+            'no recent', 'no specific', 'no information about', 'no information regarding',
+            'do not contain', 'does not contain', 'no relevant', 'no evidence of',
+            'no reports of', 'no mentions of', 'no data about', 'no significant',
+            'could not find', 'unable to find', 'nothing found', 'no results',
+            'there is no information', 'there are no reports',
+            'no public discussions', 'no social media', 'not found any',
+            'i cannot identify', 'cannot identify any', 'i could not find', 'i did not find',
+            'not aware of any', 'i cannot find any information', 'i was unable to find',
+            'no relevant information', 'no specific information',
+            'there doesn\'t appear to be', 'there does not appear to be',
+            'i found no evidence', 'no evidence of', 'no indication of', 'no mention of',
+          ];
+          const isNegative2 = NEGATIVE_INDICATORS_2.some(p => socialLower.includes(p));
+
+          if (!isNegative2 && socialContent.length >= 100) {
+            const hasConcern = /threat|concern|controversial|controversial|harassment|reputational|negative|scandal|misconduct/i.test(socialContent);
+            const citations2: string[] = socialData.citations || [];
+            results.push({
+              category: 'digital_footprint',
+              type: 'social_media',
+              label: hasConcern ? 'Social Media: Concerning Content Detected' : 'Social Media Presence Found',
+              value: socialContent.substring(0, 500),
+              source: citations2[0] || 'Perplexity Sonar (Social Media Intelligence)',
+              confidence: 72,
+              riskLevel: hasConcern ? 'medium' : 'low',
+              url: citations2[0] || undefined,
+              commentary: `Perplexity Sonar social media scan across Twitter/X, LinkedIn, Facebook, Instagram, YouTube, Reddit, TikTok. ${citations2.length > 0 ? `Sources: ${citations2.slice(0, 3).join(', ')}` : 'No direct source URLs available.'}`
+            });
+          } else {
+            console.log(`[DEEP-SCAN] Phase 3: No significant social media findings for ${entity.name}`);
           }
-          await delay(500);
-        } catch (e) {
-          console.error(`${platform} search error:`, e);
         }
+      } catch (e) {
+        console.error('[DEEP-SCAN] Phase 3 social media error:', e);
       }
+      await delay(500);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // PHASE 4: NEWS & MEDIA INTELLIGENCE
+    // PHASE 4: NEWS & MEDIA INTELLIGENCE (Perplexity Sonar)
     // ═══════════════════════════════════════════════════════════════════════════
-    
-    if (GOOGLE_API_KEY && GOOGLE_CX) {
-      const newsQueries = [
-        `"${entity.name}" news`,
-        `"${entity.name}" controversy OR scandal OR lawsuit`,
-        `"${entity.name}" arrest OR investigation OR charged`
-      ];
 
-      for (const query of newsQueries) {
-        try {
-          const searchUrl = new URL('https://www.googleapis.com/customsearch/v1');
-          searchUrl.searchParams.set('key', GOOGLE_API_KEY);
-          searchUrl.searchParams.set('cx', GOOGLE_CX);
-          searchUrl.searchParams.set('q', query);
-          searchUrl.searchParams.set('num', '5');
-          searchUrl.searchParams.set('sort', 'date');
+    if (PERPLEXITY_API_KEY && budgetOk()) {
+      try {
+        console.log(`[DEEP-SCAN] Phase 4: News & media intelligence for ${entity.name}`);
+        const newsQuery = `Search for recent news and media coverage of "${entity.name}". Include: mainstream news, local news, industry publications. Focus on: controversies, legal issues, arrests, investigations, sanctions, misconduct, lawsuits, and any negative coverage. Also note significant positive coverage.`;
 
-          const response = await fetchWithRetry(searchUrl.toString(), {});
-          if (response.ok) {
-            const data = await response.json();
-            for (const item of data.items || []) {
-              const isNegative = /arrest|scandal|lawsuit|investigation|charged|controversy/i.test(
-                item.title + ' ' + item.snippet
-              );
-              
-              results.push({
-                category: 'news',
-                type: isNegative ? 'adverse_media' : 'media_mention',
-                label: `${isNegative ? '⚠️' : '📰'} ${item.title?.slice(0, 60)}`,
-                value: item.snippet || 'No description available',
-                source: new URL(item.link).hostname,
-                confidence: 70,
-                riskLevel: isNegative ? 'high' : 'low',
-                url: item.link,
-                commentary: isNegative ? 'Adverse media mention detected' : 'General news mention'
-              });
-            }
+        const newsResponse = await fetchWithRetry('https://api.perplexity.ai/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'sonar',
+            messages: [
+              { role: 'user', content: newsQuery }
+            ],
+            max_tokens: 800
+          })
+        });
+
+        if (newsResponse.ok) {
+          const newsData = await newsResponse.json();
+          const newsContent: string = newsData.choices?.[0]?.message?.content || '';
+          const newsLower = newsContent.toLowerCase();
+          const NEGATIVE_INDICATORS_3 = [
+            'no recent', 'no specific', 'no information about', 'no information regarding',
+            'do not contain', 'does not contain', 'no relevant', 'no evidence of',
+            'no reports of', 'no mentions of', 'no data about', 'no significant',
+            'could not find', 'unable to find', 'nothing found', 'no results',
+            'there is no information', 'there are no reports', 'no news about',
+            'i cannot identify', 'cannot identify any', 'i could not find', 'i did not find',
+            'not aware of any', 'i cannot find any information', 'i was unable to find',
+            'no relevant information', 'no specific information',
+            'there doesn\'t appear to be', 'there does not appear to be',
+            'i found no evidence', 'no evidence of', 'no indication of', 'no mention of',
+          ];
+          const isNegative3 = NEGATIVE_INDICATORS_3.some(p => newsLower.includes(p));
+
+          if (!isNegative3 && newsContent.length >= 100) {
+            const isAdverse = /arrest|scandal|lawsuit|investigation|charged|controversy|misconduct|sanction|legal issue/i.test(newsContent);
+            const citations3: string[] = newsData.citations || [];
+            results.push({
+              category: 'news',
+              type: isAdverse ? 'adverse_media' : 'media_mention',
+              label: isAdverse ? 'Adverse Media Coverage Detected' : 'News & Media Coverage Found',
+              value: newsContent.substring(0, 500),
+              source: citations3[0] || 'Perplexity Sonar (News Intelligence)',
+              confidence: 72,
+              riskLevel: isAdverse ? 'high' : 'low',
+              url: citations3[0] || undefined,
+              commentary: `Perplexity Sonar news scan across mainstream, local, and industry publications. ${citations3.length > 0 ? `Sources: ${citations3.slice(0, 3).join(', ')}` : 'No direct source URLs available.'}`
+            });
+          } else {
+            console.log(`[DEEP-SCAN] Phase 4: No significant news findings for ${entity.name}`);
           }
-          await delay(500);
-        } catch (e) {
-          console.error('News search error:', e);
         }
+      } catch (e) {
+        console.error('[DEEP-SCAN] Phase 4 news error:', e);
       }
+      await delay(500);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // PHASE 5: RELATIONSHIP & NETWORK ANALYSIS (AI-Powered)
     // ═══════════════════════════════════════════════════════════════════════════
     
-    if (GEMINI_API_KEY || PERPLEXITY_API_KEY) {
+    if ((GEMINI_API_KEY || PERPLEXITY_API_KEY) && budgetOk()) {
       try {
         let analysisPrompt = `Analyze the entity "${entity.name}" (${entity.type}). `;
         if (entity.description) analysisPrompt += `Description: ${entity.description}. `;
@@ -359,7 +432,8 @@ Deno.serve(async (req) => {
             messages: [
               { role: 'system', content: 'You are a security intelligence analyst. Return only valid JSON.' },
               { role: 'user', content: analysisPrompt }
-            ]
+            ],
+            max_tokens: 1000
           })
         });
 
@@ -423,7 +497,7 @@ Deno.serve(async (req) => {
     // PHASE 5B: TECHNICAL OSINT (Shodan/Censys-style via Perplexity)
     // ═══════════════════════════════════════════════════════════════════════════
     
-    if (PERPLEXITY_API_KEY && (entity.type === 'organization' || entity.type === 'infrastructure' || entity.type === 'domain')) {
+    if (PERPLEXITY_API_KEY && budgetOk() && (entity.type === 'organization' || entity.type === 'infrastructure' || entity.type === 'domain')) {
       try {
         console.log(`[DEEP-SCAN] Running technical OSINT enrichment for ${entity.name}`);
         const techPrompt = `Perform a technical OSINT assessment for "${entity.name}". Research and report on:
@@ -476,7 +550,7 @@ Return as JSON array with objects: { finding_type, title, description, risk_leve
             }
           }
         }
-        await delay(1500);
+        await delay(500);
       } catch (e) {
         console.error('[DEEP-SCAN] Technical OSINT error:', e);
       }
@@ -486,7 +560,7 @@ Return as JSON array with objects: { finding_type, title, description, risk_leve
     // PHASE 5C: SANCTIONS & REGISTRY SCREENING
     // ═══════════════════════════════════════════════════════════════════════════
     
-    if (PERPLEXITY_API_KEY || GEMINI_API_KEY) {
+    if ((PERPLEXITY_API_KEY || GEMINI_API_KEY) && budgetOk()) {
       try {
         console.log(`[DEEP-SCAN] Running sanctions/registry screening for ${entity.name}`);
         const sanctionsPrompt = `Check "${entity.name}" (${entity.type}) against:
@@ -516,7 +590,8 @@ If no matches found for a category, include an entry with risk_level "info" conf
             messages: [
               { role: 'system', content: 'You are a compliance and sanctions screening analyst. Return only valid JSON.' },
               { role: 'user', content: sanctionsPrompt }
-            ]
+            ],
+            max_tokens: 1000
           })
         });
 
@@ -547,7 +622,7 @@ If no matches found for a category, include an entry with risk_level "info" conf
             }
           }
         }
-        await delay(1500);
+        await delay(500);
       } catch (e) {
         console.error('[DEEP-SCAN] Sanctions screening error:', e);
       }
@@ -624,28 +699,43 @@ If no matches found for a category, include an entry with risk_level "info" conf
       })
       .eq('id', entity_id);
 
-    // Store findings in entity_content for reference
-    for (const result of results.filter(r => r.url)) {
-      await supabase
-        .from('entity_content')
-        .upsert({
-          entity_id,
-          content_type: result.category,
-          title: result.label,
-          url: result.url!,
-          source: result.source,
-          excerpt: result.value,
-          content_text: result.commentary,
-          relevance_score: result.confidence,
-          metadata: {
-            risk_level: result.riskLevel,
-            scan_type: 'deep_scan',
-            discovered_at: new Date().toISOString()
-          }
-        }, {
-          onConflict: 'entity_id,url'
-        });
+    // Store ALL findings in entity_content for reference
+    // Findings without a real URL get a stable pseudo-URL so they persist
+    let savedCount = 0;
+    for (const result of results) {
+      try {
+        const stableUrl = result.url ||
+          `deep-scan://${entity_id}/${result.category}/${encodeURIComponent((result.label || 'finding').slice(0, 80))}`;
+        const { error: upsertError } = await supabase
+          .from('entity_content')
+          .upsert({
+            entity_id,
+            content_type: result.category,
+            title: result.label,
+            url: stableUrl,
+            source: result.source,
+            excerpt: result.value,
+            content_text: result.commentary,
+            relevance_score: result.confidence,
+            metadata: {
+              risk_level: result.riskLevel,
+              scan_type: 'deep_scan',
+              discovered_at: new Date().toISOString(),
+              has_real_url: !!result.url,
+            }
+          }, {
+            onConflict: 'entity_id,url'
+          });
+        if (upsertError) {
+          console.error(`[DEEP-SCAN] Failed to save finding "${result.label}":`, upsertError.message);
+        } else {
+          savedCount++;
+        }
+      } catch (saveErr) {
+        console.error(`[DEEP-SCAN] Exception saving finding:`, saveErr);
+      }
     }
+    console.log(`[DEEP-SCAN] Saved ${savedCount}/${results.length} findings to entity_content`);
 
     console.log(`Deep scan complete for ${entity.name}: ${results.length} findings, ${criticalCount} critical, ${highCount} high`);
 
@@ -666,13 +756,39 @@ If no matches found for a category, include an entry with risk_level "info" conf
     );
 
   } catch (error) {
-    console.error('Entity deep scan error:', error);
+    const errMsg = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Entity deep scan error:', errMsg);
+
+    // If we have no entity (entity not found / bad id), return a real error
+    if (!entity) {
+      return new Response(
+        JSON.stringify({ success: false, error: errMsg }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Otherwise return partial results as 200 so the client can show what we found
+    const criticalCount = results.filter(r => r.riskLevel === 'critical').length;
+    const highCount = results.filter(r => r.riskLevel === 'high').length;
+    let overallRisk = 'low';
+    if (criticalCount > 0) overallRisk = 'critical';
+    else if (highCount >= 3) overallRisk = 'high';
+    else if (highCount >= 1) overallRisk = 'medium';
+
     return new Response(
       JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        success: true,
+        partial: true,
+        error_detail: errMsg,
+        entity_id,
+        findings_count: results.length,
+        critical_count: criticalCount,
+        high_count: highCount,
+        overall_risk: overallRisk,
+        findings: results,
+        categories: [...new Set(results.map(r => r.category))]
       }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });

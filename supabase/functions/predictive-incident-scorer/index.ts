@@ -71,6 +71,22 @@ Deno.serve(async (req) => {
       if (escalationSet.has(s.id)) categoryEscalationRates[cat].escalated++;
     }
 
+    // Load accuracy calibration multipliers per agent call sign.
+    // PREDICTIVE-SCORER's calibration factor adjusts final probabilities based on
+    // how well its past predictions matched actual outcomes.
+    const { data: calibrationRows } = await supabase
+      .from('agent_accuracy_metrics')
+      .select('agent_call_sign, confidence_calibration, accuracy_score, total_predictions')
+      .eq('agent_call_sign', 'PREDICTIVE-SCORER')
+      .maybeSingle();
+
+    // calibration = 1.0 means perfectly calibrated; < 1.0 = overconfident; > 1.0 = underconfident
+    const calibrationFactor = (calibrationRows?.total_predictions || 0) >= 10
+      ? Math.max(0.5, Math.min(1.5, calibrationRows!.confidence_calibration))
+      : 1.0; // Don't adjust until we have 10+ resolved predictions
+
+    console.log(`[PredictiveScorer] Calibration factor: ${calibrationFactor.toFixed(3)} (${calibrationRows?.total_predictions || 0} resolved predictions)`);
+
     // Score each signal
     const scores: any[] = [];
     for (const signal of signalsToScore) {
@@ -112,6 +128,9 @@ Deno.serve(async (req) => {
         factors.push({ name: 'Location Specificity', value: signal.location, weight: 0.05 });
       }
 
+      // Apply accuracy calibration — if the scorer has been historically overconfident,
+      // pull probabilities toward the base rate; if underconfident, push them higher.
+      probability = probability * calibrationFactor;
       probability = Math.min(0.95, Math.max(0.01, probability));
 
       // Determine predicted severity/priority
@@ -127,8 +146,8 @@ Deno.serve(async (req) => {
         escalation_probability: Math.round(probability * 100) / 100,
         predicted_severity: predictedSeverity,
         predicted_priority: predictedPriority,
-        contributing_factors: factors,
-        model_version: 'v1',
+        contributing_factors: [...factors, { name: 'CalibrationFactor', value: calibrationFactor, weight: 0 }],
+        model_version: 'v2-calibrated',
         scored_at: new Date().toISOString(),
       }, { onConflict: 'signal_id' });
 

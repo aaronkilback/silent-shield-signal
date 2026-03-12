@@ -375,17 +375,24 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     const days = args.days || 7;
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
-    const { data: metrics, error: metricsError } = await supabaseClient
-      .from("automation_metrics").select("*").gte("metric_date", cutoff).order("metric_date", { ascending: false });
-    if (metricsError) throw metricsError;
+    const [metricsResult, incidentsResult, signalsResult, agentsResult, actionsResult] = await Promise.all([
+      supabaseClient.from("automation_metrics").select("*").gte("metric_date", cutoff).order("metric_date", { ascending: false }),
+      supabaseClient.from("incidents").select("id, status, priority, incident_type").in("status", ["open", "investigating"]).is("deleted_at", null).limit(100),
+      supabaseClient.from("signals").select("id, created_at, status, severity").gte("created_at", cutoff).limit(1000),
+      supabaseClient.from("ai_agents").select("id, call_sign, codename, is_active").eq("is_active", true),
+      supabaseClient.from("autonomous_actions_log").select("action_type, status, created_at").gte("created_at", cutoff).order("created_at", { ascending: false }).limit(50),
+    ]);
 
-    const { data: activeIncidents, error: incidentsError } = await supabaseClient
-      .from("incidents").select("id, status, priority").in("status", ["open", "investigating"]).limit(100);
-    if (incidentsError) throw incidentsError;
+    const metrics = metricsResult.data || [];
+    const activeIncidents = incidentsResult.data || [];
+    const recentSignals = signalsResult.data || [];
+    const activeAgents = agentsResult.data || [];
+    const recentActions = actionsResult.data || [];
 
-    const { data: recentSignals, error: signalsError } = await supabaseClient
-      .from("signals").select("id, created_at, status").gte("created_at", cutoff).limit(1000);
-    if (signalsError) throw signalsError;
+    // Log any errors but continue with partial data
+    if (metricsResult.error) console.warn("[get_system_health] automation_metrics error:", metricsResult.error.message);
+    if (incidentsResult.error) console.warn("[get_system_health] incidents error:", incidentsResult.error.message);
+    if (signalsResult.error) console.warn("[get_system_health] signals error:", signalsResult.error.message);
 
     const totals = metrics.reduce(
       (acc: any, m: any) => {
@@ -398,12 +405,35 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
       { signals_processed: 0, incidents_created: 0, osint_scans: 0, alerts_sent: 0 },
     );
 
+    const signalsBySeverity = recentSignals.reduce((acc: any, s: any) => {
+      const sev = s.severity || "unknown";
+      acc[sev] = (acc[sev] || 0) + 1;
+      return acc;
+    }, {});
+
+    const actionsByStatus = recentActions.reduce((acc: any, a: any) => {
+      acc[a.status] = (acc[a.status] || 0) + 1;
+      return acc;
+    }, {});
+
     return {
+      period_days: days,
       metrics: totals,
       active_incidents_count: activeIncidents.length,
-      signals_last_7_days: recentSignals.length,
+      active_incidents_by_priority: activeIncidents.reduce((acc: any, i: any) => { acc[i.priority] = (acc[i.priority] || 0) + 1; return acc; }, {}),
+      signals_last_n_days: recentSignals.length,
+      signals_by_severity: signalsBySeverity,
       average_scans_per_day: Math.round(totals.osint_scans / days),
-      latest_metrics: metrics[0],
+      latest_metrics: metrics[0] || null,
+      active_agents: activeAgents.map((a: any) => a.call_sign),
+      agent_count: activeAgents.length,
+      autonomous_actions_period: recentActions.length,
+      autonomous_actions_by_status: actionsByStatus,
+      data_errors: [
+        metricsResult.error ? `automation_metrics: ${metricsResult.error.message}` : null,
+        incidentsResult.error ? `incidents: ${incidentsResult.error.message}` : null,
+        signalsResult.error ? `signals: ${signalsResult.error.message}` : null,
+      ].filter(Boolean),
     };
   },
 
@@ -411,24 +441,27 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     const limit = args.limit || 20;
     const { data: failedScans, error: scanError } = await supabaseClient
       .from("monitoring_history").select("*").eq("status", "failed").order("scan_started_at", { ascending: false }).limit(limit);
-    if (scanError) throw scanError;
+    if (scanError) console.warn("[diagnose_issues] monitoring_history error:", scanError.message);
 
     const { data: errorSources, error: sourceError } = await supabaseClient
       .from("sources").select("name, status, error_message, last_ingested_at").not("error_message", "is", null).limit(20);
-    if (sourceError) throw sourceError;
+    if (sourceError) console.warn("[diagnose_issues] sources error:", sourceError.message);
+
+    const safeFailedScans = failedScans || [];
+    const safeErrorSources = errorSources || [];
 
     const errorPatterns: { [key: string]: number } = {};
-    failedScans.forEach((scan: any) => {
+    safeFailedScans.forEach((scan: any) => {
       const source = scan.source_name;
       errorPatterns[source] = (errorPatterns[source] || 0) + 1;
     });
 
     return {
-      failed_scans: failedScans,
-      error_sources: errorSources,
+      failed_scans: safeFailedScans,
+      error_sources: safeErrorSources,
       error_patterns: errorPatterns,
-      total_errors: failedScans.length,
-      recommendation: failedScans.length > 10
+      total_errors: safeFailedScans.length,
+      recommendation: safeFailedScans.length > 10
         ? "High error rate detected. Check rate limits and API configurations."
         : "System appears healthy with minimal errors.",
     };

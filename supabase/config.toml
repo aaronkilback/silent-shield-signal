@@ -245,7 +245,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.agent-chat]
-verify_jwt = true
+verify_jwt = false
 
 [functions.access-industry-standards]
 verify_jwt = true
@@ -314,7 +314,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.entity-deep-scan]
-verify_jwt = true
+verify_jwt = false
 
 [functions.evaluate-countermeasure-impact]
 verify_jwt = true

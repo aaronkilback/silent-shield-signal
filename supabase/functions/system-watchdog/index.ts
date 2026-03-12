@@ -298,7 +298,7 @@ interface TelemetryData {
     last24hCategories: Record<string, number>;
   };
   dailyBriefing: { sentToday: boolean; suppressionLikely: boolean; recipientCount: number };
-  dataIntegrity: { orphanedSignals: number; orphanedEntities: number; orphanedFeedback: number; staleSources: number };
+  dataIntegrity: { orphanedSignals: number; orphanedEntities: number; orphanedEntityNames: string[]; orphanedFeedback: number; staleSources: number };
   bugReports: { totalOpen: number; staleCount: number; recentSpike: number; oldestOpenDays: number; recurringPatterns: string[] };
   database: { connected: boolean; responseTimeMs: number };
   autonomousOps: { recentActions: number; lastActionAge: string };
@@ -550,6 +550,8 @@ async function storeLearnings(
       telemetry_snapshot: {
         signals6h: telemetry.signalPipeline.recentSignalCount,
         orphanedSignals: telemetry.dataIntegrity.orphanedSignals,
+        orphanedEntities: telemetry.dataIntegrity.orphanedEntities,
+        orphanedEntityNames: telemetry.dataIntegrity.orphanedEntityNames,
         openBugs: telemetry.bugReports.totalOpen,
         dbLatency: telemetry.database.responseTimeMs,
       },
@@ -633,7 +635,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     supabase.from('scheduled_briefings').select('id').eq('is_active', true).eq('briefing_type', 'daily_email'),
     supabase.from('signals').select('*', { count: 'exact', head: true }).gte('created_at', twentyFourHoursAgo),
     supabase.from('signals').select('id').is('client_id', null).not('category', 'eq', 'global').limit(20),
-    supabase.from('entities').select('id').is('client_id', null).eq('is_active', true).limit(20),
+    supabase.from('entities').select('id, name, type, created_at').is('client_id', null).eq('is_active', true).order('created_at', { ascending: false }).limit(20),
     supabase.from('bug_reports').select('*', { count: 'exact', head: true }).eq('status', 'open'),
     supabase.from('bug_reports').select('*', { count: 'exact', head: true }).eq('status', 'open').lt('created_at', sevenDaysAgo),
     supabase.from('bug_reports').select('*', { count: 'exact', head: true }).gte('created_at', new Date(now.getTime() - 3600000).toISOString()),
@@ -718,14 +720,22 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
   const avgDailySignals = Math.round((avgSignalsResult.count || 0) / 30);
   const avgWeeklyBugs = Math.round((avgBugsResult.count || 0) / 4.3);
   const totalSignals30d = avgSignalsResult.count || 0;
-  
-  // Self-tuning: thresholds scale with platform volume
+
+  // Load any persisted threshold overrides from previous adjust_thresholds remediations
+  const { data: thresholdProfile } = await supabase
+    .from('learning_profiles')
+    .select('features')
+    .eq('profile_type', 'adaptive_thresholds')
+    .maybeSingle();
+  const persistedThresholds = (thresholdProfile?.features as Record<string, any>) || {};
+
+  // Self-tuning: thresholds scale with platform volume, overridden by persisted AI adjustments
   const adaptiveThresholds: AdaptiveThresholds = {
-    signalStaleHours: avgDailySignals > 100 ? 8 : avgDailySignals > 50 ? 6 : 4,
-    minDailySignals: Math.max(1, Math.round(avgDailySignals * 0.6)),
-    orphanedSignalThreshold: Math.max(5, Math.round(totalSignals30d * 0.01)),
-    bugBacklogThreshold: Math.max(3, Math.round(avgWeeklyBugs * 1.5)),
-    dbLatencyWarningMs: 2000,
+    signalStaleHours: persistedThresholds.signalStaleHours ?? (avgDailySignals > 100 ? 8 : avgDailySignals > 50 ? 6 : 4),
+    minDailySignals: persistedThresholds.minDailySignals ?? Math.max(1, Math.round(avgDailySignals * 0.6)),
+    orphanedSignalThreshold: persistedThresholds.orphanedSignalThreshold ?? Math.max(5, Math.round(totalSignals30d * 0.01)),
+    bugBacklogThreshold: persistedThresholds.bugBacklogThreshold ?? Math.max(3, Math.round(avgWeeklyBugs * 1.5)),
+    dbLatencyWarningMs: persistedThresholds.dbLatencyWarningMs ?? 2000,
   };
 
   // ═══ AEGIS BEHAVIORAL COMPLIANCE TELEMETRY ═══
@@ -827,7 +837,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
       last24hCategories: categoryBreakdown,
     },
     dailyBriefing: { sentToday: (todayBriefingsResult.data?.length || 0) > 0, suppressionLikely: (recentNewSignalsResult.count || 0) === 0, recipientCount: briefingConfigResult.data?.length || 0 },
-    dataIntegrity: { orphanedSignals: orphanedSignalsResult.data?.length || 0, orphanedEntities: orphanedEntitiesResult.data?.length || 0, orphanedFeedback: orphanedFeedbackCount, staleSources: staleSourceCountResult.count || 0 },
+    dataIntegrity: { orphanedSignals: orphanedSignalsResult.data?.length || 0, orphanedEntities: orphanedEntitiesResult.data?.length || 0, orphanedEntityNames: (orphanedEntitiesResult.data || []).map((e: any) => `${e.name} (${e.type})`), orphanedFeedback: orphanedFeedbackCount, staleSources: staleSourceCountResult.count || 0 },
     bugReports: { totalOpen: openBugsResult.count || 0, staleCount: staleBugsResult.count || 0, recentSpike: recentBugsResult.count || 0, oldestOpenDays, recurringPatterns: [...new Set(recurringPatterns)] },
     database: { connected: dbConnected, responseTimeMs: dbResponseTimeMs },
     autonomousOps: { recentActions: autonomousActionsResult.count || 0, lastActionAge },
@@ -1251,24 +1261,73 @@ async function executeRemediation(
       }
 
       case 'adjust_thresholds': {
-        // Store threshold adjustment as a learning for the next run
         const adjustment = finding.thresholdAdjustment;
         if (!adjustment) return { action, finding, success: false, details: 'No threshold adjustment specified' };
-        
-        // Log the adjustment as a high-importance learning note
-        const { error } = await supabase.from('watchdog_learnings').insert({
+
+        // Read current persisted thresholds from learning_profiles
+        const { data: existingProfile } = await supabase
+          .from('learning_profiles')
+          .select('features')
+          .eq('profile_type', 'adaptive_thresholds')
+          .maybeSingle();
+
+        const currentFeatures = (existingProfile?.features as Record<string, any>) || {};
+        const updatedFeatures = { ...currentFeatures, [adjustment.metric]: adjustment.suggestedValue };
+
+        // Persist the updated threshold to learning_profiles
+        const { error: upsertError } = await supabase
+          .from('learning_profiles')
+          .upsert(
+            {
+              profile_type: 'adaptive_thresholds',
+              features: updatedFeatures,
+              last_updated: new Date().toISOString(),
+            },
+            { onConflict: 'profile_type' }
+          );
+
+        // Also log as a learning record
+        await supabase.from('watchdog_learnings').insert({
           run_id: 'threshold_adjustment',
           severity: 'info',
           finding_category: 'Self-Improvement',
           finding_title: `Threshold Adjusted: ${adjustment.metric}`,
           ai_learning_note: `${adjustment.metric}: ${adjustment.currentValue} → ${adjustment.suggestedValue}. Reason: ${adjustment.reason}`,
           effectiveness_score: 1.0,
-          telemetry_snapshot: { adjustment },
+          telemetry_snapshot: { adjustment, updatedFeatures },
         });
-        
-        return { 
-          action, finding, success: !error, 
-          details: error ? `Failed to store adjustment: ${error.message}` : `Threshold ${adjustment.metric} adjusted: ${adjustment.currentValue} → ${adjustment.suggestedValue} (${adjustment.reason})` 
+
+        // Emit a signal when threshold drifts ≥20% so analysts can see it in the feed
+        const drift = adjustment.currentValue !== 0
+          ? Math.abs((adjustment.suggestedValue - adjustment.currentValue) / adjustment.currentValue)
+          : 1.0;
+        if (drift >= 0.20 && !upsertError) {
+          const driftPct = Math.round(drift * 100);
+          await supabase.from('signals').insert({
+            category: 'system_alert',
+            severity: drift >= 0.40 ? 'high' : 'medium',
+            status: 'new',
+            title: `Watchdog: Threshold Drift — ${adjustment.metric} +${driftPct}%`,
+            normalized_text: `System watchdog adjusted threshold "${adjustment.metric}" by ${driftPct}%: ${adjustment.currentValue} → ${adjustment.suggestedValue}. Reason: ${adjustment.reason}`,
+            confidence: 0.99,
+            raw_json: {
+              metric: adjustment.metric,
+              currentValue: adjustment.currentValue,
+              suggestedValue: adjustment.suggestedValue,
+              drift_pct: driftPct,
+              reason: adjustment.reason,
+              auto_adjusted: true,
+              source: 'system-watchdog',
+            },
+          });
+          console.log(`[Watchdog] Threshold drift signal emitted for ${adjustment.metric} (${driftPct}% change)`);
+        }
+
+        return {
+          action, finding, success: !upsertError,
+          details: upsertError
+            ? `Failed to persist threshold: ${upsertError.message}`
+            : `Threshold ${adjustment.metric} persisted: ${adjustment.currentValue} → ${adjustment.suggestedValue} (${adjustment.reason}). Will apply on next watchdog run.`,
         };
       }
 
@@ -1452,7 +1511,9 @@ This correction was triggered because compliance score dropped below threshold. 
       }
 
       case 'run_contradiction_scan': {
-        // Trigger the detect-signal-contradictions edge function
+        // Step 1: Detect new contradictions
+        let newContradictions = 0;
+        let candidatesAnalyzed = 0;
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 60000);
@@ -1465,12 +1526,52 @@ This correction was triggered because compliance score dropped below threshold. 
           clearTimeout(timeout);
           if (resp.ok) {
             const result = await resp.json();
-            return { action, finding, success: true, details: `Contradiction scan complete: ${result.contradictions || 0} new contradictions from ${result.candidates_analyzed || 0} pairs` };
+            newContradictions = result.contradictions || 0;
+            candidatesAnalyzed = result.candidates_analyzed || 0;
           }
-          return { action, finding, success: false, details: `Contradiction scan returned ${resp.status}` };
-        } catch (err) {
-          return { action, finding, success: false, details: `Contradiction scan failed: ${err instanceof Error ? err.message : err}` };
+        } catch (_) { /* detection failure non-fatal */ }
+
+        // Step 2: Auto-assign high-severity unresolved contradictions to multi-agent debate
+        const { data: unresolvedHigh } = await supabase
+          .from('signal_contradictions')
+          .select('id, entity_name, signal_a_id, signal_b_id, signal_a_summary, signal_b_summary, severity')
+          .eq('resolution_status', 'unresolved')
+          .in('severity', ['high', 'critical'])
+          .order('detected_at', { ascending: true })
+          .limit(3);
+
+        let debatesTriggered = 0;
+        for (const contradiction of (unresolvedHigh || [])) {
+          try {
+            const debateController = new AbortController();
+            const debateTimeout = setTimeout(() => debateController.abort(), 20000);
+            const debateResp = await fetch(`${supabaseUrl}/functions/v1/multi-agent-debate`, {
+              method: 'POST',
+              headers: { 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                topic: `Contradiction Resolution: ${contradiction.entity_name}`,
+                context: `Signal A: ${contradiction.signal_a_summary}\nSignal B: ${contradiction.signal_b_summary}`,
+                contradiction_id: contradiction.id,
+                triggered_by: 'watchdog_auto_resolution',
+              }),
+              signal: debateController.signal,
+            });
+            clearTimeout(debateTimeout);
+            if (debateResp.ok) {
+              // Mark as 'under_review' so we don't re-trigger next run
+              await supabase
+                .from('signal_contradictions')
+                .update({ resolution_status: 'under_review', resolution_notes: 'Auto-assigned to multi-agent debate by watchdog' })
+                .eq('id', contradiction.id);
+              debatesTriggered++;
+            }
+          } catch (_) { /* individual debate trigger failure non-fatal */ }
         }
+
+        return {
+          action, finding, success: true,
+          details: `Contradiction scan: ${newContradictions} new from ${candidatesAnalyzed} pairs. Auto-triggered ${debatesTriggered} debate(s) for high-severity unresolved contradictions.`,
+        };
       }
 
       case 'run_knowledge_freshness_audit': {

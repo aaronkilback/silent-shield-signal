@@ -1765,4 +1765,56 @@ Each agent will "receive" the message and it will appear in their activity logs.
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "check_agent_status",
+      description: `Check the current status, recent activity, and operational health of all agents in the FORTRESS network. Use this when:
+- The user asks what agents are doing, their status, or recent activity
+- The user asks "how are the agents?", "what is BIRD-DOG doing?", "check on the agents"
+- You need to verify which agents are active and what they have accomplished recently
+- Investigating agent performance, last dispatch, or investigation history
+
+Returns: full active agent roster, recent autonomous actions from the actions log, and recent investigation memory entries per agent.`,
+      parameters: {
+        type: "object",
+        properties: {
+          agent_call_sign: {
+            type: "string",
+            description: "Optional: filter to a specific agent by call sign (e.g. 'BIRD-DOG'). Omit to check all agents.",
+          },
+          include_memory: {
+            type: "boolean",
+            description: "Whether to include recent agent investigation memory entries (default: true)",
+          },
+          limit: {
+            type: "number",
+            description: "Max recent activity entries to return (default: 10)",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "suggest_system_improvements",
+      description: `Perform a deep self-assessment of the Fortress platform and generate proactive, prioritized improvement recommendations. Analyzes watchdog remediation effectiveness, agent accuracy by category, unresolved signal contradictions, adaptive thresholds, and autonomous action outcomes. Returns prioritized, actionable suggestions with rationale and metrics. Use this proactively to surface technical debt, capability gaps, and optimization opportunities.`,
+      parameters: {
+        type: "object",
+        properties: {
+          focus_area: {
+            type: "string",
+            description: "Optional: limit assessment to a specific area. Values: all, agents, watchdog, data_quality, osint, thresholds, contradictions. Defaults to all.",
+          },
+          max_suggestions: {
+            type: "integer",
+            description: "Maximum number of improvement suggestions to return. Defaults to 10.",
+          },
+        },
+        required: [],
+      },
+    },
+  },
 ];

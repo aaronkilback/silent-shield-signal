@@ -632,6 +632,88 @@ export async function getAgentCalibration(
 }
 
 
+// ─── 8. EXPERT KNOWLEDGE RECALL (RAG) ────────────────────────────────────────
+
+/**
+ * Domain map: which expert_knowledge domains each agent specialises in.
+ */
+const AGENT_DOMAIN_MAP: Record<string, string[]> = {
+  'AEGIS-CMD':      ['crisis_management', 'threat_intelligence'],
+  '0DAY':           ['cyber', 'threat_intelligence'],
+  'NEO':            ['cyber', 'threat_intelligence'],
+  'CERBERUS':       ['investigations', 'threat_intelligence'],
+  'SPECTER':        ['threat_intelligence', 'investigations'],
+  'MERIDIAN':       ['geopolitical', 'crisis_management'],
+  'ARGUS':          ['physical_security', 'executive_protection'],
+  'VIPER':          ['investigations', 'threat_intelligence'],
+  'OUROBOROS':      ['compliance', 'threat_intelligence'],
+  'WARDEN':         ['threat_intelligence', 'investigations'],
+  'PRAETOR':        ['investigations', 'crisis_management'],
+  'CRUCIBLE':       ['threat_intelligence', 'compliance'],
+  'VERIDIAN-TANGO': ['threat_intelligence', 'crisis_management'],
+  // Generic debate roles get broad coverage
+  'THREAT-ANALYST':   ['threat_intelligence', 'cyber'],
+  'PATTERN-ANALYST':  ['threat_intelligence', 'investigations'],
+  'STRATEGIC-ANALYST':['crisis_management', 'geopolitical'],
+};
+
+/**
+ * Retrieves the most relevant expert_knowledge entries for an agent and query,
+ * ranked by keyword relevance within that agent's domain.
+ * This is the "perfect recall" layer — agents recall what they studied.
+ */
+export async function buildExpertKnowledgeContext(
+  supabase: SupabaseClient,
+  agentCallSign: string,
+  queryText: string,
+  maxEntries: number = 6
+): Promise<string> {
+  const domains = AGENT_DOMAIN_MAP[agentCallSign] || ['threat_intelligence'];
+
+  try {
+    const { data: entries } = await supabase
+      .from('expert_knowledge')
+      .select('title, content, knowledge_type, domain, subdomain, confidence_score, citation')
+      .in('domain', domains)
+      .eq('is_active', true)
+      .order('confidence_score', { ascending: false })
+      .limit(40);
+
+    if (!entries || entries.length === 0) {
+      return '\n=== EXPERT KNOWLEDGE BASE ===\nDomain expertise not yet loaded — agent self-learning pending.\n';
+    }
+
+    // Score by keyword relevance to the current query
+    const keywords = queryText.toLowerCase().split(/\s+/).filter(w => w.length > 4).slice(0, 8);
+    const scored = entries.map(e => {
+      const text = `${e.title} ${e.content}`.toLowerCase();
+      const matches = keywords.filter(k => text.includes(k)).length;
+      const relevance = keywords.length > 0 ? matches / keywords.length : 0;
+      return { ...e, score: relevance * 0.6 + (e.confidence_score || 0.8) * 0.4 };
+    });
+    scored.sort((a, b) => b.score - a.score);
+
+    const top = scored.slice(0, maxEntries);
+    const lines = top.map((e, i) =>
+      `[KB-${i + 1}] [${(e.knowledge_type || 'KNOWLEDGE').toUpperCase()}] ${e.title}\n` +
+      `  Domain: ${e.domain}${e.subdomain ? '/' + e.subdomain : ''} | Confidence: ${Math.round((e.confidence_score || 0.8) * 100)}%\n` +
+      `  ${e.content.substring(0, 450)}${e.content.length > 450 ? '...' : ''}\n` +
+      `  Source: ${e.citation || 'Agent research'}`
+    );
+
+    return `\n=== EXPERT KNOWLEDGE BASE (${top.length} entries from ${agentCallSign}'s domain expertise) ===
+${lines.join('\n\n')}
+
+MANDATORY: When a knowledge entry informs your analysis, cite it as [KB-N].
+This is your recalled domain expertise. Apply it precisely and critically.
+`;
+  } catch (err) {
+    console.error('[ExpertKnowledge] Retrieval error:', err);
+    return '\n=== EXPERT KNOWLEDGE BASE ===\nKnowledge retrieval temporarily unavailable.\n';
+  }
+}
+
+
 // ─── COMBINED INTELLIGENCE PROMPT ────────────────────────────────────────────
 
 /**

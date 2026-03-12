@@ -53,10 +53,12 @@ export default function Entities() {
   const [crossReferenceDialogOpen, setCrossReferenceDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("entities");
   const [profileEntityId, setProfileEntityId] = useState<string>("");
+  const [showMonitoredOnly, setShowMonitoredOnly] = useState(false);
+  const [sortByRisk, setSortByRisk] = useState(false);
 
   // Filter entities by the selected client
   const { data: entities = [], refetch } = useQuery({
-    queryKey: ['entities', searchTerm, selectedType, selectedClientId, showAutoCreated],
+    queryKey: ['entities', searchTerm, selectedType, selectedClientId, showAutoCreated, showMonitoredOnly, sortByRisk],
     enabled: !!user && isContextReady,
     queryFn: async () => {
       let query = supabase
@@ -64,6 +66,10 @@ export default function Entities() {
         .select('*')
         .eq('is_active', true)
         .order('created_at', { ascending: false });
+
+      if (showMonitoredOnly) {
+        query = query.eq('active_monitoring_enabled', true);
+      }
 
       // Filter by selected client
       if (selectedClientId) {
@@ -84,6 +90,10 @@ export default function Entities() {
 
       const { data, error } = await query;
       if (error) throw error;
+      if (sortByRisk && data) {
+        const RISK_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+        data.sort((a: any, b: any) => (RISK_ORDER[a.risk_level] ?? 4) - (RISK_ORDER[b.risk_level] ?? 4));
+      }
       return data;
     }
   });
@@ -209,6 +219,21 @@ export default function Entities() {
       setSelectedEntityIds(new Set());
     } else {
       setSelectedEntityIds(new Set(entities.map((e: any) => e.id)));
+    }
+  };
+
+  const handleBulkMonitoring = async (enable: boolean) => {
+    const ids = Array.from(selectedEntityIds);
+    try {
+      const BATCH = 100;
+      for (let i = 0; i < ids.length; i += BATCH) {
+        await supabase.from('entities').update({ active_monitoring_enabled: enable }).in('id', ids.slice(i, i + BATCH));
+      }
+      toast.success(`${enable ? 'Enabled' : 'Disabled'} monitoring for ${ids.length} ${ids.length === 1 ? 'entity' : 'entities'}`);
+      setSelectedEntityIds(new Set());
+      refetch();
+    } catch (error: any) {
+      toast.error(`Failed to update monitoring: ${error.message}`);
     }
   };
 
@@ -379,6 +404,21 @@ export default function Entities() {
               >
                 Auto-Created (Unapproved)
               </Button>
+              <Button
+                variant={showMonitoredOnly ? "default" : "outline"}
+                size="sm"
+                onClick={() => setShowMonitoredOnly(!showMonitoredOnly)}
+                className={showMonitoredOnly ? "bg-green-600 hover:bg-green-700" : ""}
+              >
+                Monitored Only
+              </Button>
+              <Button
+                variant={sortByRisk ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSortByRisk(!sortByRisk)}
+              >
+                Sort by Risk
+              </Button>
             </div>
             <div className="flex gap-1">
               <Button
@@ -456,7 +496,7 @@ export default function Entities() {
         {/* Bulk Actions Bar */}
         {selectedEntityIds.size > 0 && (
           <Card className="mb-4 p-4 bg-muted/50">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-4">
                 <Checkbox
                   checked={selectedEntityIds.size === entities.length}
@@ -466,14 +506,32 @@ export default function Entities() {
                   {selectedEntityIds.size} {selectedEntityIds.size === 1 ? 'entity' : 'entities'} selected
                 </span>
               </div>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setDeleteDialogOpen(true)}
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Delete Selected
-              </Button>
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-green-600 border-green-600 hover:bg-green-50"
+                  onClick={() => handleBulkMonitoring(true)}
+                >
+                  Enable Monitoring
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-muted-foreground"
+                  onClick={() => handleBulkMonitoring(false)}
+                >
+                  Disable Monitoring
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setDeleteDialogOpen(true)}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete Selected
+                </Button>
+              </div>
             </div>
           </Card>
         )}
@@ -515,8 +573,17 @@ export default function Entities() {
                       <Badge variant={getRiskColor(entity.risk_level) as any}>
                         {entity.risk_level || 'unknown'}
                       </Badge>
+                      {entity.active_monitoring_enabled && (
+                        <Badge variant="outline" className="text-xs text-green-500 border-green-500">Monitored</Badge>
+                      )}
                     </div>
-                    
+
+                    {(entity.attributes?.role || entity.attributes?.title || entity.attributes?.organization) && (
+                      <p className="text-xs text-primary/80 font-medium">
+                        {[entity.attributes?.role || entity.attributes?.title, entity.attributes?.organization].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
+
                     {entity.description && (
                       <p className="text-sm text-muted-foreground line-clamp-2">
                         {entity.description}
@@ -616,6 +683,11 @@ export default function Entities() {
                           </span>
                         )}
                       </div>
+                      {(entity.attributes?.role || entity.attributes?.title || entity.attributes?.organization) && (
+                        <p className="text-xs text-primary/80 font-medium">
+                          {[entity.attributes?.role || entity.attributes?.title, entity.attributes?.organization].filter(Boolean).join(' · ')}
+                        </p>
+                      )}
                       {entity.description && (
                         <p className="text-sm text-muted-foreground line-clamp-1">
                           {entity.description}
@@ -626,6 +698,9 @@ export default function Entities() {
                       <Badge variant="outline" className="text-xs">
                         {entity.type}
                       </Badge>
+                      {entity.active_monitoring_enabled && (
+                        <Badge variant="outline" className="text-xs text-green-500 border-green-500">Monitored</Badge>
+                      )}
                       <Badge variant={getRiskColor(entity.risk_level) as any}>
                         {entity.risk_level || 'unknown'}
                       </Badge>

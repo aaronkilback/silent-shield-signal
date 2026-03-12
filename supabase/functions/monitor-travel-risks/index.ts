@@ -654,20 +654,23 @@ Respond with a JSON object:
         for (const alert of assessment.alerts) {
           // Only create alerts for medium severity and above
           if (["medium", "high", "critical"].includes(alert.severity)) {
-            // Check for existing alert of the same type for this itinerary (active OR acknowledged)
+            // Check for an existing ACTIVE alert of the same type for this itinerary.
+            // Acknowledged alerts (is_active=false) do NOT block re-alerting so that
+            // genuinely new threats still surface after the user acknowledges an old one.
+            // A DB partial unique index on (itinerary_id, alert_type) WHERE is_active=true
+            // also enforces this at the database level to prevent race-condition duplicates.
             const { data: existingAlerts } = await supabaseClient
               .from("travel_alerts")
-              .select("id, acknowledged, is_active, created_at")
+              .select("id, created_at")
               .eq("itinerary_id", itinerary.id)
               .eq("alert_type", alert.type)
-              .order("created_at", { ascending: false })
+              .eq("is_active", true)
               .limit(1);
 
             const existingAlert = existingAlerts?.[0];
 
-            // Skip if an alert of this type already exists (acknowledged or not)
             if (existingAlert) {
-              console.log(`Skipping duplicate ${alert.type} alert for itinerary ${itinerary.id} (existing: ${existingAlert.id}, acknowledged: ${existingAlert.acknowledged})`);
+              console.log(`Skipping duplicate ${alert.type} alert for itinerary ${itinerary.id} (existing active: ${existingAlert.id})`);
               continue;
             }
 

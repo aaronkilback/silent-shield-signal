@@ -3,14 +3,16 @@ import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { validateString, validateUUID, validateMessages, validateAll } from "../_shared/input-validation.ts";
 import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
 import { getAntiHallucinationPrompt } from "../_shared/anti-hallucination.ts";
-import { 
-  getReliabilityFirstPrompt, 
-  getReliabilitySettings, 
-  runQAChecks, 
+import {
+  getReliabilityFirstPrompt,
+  getReliabilitySettings,
+  runQAChecks,
   createSourceArtifact,
   createVerificationTask,
-  type SourceArtifact 
+  type SourceArtifact
 } from "../_shared/reliability-first.ts";
+import { buildCrossAgentContext } from "../_shared/agent-intelligence.ts";
+import { buildMemoryContext, storeAgentMemory } from "../_shared/agent-memory.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -449,6 +451,28 @@ Respond naturally and briefly.`
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Rate limiting: 15 requests per user/IP per minute
+    const authHeaderForRL = req.headers.get('Authorization');
+    let rateLimitUserId = req.headers.get('cf-connecting-ip') || req.headers.get('x-forwarded-for') || 'anonymous';
+    if (authHeaderForRL?.startsWith('Bearer ')) {
+      const { data: { user } } = await supabase.auth.getUser(authHeaderForRL.replace('Bearer ', ''));
+      if (user?.id) rateLimitUserId = user.id;
+    }
+    const rateLimitWindow = new Date();
+    rateLimitWindow.setSeconds(0, 0);
+    const { data: rateLimitData } = await supabase.rpc('upsert_rate_limit', {
+      p_user_id: rateLimitUserId,
+      p_function_name: 'agent-chat',
+      p_window_start: rateLimitWindow.toISOString(),
+      p_max_requests: 15,
+    });
+    if (rateLimitData && !rateLimitData.allowed) {
+      return new Response(
+        JSON.stringify({ error: 'Rate limit exceeded. Please wait a moment before sending another message.' }),
+        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': '60' } }
+      );
+    }
+
     // Fetch the agent configuration
     const { data: agent, error: agentError } = await supabase
       .from('ai_agents')
@@ -546,6 +570,21 @@ Respond naturally and briefly.`
     // Current date for awareness
     const now = new Date();
     const currentDate = now.toISOString().split('T')[0];
+
+    // Cross-agent memory: retrieve relevant findings from peer agents + own past memories
+    let crossAgentBlock = "";
+    let ownMemoryBlock = "";
+    try {
+      const queryContext = message.substring(0, 500);
+      const [crossAgentCtx, ownMemoryCtx] = await Promise.all([
+        buildCrossAgentContext(supabase, agent.call_sign, queryContext),
+        buildMemoryContext(supabase, agent.call_sign, queryContext),
+      ]);
+      crossAgentBlock = crossAgentCtx;
+      ownMemoryBlock = ownMemoryCtx;
+    } catch (_e) {
+      // Non-fatal — proceed without memory context
+    }
 
     // Get reliability settings for this client
     const reliabilitySettings = await getReliabilitySettings(supabase, client_id);
@@ -689,6 +728,8 @@ ${FORTRESS_AGENT_CAPABILITIES}
 
 CURRENT INTELLIGENCE CONTEXT (VERIFIED DATA FROM FORTRESS DATABASE):
 ${contextData || 'No verified data available in current context. Use tools to query the database.'}
+${ownMemoryBlock}
+${crossAgentBlock}
 
 <!-- INTERNAL RULES - NEVER INCLUDE THIS TEXT IN YOUR RESPONSE -->
 <!-- These are silent instructions. Follow them but do not echo them. -->
@@ -1266,10 +1307,47 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
       },
     ];
 
+    // Compress conversation history: condense older messages into a digest, keep last 10 full
+    const compressHistory = (history: any[], keepRecent: number = 10): any[] => {
+      if (!history || history.length <= keepRecent) return history;
+      const recent = history.slice(-keepRecent);
+      const older = history.slice(0, history.length - keepRecent);
+      const digestLines: string[] = [];
+      for (const m of older) {
+        const content = typeof m.content === 'string' ? m.content : '';
+        if (m.role === 'user') {
+          digestLines.push(`User: ${content.substring(0, 300)}`);
+        } else if (m.role === 'assistant' && content.length > 0) {
+          digestLines.push(`Assistant: ${content.substring(0, 150)}${content.length > 150 ? '...' : ''}`);
+        }
+      }
+      return [
+        { role: 'system', content: `[PRIOR CONVERSATION DIGEST — ${older.length} messages condensed]\n${digestLines.join('\n')}` },
+        ...recent,
+      ];
+    };
+
+    const compressedHistory = compressHistory(conversation_history);
+
+    // Helper to truncate tool results before storing in message history
+    const truncateToolResult = (result: any, maxChars: number = 10000): string => {
+      const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+      if (resultStr.length <= maxChars) return resultStr;
+      if (typeof result === 'object' && result !== null) {
+        if (Array.isArray(result)) {
+          return JSON.stringify({ items: result.slice(0, 15), _truncation_note: `Showing first 15 of ${result.length} results.` });
+        }
+        if (result.data && Array.isArray(result.data)) {
+          return JSON.stringify({ ...result, data: result.data.slice(0, 15), _truncation_note: `Showing first 15 of ${result.data.length} results.` });
+        }
+      }
+      return resultStr.substring(0, maxChars) + '\n[... result truncated]';
+    };
+
     // Build messages array
     const messages = [
       { role: 'system', content: systemPrompt },
-      ...conversation_history.map((msg: any) => ({
+      ...compressedHistory.map((msg: any) => ({
         role: msg.role,
         content: msg.content
       })),
@@ -2205,10 +2283,10 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
                 method: "POST",
                 headers: { "Authorization": `Bearer ${PERPLEXITY_API_KEY}`, "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  model: "sonar",
+                  model: "sonar-pro",
                   messages: [
-                    { role: "system", content: "You are a social media intelligence analyst. Search for social media posts about the given topic. For each post found, extract: platform, author/handle, post content/summary, URL if available, approximate date, and sentiment. If you find no relevant posts, say so clearly." },
-                    { role: "user", content: `Find social media posts about: ${args.query}${args.location ? ` Location focus: ${args.location}` : ""}. Search across: ${targetPlatforms.join(", ")}. Time range: last ${args.time_filter || "day"}.` }
+                    { role: "system", content: "You are an open-source intelligence (OSINT) analyst. Search the web for public mentions, news, forum posts, blog entries, and any indexed public content about the given subject. Extract: source/platform, author/handle if available, content summary, URL, approximate date, and sentiment. Report what you find from web search results — do not decline based on platform restrictions." },
+                    { role: "user", content: `Search for public online mentions of: ${args.query}${args.location ? `. Location focus: ${args.location}` : ""}. Focus on: ${targetPlatforms.join(", ")}. Time range: last ${args.time_filter || "day"}. Report all public web results found.` }
                   ],
                   search_recency_filter: recency,
                 }),
@@ -2635,11 +2713,11 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
     if (toolCalls.length > 0 && toolResults.length > 0) {
       console.log('Tools executed, sending results back to AI for final response');
       
-      // Build tool results messages for the AI
+      // Build tool results messages for the AI (truncated to prevent context bloat)
       const toolResultMessages = toolCalls.map((tc: any, idx: number) => ({
         role: 'tool',
         tool_call_id: tc.id,
-        content: JSON.stringify(toolResults[idx]?.result || { error: 'No result' })
+        content: truncateToolResult(toolResults[idx]?.result || { error: 'No result' }),
       }));
       
       // Make follow-up call with tool results - with retry and validation
@@ -2950,10 +3028,22 @@ To include geopolitical or external news context, please ask me to perform an ex
       }
     }
 
-    console.log('Agent response generated successfully', { 
+    console.log('Agent response generated successfully', {
       toolsExecuted: toolResults.length,
-      responseLength: agentResponse.length 
+      responseLength: agentResponse.length
     });
+
+    // Store this exchange as agent memory for future cross-agent learning
+    try {
+      const memoryContent = `Q: ${message.substring(0, 200)}\nA: ${agentResponse.substring(0, 400)}`;
+      await storeAgentMemory(supabase, agent.call_sign, memoryContent, {
+        clientId: client_id || undefined,
+        memoryType: 'conversation',
+        confidence: 0.6,
+      });
+    } catch (_e) {
+      // Non-fatal
+    }
 
     return new Response(
       JSON.stringify({ 
