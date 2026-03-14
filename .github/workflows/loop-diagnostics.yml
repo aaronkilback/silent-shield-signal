@@ -1,0 +1,60 @@
+name: Loop Diagnostics & Fix
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose-and-fix:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - name: Check cron jobs
+        run: |
+          echo "=== CRON JOBS ==="
+          curl -s "${SUPABASE_URL}/rest/v1/rpc/get_cron_jobs" \
+            -H "Authorization: Bearer ${SERVICE_KEY}" \
+            -H "apikey: ${SERVICE_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{}' || echo "RPC not available"
+          
+          echo "=== TABLE COUNTS (last 24h) ==="
+          NOW_MINUS_24H=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-24H +%Y-%m-%dT%H:%M:%SZ)
+          for tbl in watchdog_learnings autonomous_actions_log ai_assistant_messages autonomous_scan_results; do
+            count=$(curl -s "${SUPABASE_URL}/rest/v1/${tbl}?select=id&created_at=gte.${NOW_MINUS_24H}" \
+              -H "Authorization: Bearer ${SERVICE_KEY}" \
+              -H "apikey: ${SERVICE_KEY}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else d)" 2>/dev/null)
+            echo "${tbl}: ${count}"
+          done
+
+      - name: Get latest row from each table (any time)
+        run: |
+          echo "=== LATEST ROWS (all time) ==="
+          for tbl in watchdog_learnings autonomous_actions_log ai_assistant_messages autonomous_scan_results; do
+            latest=$(curl -s "${SUPABASE_URL}/rest/v1/${tbl}?select=created_at&order=created_at.desc&limit=1" \
+              -H "Authorization: Bearer ${SERVICE_KEY}" \
+              -H "apikey: ${SERVICE_KEY}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['created_at'] if d and isinstance(d,list) else 'EMPTY or ERR: '+str(d)[:100])" 2>/dev/null)
+            echo "${tbl}: ${latest}"
+          done
+
+      - name: Invoke system-watchdog
+        run: |
+          echo "=== INVOKING SYSTEM-WATCHDOG ==="
+          resp=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            "${SUPABASE_URL}/functions/v1/system-watchdog" \
+            -H "Authorization: Bearer ${SERVICE_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"trigger":"ci-manual","source":"diagnostics"}')
+          echo "$resp"
+
+      - name: Check table counts after invocation
+        run: |
+          echo "=== TABLE COUNTS AFTER WATCHDOG (waiting 10s) ==="
+          sleep 10
+          NOW_MINUS_5M=$(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-5M +%Y-%m-%dT%H:%M:%SZ)
+          for tbl in watchdog_learnings autonomous_actions_log ai_assistant_messages autonomous_scan_results; do
+            count=$(curl -s "${SUPABASE_URL}/rest/v1/${tbl}?select=id&created_at=gte.${NOW_MINUS_5M}" \
+              -H "Authorization: Bearer ${SERVICE_KEY}" \
+              -H "apikey: ${SERVICE_KEY}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else d)" 2>/dev/null)
+            echo "${tbl} (last 5m): ${count}"
+          done
