@@ -92,7 +92,7 @@ jobs:
       - name: Check loop activity via Supabase
         run: |
           NOW_MINUS_24H=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-24H +%Y-%m-%dT%H:%M:%SZ)
-          check() { curl -s -H "apikey: ${{ secrets.VITE_SUPABASE_ANON_KEY }}" -H "Authorization: Bearer ${{ secrets.VITE_SUPABASE_ANON_KEY }}" "${{ secrets.VITE_SUPABASE_URL }}/rest/v1/$1?select=id&$2=gte.$NOW_MINUS_24H&limit=1" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0; }
+          check() { curl -s -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" "${{ secrets.VITE_SUPABASE_URL }}/rest/v1/$1?select=id&$2=gte.$NOW_MINUS_24H&limit=1" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0; }
           W=$(check watchdog_learnings created_at)
           O=$(check autonomous_actions_log created_at)
           A=$(check ai_assistant_messages created_at)
