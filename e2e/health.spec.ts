@@ -3,7 +3,7 @@ import { test, expect } from './fixtures/auth';
 test.describe('Platform Health Indicators', () => {
   test('PRODUCTION badge is visible on dashboard', async ({ authedPage: page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
-    await expect(page.getByText('PRODUCTION')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('PRODUCTION').first()).toBeVisible({ timeout: 10_000 });
   });
 
   test('threat level badge shows a known level', async ({ authedPage: page }) => {
@@ -29,7 +29,7 @@ test.describe('Platform Health Indicators', () => {
 
   test('LIVE realtime indicator on incidents page', async ({ authedPage: page }) => {
     await page.goto('/incidents', { waitUntil: 'domcontentloaded' });
-    // Supabase realtime subscription badge — allows up to 15s to connect
+    // Supabase realtime subscription badge â allows up to 15s to connect
     await expect(page.getByText('LIVE')).toBeVisible({ timeout: 15_000 });
   });
 });
