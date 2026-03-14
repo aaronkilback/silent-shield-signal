@@ -26,6 +26,7 @@ export default tseslint.config(
       "no-constant-binary-expression": "warn",
       "no-empty": "warn",
       "@typescript-eslint/no-empty-object-type": "warn",
+      "prefer-const": "warn",
     },
   },
 );
