@@ -11,7 +11,7 @@ env:
   VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
 jobs:
-  # ââ 1. TypeScript + Build ââââââââââââââââââââââââââââââââââââââââââââââââââ
+  # Ã¢ÂÂÃ¢ÂÂ 1. TypeScript + Build Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
   build:
     name: TypeScript & Build
     runs-on: ubuntu-latest
@@ -32,7 +32,7 @@ jobs:
           path: dist/
           retention-days: 1
 
-  # ââ 2. ESLint âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  # Ã¢ÂÂÃ¢ÂÂ 2. ESLint Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
   lint:
     name: ESLint
     runs-on: ubuntu-latest
@@ -43,9 +43,9 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npx eslint src/ --rule '{"@typescript-eslint/no-explicit-any": "warn"}' --max-warnings 999
+      - run: npx eslint src/ --max-warnings 999
 
-  # ââ 3. Critical File Guard ââââââââââââââââââââââââââââââââââââââââââââââââ
+  # Ã¢ÂÂÃ¢ÂÂ 3. Critical File Guard Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
   guard:
     name: Critical File Guard
     runs-on: ubuntu-latest
@@ -65,34 +65,34 @@ jobs:
             src/lib/testing/systemTestRunManager.ts \
             src/lib/testing/e2eTests.ts; do
             if [ ! -f "$f" ]; then
-              echo "â CRITICAL FILE MISSING: $f"
+              echo "Ã¢ÂÂ CRITICAL FILE MISSING: $f"
               exit 1
             fi
-            echo "â $f"
+            echo "Ã¢ÂÂ $f"
           done
       - name: No service_role key in frontend
         run: |
           if grep -r "service_role" src/hooks/ src/contexts/ src/lib/ 2>/dev/null; then
-            echo "â service_role key found in frontend â RLS bypass risk"
+            echo "Ã¢ÂÂ service_role key found in frontend Ã¢ÂÂ RLS bypass risk"
             exit 1
           fi
-          echo "â No service_role leak"
+          echo "Ã¢ÂÂ No service_role leak"
       - name: No vip_id references (use client_id)
         run: |
           COUNT=$(grep -r "vip_id" src/ --include="*.ts" --include="*.tsx" 2>/dev/null | wc -l)
           if [ "$COUNT" -gt "0" ]; then
-            echo "â ï¸  WARNING: $COUNT vip_id references found â should use client_id"
+            echo "Ã¢ÂÂ Ã¯Â¸Â  WARNING: $COUNT vip_id references found Ã¢ÂÂ should use client_id"
             grep -r "vip_id" src/ --include="*.ts" --include="*.tsx"
           fi
 
-  # ââ 4. Live System Health Gate ââââââââââââââââââââââââââââââââââââââââââââ
+  # Ã¢ÂÂÃ¢ÂÂ 4. Live System Health Gate Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
   # Calls the real system-ops health-check endpoint and blocks merge
   # if the platform is unhealthy or loops are critically degraded.
-  # This is the CI â Watchdog bridge.
+  # This is the CI Ã¢ÂÂ Watchdog bridge.
   health-gate:
     name: Live System Health Gate
     runs-on: ubuntu-latest
-    # Only run on pushes to main â not on every PR to avoid rate limits
+    # Only run on pushes to main Ã¢ÂÂ not on every PR to avoid rate limits
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Query system-ops health-check
@@ -126,15 +126,15 @@ jobs:
           STATUS="${{ steps.health.outputs.status }}"
           HTTP_CODE="${{ steps.health.outputs.http_code }}"
 
-          echo "ââââââââââââââââââââââââââââââââââââââââ"
+          echo "Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ"
           echo "  Fortress Health Gate Result"
           echo "  Status:   $STATUS"
           echo "  HTTP:     $HTTP_CODE"
-          echo "ââââââââââââââââââââââââââââââââââââââââ"
+          echo "Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ"
 
           if [ "$STATUS" = "unhealthy" ] || [ "$HTTP_CODE" = "503" ]; then
             echo ""
-            echo "â HEALTH GATE FAILED â platform is UNHEALTHY"
+            echo "Ã¢ÂÂ HEALTH GATE FAILED Ã¢ÂÂ platform is UNHEALTHY"
             echo "The system-ops health-check returned 'unhealthy'."
             echo "This push has been deployed but an alert has been raised."
             echo "Check: ${{ secrets.VITE_SUPABASE_URL }}/functions/v1/system-ops"
@@ -143,14 +143,14 @@ jobs:
             # Change 'exit 0' to 'exit 1' if you want hard blocking
             exit 0
           elif [ "$STATUS" = "degraded" ]; then
-            echo "â ï¸  WARNING â platform is DEGRADED (some checks failing)"
+            echo "Ã¢ÂÂ Ã¯Â¸Â  WARNING Ã¢ÂÂ platform is DEGRADED (some checks failing)"
             echo "Review the health check output above for details."
             exit 0
           else
-            echo "â Health Gate PASSED â platform is healthy"
+            echo "Ã¢ÂÂ Health Gate PASSED Ã¢ÂÂ platform is healthy"
           fi
 
-  # ââ 5. Fortress Loop Health Check âââââââââââââââââââââââââââââââââââââââââ
+  # Ã¢ÂÂÃ¢ÂÂ 5. Fortress Loop Health Check Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
   # Queries useFortressHealth data directly from Supabase to check
   # that all 15 loops have activity in the last 24h
   loop-health:
@@ -201,20 +201,20 @@ jobs:
           echo "  Scan results:     $SCANS records"
 
           IDLE_COUNT=0
-          [ "$WATCHDOG" = "0" ] && echo "  â ï¸  Watchdog loop appears IDLE" && IDLE_COUNT=$((IDLE_COUNT+1))
-          [ "$OODA" = "0" ]     && echo "  â ï¸  OODA loop appears IDLE"     && IDLE_COUNT=$((IDLE_COUNT+1))
-          [ "$AEGIS" = "0" ]    && echo "  â ï¸  AEGIS loop appears IDLE"    && IDLE_COUNT=$((IDLE_COUNT+1))
-          [ "$SCANS" = "0" ]    && echo "  â ï¸  Scan loop appears IDLE"     && IDLE_COUNT=$((IDLE_COUNT+1))
+          [ "$WATCHDOG" = "0" ] && echo "  Ã¢ÂÂ Ã¯Â¸Â  Watchdog loop appears IDLE" && IDLE_COUNT=$((IDLE_COUNT+1))
+          [ "$OODA" = "0" ]     && echo "  Ã¢ÂÂ Ã¯Â¸Â  OODA loop appears IDLE"     && IDLE_COUNT=$((IDLE_COUNT+1))
+          [ "$AEGIS" = "0" ]    && echo "  Ã¢ÂÂ Ã¯Â¸Â  AEGIS loop appears IDLE"    && IDLE_COUNT=$((IDLE_COUNT+1))
+          [ "$SCANS" = "0" ]    && echo "  Ã¢ÂÂ Ã¯Â¸Â  Scan loop appears IDLE"     && IDLE_COUNT=$((IDLE_COUNT+1))
 
           if [ "$IDLE_COUNT" -ge "3" ]; then
             echo ""
-            echo "â 3+ core loops are idle â possible cron failure or breaking change"
+            echo "Ã¢ÂÂ 3+ core loops are idle Ã¢ÂÂ possible cron failure or breaking change"
             echo "Check Supabase cron jobs and recent deployments."
             exit 1
           fi
-          echo "â Core loops are active"
+          echo "Ã¢ÂÂ Core loops are active"
 
-  # ââ 6. Pipeline Smoke Tests âââââââââââââââââââââââââââââââââââââââââââââââ
+  # Ã¢ÂÂÃ¢ÂÂ 6. Pipeline Smoke Tests Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
   # Triggers scheduled-pipeline-tests directly to verify
   # document processing, signal ingestion, and AI engine
   pipeline-smoke:
@@ -249,18 +249,18 @@ jobs:
             failed = sum(1 for r in results if r.get('status') == 'fail')
             print(f'  Passed: {passed}  Failed: {failed}  Total: {len(results)}')
             for r in results:
-              icon = 'â' if r.get('status') == 'pass' else 'â'
+              icon = 'Ã¢ÂÂ' if r.get('status') == 'pass' else 'Ã¢ÂÂ'
               name = r.get('test_name', 'unknown')
               err = r.get('error_message', '')
-              print(f'  {icon} {name}' + (f' â {err}' if err else ''))
+              print(f'  {icon} {name}' + (f' Ã¢ÂÂ {err}' if err else ''))
             if failed > 0:
               sys.exit(1)
           except Exception as e:
             print(f'Could not parse response: {e}')
             print('Raw:', sys.stdin.read() if hasattr(sys.stdin, 'read') else '')
-          " 2>&1 || echo "â ï¸  Pipeline tests returned errors â check edge function logs"
+          " 2>&1 || echo "Ã¢ÂÂ Ã¯Â¸Â  Pipeline tests returned errors Ã¢ÂÂ check edge function logs"
 
-  # ââ 7. Playwright E2E âââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  # Ã¢ÂÂÃ¢ÂÂ 7. Playwright E2E Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
   e2e:
     name: Playwright E2E
     runs-on: ubuntu-latest
