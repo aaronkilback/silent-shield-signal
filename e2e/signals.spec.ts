@@ -23,7 +23,7 @@ test.describe('Signals & Intelligence', () => {
       if (!e.message.includes('ResizeObserver')) jsErrors.push(e.message);
     });
     // Use the tab trigger directly by its id to avoid strict mode ambiguity
-    await page.locator('#radix-\:rd\:-trigger-unmatched, [id*="trigger-unmatched"]').first().click();
+    await page.locator('[id*="trigger-unmatched"]').first().click();
     await page.waitForLoadState('domcontentloaded');
     expect(jsErrors, 'JS errors after tab click').toHaveLength(0);
     const body = await page.locator('body').innerText();
