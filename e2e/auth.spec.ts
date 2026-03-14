@@ -3,27 +3,22 @@ import { test, expect } from '@playwright/test';
 test.describe('Fortress Auth', () => {
   test('login page loads', async ({ page }) => {
     await page.goto('/auth');
-    // Page should load without error
     await expect(page).not.toHaveTitle(/404|Not Found|Error/i);
-    // Should have an email input
-    await expect(page.locator('input[type="email"], input[name="email"]')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('input[type="email"], input[name="email"]').first()).toBeVisible({ timeout: 10000 });
   });
 
   test('login with valid credentials redirects to dashboard', async ({ page }) => {
     await page.goto('/auth');
 
-    // Fill in credentials from environment
-    await page.locator('input[type="email"], input[name="email"]').fill(process.env.TEST_USER_EMAIL || '');
-    await page.locator('input[type="password"], input[name="password"]').fill(process.env.TEST_USER_PASSWORD || '');
-
-    // Submit
-    await page.locator('button[type="submit"]').click();
+    await page.locator('input[type="email"], input[name="email"]').first().fill(process.env.TEST_USER_EMAIL || '');
+    await page.locator('input[type="password"], input[name="password"]').first().fill(process.env.TEST_USER_PASSWORD || '');
+    await page.locator('button[type="submit"]').first().click();
 
     // Should redirect away from /auth within 15s
-    await expect(page).not.toHaveURL(/\/auth/, { timeout: 15000 });
+    await page.waitForURL(url => !url.pathname.includes('/auth'), { timeout: 15000 });
 
-    // Dashboard should have the Fortress header
-    await expect(page.locator('text=Fortress AI').or(page.locator('text=THREAT').or(page.locator('[data-testid="dashboard"]')))).toBeVisible({ timeout: 10000 });
+    // Dashboard loaded - check for the nav header span (unique element)
+    await expect(page.locator('span.font-semibold').filter({ hasText: 'Fortress AI' }).first()).toBeVisible({ timeout: 10000 });
   });
 });
 
