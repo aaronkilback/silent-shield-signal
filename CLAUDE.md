@@ -219,5 +219,5 @@ Examples:
 2. Check `CRITICAL_WORKFLOWS.md` for business-critical flows
 3. Check `DATABASE_SCHEMA.md` before any schema changes
 4. Trigger `system-ops?action=health-check` after any edge function change
-5. Watch the fortifyScore in the UI — it should stay ⁥ 0.8 after your change
+5. Watch the fortifyScore in the UI — it should stay ≥ 0.8 after your change
 6. If you broke a loop: find what stopped writing to its table and fix that first
