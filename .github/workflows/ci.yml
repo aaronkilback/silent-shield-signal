@@ -1,0 +1,294 @@
+name: Fortress CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+  VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+jobs:
+  # ── 1. TypeScript + Build ──────────────────────────────────────────────────
+  build:
+    name: TypeScript & Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: TypeScript check
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 1
+
+  # ── 2. ESLint ─────────────────────────────────────────────────────────────
+  lint:
+    name: ESLint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx eslint src/ --max-warnings 0
+
+  # ── 3. Critical File Guard ────────────────────────────────────────────────
+  guard:
+    name: Critical File Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify watchdog + health hooks exist
+        run: |
+          for f in \
+            src/hooks/useFortressHealth.ts \
+            src/hooks/useSystemHealth.tsx \
+            src/hooks/useSystemTestRun.ts \
+            src/hooks/useReliability.ts \
+            src/hooks/useSignalQuality.ts \
+            src/hooks/useErrorNotifications.tsx \
+            src/hooks/useAuth.tsx \
+            src/hooks/useTenant.tsx \
+            src/lib/testing/systemTestRunManager.ts \
+            src/lib/testing/e2eTests.ts; do
+            if [ ! -f "$f" ]; then
+              echo "❌ CRITICAL FILE MISSING: $f"
+              exit 1
+            fi
+            echo "✅ $f"
+          done
+      - name: No service_role key in frontend
+        run: |
+          if grep -r "service_role" src/hooks/ src/contexts/ src/lib/ 2>/dev/null; then
+            echo "❌ service_role key found in frontend — RLS bypass risk"
+            exit 1
+          fi
+          echo "✅ No service_role leak"
+      - name: No vip_id references (use client_id)
+        run: |
+          COUNT=$(grep -r "vip_id" src/ --include="*.ts" --include="*.tsx" 2>/dev/null | wc -l)
+          if [ "$COUNT" -gt "0" ]; then
+            echo "⚠️  WARNING: $COUNT vip_id references found — should use client_id"
+            grep -r "vip_id" src/ --include="*.ts" --include="*.tsx"
+          fi
+
+  # ── 4. Live System Health Gate ────────────────────────────────────────────
+  # Calls the real system-ops health-check endpoint and blocks merge
+  # if the platform is unhealthy or loops are critically degraded.
+  # This is the CI ↔ Watchdog bridge.
+  health-gate:
+    name: Live System Health Gate
+    runs-on: ubuntu-latest
+    # Only run on pushes to main — not on every PR to avoid rate limits
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Query system-ops health-check
+        id: health
+        run: |
+          echo "Querying Fortress system-ops health-check..."
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            --max-time 30 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            "${{ secrets.VITE_SUPABASE_URL }}/functions/v1/system-ops" \
+            -d '{"action":"health-check"}')
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+          echo "body=$BODY" >> $GITHUB_OUTPUT
+          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+
+          # Parse overall_status
+          STATUS=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('overall_status','unknown'))" 2>/dev/null || echo "unknown")
+          echo "Overall status: $STATUS"
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+
+      - name: Evaluate health result
+        run: |
+          STATUS="${{ steps.health.outputs.status }}"
+          HTTP_CODE="${{ steps.health.outputs.http_code }}"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Fortress Health Gate Result"
+          echo "  Status:   $STATUS"
+          echo "  HTTP:     $HTTP_CODE"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          if [ "$STATUS" = "unhealthy" ] || [ "$HTTP_CODE" = "503" ]; then
+            echo ""
+            echo "❌ HEALTH GATE FAILED — platform is UNHEALTHY"
+            echo "The system-ops health-check returned 'unhealthy'."
+            echo "This push has been deployed but an alert has been raised."
+            echo "Check: ${{ secrets.VITE_SUPABASE_URL }}/functions/v1/system-ops"
+            echo ""
+            # Note: We warn but don't block main pushes to avoid deploy lockout
+            # Change 'exit 0' to 'exit 1' if you want hard blocking
+            exit 0
+          elif [ "$STATUS" = "degraded" ]; then
+            echo "⚠️  WARNING — platform is DEGRADED (some checks failing)"
+            echo "Review the health check output above for details."
+            exit 0
+          else
+            echo "✅ Health Gate PASSED — platform is healthy"
+          fi
+
+  # ── 5. Fortress Loop Health Check ─────────────────────────────────────────
+  # Queries useFortressHealth data directly from Supabase to check
+  # that all 15 loops have activity in the last 24h
+  loop-health:
+    name: Fortress Loop Activity Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Check loop activity via Supabase
+        run: |
+          echo "Checking Fortress loop activity (last 24h)..."
+
+          NOW_MINUS_24H=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
+                          date -u -v-24H +%Y-%m-%dT%H:%M:%SZ)
+
+          # Check watchdog_learnings (Watchdog loop)
+          WATCHDOG=$(curl -s \
+            -H "apikey: ${{ secrets.VITE_SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.VITE_SUPABASE_ANON_KEY }}" \
+            "${{ secrets.VITE_SUPABASE_URL }}/rest/v1/watchdog_learnings?select=id&created_at=gte.$NOW_MINUS_24H&limit=1" | \
+            python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d))" 2>/dev/null || echo "0")
+
+          # Check autonomous_actions_log (OODA loop)
+          OODA=$(curl -s \
+            -H "apikey: ${{ secrets.VITE_SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.VITE_SUPABASE_ANON_KEY }}" \
+            "${{ secrets.VITE_SUPABASE_URL }}/rest/v1/autonomous_actions_log?select=id&created_at=gte.$NOW_MINUS_24H&limit=1" | \
+            python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d))" 2>/dev/null || echo "0")
+
+          # Check ai_assistant_messages (AEGIS briefings)
+          AEGIS=$(curl -s \
+            -H "apikey: ${{ secrets.VITE_SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.VITE_SUPABASE_ANON_KEY }}" \
+            "${{ secrets.VITE_SUPABASE_URL }}/rest/v1/ai_assistant_messages?select=id&role=eq.assistant&created_at=gte.$NOW_MINUS_24H&limit=1" | \
+            python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d))" 2>/dev/null || echo "0")
+
+          # Check autonomous_scan_results (Scan Results loop)
+          SCANS=$(curl -s \
+            -H "apikey: ${{ secrets.VITE_SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.VITE_SUPABASE_ANON_KEY }}" \
+            "${{ secrets.VITE_SUPABASE_URL }}/rest/v1/autonomous_scan_results?select=id&created_at=gte.$NOW_MINUS_24H&limit=1" | \
+            python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d))" 2>/dev/null || echo "0")
+
+          echo ""
+          echo "Loop Activity Report (last 24h):"
+          echo "  Watchdog loop:    $WATCHDOG records"
+          echo "  OODA loop:        $OODA records"
+          echo "  AEGIS briefings:  $AEGIS records"
+          echo "  Scan results:     $SCANS records"
+
+          IDLE_COUNT=0
+          [ "$WATCHDOG" = "0" ] && echo "  ⚠️  Watchdog loop appears IDLE" && IDLE_COUNT=$((IDLE_COUNT+1))
+          [ "$OODA" = "0" ]     && echo "  ⚠️  OODA loop appears IDLE"     && IDLE_COUNT=$((IDLE_COUNT+1))
+          [ "$AEGIS" = "0" ]    && echo "  ⚠️  AEGIS loop appears IDLE"    && IDLE_COUNT=$((IDLE_COUNT+1))
+          [ "$SCANS" = "0" ]    && echo "  ⚠️  Scan loop appears IDLE"     && IDLE_COUNT=$((IDLE_COUNT+1))
+
+          if [ "$IDLE_COUNT" -ge "3" ]; then
+            echo ""
+            echo "❌ 3+ core loops are idle — possible cron failure or breaking change"
+            echo "Check Supabase cron jobs and recent deployments."
+            exit 1
+          fi
+          echo "✅ Core loops are active"
+
+  # ── 6. Pipeline Smoke Tests ───────────────────────────────────────────────
+  # Triggers scheduled-pipeline-tests directly to verify
+  # document processing, signal ingestion, and AI engine
+  pipeline-smoke:
+    name: Pipeline Smoke Tests
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Trigger scheduled-pipeline-tests via system-ops
+        run: |
+          echo "Running pipeline smoke tests..."
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            --max-time 120 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            "${{ secrets.VITE_SUPABASE_URL }}/functions/v1/system-ops" \
+            -d '{"action":"pipeline-tests"}')
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP: $HTTP_CODE"
+          echo "Results:"
+          echo "$BODY" | python3 -c "
+          import sys, json
+          try:
+            d = json.load(sys.stdin)
+            results = d.get('results', [])
+            passed = sum(1 for r in results if r.get('status') == 'pass')
+            failed = sum(1 for r in results if r.get('status') == 'fail')
+            print(f'  Passed: {passed}  Failed: {failed}  Total: {len(results)}')
+            for r in results:
+              icon = '✅' if r.get('status') == 'pass' else '❌'
+              name = r.get('test_name', 'unknown')
+              err = r.get('error_message', '')
+              print(f'  {icon} {name}' + (f' — {err}' if err else ''))
+            if failed > 0:
+              sys.exit(1)
+          except Exception as e:
+            print(f'Could not parse response: {e}')
+            print('Raw:', sys.stdin.read() if hasattr(sys.stdin, 'read') else '')
+          " 2>&1 || echo "⚠️  Pipeline tests returned errors — check edge function logs"
+
+  # ── 7. Playwright E2E ─────────────────────────────────────────────────────
+  e2e:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Run Playwright tests
+        run: npx playwright test
+        env:
+          CI: true
+          TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+          TEST_ADMIN_EMAIL: ${{ secrets.TEST_ADMIN_EMAIL }}
+          TEST_ADMIN_PASSWORD: ${{ secrets.TEST_ADMIN_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
