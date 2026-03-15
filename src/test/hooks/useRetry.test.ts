@@ -1,128 +1,134 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useRetry } from '@/hooks/useRetry';
 
+// useRetry(asyncFn, options) — asyncFn is passed at hook creation, not to execute()
+// execute() calls the registered asyncFn with retry logic
+// State: { data, error, isLoading, attempt, isRetrying }
+// defaultRetryCondition: only retries on 'network'|'fetch'|'timeout'|'5xx'|'429'|'rate limit'
+
 describe('useRetry', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
     vi.useFakeTimers();
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.clearAllMocks();
   });
 
-  it('executes the operation and returns result on first success', async () => {
-    const operation = vi.fn().mockResolvedValue('signal-data');
-    const { result } = renderHook(() => useRetry());
+  it('starts with idle state — not loading, no error, attempt 0', () => {
+    const fn = vi.fn().mockResolvedValue('data');
+    const { result } = renderHook(() => useRetry(fn));
 
-    let returnValue: string | undefined;
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.error).toBeNull();
+    expect(result.current.attempt).toBe(0);
+    expect(result.current.data).toBeNull();
+  });
+
+  it('executes asyncFn and returns data on success', async () => {
+    const fn = vi.fn().mockResolvedValue('signal-data');
+    const { result } = renderHook(() => useRetry(fn));
+
     await act(async () => {
-      returnValue = await result.current.execute(operation);
+      await result.current.execute();
     });
 
-    expect(returnValue).toBe('signal-data');
-    expect(operation).toHaveBeenCalledTimes(1);
-    expect(result.current.isLoading).toBe(false);
+    expect(result.current.data).toBe('signal-data');
     expect(result.current.error).toBeNull();
-  });
-
-  it('starts with isLoading false and no error', () => {
-    const { result } = renderHook(() => useRetry());
     expect(result.current.isLoading).toBe(false);
-    expect(result.current.error).toBeNull();
-    expect(result.current.attemptCount).toBe(0);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 
   it('sets isLoading true while executing', async () => {
-    let resolveOp: (v: string) => void;
-    const operation = vi.fn().mockReturnValue(new Promise(r => { resolveOp = r; }));
-    const { result } = renderHook(() => useRetry());
+    let resolve: (v: string) => void;
+    const fn = vi.fn().mockReturnValue(new Promise(r => { resolve = r; }));
+    const { result } = renderHook(() => useRetry(fn));
 
-    act(() => {
-      result.current.execute(operation);
-    });
-
+    act(() => { result.current.execute(); });
     expect(result.current.isLoading).toBe(true);
 
-    await act(async () => {
-      resolveOp!('done');
-    });
-
+    await act(async () => { resolve!('done'); });
     expect(result.current.isLoading).toBe(false);
   });
 
-  it('retries on failure and succeeds on retry', async () => {
+  it('retries on network errors (matches retryCondition) and succeeds on second attempt', async () => {
     let calls = 0;
-    const operation = vi.fn().mockImplementation(async () => {
+    const fn = vi.fn().mockImplementation(async () => {
       calls++;
-      if (calls < 2) throw new Error('transient error');
+      if (calls < 2) throw new Error('network error');
       return 'recovered';
     });
 
-    const { result } = renderHook(() => useRetry({ maxRetries: 3, baseDelay: 10 }));
+    const { result } = renderHook(() => useRetry(fn, { maxRetries: 3, baseDelay: 10 }));
 
-    let returnValue: string | undefined;
     await act(async () => {
-      returnValue = await result.current.execute(operation);
+      result.current.execute();
       await vi.runAllTimersAsync();
     });
 
-    expect(returnValue).toBe('recovered');
+    expect(result.current.data).toBe('recovered');
+    expect(result.current.error).toBeNull();
     expect(calls).toBe(2);
-    expect(result.current.error).toBeNull();
   });
 
-  it('sets error after all retries exhausted', async () => {
-    const operation = vi.fn().mockRejectedValue(new Error('persistent failure'));
-    const { result } = renderHook(() => useRetry({ maxRetries: 2, baseDelay: 10 }));
+  it('does NOT retry errors that fail retryCondition', async () => {
+    // Generic errors without network/5xx keywords are not retried
+    const fn = vi.fn().mockRejectedValue(new Error('permission denied'));
+    const { result } = renderHook(() => useRetry(fn, { maxRetries: 3, baseDelay: 10 }));
 
     await act(async () => {
-      try {
-        await result.current.execute(operation);
-      } catch {}
+      await result.current.execute();
       await vi.runAllTimersAsync();
     });
 
-    expect(operation).toHaveBeenCalledTimes(3); // 1 initial + 2 retries
-    expect(result.current.error).toBeTruthy();
-    expect(result.current.isLoading).toBe(false);
+    // Should only be called once — condition failed so no retries
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(result.current.error).not.toBeNull();
   });
 
-  it('reset clears error and attempt count', async () => {
-    const operation = vi.fn().mockRejectedValue(new Error('fail'));
-    const { result } = renderHook(() => useRetry({ maxRetries: 0 }));
+  it('exhausts retries on persistent network errors and sets error state', async () => {
+    const fn = vi.fn().mockRejectedValue(new Error('fetch failed: service unavailable'));
+    const { result } = renderHook(() => useRetry(fn, { maxRetries: 2, baseDelay: 10 }));
 
     await act(async () => {
-      try { await result.current.execute(operation); } catch {}
-    });
-
-    expect(result.current.error).toBeTruthy();
-
-    act(() => {
-      result.current.reset();
-    });
-
-    expect(result.current.error).toBeNull();
-    expect(result.current.attemptCount).toBe(0);
-    expect(result.current.isLoading).toBe(false);
-  });
-
-  it('tracks attempt count during retries', async () => {
-    let calls = 0;
-    const operation = vi.fn().mockImplementation(async () => {
-      calls++;
-      if (calls < 3) throw new Error('not yet');
-      return 'ok';
-    });
-
-    const { result } = renderHook(() => useRetry({ maxRetries: 3, baseDelay: 10 }));
-
-    await act(async () => {
-      await result.current.execute(operation);
+      result.current.execute();
       await vi.runAllTimersAsync();
     });
 
-    expect(calls).toBe(3);
+    expect(fn).toHaveBeenCalledTimes(3); // 1 initial + 2 retries
+    expect(result.current.error?.message).toContain('fetch failed');
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it('reset clears error, data, and resets attempt to 0', async () => {
+    const fn = vi.fn().mockRejectedValue(new Error('fetch error'));
+    const { result } = renderHook(() => useRetry(fn, { maxRetries: 0 }));
+
+    await act(async () => {
+      await result.current.execute();
+    });
+
+    expect(result.current.error).not.toBeNull();
+
+    act(() => { result.current.reset(); });
+
+    expect(result.current.error).toBeNull();
+    expect(result.current.data).toBeNull();
+    expect(result.current.attempt).toBe(0);
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it('cancel stops an in-flight request and clears loading', async () => {
+    let resolve: (v: string) => void;
+    const fn = vi.fn().mockReturnValue(new Promise(r => { resolve = r; }));
+    const { result } = renderHook(() => useRetry(fn));
+
+    act(() => { result.current.execute(); });
+    expect(result.current.isLoading).toBe(true);
+
+    act(() => { result.current.cancel(); });
+    expect(result.current.isLoading).toBe(false);
   });
 });
