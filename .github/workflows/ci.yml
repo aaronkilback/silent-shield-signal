@@ -108,7 +108,7 @@ jobs:
           [ "$A" = "0" ] && IDLE=$((IDLE+1))
           [ "$S" = "0" ] && IDLE=$((IDLE+1))
           [ "$IDLE" -ge "3" ] && echo "ERROR: 3+ autonomous loops idle - check cron jobs" && exit 1
-          echo "Ã¢ÂÂ Core loops active"
+          echo "OK: Core loops active"
 
       - name: Check for stuck document processing
         run: |
@@ -126,7 +126,7 @@ jobs:
           echo "Document pipeline: stuck=$STUCK failed_1h=$FAILED"
           [ "$STUCK" -gt "5" ] && echo "WARNING: $STUCK documents stuck in processing" && exit 1
           [ "$FAILED" -gt "20" ] && echo "WARNING: $FAILED document failures in last hour" && exit 1
-          echo "Ã¢ÂÂ Document pipeline healthy"
+          echo "OK: Document pipeline healthy"
 
       - name: Check mapbox token configured
         run: |
