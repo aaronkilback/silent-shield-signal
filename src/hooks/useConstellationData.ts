@@ -1,7 +1,8 @@
-// build: 1773599237274
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+
+export const ACTIVITY_METRICS_VERSION = "2.0.0-absolute-thresholds"; // f08c87c
 
 export interface AgentCommLink {
   sourceCallSign: string;
