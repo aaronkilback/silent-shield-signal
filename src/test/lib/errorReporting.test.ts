@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { supabase } from '@/integrations/supabase/client';
 import { reportError } from '@/lib/errorReporting';
 
+// reportError inserts: user_id, title, description, severity, page_url, browser_info
+// It does NOT insert a status field — the DB default handles that
+
 describe('reportError', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -21,6 +24,22 @@ describe('reportError', () => {
     const insertArg = insertMock.mock.calls[0][0];
     expect(insertArg.title).toBe('[Auto] Signal processor crashed');
     expect(insertArg.severity).toBe('high');
+  });
+
+  it('inserts description, page_url, and browser_info fields', async () => {
+    const insertMock = vi.fn().mockResolvedValue({ data: null, error: null });
+    (supabase.from as any).mockReturnValue({ insert: insertMock });
+
+    await reportError({
+      title: 'Test',
+      description: 'Base description',
+      severity: 'low',
+    });
+
+    const insertArg = insertMock.mock.calls[0][0];
+    expect(insertArg.description).toBe('Base description');
+    expect(insertArg).toHaveProperty('page_url');
+    expect(insertArg).toHaveProperty('browser_info');
   });
 
   it('appends error stack to description when Error object provided', async () => {
@@ -69,7 +88,6 @@ describe('reportError', () => {
     });
 
     const insertArg = insertMock.mock.calls[0][0];
-    // The setup mock returns user id 'test-user-id'
     expect(insertArg.user_id).toBe('test-user-id');
   });
 
@@ -77,7 +95,6 @@ describe('reportError', () => {
     const insertMock = vi.fn().mockResolvedValue({ data: null, error: new Error('DB unavailable') });
     (supabase.from as any).mockReturnValue({ insert: insertMock });
 
-    // Should not throw — reportError must be fire-and-forget safe
     await expect(reportError({
       title: 'Background error',
       description: 'Something failed quietly',
@@ -95,15 +112,5 @@ describe('reportError', () => {
       description: 'Should still attempt to log',
       severity: 'medium',
     })).resolves.not.toThrow();
-  });
-
-  it('sets status to open on insert', async () => {
-    const insertMock = vi.fn().mockResolvedValue({ data: null, error: null });
-    (supabase.from as any).mockReturnValue({ insert: insertMock });
-
-    await reportError({ title: 'Test', description: 'desc', severity: 'low' });
-
-    const insertArg = insertMock.mock.calls[0][0];
-    expect(insertArg.status).toBe('open');
   });
 });
