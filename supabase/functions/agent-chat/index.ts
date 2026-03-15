@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { validateString, validateUUID, validateMessages, validateAll } from "../_shared/input-validation.ts";
 import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
+import { buildCOP, formatCOPForPrompt } from "../_shared/common-operating-picture.ts";
 import { getAntiHallucinationPrompt } from "../_shared/anti-hallucination.ts";
 import { 
   getReliabilityFirstPrompt, 
@@ -464,6 +465,18 @@ Respond naturally and briefly.`
 
     // Build context based on agent's input sources
     let contextData = '';
+
+    // ── COMMON OPERATING PICTURE ──────────────────────────────────────────────
+    // Build the shared network-wide threat picture first.
+    // Every agent gets the same COP so all analysis is grounded in one truth.
+    try {
+      const cop = await buildCOP(supabase);
+      contextData += formatCOPForPrompt(cop) + '\n\n';
+    } catch (copError) {
+      console.warn('[agent-chat] COP build failed (non-fatal):', copError);
+      contextData += '⚠️ COP unavailable this cycle — operating on agent-local data only.\n\n';
+    }
+    // ─────────────────────────────────────────────────────────────────────────
     
     if (agent.input_sources.includes('signals')) {
       const { data: signals } = await supabase
