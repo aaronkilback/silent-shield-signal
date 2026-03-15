@@ -5,6 +5,7 @@ import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, 
 import { logError } from "../_shared/error-logger.ts";
 // fortress-infrastructure.ts removed from system prompt to reduce token count (~5000 tokens saved)
 import { AEGIS_CORE_IDENTITY, AEGIS_CHAT_MODIFIERS, ANTI_FABRICATION_RULES, TOOL_USAGE_GUIDANCE, AEGIS_CAPABILITY_MANIFEST, getTimeContext } from "../_shared/aegis-persona.ts";
+import { buildCOP, formatCOPForPrompt } from "../_shared/common-operating-picture.ts";
 import { getLearningPromptBlock, getSystemHealthMetrics } from "../_shared/learning-context-builder.ts";
 import { FORTRESS_PLATFORM_OVERVIEW, FORTRESS_AEGIS_CAPABILITIES, FORTRESS_WORKFLOW_INSTRUCTIONS, AEGIS_TOOL_SUMMARIZER_PROMPT, AEGIS_REPORT_PRESENTER_PROMPT, AEGIS_AGENT_CREATION_PROMPT, AEGIS_DATA_PRESENTER_PROMPT } from "../_shared/fortress-operational-prompt.ts";
 import { FORTRESS_CORE_DIRECTIVE } from "../_shared/fortress-core-directive.ts";
@@ -146,7 +147,7 @@ function isMetaConversation(text: string): boolean {
 
 // Build the unified AEGIS system prompt from shared modules
 // Single source of truth — no more inline prompt duplication
-function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = ""): string {
+function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = ""): string {
   const timeContext = getTimeContext();
   
   return `${AEGIS_CORE_IDENTITY}
@@ -160,6 +161,7 @@ ${AEGIS_CHAT_MODIFIERS}
 ═══ CURRENT TIME ═══
 ${timeContext.full}
 ${agentRosterContext}
+${copContext}
 ${tenantKnowledgeContext}${behavioralCorrectionContext}
 ${learningContext ? `\n${learningContext}\n` : ''}
 ${FORTRESS_PLATFORM_OVERVIEW}
@@ -7617,6 +7619,28 @@ The signal is now in the database with status 'triaged' and rules have been appl
       }
     }
 
+    case "get_common_operating_picture": {
+      try {
+        const cop = await buildCOP(supabaseClient);
+        return {
+          success: true,
+          summary: cop.summary,
+          generated_at: cop.generated_at,
+          risk_score: cop.risk_score,
+          risk_trend: cop.risk_trend,
+          open_incidents: cop.open_incidents,
+          critical_signals: cop.critical_signals,
+          high_probability_escalations: cop.high_probability_escalations,
+          top_entities: cop.top_entities,
+          active_agents: cop.active_agents,
+          broadcast_messages: cop.broadcast_messages,
+          formatted: formatCOPForPrompt(cop),
+        };
+      } catch (copErr) {
+        return { error: "COP snapshot failed", details: copErr instanceof Error ? copErr.message : String(copErr) };
+      }
+    }
+
     case "perform_web_fetch": {
       const { url, context: fetchContext } = args;
       if (!url) return { error: "URL is required for perform_web_fetch" };
@@ -7890,6 +7914,17 @@ Deno.serve(async (req) => {
 
     const supabaseClient = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
     
+    // ── COMMON OPERATING PICTURE ────────────────────────────────────────────
+    let copContext = "";
+    try {
+      const cop = await buildCOP(supabaseClient);
+      copContext = formatCOPForPrompt(cop);
+      console.log(`[Aegis] COP: ${cop.summary}`);
+    } catch (copErr) {
+      console.warn("[Aegis] COP build failed (non-fatal):", copErr);
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     // Extract authenticated user ID from Authorization header for memory tools
     let authenticatedUserId: string | undefined;
     let userTenantId: string | undefined;
@@ -8235,7 +8270,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         messages: [
           {
             role: "system",
-            content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext),
+            content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext),
           },
           ...processedMessages,
         ],
