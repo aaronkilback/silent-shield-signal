@@ -7617,6 +7617,96 @@ The signal is now in the database with status 'triaged' and rules have been appl
       }
     }
 
+    case "perform_web_fetch": {
+      const { url, context: fetchContext } = args;
+      
+      if (!url) {
+        return { error: "URL is required for perform_web_fetch" };
+      }
+      
+      console.log(`[perform_web_fetch] Fetching URL: ${url}`);
+      
+      // For X/Twitter URLs, use fxtwitter.com proxy which renders full content
+      let fetchUrl = url;
+      const isTwitter = url.match(/(?:x.com|twitter.com)/[^/]+/status/(d+)/i);
+      if (isTwitter) {
+        // fxtwitter serves full tweet content as plain HTML without JS requirement
+        fetchUrl = url
+          .replace('https://x.com', 'https://api.fxtwitter.com')
+          .replace('https://twitter.com', 'https://api.fxtwitter.com')
+          .replace('https://www.x.com', 'https://api.fxtwitter.com')
+          .replace('https://www.twitter.com', 'https://api.fxtwitter.com');
+        console.log(`[perform_web_fetch] X/Twitter URL detected, using fxtwitter proxy: ${fetchUrl}`);
+      }
+      
+      try {
+        const response = await fetch(fetchUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; FortressAI/1.0; +https://silentshieldsecurity.com)',
+            'Accept': 'text/html,application/xhtml+xml,application/json,*/*',
+          },
+          signal: AbortSignal.timeout(15000),
+        });
+        
+        if (!response.ok) {
+          return { 
+            error: `Failed to fetch URL: HTTP ${response.status}`,
+            url,
+            suggestion: "The page may require authentication or be unavailable."
+          };
+        }
+        
+        const contentType = response.headers.get('content-type') || '';
+        let content = '';
+        
+        if (isTwitter) {
+          // fxtwitter returns JSON with tweet data
+          const data = await response.json();
+          const tweet = data?.tweet;
+          if (tweet) {
+            content = `[X/Twitter Post]
+Author: @${tweet.author?.screen_name || 'unknown'} (${tweet.author?.name || ''})
+Posted: ${tweet.created_at || 'unknown date'}
+Content: ${tweet.text || tweet.content || ''}
+Likes: ${tweet.likes || 0} | Retweets: ${tweet.retweets || 0} | Replies: ${tweet.replies || 0}
+URL: ${url}`;
+          } else {
+            content = JSON.stringify(data, null, 2);
+          }
+        } else {
+          const rawText = await response.text();
+          // Strip HTML tags for readability
+          content = rawText
+            .replace(/<script[^>]*>[sS]*?</script>/gi, '')
+            .replace(/<style[^>]*>[sS]*?</style>/gi, '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/\s{3,}/g, '\n\n')
+            .trim()
+            .slice(0, 8000); // Cap at 8k chars
+        }
+        
+        return {
+          success: true,
+          url,
+          content_type: contentType,
+          content,
+          char_count: content.length,
+          context_note: fetchContext ? `Fetch requested for: ${fetchContext}` : undefined,
+        };
+        
+      } catch (fetchError) {
+        const errMsg = fetchError instanceof Error ? fetchError.message : String(fetchError);
+        console.error(`[perform_web_fetch] Error fetching ${url}:`, errMsg);
+        return {
+          error: `Failed to fetch URL: ${errMsg}`,
+          url,
+          suggestion: isTwitter 
+            ? "If this X post is unavailable, you can paste its text content directly into the chat."
+            : "The URL may be blocked, require authentication, or be temporarily unavailable."
+        };
+      }
+    }
+
     case "broadcast_to_agents": {
       const { message, priority = "normal" } = args;
       
