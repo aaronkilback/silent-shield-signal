@@ -1768,4 +1768,35 @@ Each agent will receive the full message content and it will appear in their act
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "perform_web_fetch",
+      description: `Fetch and read the content of any URL — web pages, news articles, social media posts, PDFs, and documents.
+
+CRITICAL USE CASES:
+- X/Twitter posts: When given an x.com or twitter.com URL, fetch its full text content
+- News articles: Retrieve full article text from any news URL
+- Research documents: Read online reports, PDFs, or intelligence documents
+- Any URL a user pastes into the conversation
+
+For X/Twitter URLs (x.com or twitter.com): automatically uses a rendering proxy to bypass JavaScript restrictions.
+Always use this tool when a user shares a URL and wants you to read its contents.
+Returns the full text content of the page.`,
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "The full URL to fetch (e.g., 'https://x.com/user/status/123', 'https://news.example.com/article')",
+          },
+          context: {
+            type: "string",
+            description: "Optional: what the user wants to do with this content (e.g., 'analyze for threat indicators', 'summarize', 'share with agents')",
+          },
+        },
+        required: ["url"],
+      },
+    },
+  },
 ];
