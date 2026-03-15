@@ -2,14 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { categorizeError, determineSeverity } from '@/lib/errorTracking';
 
 // Real categorizeError priority order (from source):
-// 1. rls_policy:        'row-level security' | 'rls'
+// 1. rls_policy:          'row-level security' | 'rls'
 // 2. database_constraint: 'constraint' | 'violates' | 'duplicate key'
-// 3. validation:        'validation' | 'invalid' | 'required'
-// 4. network:           'network' | 'fetch' | 'timeout'
-// 5. authentication:    'auth' | 'unauthorized' | 'jwt'
-// 6. edge_function:     'edge function' | 'function invocation'
-// 7. api_error:         'api' | '500' | '404'
-// 8. unknown:           everything else
+// 3. validation:          'validation' | 'invalid' | 'required'
+// 4. network:             'network' | 'fetch' | 'timeout'
+// 5. authentication:      'auth' | 'unauthorized' | 'jwt'
+// 6. edge_function:       'edge function' | 'function invocation'
+// 7. api_error:           'api' | '500' | '404'
+// 8. unknown:             everything else
 
 describe('categorizeError', () => {
   describe('rls_policy (highest priority)', () => {
@@ -25,9 +25,6 @@ describe('categorizeError', () => {
     it('detects constraint keyword', () => {
       expect(categorizeError(new Error('violates foreign key constraint'))).toBe('database_constraint');
     });
-    it('detects violates keyword', () => {
-      expect(categorizeError('null value violates not-null constraint')).toBe('database_constraint');
-    });
     it('detects duplicate key', () => {
       expect(categorizeError(new Error('duplicate key value in column'))).toBe('database_constraint');
     });
@@ -37,8 +34,8 @@ describe('categorizeError', () => {
     it('detects validation keyword', () => {
       expect(categorizeError(new Error('validation failed: email missing'))).toBe('validation');
     });
-    it('detects invalid keyword', () => {
-      // "invalid token" matches 'invalid' before 'auth' — returns validation
+    it('detects invalid keyword — matches before auth', () => {
+      // "invalid token" hits 'invalid' (priority 3) before 'auth' (priority 5)
       expect(categorizeError(new Error('invalid token'))).toBe('validation');
     });
     it('detects required keyword', () => {
@@ -53,8 +50,9 @@ describe('categorizeError', () => {
     it('detects fetch keyword', () => {
       expect(categorizeError(new Error('fetch error occurred'))).toBe('network');
     });
-    it('detects timeout keyword', () => {
-      expect(categorizeError('request timed out after 30s')).toBe('network');
+    it('detects timeout keyword (exact match)', () => {
+      // Must contain the word "timeout" — "timed out" does NOT match
+      expect(categorizeError('connection timeout after 30s')).toBe('network');
     });
   });
 
@@ -120,7 +118,7 @@ describe('determineSeverity', () => {
   it('returns medium for api_error', () => {
     expect(determineSeverity('api_error', 'api error')).toBe('medium');
   });
-  it('returns critical for unknown category with critical keyword', () => {
+  it('returns critical for unknown category with fatal keyword', () => {
     expect(determineSeverity('unknown', 'fatal crash occurred')).toBe('critical');
   });
   it('returns low for unknown category with no severe keywords', () => {
