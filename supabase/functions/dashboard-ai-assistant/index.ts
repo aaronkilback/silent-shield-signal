@@ -7619,90 +7619,191 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
     case "perform_web_fetch": {
       const { url, context: fetchContext } = args;
-      
-      if (!url) {
-        return { error: "URL is required for perform_web_fetch" };
-      }
-      
-      console.log(`[perform_web_fetch] Fetching URL: ${url}`);
-      
-      // For X/Twitter URLs, use fxtwitter.com proxy which renders full content
+      if (!url) return { error: "URL is required for perform_web_fetch" };
+      console.log(`[perform_web_fetch] Fetching: ${url}`);
+
+      // Detect platform from URL
+      const u = url.toLowerCase();
+      const isTwitter   = /(?:x\.com|twitter\.com)\/[^/]+\/status\/\d+/i.test(url);
+      const isReddit    = /reddit\.com\/(r\/[^/]+\/comments|user\/)/i.test(url);
+      const isYouTube   = /(?:youtube\.com\/watch|youtu\.be\/)/i.test(url);
+      const isTelegram  = /t\.me\//i.test(url);
+      const isLinkedIn  = /linkedin\.com\/(posts|pulse|in\/|company\/)/i.test(url);
+      const isInstagram = /instagram\.com\/p\//i.test(url);
+      const isFacebook  = /facebook\.com\/(?!groups)/i.test(url) && u.includes('/posts/');
+      const isTikTok    = /tiktok\.com\/@[^/]+\/video\//i.test(url);
+
       let fetchUrl = url;
-      const isTwitter = url.match(/(?:x.com|twitter.com)/[^/]+/status/(d+)/i);
+      let platform = 'web';
+
       if (isTwitter) {
-        // fxtwitter serves full tweet content as plain HTML without JS requirement
+        // fxtwitter.com: returns JSON with full tweet data, no JS required
         fetchUrl = url
-          .replace('https://x.com', 'https://api.fxtwitter.com')
-          .replace('https://twitter.com', 'https://api.fxtwitter.com')
-          .replace('https://www.x.com', 'https://api.fxtwitter.com')
-          .replace('https://www.twitter.com', 'https://api.fxtwitter.com');
-        console.log(`[perform_web_fetch] X/Twitter URL detected, using fxtwitter proxy: ${fetchUrl}`);
+          .replace(/https?:\/\/(?:www\.)?x\.com/, 'https://api.fxtwitter.com')
+          .replace(/https?:\/\/(?:www\.)?twitter\.com/, 'https://api.fxtwitter.com');
+        platform = 'twitter';
+      } else if (isReddit) {
+        // Reddit JSON API: append .json to get structured data
+        fetchUrl = url.replace(/\/$/, '') + '.json';
+        platform = 'reddit';
+      } else if (isYouTube) {
+        // YouTube: use noembed.com for title/description metadata
+        const videoId = url.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/)?.[1];
+        if (videoId) {
+          fetchUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+        }
+        platform = 'youtube';
+      } else if (isTelegram) {
+        // Telegram public channels: use t.me/s/ embed
+        fetchUrl = url.replace('https://t.me/', 'https://t.me/s/');
+        platform = 'telegram';
+      } else if (isLinkedIn || isInstagram || isFacebook || isTikTok) {
+        // These block bots — fall back to oEmbed or metadata scrape
+        platform = isLinkedIn ? 'linkedin' : isInstagram ? 'instagram' : isFacebook ? 'facebook' : 'tiktok';
       }
-      
+
       try {
         const response = await fetch(fetchUrl, {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; FortressAI/1.0; +https://silentshieldsecurity.com)',
-            'Accept': 'text/html,application/xhtml+xml,application/json,*/*',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/json,*/*;q=0.9',
+            'Accept-Language': 'en-US,en;q=0.9',
           },
           signal: AbortSignal.timeout(15000),
         });
-        
+
         if (!response.ok) {
-          return { 
-            error: `Failed to fetch URL: HTTP ${response.status}`,
-            url,
-            suggestion: "The page may require authentication or be unavailable."
-          };
+          // For bot-blocked platforms, return helpful guidance
+          if ([401, 403, 429].includes(response.status) && ['instagram','linkedin','facebook','tiktok'].includes(platform)) {
+            return {
+              error: `${platform} blocked automated access (HTTP ${response.status})`,
+              url,
+              platform,
+              suggestion: `${platform.charAt(0).toUpperCase()+platform.slice(1)} requires authentication for direct access. Please paste the post text directly into this chat and I will analyze it.`,
+              workaround: 'Paste the post content directly into the chat'
+            };
+          }
+          return { error: `HTTP ${response.status}`, url, platform };
         }
-        
+
         const contentType = response.headers.get('content-type') || '';
         let content = '';
-        
+        let metadata: Record<string, unknown> = {};
+
         if (isTwitter) {
-          // fxtwitter returns JSON with tweet data
           const data = await response.json();
           const tweet = data?.tweet;
           if (tweet) {
-            content = `[X/Twitter Post]
-Author: @${tweet.author?.screen_name || 'unknown'} (${tweet.author?.name || ''})
-Posted: ${tweet.created_at || 'unknown date'}
-Content: ${tweet.text || tweet.content || ''}
-Likes: ${tweet.likes || 0} | Retweets: ${tweet.retweets || 0} | Replies: ${tweet.replies || 0}
-URL: ${url}`;
+            metadata = {
+              author_handle: tweet.author?.screen_name,
+              author_name: tweet.author?.name,
+              posted: tweet.created_at,
+              likes: tweet.likes,
+              retweets: tweet.retweets,
+              replies: tweet.replies,
+              quote_count: tweet.quote_count,
+            };
+            content = tweet.text || tweet.content || '';
+            // Include quote tweet if present
+            if (tweet.quote?.text) {
+              content += `\n\n[Quoting @${tweet.quote.author?.screen_name}: ${tweet.quote.text}]`;
+            }
+            // Include media descriptions
+            if (tweet.media?.photos?.length) {
+              content += `\n\n[Contains ${tweet.media.photos.length} image(s)]`;
+            }
+            if (tweet.media?.videos?.length) {
+              content += `\n\n[Contains video]`;
+            }
           } else {
-            content = JSON.stringify(data, null, 2);
+            content = JSON.stringify(data, null, 2).slice(0, 3000);
           }
-        } else {
+        } else if (isReddit) {
+          const data = await response.json();
+          const post = data?.[0]?.data?.children?.[0]?.data;
+          if (post) {
+            metadata = {
+              subreddit: post.subreddit,
+              author: post.author,
+              title: post.title,
+              score: post.score,
+              num_comments: post.num_comments,
+              created_utc: new Date(post.created_utc * 1000).toISOString(),
+            };
+            content = `[Reddit Post in r/${post.subreddit}]\nTitle: ${post.title}\nAuthor: u/${post.author}\n\n${post.selftext || post.url || ''}\n\nScore: ${post.score} | Comments: ${post.num_comments}`;
+            // Top comments
+            const comments = data?.[1]?.data?.children?.slice(0,3)?.map((c: any) => c.data?.body).filter(Boolean);
+            if (comments?.length) {
+              content += `\n\nTop comments:\n${comments.map((c: string, i: number) => `${i+1}. ${c.slice(0,200)}`).join('\n')}`;
+            }
+          } else {
+            content = JSON.stringify(data, null, 2).slice(0, 3000);
+          }
+        } else if (isYouTube) {
+          const data = await response.json();
+          metadata = { title: data.title, author: data.author_name, thumbnail: data.thumbnail_url };
+          content = `[YouTube Video]\nTitle: ${data.title}\nChannel: ${data.author_name}\nURL: ${url}\n\nNote: Full transcript/description requires YouTube Data API access.`;
+        } else if (isTelegram) {
           const rawText = await response.text();
-          // Strip HTML tags for readability
+          const messages = rawText.match(/<div class="tgme_widget_message_text[^"]*"[^>]*>([sS]*?)</div>/gi) || [];
+          content = messages
+            .slice(0, 5)
+            .map(m => m.replace(/<[^>]+>/g, ' ').replace(/\s{2,}/g, ' ').trim())
+            .join('\n\n');
+          if (!content) {
+            content = rawText.replace(/<[^>]+>/g, ' ').replace(/\s{3,}/g, '\n').trim().slice(0, 4000);
+          }
+          platform = 'telegram';
+        } else {
+          // General web page — strip HTML
+          const rawText = await response.text();
+          // Extract title
+          const titleMatch = rawText.match(/<title[^>]*>([^<]+)<\/title>/i);
+          if (titleMatch) metadata.title = titleMatch[1].trim();
+          // Extract meta description
+          const descMatch = rawText.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i);
+          if (descMatch) metadata.description = descMatch[1].trim();
+          // Extract Open Graph data
+          const ogTitle = rawText.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
+          if (ogTitle) metadata.og_title = ogTitle[1].trim();
+          const ogDesc = rawText.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i);
+          if (ogDesc) metadata.og_description = ogDesc[1].trim();
+          
           content = rawText
-            .replace(/<script[^>]*>[sS]*?</script>/gi, '')
-            .replace(/<style[^>]*>[sS]*?</style>/gi, '')
+            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+            .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
+            .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '')
+            .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
             .replace(/<[^>]+>/g, ' ')
+            .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/&#\d+;/g, '')
             .replace(/\s{3,}/g, '\n\n')
             .trim()
-            .slice(0, 8000); // Cap at 8k chars
+            .slice(0, 8000);
         }
-        
+
         return {
           success: true,
           url,
+          platform,
           content_type: contentType,
+          metadata,
           content,
           char_count: content.length,
-          context_note: fetchContext ? `Fetch requested for: ${fetchContext}` : undefined,
+          context_note: fetchContext || undefined,
         };
-        
+
       } catch (fetchError) {
         const errMsg = fetchError instanceof Error ? fetchError.message : String(fetchError);
-        console.error(`[perform_web_fetch] Error fetching ${url}:`, errMsg);
+        console.error(`[perform_web_fetch] Error:`, errMsg);
+        const isBlocked = ['instagram','linkedin','facebook','tiktok'].includes(platform);
         return {
-          error: `Failed to fetch URL: ${errMsg}`,
+          error: `Failed to fetch: ${errMsg}`,
           url,
-          suggestion: isTwitter 
-            ? "If this X post is unavailable, you can paste its text content directly into the chat."
-            : "The URL may be blocked, require authentication, or be temporarily unavailable."
+          platform,
+          suggestion: isBlocked
+            ? `${platform} blocks automated access. Paste the post text directly into the chat.`
+            : 'The URL may be temporarily unavailable or require authentication.',
         };
       }
     }
