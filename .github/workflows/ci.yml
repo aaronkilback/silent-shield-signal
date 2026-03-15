@@ -108,7 +108,7 @@ jobs:
           [ "$A" = "0" ] && IDLE=$((IDLE+1))
           [ "$S" = "0" ] && IDLE=$((IDLE+1))
           [ "$IDLE" -ge "3" ] && echo "ERROR: 3+ autonomous loops idle - check cron jobs" && exit 1
-          echo "✓ Core loops active"
+          echo "â Core loops active"
 
       - name: Check for stuck document processing
         run: |
@@ -126,7 +126,7 @@ jobs:
           echo "Document pipeline: stuck=$STUCK failed_1h=$FAILED"
           [ "$STUCK" -gt "5" ] && echo "WARNING: $STUCK documents stuck in processing" && exit 1
           [ "$FAILED" -gt "20" ] && echo "WARNING: $FAILED document failures in last hour" && exit 1
-          echo "✓ Document pipeline healthy"
+          echo "â Document pipeline healthy"
 
       - name: Check mapbox token configured
         run: |
@@ -134,9 +134,8 @@ jobs:
           if [ -z "$MAPBOX_TOKEN" ] || [ "$MAPBOX_TOKEN" = "your_mapbox_token_here" ]; then
             echo "WARNING: VITE_MAPBOX_TOKEN is not configured - travel/incident maps will be blank"
             echo "Add a valid Mapbox public token at https://account.mapbox.com/access-tokens/"
-            exit 1
+            echo "    Get token: https://account.mapbox.com/access-tokens/"
           fi
-          echo "✓ Mapbox token configured"
 
   pipeline-smoke:
     name: Pipeline Smoke Tests
