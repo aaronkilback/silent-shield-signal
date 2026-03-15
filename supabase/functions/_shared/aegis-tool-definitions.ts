@@ -1799,4 +1799,40 @@ Returns the full text content of the page.`,
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "send_message_to_agent",
+      description: `Send a direct message or tasking instruction to a specific agent by their call sign.
+
+Use this tool when the user wants to:
+- Contact a specific agent directly (e.g., "tell BIRD-DOG to...", "message GLOBE-SAGE about...")
+- Assign a specific task to one agent
+- Send targeted intelligence to a single agent
+- Get a specific agent's attention on a particular matter
+
+IMPORTANT: Use agent's exact call sign (e.g., "BIRD-DOG", "GLOBE-SAGE"). 
+The message will appear in that agent's next conversation as a pending directive from command.
+Use broadcast_to_agents instead if you want to reach ALL agents simultaneously.`,
+      parameters: {
+        type: "object",
+        properties: {
+          agent_call_sign: {
+            type: "string",
+            description: "The exact call sign of the target agent (e.g., 'BIRD-DOG', 'GLOBE-SAGE', 'CIPHER-9')",
+          },
+          message: {
+            type: "string",
+            description: "The message or task instruction to send to the agent",
+          },
+          priority: {
+            type: "string",
+            enum: ["normal", "urgent"],
+            description: "Message priority (default: normal)",
+          },
+        },
+        required: ["agent_call_sign", "message"],
+      },
+    },
+  },
 ];
