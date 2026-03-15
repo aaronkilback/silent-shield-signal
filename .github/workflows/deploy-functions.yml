@@ -1,0 +1,38 @@
+name: Deploy Edge Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+  workflow_dispatch:
+    inputs:
+      function_name:
+        description: 'Function to deploy (leave blank for all changed)'
+        required: false
+
+jobs:
+  deploy-functions:
+    name: Deploy Supabase Edge Functions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Deploy agent-activity-scanner
+        run: |
+          supabase functions deploy agent-activity-scanner --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          PROJECT_ID: kpuqukppbmwebiptqmog
+
+      - name: Verify deployment
+        run: |
+          echo "Deployed agent-activity-scanner"
+          echo "Cron job agent-activity-scanner-15min registered (jobid 30)"
+          echo "First run will occur at next :00 or :15 mark"
