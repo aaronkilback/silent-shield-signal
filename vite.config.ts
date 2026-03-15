@@ -20,6 +20,9 @@ export default defineConfig(({ mode }) => ({
     },
     dedupe: ["react", "react-dom"],
   },
+  define: {
+    __BUILD_TS__: JSON.stringify(Date.now()),
+  },
   build: {
     rollupOptions: {
       input: {
