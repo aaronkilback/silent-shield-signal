@@ -1740,14 +1740,17 @@ Returns contradiction details, severity, and AI analysis of the conflict.`,
     type: "function",
     function: {
       name: "broadcast_to_agents",
-      description: `Send a message from the principal (user) to all active agents in the network. Use this when users want to:
-- Thank agents for their work
-- Send kudos, recognition, or appreciation
-- Broadcast operational directives or morale messages
-- Acknowledge agent contributions
+      description: `Send a message or intelligence report from the principal (user) to all active agents in the network. Use this when users want to:
+- Share intelligence reports, threat analyses, or research documents with all agents
+- Broadcast threat frameworks, radicalization indicators, or analytical methodologies
+- Send operational directives, situational awareness updates, or priority intelligence
+- Thank agents for their work, send kudos or recognition
+- Acknowledge agent contributions or broadcast morale messages
 
-The message will be delivered to every active agent's pending message queue with the user's intent preserved.
-Each agent will "receive" the message and it will appear in their activity logs.`,
+IMPORTANT: When users say "share this with agents", "send this to the team", "broadcast this intel", 
+"make sure all agents see this", or "distribute this report" — use this tool immediately.
+The message will be delivered to every active agent's pending message queue.
+Each agent will receive the full message content and it will appear in their activity logs.`,
       parameters: {
         type: "object",
         properties: {
