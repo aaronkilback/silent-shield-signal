@@ -13,10 +13,15 @@ import { renderToString } from "react-dom/server";
 export function TravelersMap() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
-  const [mapboxToken, setMapboxToken] = useState<string | null>(
-    localStorage.getItem("mapbox_token") || import.meta.env.VITE_MAPBOX_TOKEN || null
-  );
-  const [showTokenInput, setShowTokenInput] = useState(!mapboxToken);
+  const getValidToken = (): string | null => {
+    const stored = localStorage.getItem("mapbox_token");
+    if (stored && stored !== "your_mapbox_token_here") return stored;
+    const env = import.meta.env.VITE_MAPBOX_TOKEN;
+    if (env && env !== "your_mapbox_token_here") return env;
+    return null;
+  };
+  const [mapboxToken, setMapboxToken] = useState<string | null>(getValidToken);
+  const [showTokenInput, setShowTokenInput] = useState(!getValidToken());
   const [tokenInput, setTokenInput] = useState("");
 
   const { data: travelers } = useQuery({
@@ -52,10 +57,13 @@ export function TravelersMap() {
   });
 
   const handleSaveToken = () => {
-    if (tokenInput.trim()) {
-      localStorage.setItem("mapbox_token", tokenInput.trim());
-      setMapboxToken(tokenInput.trim());
+    const tok = tokenInput.trim();
+    if (tok && tok.startsWith("pk.")) {
+      localStorage.setItem("mapbox_token", tok);
+      setMapboxToken(tok);
       setShowTokenInput(false);
+    } else if (tok) {
+      alert("Please enter a valid Mapbox public token (starts with pk.)");
     }
   };
 
@@ -268,7 +276,7 @@ export function TravelersMap() {
       "wellington": [174.7787, -41.2865],
       
       // South America
-      "são paulo": [-46.6333, -23.5505],
+      "sÃ£o paulo": [-46.6333, -23.5505],
       "rio de janeiro": [-43.1729, -22.9068],
       "buenos aires": [-58.3816, -34.6037],
       "lima": [-77.0428, -12.0464],
@@ -296,6 +304,11 @@ export function TravelersMap() {
             <h3 className="text-lg font-semibold">Mapbox Token Required</h3>
             <p className="text-sm text-muted-foreground">
               Enter your Mapbox public token to display the travelers map.
+              Get a free token at{" "}
+              <a href="https://account.mapbox.com/access-tokens/" target="_blank" rel="noopener noreferrer" className="underline text-blue-400">
+                account.mapbox.com
+              </a>
+              . Token starts with <code className="bg-muted px-1 rounded">pk.</code>
             </p>
           </div>
           <div className="space-y-2">
