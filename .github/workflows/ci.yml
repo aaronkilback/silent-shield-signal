@@ -91,8 +91,12 @@ jobs:
     steps:
       - name: Check loop activity via Supabase
         run: |
+          URL="${{ secrets.VITE_SUPABASE_URL }}"
+          KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
           NOW_MINUS_24H=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-24H +%Y-%m-%dT%H:%M:%SZ)
-          check() { curl -s -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" "${{ secrets.VITE_SUPABASE_URL }}/rest/v1/$1?select=id&$2=gte.$NOW_MINUS_24H&limit=1" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0; }
+          NOW_MINUS_1H=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-1H +%Y-%m-%dT%H:%M:%SZ)
+          check() { curl -s -H "apikey: $KEY" -H "Authorization: Bearer $KEY" "$URL/rest/v1/$1?select=id&$2=gte.$NOW_MINUS_24H&limit=1" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo 0; }
+          
           W=$(check watchdog_learnings created_at)
           O=$(check autonomous_actions_log created_at)
           A=$(check ai_assistant_messages created_at)
@@ -103,8 +107,36 @@ jobs:
           [ "$O" = "0" ] && IDLE=$((IDLE+1))
           [ "$A" = "0" ] && IDLE=$((IDLE+1))
           [ "$S" = "0" ] && IDLE=$((IDLE+1))
-          [ "$IDLE" -ge "3" ] && echo "3+ loops idle - check cron jobs" && exit 1
-          echo "Core loops active"
+          [ "$IDLE" -ge "3" ] && echo "ERROR: 3+ autonomous loops idle - check cron jobs" && exit 1
+          echo "✓ Core loops active"
+
+      - name: Check for stuck document processing
+        run: |
+          URL="${{ secrets.VITE_SUPABASE_URL }}"
+          KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
+          NOW_MINUS_30M=$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-30M +%Y-%m-%dT%H:%M:%SZ)
+          # Check for documents stuck in pending/processing for >30 min
+          STUCK=$(curl -s -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            "$URL/rest/v1/documents?select=id&processing_status=in.(pending,processing)&created_at=lte.$NOW_MINUS_30M&limit=1" \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo 0)
+          # Also check error rate: documents failed in last hour
+          FAILED=$(curl -s -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            "$URL/rest/v1/documents?select=id&processing_status=eq.failed&updated_at=gte.$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo $NOW_MINUS_30M)&limit=50" \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo 0)
+          echo "Document pipeline: stuck=$STUCK failed_1h=$FAILED"
+          [ "$STUCK" -gt "5" ] && echo "WARNING: $STUCK documents stuck in processing" && exit 1
+          [ "$FAILED" -gt "20" ] && echo "WARNING: $FAILED document failures in last hour" && exit 1
+          echo "✓ Document pipeline healthy"
+
+      - name: Check mapbox token configured
+        run: |
+          MAPBOX_TOKEN="${{ secrets.VITE_MAPBOX_TOKEN }}"
+          if [ -z "$MAPBOX_TOKEN" ] || [ "$MAPBOX_TOKEN" = "your_mapbox_token_here" ]; then
+            echo "WARNING: VITE_MAPBOX_TOKEN is not configured - travel/incident maps will be blank"
+            echo "Add a valid Mapbox public token at https://account.mapbox.com/access-tokens/"
+            exit 1
+          fi
+          echo "✓ Mapbox token configured"
 
   pipeline-smoke:
     name: Pipeline Smoke Tests
