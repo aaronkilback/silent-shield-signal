@@ -205,12 +205,16 @@ export function useScanPulses(enabled: boolean) {
   });
 }
 
-/** Fetch per-agent activity metrics for performance halos and live pulses */
+
 /** Fetch per-agent activity metrics for performance halos and live pulses */
 export function useAgentActivityMetrics(enabled: boolean) {
   return useQuery({
     queryKey: ["agent-activity-metrics"],
     queryFn: async () => {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
       // 1. Get all active agents
       const { data: agents } = await supabase
         .from("ai_agents")
@@ -221,10 +225,15 @@ export function useAgentActivityMetrics(enabled: boolean) {
 
       const agentIdToCallSign = new Map(agents.map((a) => [a.id, a.call_sign]));
 
-      // 2. Get recent conversations with their agent_id (last 24h gets full weight)
-      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      // 2. Get scan metrics — primary activity signal
+      const { data: scans } = await supabase
+        .from("autonomous_scan_results")
+        .select("agent_call_sign, signals_analyzed, alerts_generated, risk_score, created_at")
+        .gte("created_at", sevenDaysAgo)
+        .order("created_at", { ascending: false })
+        .limit(500);
 
+      // 3. Get conversations (may be empty — future data source)
       const { data: recentConvs } = await supabase
         .from("agent_conversations")
         .select("id, agent_id, updated_at")
@@ -232,22 +241,10 @@ export function useAgentActivityMetrics(enabled: boolean) {
         .order("updated_at", { ascending: false })
         .limit(500);
 
-      // 3. Build conversation_id -> agent_id mapping (FIXED)
+      // 4. Get messages via conversation mapping
       const convToAgentId = new Map<string, string>();
-      const agentConvCount = new Map<string, number>();
-      const agentLastConv = new Map<string, string>();
+      recentConvs?.forEach((c) => convToAgentId.set(c.id, c.agent_id));
 
-      recentConvs?.forEach((c) => {
-        convToAgentId.set(c.id, c.agent_id);
-        const cs = agentIdToCallSign.get(c.agent_id);
-        if (cs) {
-          agentConvCount.set(cs, (agentConvCount.get(cs) || 0) + 1);
-          const existing = agentLastConv.get(cs);
-          if (!existing || c.updated_at > existing) agentLastConv.set(cs, c.updated_at);
-        }
-      });
-
-      // 4. Count messages per agent through the conversation mapping
       const { data: messages } = await supabase
         .from("agent_messages")
         .select("conversation_id, created_at")
@@ -255,128 +252,126 @@ export function useAgentActivityMetrics(enabled: boolean) {
         .order("created_at", { ascending: false })
         .limit(1000);
 
-      const agentMsgCount = new Map<string, number>();
-      const agentRecentMsgCount = new Map<string, number>(); // last 24h
-
-      messages?.forEach((msg) => {
-        const agentId = convToAgentId.get(msg.conversation_id);
-        if (!agentId) return;
-        const cs = agentIdToCallSign.get(agentId);
-        if (!cs) return;
-        agentMsgCount.set(cs, (agentMsgCount.get(cs) || 0) + 1);
-        if (msg.created_at >= oneDayAgo) {
-          agentRecentMsgCount.set(cs, (agentRecentMsgCount.get(cs) || 0) + 1);
-        }
-      });
-
-      // 5. Get scan metrics per agent
-      const { data: scans } = await supabase
-        .from("autonomous_scan_results")
-        .select("agent_call_sign, signals_analyzed, alerts_generated, risk_score, created_at")
-        .gte("created_at", sevenDaysAgo)
-        .order("created_at", { ascending: false })
-        .limit(200);
-
-      const agentScanMetrics = new Map<string, {
-        scanCount: number; totalSignals: number; totalAlerts: number;
-        riskScores: number[]; lastScan: string | null;
-      }>();
-
-      scans?.forEach((s) => {
-        const existing = agentScanMetrics.get(s.agent_call_sign) || {
-          scanCount: 0, totalSignals: 0, totalAlerts: 0, riskScores: [], lastScan: null,
-        };
-        existing.scanCount += 1;
-        existing.totalSignals += s.signals_analyzed || 0;
-        existing.totalAlerts += s.alerts_generated || 0;
-        if (s.risk_score != null) existing.riskScores.push(s.risk_score);
-        if (!existing.lastScan || s.created_at > existing.lastScan) existing.lastScan = s.created_at;
-        agentScanMetrics.set(s.agent_call_sign, existing);
-      });
-
-      // 6. Check agent_pending_messages delivered recently (broadcasts received)
+      // 5. Get delivered pending messages
       const { data: delivered } = await supabase
         .from("agent_pending_messages")
         .select("agent_id, created_at")
         .not("delivered_at", "is", null)
         .gte("created_at", sevenDaysAgo);
 
-      const agentMsgReceived = new Map<string, number>();
-      delivered?.forEach((d) => {
-        const cs = agentIdToCallSign.get(d.agent_id);
-        if (cs) agentMsgReceived.set(cs, (agentMsgReceived.get(cs) || 0) + 1);
+      // --- Build per-agent metrics ---
+      const agentData = new Map<string, {
+        scanCount: number; recentScanCount: number; veryRecentScanCount: number;
+        totalSignals: number; totalAlerts: number; riskScores: number[];
+        msgCount: number; recentMsgCount: number;
+        deliveredCount: number; lastActive: string | null;
+      }>();
+
+      agents.forEach((a) => {
+        agentData.set(a.call_sign, {
+          scanCount: 0, recentScanCount: 0, veryRecentScanCount: 0,
+          totalSignals: 0, totalAlerts: 0, riskScores: [],
+          msgCount: 0, recentMsgCount: 0, deliveredCount: 0,
+          lastActive: a.updated_at || null,
+        });
       });
 
-      // 7. Compute activity scores
-      // Scoring: recent msgs (24h) = 10pts each, older msgs = 2pts each, 
-      //          scans = 5pts each, alerts = 3pts each, msg received = 1pt each
-      // Recency bonus: if last_active within 24h → add 20pts flat
+      // Aggregate scans
+      scans?.forEach((s) => {
+        const d = agentData.get(s.agent_call_sign);
+        if (!d) return;
+        d.scanCount += 1;
+        d.totalSignals += s.signals_analyzed || 0;
+        d.totalAlerts += s.alerts_generated || 0;
+        if (s.risk_score != null) d.riskScores.push(s.risk_score);
+        if (s.created_at >= oneDayAgo) d.recentScanCount += 1;
+        if (s.created_at >= oneHourAgo) d.veryRecentScanCount += 1;
+        if (!d.lastActive || s.created_at > d.lastActive) d.lastActive = s.created_at;
+      });
+
+      // Aggregate messages
+      messages?.forEach((msg) => {
+        const agentId = convToAgentId.get(msg.conversation_id);
+        if (!agentId) return;
+        const cs = agentIdToCallSign.get(agentId);
+        if (!cs) return;
+        const d = agentData.get(cs);
+        if (!d) return;
+        d.msgCount += 1;
+        if (msg.created_at >= oneDayAgo) d.recentMsgCount += 1;
+        if (!d.lastActive || msg.created_at > d.lastActive) d.lastActive = msg.created_at;
+      });
+
+      // Aggregate delivered messages
+      delivered?.forEach((dm) => {
+        const cs = agentIdToCallSign.get(dm.agent_id);
+        if (!cs) return;
+        const d = agentData.get(cs);
+        if (d) d.deliveredCount += 1;
+      });
+
+      // --- Compute activity scores using ABSOLUTE thresholds ---
+      // Each agent is scored independently:
+      //   0.00 = truly nothing ever
+      //   0.12 = has historical scans (> 7 days ago) — via updated_at recency
+      //   0.20 = at least 1 scan in last 7 days
+      //   0.40 = at least 1 scan in last 24h OR has messages
+      //   0.60 = active scanning in last 24h (2+ scans) OR recent messages
+      //   0.80 = very active (scan in last hour OR many recent scans)
+      //   1.00 = heavily active (10+ recent scans or messages)
+      // This avoids one dominant agent compressing all others to near-zero
+
       const now = new Date();
 
-      const entries = agents.map((agent) => {
+      return agents.map((agent) => {
         const cs = agent.call_sign;
-        const scanData = agentScanMetrics.get(cs);
-        const msgCount = agentMsgCount.get(cs) || 0;
-        const recentMsgs = agentRecentMsgCount.get(cs) || 0;
-        const oldMsgs = msgCount - recentMsgs;
-        const scanCount = scanData?.scanCount || 0;
-        const totalAlerts = scanData?.totalAlerts || 0;
-        const totalSignals = scanData?.totalSignals || 0;
-        const riskScores = scanData?.riskScores || [];
-        const msgsReceived = agentMsgReceived.get(cs) || 0;
+        const d = agentData.get(cs)!;
 
-        // Determine lastActive from multiple sources
-        const candidates = [
-          agent.updated_at,
-          agentLastConv.get(cs) || null,
-          scanData?.lastScan || null,
-        ].filter(Boolean) as string[];
-        const lastActive = candidates.length > 0
-          ? candidates.reduce((a, b) => (a > b ? a : b))
-          : null;
-
-        // Recency bonus
-        const lastActiveDate = lastActive ? new Date(lastActive) : null;
+        // Determine last active time
+        const lastActiveDate = d.lastActive ? new Date(d.lastActive) : null;
         const hoursAgo = lastActiveDate
           ? (now.getTime() - lastActiveDate.getTime()) / (1000 * 60 * 60)
           : Infinity;
-        const recencyBonus = hoursAgo <= 1 ? 30 : hoursAgo <= 6 ? 20 : hoursAgo <= 24 ? 10 : 0;
 
-        const raw = recentMsgs * 10 + oldMsgs * 2 + scanCount * 5 + totalAlerts * 3 + msgsReceived * 1 + recencyBonus;
+        // Compute absolute activity score
+        let score = 0;
+
+        if (d.veryRecentScanCount > 0 || d.recentMsgCount > 0) {
+          // Active in last hour
+          score = 0.75 + Math.min(0.25, (d.veryRecentScanCount + d.recentMsgCount) * 0.025);
+        } else if (d.recentScanCount >= 2 || d.recentMsgCount >= 2) {
+          // Active today, multiple scans
+          score = 0.55 + Math.min(0.2, d.recentScanCount * 0.02);
+        } else if (d.recentScanCount >= 1 || d.msgCount >= 1) {
+          // At least one scan today or any message
+          score = 0.35 + Math.min(0.15, d.totalAlerts * 0.03);
+        } else if (d.scanCount >= 1) {
+          // Has scans but not recent (older than today, within 7 days)
+          score = 0.15 + Math.min(0.15, d.scanCount * 0.01);
+        } else if (hoursAgo <= 48) {
+          // Recently updated agent record even if no scan data
+          score = 0.10;
+        }
 
         return {
           callSign: cs,
-          messageCount: msgCount,
-          scanCount,
-          totalSignalsAnalyzed: totalSignals,
-          totalAlertsGenerated: totalAlerts,
-          avgRiskScore: riskScores.length > 0
-            ? riskScores.reduce((a, b) => a + b, 0) / riskScores.length
+          messageCount: d.msgCount,
+          scanCount: d.scanCount,
+          totalSignalsAnalyzed: d.totalSignals,
+          totalAlertsGenerated: d.totalAlerts,
+          avgRiskScore: d.riskScores.length > 0
+            ? d.riskScores.reduce((a, b) => a + b, 0) / d.riskScores.length
             : 0,
-          lastActive,
-          raw,
+          lastActive: d.lastActive,
+          activityScore: Math.min(1, score),
         };
-      });
-
-      // Normalize: use a softer baseline of 15 so agents with moderate activity show well
-      const BASELINE = 15;
-      const maxRaw = Math.max(BASELINE, ...entries.map((e) => e.raw));
-
-      return entries.map((e) => ({
-        callSign: e.callSign,
-        messageCount: e.messageCount,
-        scanCount: e.scanCount,
-        totalSignalsAnalyzed: e.totalSignalsAnalyzed,
-        totalAlertsGenerated: e.totalAlertsGenerated,
-        avgRiskScore: e.avgRiskScore,
-        lastActive: e.lastActive,
-        activityScore: Math.min(1, e.raw / maxRaw),
-      })) as AgentActivityMetrics[];
+      }) as AgentActivityMetrics[];
     },
     enabled,
     refetchInterval: 30000,
   });
 }
+
 
 
 /** Fetch knowledge graph edges for overlay visualization */
