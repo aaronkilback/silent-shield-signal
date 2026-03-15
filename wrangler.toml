@@ -2,7 +2,7 @@ name = "silent-shield-signal"
 compatibility_date = "2025-01-01"
 
 [build]
-command = "npm run build"
+command = "npm install && npm run build"
 
 [assets]
 directory = "./dist"
