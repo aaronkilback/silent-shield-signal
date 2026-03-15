@@ -7878,6 +7878,80 @@ The signal is now in the database with status 'triaged' and rules have been appl
       };
     }
 
+    case "send_message_to_agent": {
+      const { agent_call_sign, message: agentMsg, priority: agentPriority = "normal" } = args;
+
+      // Look up the specific agent by call sign
+      const { data: targetAgent, error: agentLookupErr } = await supabaseClient
+        .from("ai_agents")
+        .select("id, call_sign, codename, is_active")
+        .ilike("call_sign", agent_call_sign.trim())
+        .single();
+
+      if (agentLookupErr || !targetAgent) {
+        // Try a broader search in case of slight mismatch
+        const { data: agentList } = await supabaseClient
+          .from("ai_agents")
+          .select("id, call_sign, codename, is_active")
+          .eq("is_active", true)
+          .ilike("call_sign", `%${agent_call_sign.trim()}%`);
+        
+        if (!agentList?.length) {
+          return {
+            error: "Agent not found",
+            details: `No active agent with call sign matching "${agent_call_sign}". Use query_fortress_data to list available agents.`,
+          };
+        }
+        // Use closest match
+        const match = agentList[0];
+        const { error: insertErr } = await supabaseClient
+          .from("agent_pending_messages")
+          .insert({
+            agent_id: match.id,
+            recipient_user_id: userId || null,
+            sender_user_id: userId || null,
+            message: `[DIRECT TASKING FROM PRINCIPAL] ${agentMsg}`,
+            priority: agentPriority,
+            trigger_event: "principal_direct_message",
+          });
+        if (insertErr) return { error: "Failed to deliver message", details: insertErr.message };
+        return {
+          success: true,
+          delivered_to: match.call_sign,
+          codename: match.codename,
+          message_preview: agentMsg.substring(0, 100),
+          note: `Used closest match "${match.call_sign}" for query "${agent_call_sign}"`,
+        };
+      }
+
+      if (!targetAgent.is_active) {
+        return { error: "Agent is not active", details: `${targetAgent.call_sign} (${targetAgent.codename}) is currently inactive.` };
+      }
+
+      const { error: insertErr } = await supabaseClient
+        .from("agent_pending_messages")
+        .insert({
+          agent_id: targetAgent.id,
+          recipient_user_id: userId || null,
+          sender_user_id: userId || null,
+          message: `[DIRECT TASKING FROM PRINCIPAL] ${agentMsg}`,
+          priority: agentPriority,
+          trigger_event: "principal_direct_message",
+        });
+
+      if (insertErr) {
+        return { error: "Failed to deliver message to agent", details: insertErr.message };
+      }
+
+      return {
+        success: true,
+        delivered_to: targetAgent.call_sign,
+        codename: targetAgent.codename,
+        message_preview: agentMsg.substring(0, 100),
+        summary: `Message delivered to ${targetAgent.call_sign} (${targetAgent.codename}). It will appear in their next conversation.`,
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
     }
