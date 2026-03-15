@@ -17,7 +17,8 @@ export const IncidentLocationMap = ({ location }: IncidentLocationMapProps) => {
   const [showTokenInput, setShowTokenInput] = useState(false);
 
   useEffect(() => {
-    const savedToken = localStorage.getItem('mapbox_token');
+    const rawStored = localStorage.getItem('mapbox_token');
+  const savedToken = (rawStored && rawStored !== 'your_mapbox_token_here') ? rawStored : null;
     if (savedToken) {
       setMapboxToken(savedToken);
     } else {
