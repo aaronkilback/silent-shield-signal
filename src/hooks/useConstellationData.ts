@@ -214,7 +214,7 @@ export function useAgentActivityMetrics(enabled: boolean) {
       // 1. Get all active agents
       const { data: agents } = await supabase
         .from("ai_agents")
-        .select("id, call_sign, last_active_at")
+        .select("id, call_sign, updated_at")
         .eq("is_active", true);
 
       if (!agents) return [];
@@ -327,7 +327,7 @@ export function useAgentActivityMetrics(enabled: boolean) {
 
         // Determine lastActive from multiple sources
         const candidates = [
-          agent.last_active_at,
+          agent.updated_at,
           agentLastConv.get(cs) || null,
           scanData?.lastScan || null,
         ].filter(Boolean) as string[];
