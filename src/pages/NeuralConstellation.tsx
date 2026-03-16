@@ -16,6 +16,7 @@ import { DraggablePanel } from "@/components/neural-constellation/DraggablePanel
 import { GodsEyeOverlay } from "@/components/neural-constellation/GodsEyeOverlay";
 import { AgentListPanel } from "@/components/neural-constellation/AgentListPanel";
 import { ActivityFeedPanel } from "@/components/neural-constellation/ActivityFeedPanel";
+import { SignalDetailSheet } from "@/components/signals/SignalDetailSheet";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -118,6 +119,8 @@ const NeuralConstellation = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [selectedAgent, setSelectedAgent] = useState<AgentNode | null>(null);
+  const [selectedSignal, setSelectedSignal] = useState<any>(null);
+  const [signalDetailOpen, setSignalDetailOpen] = useState(false);
   const [isExecutiveMode, setIsExecutiveMode] = useState(true);
   const [showBattle, setShowBattle] = useState(false);
   const [cameraView, setCameraView] = useState<string>("constellation");
@@ -423,12 +426,24 @@ const NeuralConstellation = () => {
             latestSignal={latestSignal}
             latestMessage={latestMessage}
             recentScans={recentScans}
+            onSignalClick={(signal) => {
+              setSelectedSignal({ ...signal, primary_signal_id: signal.primary_signal_id ?? signal.id });
+              setSignalDetailOpen(true);
+            }}
           />
         )}
 
         {/* Fortress HUD — loop health drilldown, top right */}
         <FortressHUD health={fortressHealth} isLoading={fortressLoading} />
       </main>
+
+      <SignalDetailSheet
+        open={signalDetailOpen}
+        onOpenChange={setSignalDetailOpen}
+        signal={selectedSignal}
+        onAssign={() => setSignalDetailOpen(false)}
+        onDismiss={() => setSignalDetailOpen(false)}
+      />
     </div>
   );
 };
