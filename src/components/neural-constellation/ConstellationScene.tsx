@@ -2478,7 +2478,7 @@ export function ConstellationScene({
   return (
     <div className="relative w-full h-full">
       {/* Camera view buttons */}
-      <div className="absolute top-14 right-4 z-20 flex flex-col gap-2">
+      <div className="absolute top-14 right-4 z-20 flex flex-col gap-2 pointer-events-none">
         {([
           { view: "constellation" as CameraView, label: "⬡ NETWORK", desc: "Agent constellation" },
           { view: "earth" as CameraView, label: "🌍 EARTH", desc: "Globe view" },
@@ -2487,7 +2487,7 @@ export function ConstellationScene({
           <button
             key={view}
             onClick={() => setCameraView(view)}
-            className={`px-3 py-2 rounded border text-left transition-all duration-300 backdrop-blur-xl ${
+            className={`px-3 py-2 rounded border text-left transition-all duration-300 backdrop-blur-xl pointer-events-auto ${
               cameraView === view
                 ? "bg-primary/20 border-primary/50 text-primary"
                 : "bg-card/50 border-border/50 text-muted-foreground hover:border-primary/30 hover:text-foreground"
