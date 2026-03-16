@@ -13,6 +13,7 @@ interface FeedItem {
   label: string;
   detail: string;
   timestamp: string;
+  rawSignal?: any;
 }
 
 interface ActivityFeedPanelProps {
@@ -21,6 +22,7 @@ interface ActivityFeedPanelProps {
   /** Recent scan pulses to show in feed */
   recentScans?: { agentCallSign: string; scanType: string; alertsGenerated: number; createdAt: string }[];
   visible?: boolean;
+  onSignalClick?: (signal: any) => void;
 }
 
 const SEV_COLOR: Record<string, string> = {
@@ -39,14 +41,14 @@ function formatAgo(ts: string) {
   return `${Math.floor(m / 60)}h ago`;
 }
 
-export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [], visible = true }: ActivityFeedPanelProps) {
+export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [], visible = true, onSignalClick }: ActivityFeedPanelProps) {
   // Self-contained signal query — doesn't depend on parent timing
   const { data: signals = [] } = useQuery({
     queryKey: ["activity-feed-signals"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("signals")
-        .select("id, signal_type, title, severity, created_at")
+        .select("id, signal_type, title, severity, created_at, category, location, normalized_text, sources_json, signal_count, confidence, source_reliability, information_accuracy, event_date, post_caption, thumbnail_url, media_urls, hashtags, mentions, engagement_metrics, raw_json")
         .order("created_at", { ascending: false })
         .limit(30);
       if (error) throw error;
@@ -68,6 +70,7 @@ export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [
       label: s.signal_type ?? "Signal",
       detail: s.title ?? "Signal ingested",
       timestamp: s.created_at,
+      rawSignal: { ...s, primary_signal_id: s.id },
     }));
 
     const scanItems: FeedItem[] = recentScans.slice(0, 8).map((s) => ({
@@ -91,6 +94,17 @@ export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [
     const deduped = seedItems.filter((i) => !realtimeIds.has(i.id));
     return [...realtimeItems, ...deduped].slice(0, 40);
   }, [realtimeItems, seedItems]);
+
+  const handleSignalClick = async (item: FeedItem) => {
+    if (!onSignalClick) return;
+    if (item.rawSignal) {
+      onSignalClick(item.rawSignal);
+      return;
+    }
+    const signalId = item.id.replace("sig-", "");
+    const { data } = await supabase.from("signals").select("*").eq("id", signalId).single();
+    if (data) onSignalClick({ ...data, primary_signal_id: data.id });
+  };
 
   // Ingest new signals via realtime
   useEffect(() => {
@@ -178,37 +192,46 @@ export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [
             items.map((item, idx) => {
               const Icon = item.icon;
               const isNew = idx === 0;
-              return (
-                <div
-                  key={item.id}
-                  className={`px-3 py-2 border-b border-border/20 last:border-0 transition-all ${
-                    isNew ? "bg-accent/10" : ""
-                  }`}
-                >
-                  <div className="flex items-start gap-2">
-                    <div
-                      className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 mt-0.5"
-                      style={{ backgroundColor: `${item.color}20`, border: `1px solid ${item.color}40` }}
-                    >
-                      <Icon className="w-2.5 h-2.5" style={{ color: item.color }} />
+              const rowContent = (
+                <div className="flex items-start gap-2">
+                  <div
+                    className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 mt-0.5"
+                    style={{ backgroundColor: `${item.color}20`, border: `1px solid ${item.color}40` }}
+                  >
+                    <Icon className="w-2.5 h-2.5" style={{ color: item.color }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <span
+                        className="text-[10px] font-bold truncate"
+                        style={{ color: item.color, fontFamily: "Share Tech Mono, monospace" }}
+                      >
+                        {item.label}
+                      </span>
+                      <span className="text-[8px] text-muted-foreground whitespace-nowrap font-mono">
+                        {formatAgo(item.timestamp)}
+                      </span>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1">
-                        <span
-                          className="text-[10px] font-bold truncate"
-                          style={{ color: item.color, fontFamily: "Share Tech Mono, monospace" }}
-                        >
-                          {item.label}
-                        </span>
-                        <span className="text-[8px] text-muted-foreground whitespace-nowrap font-mono">
-                          {formatAgo(item.timestamp)}
-                        </span>
-                      </div>
-                      <div className="text-[9px] text-muted-foreground leading-tight mt-0.5 line-clamp-2">
-                        {item.detail}
-                      </div>
+                    <div className="text-[9px] text-muted-foreground leading-tight mt-0.5 line-clamp-2">
+                      {item.detail}
                     </div>
                   </div>
+                </div>
+              );
+              return item.type === "signal" ? (
+                <button
+                  key={item.id}
+                  onClick={() => handleSignalClick(item)}
+                  className={`w-full text-left px-3 py-2 border-b border-border/20 last:border-0 transition-colors hover:bg-muted/30 cursor-pointer ${isNew ? "bg-accent/10" : ""}`}
+                >
+                  {rowContent}
+                </button>
+              ) : (
+                <div
+                  key={item.id}
+                  className={`px-3 py-2 border-b border-border/20 last:border-0 transition-all ${isNew ? "bg-accent/10" : ""}`}
+                >
+                  {rowContent}
                 </div>
               );
             })
