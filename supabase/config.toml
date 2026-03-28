@@ -67,7 +67,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.generate-executive-report]
-verify_jwt = true
+verify_jwt = false
 
 [functions.enrich-entity]
 verify_jwt = true
@@ -316,6 +316,12 @@ verify_jwt = false
 [functions.entity-deep-scan]
 verify_jwt = true
 
+[functions.investigate-poi]
+verify_jwt = false
+
+[functions.generate-poi-report]
+verify_jwt = false
+
 [functions.evaluate-countermeasure-impact]
 verify_jwt = true
 
@@ -551,4 +557,10 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.wraith-security-advisor]
+verify_jwt = false
+
+[functions.ingest-expert-media]
+verify_jwt = false
+
+[functions.knowledge-synthesizer]
 verify_jwt = false
