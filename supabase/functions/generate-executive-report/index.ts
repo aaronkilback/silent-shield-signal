@@ -251,7 +251,7 @@ serve(async (req) => {
 
     // Build evidence sources array for traceability
     const evidenceSources: EvidenceSource[] = [];
-    const appBaseUrl = Deno.env.get('SUPABASE_URL')?.replace('.supabase.co', '.lovable.app') || '';
+    const appBaseUrl = Deno.env.get('APP_URL') || 'https://fortress.silentshieldsecurity.com';
 
     // Add signal evidence
     signals?.slice(0, 20).forEach(signal => {
@@ -322,11 +322,13 @@ ${criticalSignals.slice(0, 3).map((s, i) => `${i + 1}. [${s.category}] ${s.norma
 
 Provide a JSON response with exactly this structure:
 {
-  "mostPressingIssue": "One sentence describing the single most critical issue requiring attention",
+  "mostPressingIssue": "One sentence describing the single most critical issue requiring attention — name specific individuals in CAPITALS if relevant",
   "confidence": "High|Medium|Low",
-  "recommendedAction": "One specific, actionable recommendation",
+  "recommendedAction": "One specific, actionable recommendation with a named owner role and timeframe",
   "ownerSuggestion": "Security Operations|Physical Security|Cyber Security|Intelligence|Executive Team",
-  "deadlineUrgency": "Immediate|24 hours|48 hours|This week"
+  "deadlineUrgency": "Immediate|24 hours|48 hours|This week",
+  "trajectory": "ESCALATING|STABLE|DE-ESCALATING",
+  "trajectoryReason": "One sentence explaining the direction of risk vs the previous reporting period"
 }
 
 Be specific, cite EXACT data from above, and use executive-appropriate language. DO NOT claim clusters or groups that don't exist in the data.`;
@@ -408,11 +410,12 @@ Top 5 Signals:
 ${signals?.slice(0, 5).map((s, i) => `${i + 1}. [${s.severity}] ${s.category}: ${s.normalized_text?.substring(0, 200)}`).join('\n')}
 
 Write a professional 2-3 paragraph executive summary that:
-1. Highlights the most significant threats or developments FROM THE VERIFIED DATA ABOVE
-2. CLEARLY DISTINGUISHES between new threats (last 24h) and stale open incidents
-3. Reports EXACT counts - do not round or estimate
-4. If there are stale incidents, note they require review/closure, not that they are new threats
-5. Uses professional, executive-appropriate language
+1. Opens with a BLUF (Bottom Line Up Front) — one sentence stating the single most important thing the executive needs to know right now
+2. Names all key individuals using SURNAME in CAPITALS following intelligence tradecraft convention (e.g., activist organizer Richard BROOKS, journalist Danny NUNES, Dr. Ulrike MEYER)
+3. Clearly distinguishes between new threats (last 24h) and stale open incidents — never present stale incidents as current threats
+4. States the threat trajectory explicitly: is overall risk ESCALATING, STABLE, or DE-ESCALATING compared to the previous reporting period, and why
+5. Reports EXACT counts from verified data only — never round or estimate
+6. Closes with one specific sentence on what ${client.name} leadership should prioritize in the next 24 hours
 
 CRITICAL: Do NOT claim incidents "appeared" or "emerged" on dates other than their actual opened_at dates. Do NOT fabricate clusters or groups.`;
 
@@ -499,20 +502,25 @@ Be specific and actionable. Max 5 items.`;
     }
 
     // Generate deductions with tone transformation
-    const deductionsPrompt = `As a security analyst, provide strategic deductions about threats facing ${client.name}.
+    const deductionsPrompt = `You are a senior intelligence analyst writing strategic deductions for ${client.name} leadership. You write in the style of a professional government intelligence analyst — precise, direct, and specific.
 
-Based on these critical/high signals:
-${[...criticalSignals, ...highSignals].slice(0, 10).map((s, i) => 
+MANDATORY TRADECRAFT RULES:
+- Write ALL surnames of named individuals in CAPITALS (e.g., activist BROOKS, journalist NUNES, professor ANTWEILER)
+- Label every analytical conclusion with DEDUCTIONS: in bold
+- Every deduction must end with a specific implication for ${client.name} — not generic industry risk
+- State trajectory for each threat thread: ESCALATING / STABLE / DE-ESCALATING with one sentence of evidence
+- Maximum 3 deduction paragraphs — quality and specificity over volume
+- Never use vague language like "may pose risks" — state the specific risk clearly
+
+Threat signals to analyze:
+${[...criticalSignals, ...highSignals].slice(0, 10).map((s, i) =>
   `${i + 1}. ${s.category}: ${s.normalized_text}`
 ).join('\n')}
 
-Write 2-3 deduction paragraphs that:
-1. Explain strategic implications
-2. Assess potential impact on operations, reputation, or stakeholder relationships
-3. Identify potential escalation scenarios
-4. Suggest monitoring priorities
+For each major threat thread write one deduction paragraph in this format:
+DEDUCTIONS: [2-3 sentences connecting the signals to a specific implication for ${client.name}. Name threat actors in CAPITALS. State whether this thread is ESCALATING, STABLE, or DE-ESCALATING with one piece of evidence. End with one specific recommended action for ${client.name} with an owner role and timeframe.]
 
-Use professional executive language.`;
+Use professional executive language. Be direct. Avoid hedging.`;
 
     console.log('Generating strategic deductions...');
     let deductions = 'Analysis in progress...';
@@ -532,18 +540,20 @@ Use professional executive language.`;
       .map(async ([category, categorySignals]: [string, any]) => {
         const topSignals = categorySignals.slice(0, 5);
         
-        const narrativePrompt = `Write a professional intelligence narrative about ${category} for ${client.name}.
+        const narrativePrompt = `Write a professional intelligence narrative about ${category} threats for ${client.name}.
+
+MANDATORY TRADECRAFT RULES:
+- Write ALL surnames of named individuals in CAPITALS (e.g., organizer Richard BROOKS, journalist Danny NUNES)
+- Include exact dates for all cited events — never use vague references like "recently"
+- State the trajectory for this threat category: ESCALATING, STABLE, or DE-ESCALATING vs last period
+- End with a DEDUCTIONS: paragraph that connects this category specifically to ${client.name} operations, reputation, or personnel
+- Include one RECOMMENDED ACTION with a specific owner role and timeframe
+- If no significant activity occurred in this category during the reporting period, state clearly: "No significant ${category} activity detected in the reporting period." Do not pad with generic content.
 
 Signals to analyze:
-${topSignals.map((s: any, i: number) => `${i + 1}. ${s.normalized_text} (${s.severity}, ${new Date(s.received_at).toLocaleDateString()})`).join('\n')}
+${topSignals.map((s: any, i: number) => `${i + 1}. [${s.severity?.toUpperCase()}] ${s.normalized_text} (Source: ${s.source_url ? new URL(s.source_url).hostname : 'Fortress Intelligence'}, ${new Date(s.received_at).toLocaleDateString('en-US', {year: 'numeric', month: 'long', day: 'numeric'})})`).join('\n')}
 
-Write 2-3 paragraphs that:
-1. Summarize developments in this category
-2. Provide context and significance
-3. Include specific details (dates, sources)
-4. Explain potential risks
-
-Use executive-appropriate language.`;
+Write 2-3 paragraphs of narrative followed by a DEDUCTIONS: paragraph. Use executive-appropriate language. Be specific about names, dates, organizations, and implications for ${client.name}.`;
 
         const narrativeResult = await callAiGateway({
           model: 'gemini-2.5-flash',
@@ -1140,6 +1150,7 @@ Use executive-appropriate language.`;
       <div class="flash-meta-item"><strong>Owner:</strong> ${executiveFlash.ownerSuggestion}</div>
       <div class="flash-meta-item"><strong>Timeline:</strong> ${executiveFlash.deadlineUrgency}</div>
       <div class="flash-meta-item"><strong>Risk Level:</strong> ${overallRiskLevel}</div>
+      <div class="flash-meta-item"><strong>Trajectory:</strong> ${executiveFlash.trajectory || 'STABLE'} — ${executiveFlash.trajectoryReason || 'Insufficient data for trend comparison'}</div>
     </div>
   </div>
 
@@ -1426,6 +1437,9 @@ Use executive-appropriate language.`;
           new_incidents_last_24h: newIncidentsLast24h.length,
           stale_open_incidents: staleOpenIncidents.length,
           unknown_incidents: unknownIncidents.length,
+          lead_time_advantage: signals?.filter(s =>
+            new Date(s.received_at) < new Date(reportGeneratedAt.getTime() - 24*60*60*1000)
+          ).length || 0,
           overall_risk_level: overallRiskLevel,
           categories: Object.keys(signalsByCategory),
           executive_flash: executiveFlash,
