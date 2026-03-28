@@ -66,8 +66,63 @@ async function safeLoadImage(img: HTMLImageElement): Promise<void> {
 }
 
 /**
+ * Walk the DOM to find break points that don't cut through block elements.
+ * Returns an array of canvas-pixel Y positions where page breaks should occur.
+ */
+function findSmartBreakPoints(
+  container: HTMLElement,
+  canvasHeight: number,
+  stripHeightPx: number,
+  scale: number
+): number[] {
+  const containerRect = container.getBoundingClientRect();
+
+  // Collect block elements with their canvas-pixel positions
+  const elements = Array.from(
+    container.querySelectorAll("h1,h2,h3,h4,h5,h6,p,img,table,tr,ul,ol,li,div,section,article")
+  ).map((el) => {
+    const rect = (el as HTMLElement).getBoundingClientRect();
+    return {
+      top: Math.round((rect.top - containerRect.top) * scale),
+      bottom: Math.round((rect.bottom - containerRect.top) * scale),
+    };
+  }).filter((el) => el.bottom > el.top && el.bottom > 0 && el.top < canvasHeight);
+
+  const breakPoints: number[] = [];
+  let pageEnd = stripHeightPx;
+
+  while (pageEnd < canvasHeight) {
+    let breakAt = pageEnd;
+
+    // Find the first element that straddles this page boundary
+    for (const el of elements) {
+      if (el.top < pageEnd && el.bottom > pageEnd) {
+        const elementHeight = el.bottom - el.top;
+        const lastBreak = breakPoints[breakPoints.length - 1] ?? 0;
+        // Only move the break upward if the element is not taller than half a page
+        // and there's enough space above it from the previous break
+        if (elementHeight < stripHeightPx * 0.5 && el.top > lastBreak + 40) {
+          breakAt = el.top - 4;
+        }
+        break;
+      }
+    }
+
+    // Safety: always advance by at least 50% of a page to avoid infinite loops
+    const lastBreak = breakPoints[breakPoints.length - 1] ?? 0;
+    breakAt = Math.max(breakAt, lastBreak + Math.floor(stripHeightPx * 0.5));
+
+    breakPoints.push(Math.floor(breakAt));
+    pageEnd = Math.floor(breakAt) + stripHeightPx;
+  }
+
+  return breakPoints;
+}
+
+/**
  * Prepare an offscreen container with the report HTML, preload images,
- * render to canvas, slice into A4 pages, and return a jsPDF instance.
+ * render to canvas, slice into A4 pages at smart element-aware break points,
+ * and return a jsPDF instance.
  */
 export async function generatePdfFromHtml(
   html: string,
@@ -75,9 +130,6 @@ export async function generatePdfFromHtml(
 ): Promise<jsPDF> {
   const bgColor = options?.backgroundColor ?? "#0a0a0a";
 
-  // Create offscreen container — use fixed positioning with opacity:0 to keep
-  // it in the rendering flow (avoiding off-screen rendering bugs in some browsers
-  // that can cause flipped/blank canvases).
   const container = document.createElement("div");
   container.style.position = "fixed";
   container.style.left = "0";
@@ -90,7 +142,6 @@ export async function generatePdfFromHtml(
   container.style.opacity = "0";
   container.style.pointerEvents = "none";
   container.style.zIndex = "-9999";
-  // Prevent any inherited transforms from flipping the content
   container.style.transform = "none";
   container.style.direction = "ltr";
   container.style.writingMode = "horizontal-tb";
@@ -108,9 +159,7 @@ export async function generatePdfFromHtml(
       max-height: none !important;
       min-height: 0 !important;
     }
-    * {
-      transform: none !important;
-    }
+    * { transform: none !important; }
     @page { size: auto; margin: 0; }
   `;
   const styleEl = document.createElement("style");
@@ -126,7 +175,7 @@ export async function generatePdfFromHtml(
     const images = Array.from(container.querySelectorAll("img"));
     await Promise.allSettled(images.map(safeLoadImage));
 
-    // Only unlock overflow on divs that might clip content — leave everything else alone
+    // Unlock overflow on elements that might clip content
     container.querySelectorAll("div, section, article, main").forEach((el) => {
       const htmlEl = el as HTMLElement;
       const computed = window.getComputedStyle(htmlEl);
@@ -140,17 +189,15 @@ export async function generatePdfFromHtml(
     await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 500)));
     await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 300)));
 
-    // Temporarily make visible for html2canvas (some engines skip opacity:0 elements)
+    // Make visible for rendering and DOM measurements
     container.style.opacity = "1";
     container.style.visibility = "visible";
 
-    // Measure actual height
     const actualHeight = container.scrollHeight;
-    console.log(`[PDF] Container scrollHeight: ${actualHeight}px, offsetHeight: ${container.offsetHeight}px`);
+    console.log(`[PDF] Container scrollHeight: ${actualHeight}px`);
 
-    const scale = 2;
+    const scale = 1.5;
 
-    // Render the entire container as one tall canvas
     const fullCanvas = await html2canvas(container, {
       scale,
       useCORS: true,
@@ -168,16 +215,23 @@ export async function generatePdfFromHtml(
       throw new Error("html2canvas produced an empty canvas");
     }
 
-    // Slice the canvas into A4-sized strips
     const pdf = new jsPDF("p", "mm", "a4");
     const pxPerMm = fullCanvas.width / CONTENT_W_MM;
     const stripHeightPx = Math.floor(CONTENT_H_MM * pxPerMm);
 
+    // Find smart break points that don't cut through elements
+    const breakPoints = findSmartBreakPoints(container, fullCanvas.height, stripHeightPx, scale);
+    const allBreaks = [...breakPoints, fullCanvas.height];
+
+    console.log(`[PDF] Page breaks at: ${breakPoints.join(", ")} (canvas px)`);
+
     let offsetY = 0;
     let pageIdx = 0;
 
-    while (offsetY < fullCanvas.height) {
-      const thisStripH = Math.min(stripHeightPx, fullCanvas.height - offsetY);
+    for (const breakPoint of allBreaks) {
+      if (breakPoint <= offsetY) continue;
+      const thisStripH = breakPoint - offsetY;
+      if (thisStripH <= 0) continue;
 
       const stripCanvas = document.createElement("canvas");
       stripCanvas.width = fullCanvas.width;
@@ -185,30 +239,24 @@ export async function generatePdfFromHtml(
       const ctx = stripCanvas.getContext("2d");
       if (!ctx) throw new Error("Could not get canvas 2d context");
 
+      // Fill background before drawing — required for correct JPEG output
+      // (JPEG has no alpha channel; unfilled areas become black)
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, stripCanvas.width, thisStripH);
       ctx.drawImage(
         fullCanvas,
         0, offsetY, fullCanvas.width, thisStripH,
         0, 0, fullCanvas.width, thisStripH
       );
 
-      // Use PNG format to avoid any JPEG orientation/encoding edge cases
-      const imgData = stripCanvas.toDataURL("image/png");
+      const imgData = stripCanvas.toDataURL("image/jpeg", 0.85);
       const stripHeightMM = thisStripH / pxPerMm;
 
-      if (pageIdx > 0) {
-        pdf.addPage();
-      }
+      if (pageIdx > 0) pdf.addPage();
 
-      pdf.addImage(
-        imgData,
-        "PNG",
-        MARGIN_MM,
-        MARGIN_MM,
-        CONTENT_W_MM,
-        stripHeightMM
-      );
+      pdf.addImage(imgData, "JPEG", MARGIN_MM, MARGIN_MM, CONTENT_W_MM, stripHeightMM);
 
-      offsetY += thisStripH;
+      offsetY = breakPoint;
       pageIdx++;
     }
 
