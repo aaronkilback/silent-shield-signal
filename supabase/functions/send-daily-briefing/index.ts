@@ -14,7 +14,7 @@ Deno.serve(async (req) => {
   try {
     const supabase = createServiceClient();
     const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
-    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Fortress AI <notifications@updates.lovableproject.com>';
+    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Fortress AI <notifications@silentshieldsecurity.com>';
 
     if (!RESEND_API_KEY) throw new Error('RESEND_API_KEY not configured');
 
@@ -114,6 +114,26 @@ Deno.serve(async (req) => {
       return successResponse({ success: true, message: 'No new activity — briefing skipped', sent: 0, skipped: true });
     }
 
+    // Calculate trajectory vs previous 7-day period
+    const previousPeriodStart = new Date(Date.now() - 8 * 24 * 3600000).toISOString();
+    const { data: previousSignals } = await supabase
+      .from('signals')
+      .select('id, severity')
+      .gte('created_at', previousPeriodStart)
+      .lt('created_at', cutoff24h)
+      .neq('status', 'false_positive');
+
+    const previousCriticalCount = (previousSignals || []).filter((s: any) => s.severity === 'critical').length;
+    const previousHighCount = (previousSignals || []).filter((s: any) => s.severity === 'high').length;
+    const previousTotalPriority = previousCriticalCount + previousHighCount;
+    const currentTotalPriority = metrics.critical_signals + metrics.high_signals;
+
+    const trajectoryDirection = currentTotalPriority > previousTotalPriority * 1.2 ? 'ESCALATING' :
+      currentTotalPriority < previousTotalPriority * 0.8 ? 'DE-ESCALATING' : 'STABLE';
+
+    const trajectoryDelta = currentTotalPriority - previousTotalPriority;
+    const trajectoryReason = `${Math.abs(trajectoryDelta)} ${trajectoryDelta >= 0 ? 'more' : 'fewer'} priority signals vs previous 7-day period (${previousTotalPriority} → ${currentTotalPriority})`;
+
     // Generate doctrine line
     let doctrineLine = '';
     try {
@@ -157,20 +177,29 @@ CRITICAL RULES:
 - Prioritize: What changed? What's new? What requires action?
 - Name specific entities, locations, and categories. Vague language like "various threats were detected" is unacceptable.
 
+MANDATORY INTELLIGENCE TRADECRAFT RULES:
+- Write ALL surnames of named individuals in CAPITALS throughout (e.g., activist BROOKS, journalist NUNES, organizer MEYER). This is non-negotiable.
+- Open the SITUATION OVERVIEW section with a BLUF (Bottom Line Up Front) — one sentence stating the single most important thing the reader needs to know before anything else.
+- For each section, state the trajectory: ESCALATING / STABLE / DE-ESCALATING with one sentence of evidence.
+- Label all analytical conclusions with DEDUCTIONS: in the EMERGING PATTERNS section.
+- In RECOMMENDED POSTURE, every recommendation must include a named owner role (e.g., Security Operations, Physical Security Lead, Intelligence Analyst) and a specific timeframe (Immediate / 24 hours / 48 hours / This week).
+- If a section has no relevant activity, state clearly: "No significant activity in this category during the reporting period." Do not pad with generic filler content.
+- Never use vague language like "may pose risks" or "could potentially" — state the specific risk and the specific implication for the client directly.
+
 Current date: ${dateContext.currentDateFormatted}, ${dateContext.currentTime24h} ${dateContext.currentTimezone}.
 
 Structure:
-1. SITUATION OVERVIEW (2-3 sentences — what is the overall posture and why)
+1. SITUATION OVERVIEW (2-3 sentences — open with BLUF, then overall posture and trajectory)
 2. KEY METRICS (bullet-style numbers with context, not just raw counts)
 3. PRIORITY SIGNALS (top 3-5 actionable signals with specifics: what, where, severity, and why it matters)
-4. EMERGING PATTERNS (any trends or clusters — if none, say "No notable patterns detected")
-5. RECOMMENDED POSTURE (specific actions, not generic advice)
+4. EMERGING PATTERNS (any trends or clusters with DEDUCTIONS: label — if none, say "No significant activity in this category during the reporting period.")
+5. RECOMMENDED POSTURE (specific actions with named owner role and timeframe — not generic advice)
 
 Tone: Calm, authoritative, measured. Like a senior intelligence officer delivering a classified briefing. Zero filler words.`,
         },
         {
           role: 'user',
-          content: `Generate today's daily briefing.\n\nMETRICS:\n${JSON.stringify(metrics, null, 2)}\n\nACTIONABLE SIGNALS (filtered for quality and recency — ${briefingSignals.length} of ${(recentSignals || []).length} total):\n${JSON.stringify(briefingSignals.slice(0, 10).map((s: any) => ({ severity: s.severity, category: s.category, title: s.title, normalized_text: (s.normalized_text || '').substring(0, 200), confidence: s.confidence, quality_score: s.quality_score })), null, 2)}\n\nAUTONOMOUS ACTIONS:\n${JSON.stringify((recentActions || []).map((a: any) => a.action_type), null, 2)}`,
+          content: `Generate today's daily briefing.\n\nMETRICS:\n${JSON.stringify({ ...metrics, trajectory: trajectoryDirection, trajectoryReason }, null, 2)}\n\nACTIONABLE SIGNALS (filtered for quality and recency — ${briefingSignals.length} of ${(recentSignals || []).length} total):\n${JSON.stringify(briefingSignals.slice(0, 10).map((s: any) => ({ severity: s.severity, category: s.category, title: s.title, normalized_text: (s.normalized_text || '').substring(0, 200), confidence: s.confidence, quality_score: s.quality_score })), null, 2)}\n\nAUTONOMOUS ACTIONS:\n${JSON.stringify((recentActions || []).map((a: any) => a.action_type), null, 2)}`,
         },
       ],
       functionName: 'send-daily-briefing',
@@ -185,7 +214,7 @@ Tone: Calm, authoritative, measured. Like a senior intelligence officer deliveri
 
     const briefingText = briefingResult.content || 'Unable to generate briefing content.';
 
-    const appUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || 'https://silent-shield-signal.lovable.app';
+    const appUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || 'https://fortress.silentshieldsecurity.com';
     const feedbackBaseUrl = `${appUrl}/briefing-feedback`;
 
     const emailHtml = buildBriefingEmail(briefingText, metrics, dateContext, doctrineLine, feedbackBaseUrl);
