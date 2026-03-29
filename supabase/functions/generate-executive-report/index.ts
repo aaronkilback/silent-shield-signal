@@ -322,7 +322,7 @@ ${criticalSignals.slice(0, 3).map((s, i) => `${i + 1}. [${s.category}] ${s.norma
 
 Provide a JSON response with exactly this structure:
 {
-  "mostPressingIssue": "One sentence describing the single most critical issue requiring attention — name specific individuals in CAPITALS if relevant",
+  "mostPressingIssue": "One sentence describing the single most critical issue requiring attention — name specific individuals in CAPITALS if relevant. Do not use database field names or underscores — write in plain English.",
   "confidence": "High|Medium|Low",
   "recommendedAction": "One specific, actionable recommendation with a named owner role and timeframe",
   "ownerSuggestion": "Security Operations|Physical Security|Cyber Security|Intelligence|Executive Team",
@@ -506,7 +506,8 @@ Be specific and actionable. Max 5 items.`;
 
 MANDATORY TRADECRAFT RULES:
 - Write ALL surnames of named individuals in CAPITALS (e.g., activist BROOKS, journalist NUNES, professor ANTWEILER)
-- Label every analytical conclusion with DEDUCTIONS: in bold
+- Label every analytical conclusion with DEDUCTIONS: as a plain text label — no bold, no asterisks, no hash symbols
+- Do not use markdown formatting — no **bold**, no ### headers, no asterisks anywhere in the output
 - Every deduction must end with a specific implication for ${client.name} — not generic industry risk
 - State trajectory for each threat thread: ESCALATING / STABLE / DE-ESCALATING with one sentence of evidence
 - Maximum 3 deduction paragraphs — quality and specificity over volume
@@ -549,6 +550,7 @@ MANDATORY TRADECRAFT RULES:
 - End with a DEDUCTIONS: paragraph that connects this category specifically to ${client.name} operations, reputation, or personnel
 - Include one RECOMMENDED ACTION with a specific owner role and timeframe
 - If no significant activity occurred in this category during the reporting period, state clearly: "No significant ${category} activity detected in the reporting period." Do not pad with generic content.
+- Do not use markdown formatting — no **bold**, no ### headers, no asterisks. Write in plain prose only. DEDUCTIONS: is a plain label, not a markdown heading.
 
 Signals to analyze:
 ${topSignals.map((s: any, i: number) => `${i + 1}. [${s.severity?.toUpperCase()}] ${s.normalized_text} (Source: ${s.source_url ? new URL(s.source_url).hostname : 'Fortress Intelligence'}, ${new Date(s.received_at).toLocaleDateString('en-US', {year: 'numeric', month: 'long', day: 'numeric'})})`).join('\n')}
