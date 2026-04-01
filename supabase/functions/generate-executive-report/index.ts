@@ -112,6 +112,21 @@ Deno.serve(async (req) => {
 
     if (signalsError) throw signalsError;
 
+    // Apply staleness filter: signals older than 14 days only if critical AND directly PECL-relevant
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const freshSignals = signals?.filter(s => {
+      const signalDate = new Date(s.created_at || s.event_date || 0);
+      const isRecent = signalDate >= new Date(fourteenDaysAgo);
+      if (isRecent) return true;
+      const text = (s.normalized_text || '').toLowerCase();
+      const isPECLRelevant =
+        text.includes('petronas') ||
+        text.includes('pecl') ||
+        text.includes('lng canada') ||
+        text.includes('coastal gaslink');
+      return s.severity === 'critical' && isPECLRelevant;
+    }) ?? [];
+
     // Fetch incidents with classification rationale
     const { data: incidents, error: incidentsError } = await supabaseClient
       .from('incidents')
@@ -235,22 +250,22 @@ Deno.serve(async (req) => {
     console.log(`Incident breakdown: ${p1p2Incidents.length} total P1/P2, ${newIncidentsLast24h.length} new (last 24h), ${staleOpenIncidents.length} stale (>7 days), ${unknownIncidents.length} unknown/unclassified`);
 
     // Calculate risk ratings
-    const surveillanceRisk = signals?.filter(s => 
-      s.category?.toLowerCase().includes('surveillance') || 
+    const surveillanceRisk = freshSignals.filter(s =>
+      s.category?.toLowerCase().includes('surveillance') ||
       s.normalized_text?.toLowerCase().includes('reconnaissance')
-    ).length || 0;
+    ).length;
 
-    const protestRisk = signals?.filter(s => 
-      s.category?.toLowerCase().includes('protest') || 
+    const protestRisk = freshSignals.filter(s =>
+      s.category?.toLowerCase().includes('protest') ||
       s.category?.toLowerCase().includes('activism') ||
       s.normalized_text?.toLowerCase().includes('rally')
-    ).length || 0;
+    ).length;
 
-    const sabotageThreat = signals?.filter(s => 
+    const sabotageThreat = freshSignals.filter(s =>
       s.category?.toLowerCase().includes('sabotage') ||
       s.category?.toLowerCase().includes('vandalism') ||
       s.severity === 'critical'
-    ).length || 0;
+    ).length;
 
     function getRiskLevel(count: number): string {
       if (count >= 5) return 'HIGH';
@@ -268,7 +283,7 @@ Deno.serve(async (req) => {
     const appBaseUrl = Deno.env.get('APP_URL') || 'https://fortress.silentshieldsecurity.com';
 
     // Add signal evidence
-    signals?.slice(0, 20).forEach(signal => {
+    freshSignals.slice(0, 20).forEach(signal => {
       evidenceSources.push({
         claim: signal.normalized_text?.substring(0, 100) || 'Signal detected',
         sourceType: 'signal',
@@ -407,7 +422,7 @@ Client Context:
 - High-Value Assets: ${client.high_value_assets?.join(', ') || 'N/A'}
 
 VERIFIED INTELLIGENCE DATA (use ONLY these numbers):
-- Total signals collected: ${signals?.length || 0}
+- Total signals collected: ${freshSignals.length}
 - Critical severity signals: ${criticalSignals.length}
 - High severity signals: ${highSignals.length}
 - TOTAL P1/P2 Incidents: ${p1p2Incidents.length}
@@ -421,7 +436,7 @@ ${newIncidentsLast24h.length > 0 ? `NEW INCIDENTS (last 24h) - THESE ARE THE CUR
 ${staleOpenIncidents.length > 0 ? `STALE OPEN INCIDENTS (opened >7 days ago, still unresolved):\n${staleOpenIncidents.map((i, idx) => `${idx + 1}. [${i.priority?.toUpperCase()}] ${i.title} - Opened: ${new Date(i.opened_at).toISOString().split('T')[0]} (${Math.floor((reportGeneratedAt.getTime() - new Date(i.opened_at).getTime()) / (24*60*60*1000))} days old)`).join('\n')}` : ''}
 
 Top 5 Signals:
-${signals?.slice(0, 5).map((s, i) => `${i + 1}. [${s.severity}] ${s.category}: ${s.normalized_text?.substring(0, 200)}`).join('\n')}
+${freshSignals.slice(0, 5).map((s, i) => `${i + 1}. [${s.severity}] ${s.category}: ${s.normalized_text?.substring(0, 200)}`).join('\n')}
 
 Write a professional 2-3 paragraph executive summary that:
 1. Opens with a BLUF (Bottom Line Up Front) — one sentence stating the single most important thing the executive needs to know right now
@@ -1131,7 +1146,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
     </div>
     <div class="meta-item">
       <div class="meta-label">Signals Analyzed</div>
-      <div class="meta-value">${signals?.length || 0}</div>
+      <div class="meta-value">${freshSignals.length}</div>
     </div>
     <div class="meta-item">
       <div class="meta-label">P1/P2 Incidents</div>
@@ -1372,16 +1387,16 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
           client_id,
           client_name: client.name,
           report_generated_at: currentDateTimeISO,
-          total_signals: signals?.length || 0,
+          total_signals: freshSignals.length,
           critical_signals: criticalSignals.length,
           high_signals: highSignals.length,
           p1p2_incidents: p1p2Incidents.length,
           new_incidents_last_24h: newIncidentsLast24h.length,
           stale_open_incidents: staleOpenIncidents.length,
           unknown_incidents: unknownIncidents.length,
-          lead_time_advantage: signals?.filter(s =>
+          lead_time_advantage: freshSignals.filter(s =>
             new Date(s.received_at) < new Date(reportGeneratedAt.getTime() - 24*60*60*1000)
-          ).length || 0,
+          ).length,
           overall_risk_level: overallRiskLevel,
           categories: Object.keys(signalsByCategory),
           executive_flash: executiveFlash,
@@ -1445,7 +1460,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
         metadata: {
           client: client.name,
           period: `${periodStart.toLocaleDateString()} - ${periodEnd.toLocaleDateString()}`,
-          signals_analyzed: signals?.length || 0,
+          signals_analyzed: freshSignals.length,
           p1p2_incidents: p1p2Incidents.length,
           risk_level: overallRiskLevel,
           executive_flash: executiveFlash,
