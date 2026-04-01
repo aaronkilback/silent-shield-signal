@@ -1,6 +1,24 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { checkWatchListHits, applyWatchListBoosts } from "../_shared/watch-list.ts";
+
+const AI_REFUSAL_PATTERNS = [
+  /i cannot (fulfill|provide|complete|generate)/i,
+  /i('m| am) unable to/i,
+  /i (don't|do not) have (access|information|enough)/i,
+  /i (don't|do not) have sufficient/i,
+  /not able to provide/i,
+  /cannot (search|access|retrieve|browse)/i,
+  /no (information|data|results) available/i,
+  /based on (the |my )?(search results|information provided)/i,
+  /sufficient information to (answer|provide|fulfill)/i,
+];
+
+function isAiRefusal(text: string): boolean {
+  if (!text) return false;
+  return AI_REFUSAL_PATTERNS.some((p) => p.test(text));
+}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -413,8 +431,9 @@ ${feedbackRejectionContext}
 13. Netflix documentaries, webinars, books, and educational content are NOT security threats — skip them entirely or set relevance_score to 0.1.
 
 **GEOGRAPHIC RELEVANCE RULES:**
-14. Only create signals that are geographically relevant to the client's area of operations (NE British Columbia, pipeline corridors, LNG terminals)
-15. DO NOT create signals about events in distant provinces/cities (e.g., Halifax, Toronto, Quebec) unless they DIRECTLY impact the client's infrastructure, supply chain, or named stakeholders
+14. Only create signals that are geographically relevant to the client's area of operations (NE British Columbia, pipeline corridors, LNG terminals) — OR that represent a relevant threat pattern (see rule 14a).
+14a. EXCEPTION — THREAT PATTERN SIGNALS: If an event involves sabotage, vandalism, arson, physical attack, or activist/protest action against similar infrastructure (pipelines, LNG terminals, energy facilities, rail lines) ANYWHERE in the world, create a signal even if geographically distant. These are relevant threat intelligence — they demonstrate tactics, techniques, and precedents that could be replicated against the client's assets. Mark these as signal_type "sabotage", "threat", or "protest" as appropriate.
+15. DO NOT create signals about unrelated events in distant locations (e.g., a car accident in Halifax, a political election in Quebec) unless they DIRECTLY impact the client's infrastructure, supply chain, or named stakeholders.
 16. National policy/regulatory signals are acceptable only if they explicitly mention the client, their projects, or their region
 17. CHECK THE URL DOMAIN for geographic cues — "OtagoDailyTimes" = New Zealand, "maribyrnong" = Australia, "culturalsurvival" = international NGO. These are almost never relevant.
 
@@ -688,6 +707,12 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
         continue;
       }
       
+      // REFUSAL GATE: Skip if the AI returned a refusal message instead of real content
+      if (isAiRefusal(signal.title) || isAiRefusal(signal.description)) {
+        console.log(`[RefusalGate] Skipping AI refusal signal: ${(signal.title || '').slice(0, 80)}`);
+        continue;
+      }
+
       // HARD HISTORICAL GATE: Skip signals explicitly marked as historical
       if (signal.is_historical_content === true && (signal.relevance_score || 0) < 0.6) {
         console.log(`[HistoricalGate] Skipping historical signal: ${signal.title}`);
@@ -832,6 +857,8 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
             hashtags: document.hashtags || [],
             engagement_metrics: document.engagement_metrics || {},
             comments: document.comments || [],
+            source_url: sourceUrl || null,
+            image_url: document.metadata?.image_url || null,
             raw_json: {
               matched_keywords: clientMatch.matchedKeywords,
               client_name: clientMatch.clientName,
@@ -900,8 +927,22 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
             }
           }
 
-          // Check for auto-escalation
-          if (signal.severity_score >= 80) {
+          // Watch list check — boost severity if any extracted entities are being watched
+          const watchEntityNames = signal.related_entity_names || [];
+          let finalSeverityScore = signal.severity_score;
+          if (watchEntityNames.length > 0) {
+            try {
+              const watchHits = await checkWatchListHits(supabase, watchEntityNames, clientMatch.clientId);
+              if (watchHits.length > 0) {
+                finalSeverityScore = await applyWatchListBoosts(supabase, newSignal.id, watchHits, signal.severity_score);
+              }
+            } catch (watchErr) {
+              console.error('[WatchList] Check failed (non-critical):', watchErr);
+            }
+          }
+
+          // Auto-escalation (use boosted score)
+          if (finalSeverityScore >= 80) {
             await supabase.functions.invoke('check-incident-escalation', {
               body: { signalId: newSignal.id }
             });
