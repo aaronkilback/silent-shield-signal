@@ -16,6 +16,8 @@ const SignalInputSchema = z.object({
   event: z.any().optional(),
   text: z.string().min(1).max(5000000).optional(), // Increased to 5MB for large documents
   url: z.string().url().optional(),
+  source_url: z.string().url().optional(),  // Canonical URL of the source article
+  image_url: z.string().url().optional(),   // Open Graph / thumbnail image
   location: z.string().max(500).optional(),
   raw_json: z.any().optional(),
   is_test: z.boolean().optional(),
@@ -117,7 +119,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { source_key, event, text, url, location, raw_json, is_test, client_id: explicitClientId } = validationResult.data;
+    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test, client_id: explicitClientId } = validationResult.data;
     
     // CRITICAL FIX: Validate explicit client_id if provided
     let validatedExplicitClientId: string | null = null;
@@ -331,26 +333,53 @@ Be specific and concise. Focus on facts, not speculation.`
       confidence: 0.5
     };
 
+    // Fetch analyst feedback examples for severity calibration (few-shot injection)
+    let fewShotBlock = '';
+    try {
+      const { data: feedbackExamples } = await supabase
+        .from('signal_feedback')
+        .select('original_severity, corrected_severity, original_category, corrected_category, notes')
+        .eq('feedback_type', 'wrong_severity')
+        .not('corrected_severity', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(6);
+      if (feedbackExamples && feedbackExamples.length > 0) {
+        fewShotBlock = '\n\nANALYST CALIBRATION EXAMPLES (severity corrections from real signals — apply these lessons):\n' +
+          feedbackExamples.map((ex: any) =>
+            `- Corrected ${ex.original_severity} → ${ex.corrected_severity}` +
+            (ex.original_category ? ` [${ex.original_category}]` : '') +
+            (ex.notes ? `: ${ex.notes}` : '')
+          ).join('\n');
+      }
+    } catch { /* non-blocking */ }
+
     const classResult = await callAiGatewayJson({
       model: 'gemini-2.5-flash',
       messages: [
         {
           role: 'system',
-          content: `You are a security intelligence classifier. Analyze security events and extract:
-- normalized_text: clean summary of the event
-- entity_tags: array of entities (people, organizations, locations, IPs, domains)
-- location: geographic location if mentioned
-- category: type (malware, phishing, intrusion, data_exfil, protest, activism, regulatory, environmental, social_sentiment, crime, sabotage, legal, document_upload, etc)
-- severity: critical, high, medium, or low
-- confidence: 0-100 score
-- event_date: the ISO 8601 date (YYYY-MM-DD) of WHEN THE DESCRIBED EVENT ACTUALLY OCCURRED. Look for specific dates, years, seasons, or temporal references in the text. If the text says "January 9, 2019" the event_date is "2019-01-09". If the text says "December 4th, 2023" the event_date is "2023-12-04". If the event appears to be happening now or no date is discernible, use null.
-- is_historical: boolean — true if the described event occurred more than 90 days ago based on temporal clues in the text. Look for past years (2019, 2020, 2021, 2022, 2023, 2024, early 2025), phrases like "years ago", concluded campaigns, archived content.
+          content: `You are a PECL (Physical, Environmental, Cyber, Legal) security intelligence classifier for a corporate protective intelligence platform.
 
-CRITICAL TEMPORAL RULES:
-- Extract the ACTUAL event date from the text, NOT the publication/crawl date.
-- "January 9, 2019" means event_date: "2019-01-09", NOT "2026-01-09".
-- If the event is historical (>90 days old), severity MUST be "low" regardless of how dramatic the event was.
-- Historical events are NOT current threats.
+Extract the following fields as JSON:
+- normalized_text: clean, factual one-paragraph summary of the event
+- entity_tags: array of named entities (people, orgs, locations, IPs, domains, project names)
+- location: specific geographic location if mentioned
+- category: one of — protest, sabotage, physical_threat, trespass, surveillance, wildfire, hazmat, flood, natural_disaster, malware, phishing, intrusion, data_exfil, ddos, ransomware, regulatory, litigation, compliance, injunction, activism, social_sentiment, crime, document_upload, other
+- severity: critical | high | medium | low (see rules below)
+- confidence: 0-100
+- event_date: ISO 8601 date (YYYY-MM-DD) of WHEN THE EVENT OCCURRED — extract from text clues, not crawl date
+- is_historical: true if event occurred >90 days ago
+
+SEVERITY RULES:
+- critical: Immediate threat to life/safety, active sabotage in progress, ongoing breach, credible imminent attack
+- high: Planned direct action within 7 days, serious legal order affecting operations, active malware campaign targeting sector
+- medium: Activist monitoring, routine regulatory filing, general cyber indicator, planned protest >7 days out
+- low: Historical event >90 days ago, informational/background, geopolitical context with no direct client nexus
+
+TEMPORAL RULES:
+- Extract the ACTUAL event date, not publication date
+- Historical signals (>90 days old) MUST be severity "low" unless actively resurging
+- Past years (2019-2024) = is_historical true${fewShotBlock}
 
 Respond ONLY with valid JSON.`
         },
@@ -772,9 +801,9 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
     
     const signalTitle = generateTitle(classification.normalized_text || signalText);
     
-    // ===== AI RELEVANCE GATE: Fast LLM check for client-specific relevance =====
-    // This catches what keyword matching misses: geographic irrelevance, corporate PR,
-    // historical content, and tangentially-related signals.
+    // ===== AI RELEVANCE GATE: PECL-calibrated two-stage check =====
+    // Stage 1: LLM scores relevance (0-1) + classifies connection type
+    // Stage 2: Threshold check at 0.35 — below = write to filtered_signals and reject
     if (clientId) {
       try {
         const { data: clientForGate } = await supabase
@@ -789,24 +818,32 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
             messages: [
               {
                 role: 'system',
-                content: `You are a signal relevance filter for a corporate security intelligence platform. Your ONLY job is to determine if a signal is ACTIONABLE INTELLIGENCE worth showing to an analyst.
+                content: `You are a PECL (Physical, Environmental, Cyber, Legal) signal relevance scorer for a corporate protective intelligence platform.
 
-REJECT signals that are:
-1. GEOGRAPHICALLY IRRELEVANT: About events/protests/incidents in regions unrelated to the client's operations (e.g., Paris attacks, Australian protests, Standing Rock when client operates in BC/Alberta)
-2. CORPORATE PR / POSITIVE CONTENT: The client's own press releases, social media promotions, sponsorship announcements, community goodwill posts
-3. HISTORICAL: Events from more than 6 months ago (old protests, historical incidents) with no current relevance
-4. TANGENTIALLY RELATED: Mentions a keyword (e.g., "pipeline", "LNG") but is about a completely unrelated industry or context (e.g., software data pipelines, plumbing). Note: Other major pipeline projects (Keystone XL, Trans Mountain, DAPL, etc.) ARE relevant if they involve protests, regulatory precedents, or activist tactics that could affect the client's operations or set industry precedent
-5. LOW-VALUE NOISE: Generic environmental org "about us" pages, merch listings, unrelated entertainment, sports content
-6. NO THREAT/RISK VALUE: Content that describes no threat, risk, legal action, protest, sabotage, or operational concern
+Score how actionable this signal is for the specific client on a 0.0–1.0 scale, and classify the primary connection type.
 
-ACCEPT signals that are:
-- Direct threats, protests, or sabotage targeting the client's specific assets
-- Legal/regulatory actions affecting the client's operations
-- Activist campaigns specifically targeting the client or their projects
-- Security incidents in the client's operational area
-- Supply chain or partner risks directly impacting the client
+SCORE GUIDE:
+0.8–1.0  Direct naming, active threat/legal action against this client or their assets
+0.6–0.79 Strong indirect: same project, same threat actor, adjacent geography with credible spillover
+0.4–0.59 Moderate: sector-wide risk, regulatory trend, protest tactics relevant to client's industry
+0.2–0.39 Weak: tangential keyword match, distant geography, corporate PR, historical >6 months
+0.0–0.19 No connection: wrong industry, wrong region, entertainment/sports, generic content
 
-Respond with JSON: {"relevant": true/false, "reason": "one sentence explanation"}`
+CONNECTION TYPES (pick one):
+- direct_naming: client or asset explicitly named
+- threat_actor: known threat group also targeting client's sector
+- regulatory: regulation/legal ruling affecting client's industry
+- geographic: incident in client's operational area
+- tactical: activist/attack tactic relevant to client's threat model
+- none: no meaningful connection
+
+ALWAYS REJECT (score 0.0–0.19):
+- Client's own positive PR, sponsorships, community goodwill posts
+- Events in regions with zero operational overlap and no precedent value
+- Entertainment, sports, software (non-security) content
+- Generic "about us" pages, merchandise listings
+
+Respond with JSON: {"score": 0.0-1.0, "relevant": true/false, "primary_connection": "...", "reason": "one sentence"}`
               },
               {
                 role: 'user',
@@ -815,26 +852,42 @@ INDUSTRY: ${clientForGate.industry || 'unknown'}
 LOCATIONS: ${(clientForGate.locations || []).join(', ')}
 KEY ASSETS: ${(clientForGate.high_value_assets || []).join(', ')}
 
-SIGNAL TO EVALUATE:
+SIGNAL:
 ${(classification.normalized_text || signalText).substring(0, 1500)}
 
-Is this signal actionable intelligence for this specific client?`
+Score this signal's relevance and classify the connection.`
               }
             ],
             functionName: 'ingest-signal-relevance-gate',
-            extraBody: { max_completion_tokens: 100 },
+            extraBody: { max_completion_tokens: 120 },
           });
 
-          if (gateResult.data && gateResult.data.relevant === false) {
-            console.log(`[AI Relevance Gate] REJECTED: ${gateResult.data.reason}`);
-            
-            // Store the hash so it doesn't come back
+          const gateScore: number = gateResult.data?.score ?? (gateResult.data?.relevant === false ? 0.1 : 0.7);
+          const gateReason: string = gateResult.data?.reason || '';
+          const primaryConnection: string = gateResult.data?.primary_connection || 'none';
+
+          if (gateScore < 0.35) {
+            console.log(`[AI Relevance Gate] REJECTED (score ${gateScore.toFixed(2)}): ${gateReason}`);
+
+            // Audit trail — write to filtered_signals
+            supabase.from('filtered_signals').insert({
+              raw_text: (classification.normalized_text || signalText).substring(0, 2000),
+              source_url: source_url || signalRaw?.source_url || signalRaw?.url || signalRaw?.link || null,
+              source_name: source_key || signalRaw?.source_name || null,
+              client_id: clientId,
+              filter_reason: 'ai_relevance_gate',
+              relevance_score: gateScore,
+              relevance_reason: gateReason,
+              primary_connection: primaryConnection,
+            }).then(() => {}).catch(() => {});
+
+            // Store hash so this content doesn't re-enter
             const encoder2 = new TextEncoder();
             const data2 = encoder2.encode(classification.normalized_text || signalText);
             const hashBuffer2 = await crypto.subtle.digest('SHA-256', data2);
             const hashArray2 = Array.from(new Uint8Array(hashBuffer2));
             const rejectedHash2 = hashArray2.map((b: number) => b.toString(16).padStart(2, '0')).join('');
-            
+
             await supabase.from('rejected_content_hashes').insert({
               content_hash: rejectedHash2,
               client_id: clientId,
@@ -846,17 +899,19 @@ Is this signal actionable intelligence for this specific client?`
               JSON.stringify({
                 status: 'rejected',
                 reason: 'ai_relevance_gate',
-                detail: gateResult.data.reason,
-                message: 'Signal rejected by AI relevance gate - not actionable intelligence for this client'
+                relevance_score: gateScore,
+                primary_connection: primaryConnection,
+                detail: gateReason,
+                message: 'Signal rejected by AI relevance gate — not actionable intelligence for this client'
               }),
               { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             );
           } else {
-            console.log(`[AI Relevance Gate] ACCEPTED: ${gateResult.data?.reason || 'relevant'}`);
+            console.log(`[AI Relevance Gate] ACCEPTED (score ${gateScore.toFixed(2)}, connection: ${primaryConnection}): ${gateReason}`);
           }
         }
       } catch (gateError) {
-        // Non-blocking - if the gate fails, let the signal through
+        // Non-blocking — if the gate fails, let the signal through
         console.error('[AI Relevance Gate] Error (non-blocking):', gateError);
       }
     }
@@ -984,7 +1039,9 @@ Is this signal actionable intelligence for this specific client?`
         is_test: is_test || false,
         content_hash: contentHash,
         event_date: eventDate,
-        triage_override: triageOverride
+        triage_override: triageOverride,
+        source_url: source_url || signalRaw?.source_url || signalRaw?.url || signalRaw?.link || null,
+        image_url: image_url || signalRaw?.image_url || signalRaw?.og_image || signalRaw?.thumbnail || null,
       })
       .select()
       .single();
@@ -995,6 +1052,19 @@ Is this signal actionable intelligence for this specific client?`
     }
 
     console.log(`Signal ingested: ${signal.id}${matchedKeywords.length > 0 ? ` (keywords: ${matchedKeywords.join(', ')})` : ''}`);
+
+    // Non-blocking — anomaly scoring runs after insert
+    supabase.functions.invoke('score-signal-anomaly', {
+      body: {
+        signal_id: signal.id,
+        category: signal.category,
+        severity: signal.severity,
+        client_id: clientId,
+        location: signal.location,
+        normalized_text: signal.normalized_text,
+        created_at: signal.created_at,
+      }
+    }).catch(err => console.error('[ingest-signal] anomaly scoring:', err));
 
     // Now create duplicate detection records if any near-duplicates found
     if (dupCheck?.data?.duplicates && dupCheck.data.duplicates.length > 0) {

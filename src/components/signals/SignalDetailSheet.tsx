@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -63,6 +63,17 @@ export function SignalDetailSheet({
   const [createIncidentOpen, setCreateIncidentOpen] = useState(false);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackGiven, setFeedbackGiven] = useState<string | null>(null);
+  const [agentAnalyses, setAgentAnalyses] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!signal?.id) return;
+    supabase
+      .from('signal_agent_analyses')
+      .select('agent_call_sign, analysis, confidence_score, trigger_reason, created_at')
+      .eq('signal_id', signal.id)
+      .order('created_at', { ascending: true })
+      .then(({ data }) => setAgentAnalyses(data || []));
+  }, [signal?.id]);
 
   const submitFeedback = async (
     feedbackType: 'relevant' | 'not_relevant' | 'wrong_severity',
@@ -441,6 +452,32 @@ export function SignalDetailSheet({
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <FileText className="h-3.5 w-3.5" />
                     <span>Extracted from uploaded {sourceType || 'document'}</span>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Agent Pre-Analysis */}
+            {agentAnalyses.length > 0 && (
+              <>
+                <Separator />
+                <div>
+                  <h4 className="text-sm font-medium mb-3">Agent Pre-Analysis</h4>
+                  <div className="space-y-3">
+                    {agentAnalyses.map((a, i) => (
+                      <div key={i} className="rounded-md border bg-muted/30 p-3 text-sm space-y-1.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge variant="outline" className="font-mono text-xs">{a.agent_call_sign}</Badge>
+                          {a.confidence_score != null && (
+                            <span className="text-xs text-muted-foreground">{Math.round(a.confidence_score * 100)}% confidence</span>
+                          )}
+                          {a.trigger_reason && (
+                            <span className="text-xs text-muted-foreground capitalize">{a.trigger_reason.replace(/_/g, ' ')}</span>
+                          )}
+                        </div>
+                        <p className="text-muted-foreground leading-relaxed">{a.analysis}</p>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </>
