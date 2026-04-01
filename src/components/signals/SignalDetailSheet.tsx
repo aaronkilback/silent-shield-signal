@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, History, Clock, Heart, MessageCircle, Eye, Hash, AtSign, Instagram, Twitter, Facebook, FileText } from "lucide-react";
+import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, History, Clock, Heart, MessageCircle, Eye, Hash, AtSign, Instagram, Twitter, Facebook, FileText, ThumbsUp, ThumbsDown, ShieldAlert } from "lucide-react";
 import { AskAegisButton } from "@/components/AskAegisButton";
 import { SignalManualOverride } from "./SignalManualOverride";
 import { format, differenceInDays } from "date-fns";
@@ -12,6 +12,9 @@ import { SignalAgeBadge } from "./SignalAgeBadge";
 import { FacebookVideoEmbed, isFacebookVideoUrl } from "./FacebookVideoEmbed";
 import { SignalUpdatesTimeline } from "./SignalUpdatesTimeline";
 import { extractHttpUrl } from "@/lib/extractHttpUrl";
+import { CreateIncidentFromSignalDialog } from "./CreateIncidentFromSignalDialog";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 
 interface SignalDetailSheetProps {
@@ -57,6 +60,33 @@ export function SignalDetailSheet({
   onDismiss,
 }: SignalDetailSheetProps) {
   const [updateCount, setUpdateCount] = useState(0);
+  const [createIncidentOpen, setCreateIncidentOpen] = useState(false);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackGiven, setFeedbackGiven] = useState<string | null>(null);
+
+  const submitFeedback = async (
+    feedbackType: 'relevant' | 'not_relevant' | 'wrong_severity',
+    correctedSeverity?: string
+  ) => {
+    if (!signal) return;
+    setFeedbackLoading(true);
+    try {
+      const { error } = await supabase.from('signal_feedback').insert({
+        signal_id: signal.primary_signal_id || signal.id,
+        feedback_type: feedbackType,
+        feedback_source: 'analyst',
+        original_severity: signal.severity,
+        corrected_severity: correctedSeverity || null,
+      });
+      if (error) throw error;
+      setFeedbackGiven(feedbackType);
+      toast.success('Feedback recorded — thank you');
+    } catch {
+      toast.error('Failed to save feedback');
+    } finally {
+      setFeedbackLoading(false);
+    }
+  };
 
   if (!signal) return null;
 
@@ -85,7 +115,8 @@ export function SignalDetailSheet({
     [];
 
   // Extract source URL from sources_json OR raw_json (many monitors store URLs in raw_json)
-  const rawSourceUrl = sources.find((s: any) => s?.url || s?.link)?.url ||
+  const rawSourceUrl = signal.source_url ||
+                       sources.find((s: any) => s?.url || s?.link)?.url ||
                        sources.find((s: any) => s?.url || s?.link)?.link ||
                        signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link;
   const sourceUrl = extractHttpUrl(rawSourceUrl);
@@ -253,10 +284,10 @@ export function SignalDetailSheet({
                 </div>
 
                 {/* Thumbnail/Media */}
-                {signal.thumbnail_url && (
+                {signal.image_url && (
                   <div className="rounded-lg overflow-hidden border">
                     <img 
-                      src={signal.thumbnail_url} 
+                      src={signal.image_url} 
                       alt="Post media" 
                       className="w-full h-auto max-h-64 object-cover"
                       onError={(e) => {
@@ -473,6 +504,58 @@ export function SignalDetailSheet({
               </>
             )}
 
+            {/* Analyst Feedback */}
+            <Separator />
+            <div>
+              <h4 className="text-sm font-medium mb-3">Signal Quality Feedback</h4>
+              {feedbackGiven ? (
+                <p className="text-sm text-muted-foreground flex items-center gap-2">
+                  <Check className="h-4 w-4 text-green-500" />
+                  Feedback recorded
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                      disabled={feedbackLoading}
+                      onClick={() => submitFeedback('relevant')}
+                    >
+                      <ThumbsUp className="h-3.5 w-3.5 mr-1.5" />
+                      Relevant
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                      disabled={feedbackLoading}
+                      onClick={() => submitFeedback('not_relevant')}
+                    >
+                      <ThumbsDown className="h-3.5 w-3.5 mr-1.5" />
+                      Not Relevant
+                    </Button>
+                  </div>
+                  {signal.severity && signal.severity !== 'critical' && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full text-orange-500 border-orange-500/30 hover:bg-orange-500/10"
+                      disabled={feedbackLoading}
+                      onClick={() => {
+                        const upgrades: Record<string, string> = { low: 'medium', medium: 'high', high: 'critical' };
+                        submitFeedback('wrong_severity', upgrades[signal.severity!] || 'high');
+                      }}
+                    >
+                      <ShieldAlert className="h-3.5 w-3.5 mr-1.5" />
+                      Severity too low — escalate
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Signal ID */}
             <Separator />
             <div>
@@ -486,18 +569,40 @@ export function SignalDetailSheet({
 
         {/* Actions */}
         <div className="absolute bottom-0 left-0 right-0 p-6 bg-background border-t">
-          <div className="flex gap-3">
-            <Button className="flex-1" onClick={onAssign}>
-              <UserPlus className="h-4 w-4 mr-2" />
-              Assign to Client
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              onClick={() => setCreateIncidentOpen(true)}
+            >
+              <ShieldAlert className="h-4 w-4 mr-2" />
+              Create Investigation
             </Button>
-            <Button variant="outline" onClick={onDismiss}>
-              <XCircle className="h-4 w-4 mr-2" />
-              Dismiss
+            <Button size="sm" className="flex-1" onClick={onAssign}>
+              <UserPlus className="h-4 w-4 mr-2" />
+              Assign
+            </Button>
+            <Button variant="outline" size="sm" onClick={onDismiss}>
+              <XCircle className="h-4 w-4" />
             </Button>
           </div>
         </div>
       </SheetContent>
+
+      {signal && (
+        <CreateIncidentFromSignalDialog
+          open={createIncidentOpen}
+          onOpenChange={setCreateIncidentOpen}
+          signal={{
+            id: signal.primary_signal_id || signal.id,
+            normalized_text: signal.normalized_text || undefined,
+            severity: signal.severity || undefined,
+            category: signal.category || undefined,
+            raw_json: signal.raw_json,
+          }}
+        />
+      )}
     </Sheet>
   );
 }

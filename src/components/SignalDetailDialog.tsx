@@ -449,24 +449,24 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                 )}
 
                 {/* Original Source Link */}
-                {(signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link) && (
+                {(signal.source_url || signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link) && (
                   <div className="flex items-center gap-2 text-sm border-t border-border pt-3 mt-2">
                     <ExternalLink className="w-3.5 h-3.5 text-muted-foreground" />
                     <span className="text-muted-foreground">Source:</span>
-                    <a 
-                      href={signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link} 
-                      target="_blank" 
+                    <a
+                      href={signal.source_url || signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link}
+                      target="_blank"
                       rel="noopener noreferrer"
                       className="text-primary hover:underline truncate max-w-md"
                     >
-                      {signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link}
+                      {signal.source_url || signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link}
                     </a>
                   </div>
                 )}
 
                 {/* Facebook Video/Live Embed */}
                 {(() => {
-                  const fbUrl = signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link;
+                  const fbUrl = signal.source_url || signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link;
                   return isFacebookVideoUrl(fbUrl) ? (
                     <div className="border-t border-border pt-3 mt-2">
                       <FacebookVideoEmbed url={fbUrl} />

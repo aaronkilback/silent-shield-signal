@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { extractOGImage } from "../_shared/og-image.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -96,92 +97,54 @@ Deno.serve(async (req) => {
           itemsScanned += data.items?.length || 0;
 
           for (const item of data.items || []) {
-            // Generate content hash for deduplication
-            const contentToHash = `${item.link}|${item.title}`;
-            const encoder = new TextEncoder();
-            const hashData = encoder.encode(contentToHash);
-            const hashBuffer = await crypto.subtle.digest('SHA-256', hashData);
-            const hashArray = Array.from(new Uint8Array(hashBuffer));
-            const contentHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            // Skip results with no meaningful snippet
+            const snippet = (item.snippet || '').trim();
+            if (snippet.length < 40) continue;
 
-            // Check for existing signal
-            const { data: existingSignal } = await supabase
-              .from('signals')
-              .select('id')
-              .eq('content_hash', contentHash)
-              .single();
+            const signalText = `${item.title}\n\n${snippet}`;
 
-            if (existingSignal) {
-              console.log(`Skipping duplicate: ${item.title?.substring(0, 50)}...`);
+            // Extract OG image from article page (non-blocking)
+            const imageUrl = item.link ? await extractOGImage(item.link).catch(() => null) : null;
+
+            // Route through ingest-signal for PECL classification, relevance gate, and dedup
+            const ingestResult = await supabase.functions.invoke('ingest-signal', {
+              body: {
+                text: signalText,
+                source_url: item.link || null,
+                image_url: imageUrl || undefined,
+                client_id: client.id,
+                raw_json: {
+                  source: 'google_news_api',
+                  source_url: item.link,
+                  snippet,
+                  display_link: item.displayLink,
+                  search_query: query,
+                  matched_client: client.name,
+                },
+              },
+            });
+
+            if (ingestResult.error) {
+              console.error(`ingest-signal error for "${item.title?.substring(0, 50)}":`, ingestResult.error);
               continue;
             }
 
-            // Determine category and severity
-            const fullContent = `${item.title} ${item.snippet}`.toLowerCase();
-            let category = 'news';
-            let severity = 'low';
+            const ingestData = ingestResult.data as any;
+            const ingestStatus = ingestData?.status || 'unknown';
 
-            if (/breach|hack|cyber|ransomware|malware|zero-day|exploit/.test(fullContent)) {
-              category = 'cybersecurity';
-              severity = 'high';
-            } else if (/protest|activist|opposition|blockade|demonstration/.test(fullContent)) {
-              category = 'protest';
-              severity = 'medium';
-            } else if (/lawsuit|investigation|fine|penalty|regulatory/.test(fullContent)) {
-              category = 'regulatory';
-              severity = 'medium';
-            } else if (/deal|acquisition|merger|partnership|contract/.test(fullContent)) {
-              category = 'business_intelligence';
-              severity = 'low';
+            if (ingestStatus === 'rejected' || ingestStatus === 'suppressed' || ingestStatus === 'filed_as_update') {
+              console.log(`↳ ${ingestStatus}: ${item.title?.substring(0, 50)}... (${ingestData?.reason || ingestData?.detail || ''})`);
+              continue;
             }
 
-            // Extract event_date from snippet date patterns (e.g., "Jan 15, 2025", "2025-03-01")
-            let eventDate: string | null = null;
-            const snippetText = item.snippet || '';
-            const dateMatch = snippetText.match(/(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}\b)/i)
-              || snippetText.match(/(\d{4}-\d{2}-\d{2})/);
-            if (dateMatch) {
-              try {
-                const parsed = new Date(dateMatch[1]);
-                if (!isNaN(parsed.getTime())) {
-                  eventDate = parsed.toISOString();
-                }
-              } catch { /* ignore */ }
-            }
-
-            // Create signal
-            const { error: signalError } = await supabase
-              .from('signals')
-              .insert({
-                client_id: client.id,
-                normalized_text: `[Google News] ${item.title}`,
-                category,
-                severity,
-                location: item.displayLink || 'Web',
-                content_hash: contentHash,
-                raw_json: {
-                  source: 'google_news_api',
-                  url: item.link,
-                  snippet: item.snippet,
-                  display_link: item.displayLink,
-                  search_query: query,
-                  matched_client: client.name
-                },
-                status: 'new',
-                confidence: 0.85,
-                event_date: eventDate
-              });
-
-            if (!signalError) {
+            if (ingestData?.signal_id || ingestStatus === 'enqueued' || ingestStatus === 'critical_processed') {
               signalsCreated++;
               console.log(`✓ Created signal for ${client.name}: ${item.title?.substring(0, 60)}...`);
-
               searchResults.push({
                 client: client.name,
                 title: item.title,
                 url: item.link,
-                category,
-                severity
+                status: ingestStatus,
               });
             }
           }

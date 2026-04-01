@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { extractOGImage } from "../_shared/og-image.ts";
 
 interface RSSItem {
   title: string;
@@ -131,10 +132,16 @@ Deno.serve(async (req) => {
         }
 
         const xmlText = await response.text();
-        const items = parseRSS(xmlText);
+        const allItems = parseRSS(xmlText);
+        // Only ingest items published within the last 7 days
+        const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        const items = allItems.filter((item) => {
+          const ts = item.pubDate ? new Date(item.pubDate).getTime() : NaN;
+          return isNaN(ts) || ts >= cutoff; // keep if unparseable (default = now)
+        });
         totalItems += items.length;
 
-        console.log(`Found ${items.length} items in ${source.name}`);
+        console.log(`Found ${allItems.length} items in ${source.name}, ${items.length} within last 7 days`);
         
         // Clear any previous error on successful fetch
         await supabaseClient
@@ -162,7 +169,10 @@ Deno.serve(async (req) => {
             }
 
             const content = `${item.title}\n\n${item.description}`;
-            
+
+            // Extract OG image from article page (non-blocking)
+            const imageUrl = item.link ? await extractOGImage(item.link).catch(() => null) : null;
+
             // Ingest document for AI to analyze relevance
             const { data: insertedDoc, error: ingestError } = await supabaseClient
               .from('ingested_documents')
@@ -175,7 +185,8 @@ Deno.serve(async (req) => {
                   url: item.link,
                   source_type: 'rss',
                   source_name: source.name,
-                  published_date: item.pubDate
+                  published_date: item.pubDate,
+                  image_url: imageUrl || undefined,
                 },
                 processing_status: 'pending'
               })
