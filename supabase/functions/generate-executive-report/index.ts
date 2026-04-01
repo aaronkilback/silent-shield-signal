@@ -1,7 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway, callAiGatewayJson } from "../_shared/ai-gateway.ts";
 import { logError } from "../_shared/error-logger.ts";
-import { generateReportVisuals, type ReportVisualType } from "../_shared/report-image-generator.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -167,16 +166,31 @@ Deno.serve(async (req) => {
       return result;
     }
 
+    // Filter out junk signals before any analysis
+    const EXCLUDE_CATEGORIES = new Set(['weather', 'test', 'work_interruption', 'advisory', 'health_concern', 'system_alert']);
+    const HIGH_VALUE_CATEGORIES = new Set(['active_threat', 'cybersecurity', 'insider_threat', 'protest', 'regulatory', 'operational']);
+
+    const reportableSignals = (signals || []).filter((s: any) => {
+      if (EXCLUDE_CATEGORIES.has(s.category)) return false;
+      if (HIGH_VALUE_CATEGORIES.has(s.category) && s.severity === 'low') return false;
+      return true;
+    });
+
+    function getHostname(url: string | null | undefined): string {
+      if (!url) return 'Fortress Intelligence';
+      try { return new URL(url).hostname; } catch { return url; }
+    }
+
     // Group signals by category and severity
-    const signalsByCategory = signals?.reduce((acc: any, s) => {
+    const signalsByCategory = reportableSignals.reduce((acc: any, s: any) => {
       const cat = s.category || 'uncategorized';
       if (!acc[cat]) acc[cat] = [];
       acc[cat].push(s);
       return acc;
-    }, {}) || {};
+    }, {});
 
-    const criticalSignals = signals?.filter(s => s.severity === 'critical') || [];
-    const highSignals = signals?.filter(s => s.severity === 'high') || [];
+    const criticalSignals = reportableSignals.filter((s: any) => s.severity === 'critical');
+    const highSignals = reportableSignals.filter((s: any) => s.severity === 'high');
     const p1p2Incidents = incidents?.filter(i => i.priority === 'p1' || i.priority === 'p2') || [];
     
     // ═══════════════════════════════════════════════════════════════════════════
@@ -417,7 +431,9 @@ Write a professional 2-3 paragraph executive summary that:
 5. Reports EXACT counts from verified data only — never round or estimate
 6. Closes with one specific sentence on what ${client.name} leadership should prioritize in the next 24 hours
 
-CRITICAL: Do NOT claim incidents "appeared" or "emerged" on dates other than their actual opened_at dates. Do NOT fabricate clusters or groups.`;
+CRITICAL: Do NOT claim incidents "appeared" or "emerged" on dates other than their actual opened_at dates. Do NOT fabricate clusters or groups.
+
+OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbols. No bullet points using asterisks. No bold formatting. Write in complete sentences.`;
 
     console.log('Generating executive summary...');
     let executiveSummary = 'Analysis in progress...';
@@ -521,7 +537,9 @@ ${[...criticalSignals, ...highSignals].slice(0, 10).map((s, i) =>
 For each major threat thread write one deduction paragraph in this format:
 DEDUCTIONS: [2-3 sentences connecting the signals to a specific implication for ${client.name}. Name threat actors in CAPITALS. State whether this thread is ESCALATING, STABLE, or DE-ESCALATING with one piece of evidence. End with one specific recommended action for ${client.name} with an owner role and timeframe.]
 
-Use professional executive language. Be direct. Avoid hedging.`;
+Use professional executive language. Be direct. Avoid hedging.
+
+OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbols. No bullet points using asterisks. No bold formatting. Write in complete sentences.`;
 
     console.log('Generating strategic deductions...');
     let deductions = 'Analysis in progress...';
@@ -535,12 +553,23 @@ Use professional executive language. Be direct. Avoid hedging.`;
     });
     if (deductionsResult.content) deductions = applyToneTransformation(deductionsResult.content);
 
-    // Generate detailed narratives
-    const narrativesPromises = Object.entries(signalsByCategory)
-      .slice(0, 3)
-      .map(async ([category, categorySignals]: [string, any]) => {
-        const topSignals = categorySignals.slice(0, 5);
-        
+    // Generate detailed narratives — top 3 categories by weighted score (critical×4, high×2, medium×1), min score 3
+    const weightedCategories = Object.entries(signalsByCategory)
+      .map(([category, categorySignals]: [string, any]) => {
+        const score = (categorySignals as any[]).filter((s: any) => s.severity !== 'low').reduce((sum: number, s: any) => {
+          if (s.severity === 'critical') return sum + 4;
+          if (s.severity === 'high') return sum + 2;
+          return sum + 1;
+        }, 0);
+        return { category, categorySignals, score };
+      })
+      .filter(({ score }) => score >= 3)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+
+    const narrativesPromises = weightedCategories.map(async ({ category, categorySignals }) => {
+        const topSignals = (categorySignals as any[]).slice(0, 5);
+
         const narrativePrompt = `Write a professional intelligence narrative about ${category} threats for ${client.name}.
 
 MANDATORY TRADECRAFT RULES:
@@ -550,12 +579,13 @@ MANDATORY TRADECRAFT RULES:
 - End with a DEDUCTIONS: paragraph that connects this category specifically to ${client.name} operations, reputation, or personnel
 - Include one RECOMMENDED ACTION with a specific owner role and timeframe
 - If no significant activity occurred in this category during the reporting period, state clearly: "No significant ${category} activity detected in the reporting period." Do not pad with generic content.
-- Do not use markdown formatting — no **bold**, no ### headers, no asterisks. Write in plain prose only. DEDUCTIONS: is a plain label, not a markdown heading.
 
 Signals to analyze:
-${topSignals.map((s: any, i: number) => `${i + 1}. [${s.severity?.toUpperCase()}] ${s.normalized_text} (Source: ${s.source_url ? new URL(s.source_url).hostname : 'Fortress Intelligence'}, ${new Date(s.received_at).toLocaleDateString('en-US', {year: 'numeric', month: 'long', day: 'numeric'})})`).join('\n')}
+${topSignals.map((s: any, i: number) => `${i + 1}. [${s.severity?.toUpperCase()}] ${s.normalized_text} (Source: ${getHostname(s.source_url)}, ${new Date(s.received_at).toLocaleDateString('en-US', {year: 'numeric', month: 'long', day: 'numeric'})})`).join('\n')}
 
-Write 2-3 paragraphs of narrative followed by a DEDUCTIONS: paragraph. Use executive-appropriate language. Be specific about names, dates, organizations, and implications for ${client.name}.`;
+Write 2-3 paragraphs of narrative followed by a DEDUCTIONS: paragraph. Use executive-appropriate language. Be specific about names, dates, organizations, and implications for ${client.name}.
+
+OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbols. No bullet points using asterisks. No bold formatting. Write in complete sentences.`;
 
         const narrativeResult = await callAiGateway({
           model: 'gemini-2.5-flash',
@@ -573,54 +603,11 @@ Write 2-3 paragraphs of narrative followed by a DEDUCTIONS: paragraph. Use execu
         };
       });
 
-    console.log('Generating detailed narratives and report visuals in parallel...');
+    console.log('Generating detailed narratives...');
 
-    // Determine threat categories and risk level for image generation
     const threatCategories = Object.keys(signalsByCategory);
-    const clientLocations = client.locations || [];
 
-    // Generate narratives AND report visuals in parallel
-    const [narratives, reportVisuals] = await Promise.all([
-      Promise.all(narrativesPromises),
-      generateReportVisuals([
-        {
-          type: "header",
-          context: {
-            clientName: client.name,
-            reportTitle: `Executive Intelligence Brief`,
-            threatCategories,
-            riskLevel: overallRiskLevel as any,
-            locations: clientLocations,
-          },
-        },
-        {
-          type: "threat_landscape",
-          context: {
-            threatCategories,
-            riskLevel: overallRiskLevel as any,
-            period: `${period_days} days`,
-          },
-        },
-        {
-          type: "risk_heatmap",
-          context: {
-            riskLevel: overallRiskLevel as any,
-            threatCategories,
-          },
-        },
-      ]),
-    ]);
-
-    // Extract generated image URLs
-    const headerImage = reportVisuals.get("header");
-    const threatLandscapeImage = reportVisuals.get("threat_landscape");
-    const riskHeatmapImage = reportVisuals.get("risk_heatmap");
-
-    const headerImageUrl = headerImage?.imageUrl || headerImage?.base64Url || "";
-    const threatLandscapeUrl = threatLandscapeImage?.imageUrl || threatLandscapeImage?.base64Url || "";
-    const riskHeatmapUrl = riskHeatmapImage?.imageUrl || riskHeatmapImage?.base64Url || "";
-
-    console.log(`Report visuals: header=${!!headerImageUrl}, threat=${!!threatLandscapeUrl}, heatmap=${!!riskHeatmapUrl}`);
+    const narratives = await Promise.all(narrativesPromises);
 
     // Format dates
     const reportDate = new Date().toLocaleDateString('en-US', { 
@@ -639,12 +626,14 @@ Write 2-3 paragraphs of narrative followed by a DEDUCTIONS: paragraph. Use execu
     @page { margin: 0.75in; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     
-    body { 
+    body {
       font-family: 'Arial', 'Helvetica', sans-serif;
-      font-size: 11pt;
+      font-size: 10pt;
       line-height: 1.5;
       color: #1a1a1a;
       background: white;
+      max-width: 900px;
+      margin: 0 auto;
     }
 
     .header {
@@ -674,14 +663,13 @@ Write 2-3 paragraphs of narrative followed by a DEDUCTIONS: paragraph. Use execu
     .company-name { font-size: 20pt; font-weight: 700; color: #7c3aed; margin-bottom: 4pt; }
     .report-title { font-size: 14pt; color: #333; font-weight: 600; }
 
-    /* EXECUTIVE FLASH BANNER - New */
+    /* EXECUTIVE FLASH BANNER */
     .executive-flash {
-      background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+      background: #1B2A4A;
       color: white;
       padding: 20pt;
       margin: 16pt 0;
       border-radius: 6pt;
-      box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
     }
 
     .flash-header {
@@ -762,7 +750,7 @@ Write 2-3 paragraphs of narrative followed by a DEDUCTIONS: paragraph. Use execu
 
     .section { margin-bottom: 28pt; page-break-inside: avoid; }
     .section-title {
-      font-size: 14pt;
+      font-size: 12pt;
       font-weight: 700;
       color: #1a1a1a;
       margin-bottom: 12pt;
@@ -1091,42 +1079,10 @@ Write 2-3 paragraphs of narrative followed by a DEDUCTIONS: paragraph. Use execu
     .page-break { page-break-after: always; }
     @media print { .no-print { display: none; } }
 
-    /* AI-GENERATED VISUALS */
-    .report-hero-image {
-      width: 100%;
-      max-height: 260px;
-      overflow: hidden;
-      margin-bottom: 0;
-      border-radius: 6pt 6pt 0 0;
-    }
-    .report-hero-image img {
-      width: 100%;
-      height: auto;
-      display: block;
-      object-fit: cover;
-    }
-    .visual-section {
-      margin: 20pt 0;
-      text-align: center;
-    }
-    .visual-section img {
-      width: 100%;
-      max-height: 320px;
-      object-fit: cover;
-      border-radius: 4pt;
-      border: 1px solid #e0e0e0;
-    }
-    .visual-caption {
-      font-size: 8pt;
-      color: #888;
-      margin-top: 6pt;
-      font-style: italic;
-    }
   </style>
 </head>
 <body>
-  ${headerImageUrl ? `<div class="report-hero-image" data-pdf-section><img src="${headerImageUrl}" alt="Executive Brief Header" crossorigin="anonymous" /></div>` : ""}
-  <div class="header" ${headerImageUrl ? 'style="border-radius: 0; margin-top: 0;"' : ''}>
+  <div class="header">
     <div class="header-top">
       <div class="classification">SENSITIVE SECURITY INFORMATION</div>
       <div class="report-date">${reportDate}</div>
@@ -1140,7 +1096,7 @@ Write 2-3 paragraphs of narrative followed by a DEDUCTIONS: paragraph. Use execu
   <!-- EXECUTIVE FLASH BANNER -->
   <div class="executive-flash">
     <div class="flash-header">
-      <div class="flash-title">⚡ Executive Flash</div>
+      <div class="flash-title">Executive Flash</div>
       <div class="flash-confidence">Confidence: ${executiveFlash.confidence}</div>
     </div>
     <div class="flash-issue">${executiveFlash.mostPressingIssue}</div>
@@ -1189,22 +1145,6 @@ Write 2-3 paragraphs of narrative followed by a DEDUCTIONS: paragraph. Use execu
       ${executiveSummary.split('\n').map(p => `<p style="margin-bottom: 10pt;">${p}</p>`).join('')}
     </div>
   </div>
-
-  <!-- AI-GENERATED THREAT LANDSCAPE VISUAL -->
-  ${threatLandscapeUrl ? `
-  <div class="visual-section">
-    <h2 class="section-title">Threat Landscape Visualization</h2>
-    <img src="${threatLandscapeUrl}" alt="AI-generated threat landscape visualization" crossorigin="anonymous" />
-    <div class="visual-caption">AI-generated threat landscape — ${threatCategories.join(", ")} | Risk Level: ${overallRiskLevel}</div>
-  </div>` : ""}
-
-  <!-- AI-GENERATED RISK HEATMAP -->
-  ${riskHeatmapUrl ? `
-  <div class="visual-section">
-    <h2 class="section-title">Risk Assessment Visual</h2>
-    <img src="${riskHeatmapUrl}" alt="AI-generated risk heatmap" crossorigin="anonymous" />
-    <div class="visual-caption">AI-generated risk intensity map — Overall assessment: ${overallRiskLevel}</div>
-  </div>` : ""}
 
   <!-- P1/P2 INCIDENT DETAIL TABLE -->
   ${p1p2Incidents.length > 0 ? `
@@ -1510,12 +1450,7 @@ Write 2-3 paragraphs of narrative followed by a DEDUCTIONS: paragraph. Use execu
           risk_level: overallRiskLevel,
           executive_flash: executiveFlash,
           action_items_count: actionItems.length,
-          categories: Object.keys(signalsByCategory),
-          ai_visuals: {
-            header: { generated: !!headerImageUrl, url: headerImage?.imageUrl, durationMs: headerImage?.durationMs },
-            threat_landscape: { generated: !!threatLandscapeUrl, url: threatLandscapeImage?.imageUrl, durationMs: threatLandscapeImage?.durationMs },
-            risk_heatmap: { generated: !!riskHeatmapUrl, url: riskHeatmapImage?.imageUrl, durationMs: riskHeatmapImage?.durationMs },
-          }
+          categories: Object.keys(signalsByCategory)
         }
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
