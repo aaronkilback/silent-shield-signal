@@ -1153,23 +1153,34 @@ async function collectAegisBehaviorTelemetry(supabase: any): Promise<TelemetryDa
 // âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 async function callAI(systemPrompt: string, userMessage: string): Promise<any> {
-  const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
+  const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+  if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not configured');
 
-  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${GEMINI_API_KEY}`, 'Content-Type': 'application/json' },
+    headers: {
+      'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({
-      model: 'gemini-2.0-flash',
-      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessage }],
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
       temperature: 0.1,
+      response_format: { type: 'json_object' },
     }),
+    signal: AbortSignal.timeout(60000),
   });
 
-  if (!response.ok) throw new Error(`AI call failed (${response.status}): ${await response.text()}`);
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`AI call failed (${response.status}): ${errText}`);
+  }
   const data = await response.json();
-  let content = (data.choices?.[0]?.message?.content || '').trim();
-  if (content.startsWith('```')) content = content.replace(/```json?\n?/g, '').replace(/```$/g, '').trim();
+  const content = (data.choices?.[0]?.message?.content || '').trim();
+  if (!content) throw new Error('AI returned empty response');
   return JSON.parse(content);
 }
 
@@ -1909,10 +1920,11 @@ Deno.serve(async (req) => {
         `Analyze this telemetry AND your learning history to make informed decisions. Skip remediations with poor track records. Identify recurring patterns. USE the adaptiveThresholds to calibrate your severity judgments â these auto-adjust with platform growth.\n\n${JSON.stringify(analysisInput, null, 2)}`
       );
     } catch (e) {
-      console.error('[Watchdog] AI analysis failed:', e);
+      const aiErrMsg = e instanceof Error ? e.message : String(e);
+      console.error('[Watchdog] AI analysis failed:', aiErrMsg);
       analysis = {
-        shouldAlert: true, overallAssessment: 'AI analysis engine failed â raw telemetry review needed.',
-        severity: 'monitoring', findings: [], suppressedChecks: [], selfImprovementNotes: ['AI analysis failed â investigate gateway health'],
+        shouldAlert: true, overallAssessment: `AI analysis engine failed: ${aiErrMsg.substring(0, 300)}`,
+        severity: 'monitoring', findings: [], suppressedChecks: [], selfImprovementNotes: ['AI analysis failed -- investigate gateway health'],
       };
     }
     console.log(`[Watchdog] AI verdict: severity=${analysis.severity}, findings=${analysis.findings.length}, remediable=${analysis.findings.filter(f => f.canAutoRemediate).length}`);
