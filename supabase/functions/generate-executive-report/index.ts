@@ -310,7 +310,60 @@ Deno.serve(async (req) => {
       });
     });
 
-    // Generate 1-Line Executive Call-to-Action with AI
+    // ═══════════════════════════════════════════════════════════════════════════
+    // KNOWLEDGE BASE + AGENT BELIEF INJECTION
+    // Fetch in parallel before any prompts are built
+    // ═══════════════════════════════════════════════════════════════════════════
+    const [knowledgeResult, agentBeliefResult, briefingStandardsResult] = await Promise.allSettled([
+      supabase
+        .from('expert_knowledge')
+        .select('title, content, domain, knowledge_type, citation')
+        .eq('is_active', true)
+        .in('domain', ['intelligence_reporting', 'security_assessment', 'threat_analysis', 'executive_communication', 'corporate_security', 'threat_intelligence', 'executive_protection', 'crisis_management'])
+        .gte('confidence_score', 0.75)
+        .order('confidence_score', { ascending: false })
+        .limit(8),
+
+      supabase
+        .from('agent_beliefs')
+        .select('belief_type, confidence, related_domains, agent_call_sign, last_updated_at, hypothesis')
+        .eq('is_active', true)
+        .in('agent_call_sign', ['AEGIS-CMD', 'VERIDIAN-TANGO', 'PURE-DATA', 'FININT', 'BRAVO-1'])
+        .gte('confidence', 0.85)
+        .order('last_updated_at', { ascending: false })
+        .limit(8),
+
+      supabase
+        .from('expert_knowledge')
+        .select('title, content, domain, knowledge_type')
+        .eq('is_active', true)
+        .or('title.ilike.%brief%,title.ilike.%report%,title.ilike.%BLUF%,title.ilike.%intelligence writing%,content.ilike.%bottom line up front%')
+        .gte('confidence_score', 0.88)
+        .limit(5),
+    ]);
+
+    const knowledge = knowledgeResult.status === 'fulfilled' ? (knowledgeResult.value.data || []) : [];
+    const agentBeliefs = agentBeliefResult.status === 'fulfilled' ? (agentBeliefResult.value.data || []) : [];
+    const briefingKnowledge = briefingStandardsResult.status === 'fulfilled' ? (briefingStandardsResult.value.data || []) : [];
+
+    const knowledgeContext = knowledge.length > 0 ? `
+EXPERT KNOWLEDGE BASE (apply this specialist expertise to your analysis):
+${knowledge.map((k: any) => `[${k.knowledge_type?.toUpperCase()} | ${k.domain}] ${k.title}
+${k.content?.substring(0, 300)}`).join('\n\n')}
+` : '';
+
+    const agentContext = agentBeliefs.length > 0 ? `
+CURRENT AGENT INTELLIGENCE PICTURE (assessments formed by specialist analysts):
+${agentBeliefs.map((b: any) => `${b.agent_call_sign} [${b.belief_type}, confidence ${Math.round(b.confidence * 100)}%]: ${b.hypothesis?.substring(0, 200)}`).join('\n')}
+` : '';
+
+    const briefingStandardsContext = briefingKnowledge.length > 0 ? `
+BRIEFING STANDARDS (apply these standards to structure and tone):
+${briefingKnowledge.map((k: any) => `${k.title}: ${k.content?.substring(0, 250)}`).join('\n\n')}
+` : '';
+
+    console.log(`Knowledge base: ${knowledge.length} entries, agent beliefs: ${agentBeliefs.length}, briefing standards: ${briefingKnowledge.length}`);
+
     // ═══════════════════════════════════════════════════════════════════════════
     // CRITICAL DATE CONTEXT injected into AI prompts to prevent hallucination
     // ═══════════════════════════════════════════════════════════════════════════
@@ -412,7 +465,7 @@ Provide exactly 3 impact ladders. Be specific and actionable. Use executive lang
     if (impactResult.data) impactLadders = impactResult.data;
 
     // Generate executive summary with tone transformation
-    const summaryPrompt = `You are a security intelligence analyst creating an executive summary for ${client.name}.
+    const summaryPrompt = `You are a senior security intelligence analyst with deep specialist knowledge and access to current agent assessments. Apply the expertise below to produce an executive summary that reflects the depth of analysis our specialist agents have conducted.
 ${criticalDateContext}
 
 Client Context:
@@ -420,6 +473,9 @@ Client Context:
 - Industry: ${client.industry || 'N/A'}
 - Locations: ${client.locations?.join(', ') || 'N/A'}
 - High-Value Assets: ${client.high_value_assets?.join(', ') || 'N/A'}
+${briefingStandardsContext}
+${knowledgeContext}
+${agentContext}
 
 VERIFIED INTELLIGENCE DATA (use ONLY these numbers):
 - Total signals collected: ${freshSignals.length}
@@ -455,7 +511,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
     const summaryResult = await callAiGateway({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: 'You are a professional security intelligence analyst writing for C-level executives. Use formal, business-appropriate language.' },
+        { role: 'system', content: 'You are a senior security intelligence analyst writing for C-level executives. You apply BLUF, Minto Pyramid, and structured analytical tradecraft. Use formal, precise, business-appropriate language.' },
         { role: 'user', content: summaryPrompt }
       ],
       functionName: 'generate-executive-report',
@@ -533,7 +589,9 @@ Be specific and actionable. Max 5 items.`;
     }
 
     // Generate deductions with tone transformation
-    const deductionsPrompt = `You are a senior intelligence analyst writing strategic deductions for ${client.name} leadership. You write in the style of a professional government intelligence analyst — precise, direct, and specific.
+    const deductionsPrompt = `You are a senior intelligence analyst writing strategic deductions for ${client.name} leadership. You write in the style of a professional government intelligence analyst — precise, direct, and specific. Apply the specialist knowledge and agent assessments below.
+${knowledgeContext}
+${agentContext}
 
 MANDATORY TRADECRAFT RULES:
 - Write ALL surnames of named individuals in CAPITALS (e.g., activist BROOKS, journalist NUNES, professor ANTWEILER)
@@ -603,7 +661,9 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
     const narrativesPromises = weightedCategories.map(async ({ category, categorySignals }) => {
         const topSignals = (categorySignals as any[]).slice(0, 5);
 
-        const narrativePrompt = `Write a professional intelligence narrative about ${category} threats for ${client.name}.
+        const narrativePrompt = `Write a professional intelligence narrative about ${getCategoryDisplay(category)} threats for ${client.name}. Apply the specialist knowledge and agent assessments below.
+${knowledgeContext}
+${agentContext}
 
 MANDATORY TRADECRAFT RULES:
 - Write ALL surnames of named individuals in CAPITALS (e.g., organizer Richard BROOKS, journalist Danny NUNES)
@@ -623,7 +683,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
         const narrativeResult = await callAiGateway({
           model: 'gpt-4o-mini',
           messages: [
-            { role: 'system', content: 'You are an intelligence analyst writing for executives.' },
+            { role: 'system', content: 'You are a senior intelligence analyst writing for executives. You apply structured analytical tradecraft (BLUF, SAT, Minto Pyramid) and draw on specialist agent assessments.' },
             { role: 'user', content: narrativePrompt }
           ],
           functionName: 'generate-executive-report',
