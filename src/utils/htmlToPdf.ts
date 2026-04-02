@@ -120,9 +120,14 @@ function findSmartBreakPoints(
 }
 
 /**
- * Prepare an offscreen container with the report HTML, preload images,
- * render to canvas, slice into A4 pages at smart element-aware break points,
+ * Render the report HTML inside an isolated iframe (no parent-page CSS leakage),
+ * capture via html2canvas, slice into A4 pages at smart break points,
  * and return a jsPDF instance.
+ *
+ * Using an iframe is critical: the app uses Tailwind dark-mode CSS variables
+ * (--background: 222 47% 5%) that bleed into any div appended to document.body,
+ * making the PDF render black even when the report HTML specifies white backgrounds.
+ * An iframe has its own browsing context — the parent page's CSS never applies.
  */
 export async function generatePdfFromHtml(
   html: string,
@@ -130,75 +135,69 @@ export async function generatePdfFromHtml(
 ): Promise<jsPDF> {
   const bgColor = options?.backgroundColor ?? "#ffffff";
 
-  const container = document.createElement("div");
-  container.style.position = "fixed";
-  container.style.left = "0";
-  container.style.top = "0";
-  container.style.width = `${RENDER_WIDTH_PX}px`;
-  container.style.background = bgColor;
-  container.style.overflow = "visible";
-  container.style.height = "auto";
-  container.style.maxHeight = "none";
-  container.style.opacity = "0";
-  container.style.pointerEvents = "none";
-  container.style.zIndex = "-9999";
-  container.style.transform = "none";
-  container.style.direction = "ltr";
-  container.style.writingMode = "horizontal-tb";
+  const iframe = document.createElement("iframe");
+  iframe.style.cssText = [
+    "position:fixed",
+    "top:0",
+    "left:0",
+    `width:${RENDER_WIDTH_PX}px`,
+    "height:1px",
+    "opacity:0",
+    "pointer-events:none",
+    "z-index:-9999",
+    "border:none",
+    "overflow:hidden",
+  ].join(";");
 
-  // Extract body content if it's a full HTML document
-  const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  container.innerHTML = bodyMatch ? bodyMatch[1] : html;
-
-  // Extract and apply styles, then add targeted overflow overrides
-  const styleMatches = html.match(/<style[^>]*>([\s\S]*?)<\/style>/gi);
-  const overrideCSS = `
-    .page, .report-container, .bulletin-container,
-    .content, body, html {
-      overflow: visible !important;
-      max-height: none !important;
-      min-height: 0 !important;
-    }
-    * { transform: none !important; }
-    @page { size: auto; margin: 0; }
-  `;
-  const styleEl = document.createElement("style");
-  styleEl.textContent = (styleMatches || [])
-    .map((s) => s.replace(/<\/?style[^>]*>/gi, ""))
-    .join("\n") + "\n" + overrideCSS;
-  container.prepend(styleEl);
-
-  document.body.appendChild(container);
+  document.body.appendChild(iframe);
 
   try {
-    // Preload all images as base64
-    const images = Array.from(container.querySelectorAll("img"));
-    await Promise.allSettled(images.map(safeLoadImage));
+    const iframeDoc = iframe.contentDocument!;
+    iframeDoc.open();
+    iframeDoc.write(html);
+    iframeDoc.close();
 
-    // Unlock overflow on elements that might clip content
-    container.querySelectorAll("div, section, article, main").forEach((el) => {
+    // Wait for iframe content to fully load
+    await new Promise<void>((resolve) => {
+      if (iframeDoc.readyState === "complete") { resolve(); return; }
+      iframe.onload = () => resolve();
+      setTimeout(resolve, 3000); // fallback
+    });
+    // Extra settle time for fonts and layout
+    await new Promise((r) => setTimeout(r, 700));
+
+    const body = iframeDoc.body;
+    body.style.margin = "0";
+    body.style.padding = "0";
+    body.style.overflow = "visible";
+
+    // Unlock overflow on clipping elements
+    iframeDoc.querySelectorAll("div, section, article, main").forEach((el) => {
       const htmlEl = el as HTMLElement;
-      const computed = window.getComputedStyle(htmlEl);
+      const win = iframeDoc.defaultView;
+      if (!win) return;
+      const computed = win.getComputedStyle(htmlEl);
       if (computed.overflow === "hidden" || computed.maxHeight !== "none") {
         htmlEl.style.overflow = "visible";
         htmlEl.style.maxHeight = "none";
       }
     });
 
-    // Let styles settle
-    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 500)));
+    // Preload all images as base64
+    const images = Array.from(iframeDoc.querySelectorAll("img"));
+    await Promise.allSettled(images.map(safeLoadImage));
+
+    // Expand iframe height to full content height for correct measurements
+    const actualHeight = body.scrollHeight;
+    iframe.style.height = `${actualHeight}px`;
+    console.log(`[PDF] iframe content height: ${actualHeight}px`);
+
+    // Let layout re-settle after height change
     await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 300)));
-
-    // Make visible for rendering and DOM measurements
-    container.style.opacity = "1";
-    container.style.visibility = "visible";
-
-    const actualHeight = container.scrollHeight;
-    console.log(`[PDF] Container scrollHeight: ${actualHeight}px`);
 
     const scale = 1.5;
 
-    const fullCanvas = await html2canvas(container, {
+    const fullCanvas = await html2canvas(body, {
       scale,
       useCORS: true,
       allowTaint: false,
@@ -220,7 +219,7 @@ export async function generatePdfFromHtml(
     const stripHeightPx = Math.floor(CONTENT_H_MM * pxPerMm);
 
     // Find smart break points that don't cut through elements
-    const breakPoints = findSmartBreakPoints(container, fullCanvas.height, stripHeightPx, scale);
+    const breakPoints = findSmartBreakPoints(body, fullCanvas.height, stripHeightPx, scale);
     const allBreaks = [...breakPoints, fullCanvas.height];
 
     console.log(`[PDF] Page breaks at: ${breakPoints.join(", ")} (canvas px)`);
@@ -263,8 +262,8 @@ export async function generatePdfFromHtml(
     console.log(`[PDF] Generated ${pageIdx} pages`);
     return pdf;
   } finally {
-    if (container.parentNode) {
-      container.parentNode.removeChild(container);
+    if (iframe.parentNode) {
+      iframe.parentNode.removeChild(iframe);
     }
   }
 }
