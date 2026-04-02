@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
     // Fall back to a default set if routing returns nothing
     const callSigns = routedAgents.length > 0
       ? routedAgents.slice(0, 3).map((a) => a.call_sign)
-      : ['NEO', 'ORACLE', 'SPECTER'];
+      : ['ORACLE', 'INSIDE-EYE', 'GUARDIAN'];
 
     // 2. Resolve call_signs → UUIDs (agent-chat requires agent_id as UUID)
     const { data: agentRows } = await supabase
