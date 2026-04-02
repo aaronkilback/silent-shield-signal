@@ -1,5 +1,10 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { extractOGImage } from "../_shared/og-image.ts";
+import { extractYouTubeTranscript } from "../_shared/youtube-transcript.ts";
+
+function isYouTubeUrl(url: string): boolean {
+  return /(?:youtube\.com\/watch\?v=|youtu\.be\/)/.test(url);
+}
 
 interface RSSItem {
   title: string;
@@ -170,10 +175,20 @@ Deno.serve(async (req) => {
               continue;
             }
 
-            const content = `${item.title}\n\n${item.description}`;
+            let content = `${item.title}\n\n${item.description}`;
+            let imageUrl: string | null = null;
 
-            // Extract OG image from article page (non-blocking)
-            const imageUrl = item.link ? await extractOGImage(item.link).catch(() => null) : null;
+            if (item.link && isYouTubeUrl(item.link)) {
+              // For YouTube items: extract transcript instead of OG image
+              const transcript = await extractYouTubeTranscript(item.link).catch(() => null);
+              if (transcript) {
+                content = `${item.title}\n\n${transcript}`;
+                console.log(`Extracted YouTube transcript for: ${item.title} (${transcript.length} chars)`);
+              }
+            } else {
+              // Extract OG image from article page (non-blocking)
+              imageUrl = item.link ? await extractOGImage(item.link).catch(() => null) : null;
+            }
 
             // Ingest document for AI to analyze relevance
             const { data: insertedDoc, error: ingestError } = await supabaseClient
@@ -185,7 +200,7 @@ Deno.serve(async (req) => {
                 source_url: item.link || null,
                 metadata: {
                   url: item.link,
-                  source_type: 'rss',
+                  source_type: item.link && isYouTubeUrl(item.link) ? 'youtube' : 'rss',
                   source_name: source.name,
                   published_date: item.pubDate,
                   image_url: imageUrl || undefined,

@@ -12,6 +12,7 @@
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { extractYouTubeTranscript } from "../_shared/youtube-transcript.ts";
 
 // Knowledge hunt angles — each agent runs ALL of these for their specialty
 const KNOWLEDGE_ANGLES = [
@@ -213,6 +214,42 @@ async function huntOneAngle(params: {
     console.log(`[agent-knowledge-seeker] ${agent.call_sign}/${angleConfig.angle} Perplexity OK, content length: ${content.length}`);
 
     if (content.length < 100) return `short_content:${content.length}`;
+
+    // Extract transcripts from any YouTube citations in parallel
+    const youtubeCitations = citations.filter(c => /(?:youtube\.com\/watch\?v=|youtu\.be\/)/.test(c));
+    if (youtubeCitations.length > 0) {
+      console.log(`[agent-knowledge-seeker] ${agent.call_sign}/${angleConfig.angle} extracting ${youtubeCitations.length} YouTube transcript(s)`);
+      const transcriptResults = await Promise.allSettled(
+        youtubeCitations.map(url => extractYouTubeTranscript(url))
+      );
+      const transcriptRows = youtubeCitations
+        .map((url, i) => {
+          const t = transcriptResults[i];
+          return t.status === 'fulfilled' && t.value ? { url, transcript: t.value } : null;
+        })
+        .filter(Boolean) as Array<{ url: string; transcript: string }>;
+
+      if (transcriptRows.length > 0) {
+        const videoEntries = transcriptRows.map(({ url, transcript }) => ({
+          expert_name: `agent:${agent.call_sign}`,
+          source_url: url,
+          media_type: 'video',
+          domain: deriveDomain(specialty),
+          subdomain: angleConfig.angle,
+          knowledge_type: 'video_transcript',
+          title: `Video transcript — ${specialty.substring(0, 60)} (${angleConfig.angle})`,
+          content: transcript,
+          applicability_tags: [agent.call_sign, angleConfig.angle, 'video_transcript'],
+          citation: `YouTube transcript — ${agent.call_sign} knowledge hunt`,
+          confidence_score: 0.75,
+          source_type: 'youtube_transcript',
+          last_validated_at: new Date().toISOString(),
+        }));
+        const { error: vidErr } = await supabase.from('expert_knowledge').insert(videoEntries);
+        if (vidErr) console.error(`[agent-knowledge-seeker] ${agent.call_sign}/${angleConfig.angle} video insert error:`, vidErr);
+        else console.log(`[agent-knowledge-seeker] ${agent.call_sign}/${angleConfig.angle}: stored ${videoEntries.length} video transcript(s)`);
+      }
+    }
 
     const fullText = content + (citations.length ? `\n\nSources:\n${citations.join('\n')}` : '');
 
