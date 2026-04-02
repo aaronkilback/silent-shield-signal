@@ -101,13 +101,16 @@ Deno.serve(async (req) => {
 
     if (clientError) throw clientError;
 
-    // Fetch signals with full details for traceability
+    // Fetch signals with full details for traceability (exclude QA test signals)
     const { data: signals, error: signalsError } = await supabaseClient
       .from('signals')
       .select('*')
       .eq('client_id', client_id)
       .gte('received_at', periodStart.toISOString())
       .lte('received_at', periodEnd.toISOString())
+      .not('raw_json->>sourceType', 'eq', 'qa_test')
+      .not('raw_json->>source_name', 'eq', 'QA Test')
+      .not('raw_json->>source_name', 'eq', 'QA')
       .order('received_at', { ascending: false });
 
     if (signalsError) throw signalsError;
@@ -567,6 +570,24 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
       functionName: 'generate-executive-report',
     });
     if (deductionsResult.content) deductions = applyToneTransformation(deductionsResult.content);
+
+    const categoryDisplayNames: Record<string, string> = {
+      'active_threat': 'Active Threat',
+      'social_sentiment': 'Social Sentiment',
+      'work_interruption': 'Work Interruption',
+      'cyber': 'Cyber Security',
+      'cybersecurity': 'Cyber Security',
+      'civil_emergency': 'Civil Emergency',
+      'insider_threat': 'Insider Threat',
+      'active_shooter': 'Active Shooter',
+      'protest': 'Protest Activity',
+      'surveillance': 'Surveillance',
+      'sabotage': 'Sabotage',
+      'vandalism': 'Vandalism',
+      'uncategorized': 'General Intelligence',
+    };
+    const getCategoryDisplay = (cat: string) =>
+      categoryDisplayNames[cat] || cat.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
     // Generate detailed narratives — top 3 categories by weighted score (critical×4, high×2, medium×1), min score 3
     const weightedCategories = Object.entries(signalsByCategory)
@@ -1334,7 +1355,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
     <h2 class="section-title">Issues of Specific Concern</h2>
     ${narratives.map(item => `
       <div class="narrative-section">
-        <h3 class="subsection-title">${item.category}</h3>
+        <h3 class="subsection-title">${getCategoryDisplay(item.category)}</h3>
         <div class="narrative-text">
           ${item.narrative.split('\n\n').map((p: string) => `<p style="margin-bottom: 10pt;">${p}</p>`).join('')}
         </div>
@@ -1346,7 +1367,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
               <div class="evidence-timestamp">${new Date(signal.received_at).toISOString()}</div>
             </div>
             <div class="evidence-text">
-              <strong>${signal.category || 'Signal'}:</strong> ${signal.normalized_text?.substring(0, 250) || 'No details available'}
+              <strong>${getCategoryDisplay(signal.category || 'signal')}:</strong> ${signal.normalized_text?.substring(0, 250) || 'No details available'}
             </div>
             <div class="evidence-links">
               <a href="/signals?id=${signal.id}" class="evidence-link">🔗 View in Fortress</a>
