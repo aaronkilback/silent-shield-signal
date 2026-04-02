@@ -364,7 +364,7 @@ Extract the following fields as JSON:
 - normalized_text: clean, factual one-paragraph summary of the event
 - entity_tags: array of named entities (people, orgs, locations, IPs, domains, project names)
 - location: specific geographic location if mentioned
-- category: one of — protest, sabotage, physical_threat, trespass, surveillance, wildfire, hazmat, flood, natural_disaster, malware, phishing, intrusion, data_exfil, ddos, ransomware, regulatory, litigation, compliance, injunction, activism, social_sentiment, crime, document_upload, other
+- category: one of — active_threat, protest, sabotage, physical_threat, trespass, surveillance, wildfire, hazmat, flood, natural_disaster, malware, phishing, intrusion, data_exfil, ddos, ransomware, regulatory, litigation, compliance, injunction, activism, social_sentiment, crime, document_upload, insider_threat, other
 - severity: critical | high | medium | low (see rules below)
 - confidence: 0-100
 - event_date: ISO 8601 date (YYYY-MM-DD) of WHEN THE EVENT OCCURRED — extract from text clues, not crawl date
@@ -375,6 +375,12 @@ SEVERITY RULES:
 - high: Planned direct action within 7 days, serious legal order affecting operations, active malware campaign targeting sector
 - medium: Activist monitoring, routine regulatory filing, general cyber indicator, planned protest >7 days out
 - low: Historical event >90 days ago, informational/background, geopolitical context with no direct client nexus
+
+CATEGORY GUIDANCE:
+- active_threat: Use for ongoing or imminent threats requiring immediate attention (violence, active sabotage, credible attack)
+- insider_threat: ONLY for individuals with a direct employment, contractor, or privileged access relationship to the client organization. Public activists, protesters, Indigenous land defenders, journalists, and named individuals WITHOUT a direct employment or access relationship to the client are NEVER insider threats — classify them as active_threat, protest, activism, or social_sentiment instead.
+- social_sentiment: Use for aftermath/recovery coverage, public reactions, and ongoing media attention to a past event (e.g. shooting victim updates weeks after the incident)
+- protest / activism: Use for Indigenous land defense actions, pipeline opposition, environmental campaigns, direct action by external parties
 
 TEMPORAL RULES:
 - Extract the ACTUAL event date, not publication date
