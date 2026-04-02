@@ -1361,18 +1361,17 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
         </div>
         
         ${item.signals.slice(0, 3).map((signal: any) => `
-          <div class="evidence-citation">
-            <div class="evidence-header">
-              <div class="evidence-source">Source: Fortress Intelligence Platform</div>
-              <div class="evidence-timestamp">${new Date(signal.received_at).toISOString()}</div>
+          <div style="border-left: 3px solid #7c3aed; padding: 8px 14px; margin-bottom: 12px; background: #0f0f0f;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+              <span style="color: #7c3aed; font-size: 11px; font-weight: bold;">Source: Fortress Intelligence Platform</span>
+              <span style="color: #555; font-size: 10px;">${new Date(signal.received_at).toISOString()}</span>
             </div>
-            <div class="evidence-text">
-              <strong>${getCategoryDisplay(signal.category || 'signal')}:</strong> ${signal.normalized_text?.substring(0, 250) || 'No details available'}
-            </div>
-            <div class="evidence-links">
-              <a href="/signals?id=${signal.id}" class="evidence-link">🔗 View in Fortress</a>
-              ${signal.source_url ? `<a href="${signal.source_url}" class="evidence-link" target="_blank">🌐 Original Source</a>` : ''}
-              <span class="evidence-id">ID: ${signal.id.substring(0, 8).toUpperCase()}</span>
+            <p style="margin: 0 0 6px; font-size: 12px; color: #ccc; line-height: 1.5;">
+              <strong style="color: #aaa;">${getCategoryDisplay(signal.category || 'signal')}:</strong> ${signal.normalized_text?.substring(0, 250) || 'No details available'}
+            </p>
+            <div style="display: flex; gap: 12px; align-items: center;">
+              <span style="font-size: 10px; color: #444;">ID: ${signal.id.substring(0, 8).toUpperCase()}</span>
+              ${signal.source_url ? `<a href="${signal.source_url}" target="_blank" rel="noopener noreferrer" style="font-size: 11px; color: #7c3aed; text-decoration: underline;">Original Source →</a>` : ''}
             </div>
           </div>
         `).join('')}
