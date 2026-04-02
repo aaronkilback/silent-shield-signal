@@ -6,6 +6,8 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
+    const heartbeatAt = new Date().toISOString();
+    const heartbeatMs = Date.now();
 
     console.log('Starting threat intelligence monitoring...');
 
@@ -96,6 +98,15 @@ Deno.serve(async (req) => {
     }
 
     console.log(`Threat intelligence monitoring complete. Created ${signalsCreated} signals.`);
+
+    await supabase.from('cron_heartbeat').insert({
+      job_name: 'monitor-threat-intel',
+      started_at: heartbeatAt,
+      completed_at: new Date().toISOString(),
+      status: 'completed',
+      duration_ms: Date.now() - heartbeatMs,
+      result_summary: { signals_created: signalsCreated },
+    }).catch(() => {});
 
     return successResponse({
       success: true,

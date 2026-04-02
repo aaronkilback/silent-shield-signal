@@ -30,6 +30,8 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   const supabaseClient = createServiceClient();
+  const heartbeatAt = new Date().toISOString();
+  const heartbeatMs = Date.now();
 
   // Create monitoring history entry
   const { data: historyEntry, error: historyError } = await supabaseClient
@@ -236,6 +238,15 @@ Deno.serve(async (req) => {
       .eq('id', historyEntry.id);
 
     console.log(`RSS monitoring completed. Scanned ${totalItems} items, created ${totalSignals} signals`);
+
+    await supabaseClient.from('cron_heartbeat').insert({
+      job_name: 'monitor-rss-sources',
+      started_at: heartbeatAt,
+      completed_at: new Date().toISOString(),
+      status: 'completed',
+      duration_ms: Date.now() - heartbeatMs,
+      result_summary: { signals_created: totalSignals, items_scanned: totalItems },
+    }).catch(() => {});
 
     return successResponse({
       success: true,

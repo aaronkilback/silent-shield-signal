@@ -144,6 +144,10 @@ async function handleHealthCheck(_req: Request, body: Record<string, unknown>): 
     checkStorageBuckets(supabase),
     checkDocumentProcessing(supabase),
     checkRecentErrors(supabase),
+    checkDeadLetterQueue(supabase),
+    checkEdgeFunctionErrors(supabase),
+    checkCronHeartbeats(supabase),
+    checkFrontendErrors(supabase),
   ];
 
   const extendedChecks = includeExternal && !quick ? [
@@ -241,13 +245,77 @@ async function checkStorageBuckets(supabase: any): Promise<HealthCheckResult> {
 async function checkDocumentProcessing(supabase: any): Promise<HealthCheckResult> {
   const start = Date.now();
   try {
+    const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
     const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
-    const { data: stuckDocs, error } = await supabase.from('archival_documents').select('id').is('content_text', null).gte('created_at', oneHourAgo).limit(100);
-    if (error) return { name: 'document_processing', status: 'degraded', latency_ms: Date.now() - start, message: error.message, last_checked: new Date().toISOString() };
-    const stuckCount = stuckDocs?.length || 0;
+
+    // Stuck in 'processing' > 15 min (likely timed out)
+    const { data: stuckProcessing } = await supabase
+      .from('archival_documents')
+      .select('id')
+      .eq('processing_status', 'processing')
+      .lt('updated_at', fifteenMinAgo)
+      .limit(50);
+
+    // Failed in last hour
+    const { data: failedDocs } = await supabase
+      .from('archival_documents')
+      .select('id')
+      .eq('processing_status', 'failed')
+      .gte('updated_at', oneHourAgo)
+      .limit(50);
+
+    // DLQ depth for process-stored-document
+    const { data: dlqItems } = await supabase
+      .from('dead_letter_queue')
+      .select('id')
+      .eq('function_name', 'process-stored-document')
+      .eq('status', 'pending')
+      .limit(100);
+
+    // edge_function_errors for document processing in last hour
+    const { data: docErrors } = await supabase
+      .from('edge_function_errors')
+      .select('id, severity')
+      .eq('function_name', 'process-stored-document')
+      .gte('created_at', oneHourAgo)
+      .limit(50);
+
+    const stuckCount = stuckProcessing?.length || 0;
+    const failedCount = failedDocs?.length || 0;
+    const dlqDepth = dlqItems?.length || 0;
+    const errorCount = docErrors?.length || 0;
     const latency = Date.now() - start;
-    if (stuckCount > 10) return { name: 'document_processing', status: 'degraded', latency_ms: latency, message: `${stuckCount} unprocessed documents in last hour`, last_checked: new Date().toISOString() };
-    return { name: 'document_processing', status: 'healthy', latency_ms: latency, message: stuckCount > 0 ? `${stuckCount} documents pending` : undefined, last_checked: new Date().toISOString() };
+
+    // Auto-remediate: re-enqueue stuck documents (those genuinely stuck, not just processing)
+    if (stuckCount > 0 && stuckProcessing) {
+      for (const doc of stuckProcessing.slice(0, 5)) {
+        await supabase
+          .from('archival_documents')
+          .update({ processing_status: 'failed', metadata: { failure_reason: 'Auto-remediated: stuck in processing > 15min', failed_at: new Date().toISOString(), queued_for_retry: true } })
+          .eq('id', doc.id);
+        await supabase.from('dead_letter_queue').insert({
+          function_name: 'process-stored-document',
+          payload: { documentId: doc.id },
+          error_message: 'Stuck in processing > 15 minutes — auto-remediated by health check',
+          max_retries: 3,
+          next_retry_at: new Date(Date.now() + 60_000).toISOString(),
+          status: 'pending',
+        }).catch(() => {});
+      }
+      console.log(`[SystemOps] Auto-remediated ${Math.min(stuckCount, 5)} stuck documents`);
+    }
+
+    const summary = [
+      stuckCount > 0 ? `${stuckCount} stuck` : '',
+      failedCount > 0 ? `${failedCount} failed` : '',
+      dlqDepth > 0 ? `${dlqDepth} in DLQ` : '',
+      errorCount > 0 ? `${errorCount} errors/hr` : '',
+    ].filter(Boolean).join(', ');
+
+    if (stuckCount > 5 || dlqDepth > 20 || errorCount > 10) {
+      return { name: 'document_processing', status: 'degraded', latency_ms: latency, message: summary || 'Pipeline degraded', last_checked: new Date().toISOString() };
+    }
+    return { name: 'document_processing', status: 'healthy', latency_ms: latency, message: summary || undefined, last_checked: new Date().toISOString() };
   } catch (err) {
     return { name: 'document_processing', status: 'degraded', latency_ms: Date.now() - start, message: err instanceof Error ? err.message : 'Check failed', last_checked: new Date().toISOString() };
   }
@@ -267,6 +335,123 @@ async function checkRecentErrors(supabase: any): Promise<HealthCheckResult> {
     return { name: 'error_rate', status: 'healthy', latency_ms: latency, message: highCount > 0 ? `${highCount} high-severity errors in last hour` : undefined, last_checked: new Date().toISOString() };
   } catch (err) {
     return { name: 'error_rate', status: 'degraded', latency_ms: Date.now() - start, message: err instanceof Error ? err.message : 'Check failed', last_checked: new Date().toISOString() };
+  }
+}
+
+async function checkDeadLetterQueue(supabase: any): Promise<HealthCheckResult> {
+  const start = Date.now();
+  try {
+    const { data: dlqItems, error } = await supabase
+      .from('dead_letter_queue')
+      .select('function_name, retry_count, max_retries, created_at')
+      .eq('status', 'pending')
+      .limit(200);
+
+    const latency = Date.now() - start;
+    if (error) return { name: 'dead_letter_queue', status: 'degraded', latency_ms: latency, message: error.message, last_checked: new Date().toISOString() };
+
+    const total = dlqItems?.length || 0;
+    const exhausted = (dlqItems || []).filter((i: any) => i.retry_count >= i.max_retries).length;
+    const stale = (dlqItems || []).filter((i: any) => new Date(i.created_at) < new Date(Date.now() - 24 * 3600 * 1000)).length;
+
+    if (exhausted > 0 || total > 50) {
+      return { name: 'dead_letter_queue', status: 'degraded', latency_ms: latency, message: `${total} pending (${exhausted} exhausted retries, ${stale} stale >24h)`, last_checked: new Date().toISOString() };
+    }
+    return { name: 'dead_letter_queue', status: 'healthy', latency_ms: latency, message: total > 0 ? `${total} items pending retry` : undefined, last_checked: new Date().toISOString() };
+  } catch (err) {
+    return { name: 'dead_letter_queue', status: 'degraded', latency_ms: Date.now() - start, message: err instanceof Error ? err.message : 'Check failed', last_checked: new Date().toISOString() };
+  }
+}
+
+async function checkEdgeFunctionErrors(supabase: any): Promise<HealthCheckResult> {
+  const start = Date.now();
+  try {
+    const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
+    const { data: errors, error } = await supabase
+      .from('edge_function_errors')
+      .select('function_name, severity')
+      .gte('created_at', oneHourAgo)
+      .limit(200);
+
+    const latency = Date.now() - start;
+    if (error) return { name: 'edge_function_errors', status: 'degraded', latency_ms: latency, message: error.message, last_checked: new Date().toISOString() };
+
+    const critical = (errors || []).filter((e: any) => e.severity === 'critical').length;
+    const total = errors?.length || 0;
+
+    // Group by function for message
+    const byFn: Record<string, number> = {};
+    (errors || []).forEach((e: any) => { byFn[e.function_name] = (byFn[e.function_name] || 0) + 1; });
+    const topFns = Object.entries(byFn).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([fn, n]) => `${fn}(${n})`).join(', ');
+
+    if (critical > 0) return { name: 'edge_function_errors', status: 'unhealthy', latency_ms: latency, message: `${critical} critical errors in last hour — ${topFns}`, last_checked: new Date().toISOString() };
+    if (total > 20) return { name: 'edge_function_errors', status: 'degraded', latency_ms: latency, message: `${total} errors in last hour — ${topFns}`, last_checked: new Date().toISOString() };
+    return { name: 'edge_function_errors', status: 'healthy', latency_ms: latency, message: total > 0 ? `${total} errors/hr (${topFns})` : undefined, last_checked: new Date().toISOString() };
+  } catch (err) {
+    return { name: 'edge_function_errors', status: 'degraded', latency_ms: Date.now() - start, message: err instanceof Error ? err.message : 'Check failed', last_checked: new Date().toISOString() };
+  }
+}
+
+async function checkCronHeartbeats(supabase: any): Promise<HealthCheckResult> {
+  const start = Date.now();
+  try {
+    // Query the stalled_cron_jobs view for critical jobs
+    const { data: stalledJobs, error } = await supabase
+      .from('stalled_cron_jobs')
+      .select('job_name, stall_status, minutes_since_last_success, recent_failures, is_critical')
+      .neq('stall_status', 'ok');
+
+    const latency = Date.now() - start;
+    if (error) return { name: 'cron_heartbeats', status: 'degraded', latency_ms: latency, message: error.message, last_checked: new Date().toISOString() };
+
+    const stalled = (stalledJobs || []).filter((j: any) => j.stall_status === 'stalled');
+    const neverRun = (stalledJobs || []).filter((j: any) => j.stall_status === 'never_run');
+    const criticalStalled = stalled.filter((j: any) => j.is_critical);
+
+    if (criticalStalled.length > 0) {
+      const names = criticalStalled.map((j: any) => `${j.job_name}(${Math.round(j.minutes_since_last_success)}min ago)`).join(', ');
+      return { name: 'cron_heartbeats', status: 'unhealthy', latency_ms: latency, message: `Critical cron jobs stalled: ${names}`, last_checked: new Date().toISOString() };
+    }
+    if (stalled.length > 0 || neverRun.length > 0) {
+      const msg = [...stalled.map((j: any) => j.job_name), ...neverRun.map((j: any) => `${j.job_name}(never run)`)].join(', ');
+      return { name: 'cron_heartbeats', status: 'degraded', latency_ms: latency, message: `Non-critical jobs stalled/never run: ${msg}`, last_checked: new Date().toISOString() };
+    }
+    return { name: 'cron_heartbeats', status: 'healthy', latency_ms: latency, last_checked: new Date().toISOString() };
+  } catch (err) {
+    // View may not exist yet on first deploy — degrade gracefully
+    return { name: 'cron_heartbeats', status: 'degraded', latency_ms: Date.now() - start, message: err instanceof Error ? err.message : 'Check failed', last_checked: new Date().toISOString() };
+  }
+}
+
+async function checkFrontendErrors(supabase: any): Promise<HealthCheckResult> {
+  const start = Date.now();
+  try {
+    const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
+    const { data: errors, error } = await supabase
+      .from('frontend_errors')
+      .select('error_type, component, message')
+      .gte('occurred_at', oneHourAgo)
+      .limit(200);
+
+    const latency = Date.now() - start;
+    if (error) {
+      // Table may not exist on older deploys — degrade gracefully
+      return { name: 'frontend_errors', status: 'degraded', latency_ms: latency, message: error.message, last_checked: new Date().toISOString() };
+    }
+
+    const total = errors?.length || 0;
+    const byComponent: Record<string, number> = {};
+    (errors || []).forEach((e: any) => {
+      const key = e.component || e.error_type || 'unknown';
+      byComponent[key] = (byComponent[key] || 0) + 1;
+    });
+    const top = Object.entries(byComponent).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => `${k}(${n})`).join(', ');
+
+    if (total > 50) return { name: 'frontend_errors', status: 'unhealthy', latency_ms: latency, message: `${total} client-side errors in last hour — ${top}`, last_checked: new Date().toISOString() };
+    if (total > 10) return { name: 'frontend_errors', status: 'degraded', latency_ms: latency, message: `${total} client-side errors in last hour — ${top}`, last_checked: new Date().toISOString() };
+    return { name: 'frontend_errors', status: 'healthy', latency_ms: latency, message: total > 0 ? `${total} errors/hr` : undefined, last_checked: new Date().toISOString() };
+  } catch (err) {
+    return { name: 'frontend_errors', status: 'degraded', latency_ms: Date.now() - start, message: err instanceof Error ? err.message : 'Check failed', last_checked: new Date().toISOString() };
   }
 }
 
