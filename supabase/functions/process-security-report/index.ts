@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import JSZip from "npm:jszip@3.10.1";
 
 function normalizeExtractedText(input: string): string {
   return input
@@ -37,116 +38,50 @@ function isWordDocument(fileType: string, filename?: string): boolean {
   return false;
 }
 
-// Extract text from Word documents using AI
-async function extractTextFromWord(blob: Blob, apiKey: string, filename?: string): Promise<string> {
-  console.log('Starting Word document text extraction using Gemini Vision...');
-  
+// Extract text from Word documents by unzipping the DOCX XML — no AI needed
+async function extractTextFromWord(blob: Blob, _apiKey: string, filename?: string): Promise<string> {
+  console.log(`Starting Word document text extraction via JSZip for: ${filename}`);
+
   const fileSizeMB = blob.size / (1024 * 1024);
-  
-  // For very large Word docs, return a message instead of failing
-  if (blob.size > 25 * 1024 * 1024) {
-    console.log(`Word document too large (${fileSizeMB.toFixed(1)}MB), returning size notice`);
-    return `[Large Word document: ${filename || 'document'} (${fileSizeMB.toFixed(1)}MB). File stored successfully. For full text extraction of documents over 25MB, please split into smaller files.]`;
+
+  if (blob.size > 50 * 1024 * 1024) {
+    return `[Large Word document: ${filename || 'document'} (${fileSizeMB.toFixed(1)}MB). File stored successfully. For full text extraction of documents over 50MB, please split into smaller files.]`;
   }
-  
-  // Convert to base64
+
   const arrayBuffer = await blob.arrayBuffer();
   const uint8Array = new Uint8Array(arrayBuffer);
-  const base64Doc = uint8ToBase64(uint8Array);
-  
-  console.log(`Word document size: ${blob.size} bytes`);
-  
-  // Determine MIME type
-  const mimeType = filename?.toLowerCase().endsWith('.doc') 
-    ? 'application/msword' 
-    : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-  
-  const maxRetries = 3;
-  let lastError: Error | null = null;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`Word extraction attempt ${attempt}/${maxRetries}...`);
-      
-      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'gemini-2.5-pro',
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: `You are a document text extractor. Extract ALL text from this Word document.
 
-INSTRUCTIONS:
-- Extract every word, number, and piece of text from the document
-- Preserve the general structure (paragraphs, sections, headers, bullet points)
-- Include tables, lists, and any formatted content
-- Do NOT summarize or interpret - just extract the raw text
-- Maintain the reading order (top to bottom)
-- If there are multiple sections or pages, extract text from all of them
+  try {
+    const zip = await JSZip.loadAsync(uint8Array);
+    const documentXml = await zip.file('word/document.xml')?.async('string');
 
-Output ONLY the extracted text, nothing else.`
-                },
-                {
-                  type: 'image_url',
-                  image_url: {
-                    url: `data:${mimeType};base64,${base64Doc}`
-                  }
-                }
-              ]
-            }
-          ]
-        })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`Word extraction attempt ${attempt} failed:`, response.status, errorText.slice(0, 300));
-        
-        if (response.status >= 500 && attempt < maxRetries) {
-          console.log(`Retrying after ${attempt * 2} seconds...`);
-          await new Promise(resolve => setTimeout(resolve, attempt * 2000));
-          continue;
-        }
-        
-        throw new Error(`AI service temporarily unavailable (${response.status}). Please try again in a few minutes.`);
-      }
-
-      const result = await response.json();
-      const extractedText = result.choices?.[0]?.message?.content || '';
-      
-      if (!extractedText || extractedText.length < 50) {
-        throw new Error('Could not extract sufficient text from Word document. The file may be corrupted or empty.');
-      }
-      
-      console.log(`Word extraction successful: ${extractedText.length} characters`);
-      return normalizeExtractedText(extractedText);
-      
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      
-      if (lastError.message.includes('insufficient') || lastError.message.includes('corrupted')) {
-        throw lastError;
-      }
-      
-      if (attempt < maxRetries) {
-        console.log(`Retrying after error: ${lastError.message.slice(0, 100)}`);
-        await new Promise(resolve => setTimeout(resolve, attempt * 2000));
-        continue;
-      }
-      
-      throw lastError;
+    if (!documentXml) {
+      throw new Error('Could not find word/document.xml inside DOCX — file may be corrupt or is a .doc (old binary format).');
     }
+
+    const text = documentXml
+      .replace(/<w:p[^>]*>/g, '\n')
+      .replace(/<w:t[^>]*>([^<]*)<\/w:t>/g, '$1')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/\n\s*\n/g, '\n\n')
+      .trim();
+
+    if (!text || text.length < 50) {
+      throw new Error('Could not extract sufficient text from Word document. The file may be empty or corrupted.');
+    }
+
+    console.log(`Word extraction successful: ${text.length} characters`);
+    return normalizeExtractedText(text);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Word extraction failed:', msg);
+    throw new Error(`Failed to extract text from Word document: ${msg}`);
   }
-  
-  throw lastError || new Error('Word extraction failed after all retries');
 }
 
 // Maximum size for base64 OCR - edge functions have 150MB memory, base64 doubles size
@@ -180,7 +115,7 @@ async function extractTextWithOCR(
   let lastError: Error | null = null;
   
   // Use Pro model for larger files (better at handling complex documents)
-  const model = pdfBlob.size > 10 * 1024 * 1024 ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
+  const model = pdfBlob.size > 10 * 1024 * 1024 ? 'gpt-4o-mini' : 'gpt-4o-mini';
   console.log(`Using model: ${model}`);
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -578,7 +513,7 @@ Deno.serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gemini-2.5-pro',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',

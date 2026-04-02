@@ -62,7 +62,7 @@ Identify and analyze recent regulatory changes and upcoming requirements that im
 Focus on regulations with direct security, privacy, or operational risk implications.`;
 
     const aiResult = await callAiGateway({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are an expert regulatory compliance analyst specializing in security, privacy, and environmental regulations.' },
         { role: 'user', content: analysisPrompt }

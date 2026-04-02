@@ -43,7 +43,7 @@ Deno.serve(async (req) => {
 
     // Use AI to extract entities from the text via resilient gateway
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         {
           role: 'system',

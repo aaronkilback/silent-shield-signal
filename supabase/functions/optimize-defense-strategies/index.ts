@@ -99,7 +99,7 @@ Design an optimized, layered defense strategy combining technical, physical, and
 Consider client-specific constraints (industry regulations, operational requirements, budget) and ensure recommendations are practical and implementable.`;
 
     const aiResult = await callAiGateway({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are an expert strategic defense architect specializing in comprehensive security program design and optimization.' },
         { role: 'user', content: optimizationPrompt }

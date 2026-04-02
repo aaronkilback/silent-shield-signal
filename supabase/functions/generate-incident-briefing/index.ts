@@ -296,7 +296,7 @@ Include specific technical details, TTPs, and actionable steps. Use security ter
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",

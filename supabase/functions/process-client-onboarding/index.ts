@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
 
     // Use AI to generate risk assessment via resilient gateway
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         {
           role: 'system',

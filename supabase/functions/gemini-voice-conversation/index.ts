@@ -59,7 +59,7 @@ Be professional, security-focused, and conversational in your voice responses. K
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "gemini-2.5-flash",
+          model: "gpt-4o-mini",
           messages,
           stream: false,
         }),

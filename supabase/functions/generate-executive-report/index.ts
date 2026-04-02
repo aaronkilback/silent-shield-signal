@@ -372,7 +372,7 @@ Be specific, cite EXACT data from above, and use executive-appropriate language.
     };
 
     const flashResult = await callAiGatewayJson({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are a security intelligence advisor. Always respond with valid JSON only, no markdown.' },
         { role: 'user', content: flashPrompt }
@@ -402,7 +402,7 @@ Provide exactly 3 impact ladders. Be specific and actionable. Use executive lang
     console.log('Generating impact ladders...');
     let impactLadders: ImpactLadder[] = [];
     const impactResult = await callAiGatewayJson<ImpactLadder[]>({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are a strategic security advisor. Always respond with valid JSON only.' },
         { role: 'user', content: impactPrompt }
@@ -453,7 +453,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
     console.log('Generating executive summary...');
     let executiveSummary = 'Analysis in progress...';
     const summaryResult = await callAiGateway({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are a professional security intelligence analyst writing for C-level executives. Use formal, business-appropriate language.' },
         { role: 'user', content: summaryPrompt }
@@ -488,7 +488,7 @@ Be specific and actionable. Max 5 items.`;
     console.log('Generating action items...');
     let actionItems: ActionItem[] = [];
     const actionsResult = await callAiGatewayJson({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are a security operations advisor. Always respond with valid JSON only.' },
         { role: 'user', content: actionsPrompt }
@@ -559,7 +559,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
     console.log('Generating strategic deductions...');
     let deductions = 'Analysis in progress...';
     const deductionsResult = await callAiGateway({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are a strategic security analyst providing executive-level threat assessment.' },
         { role: 'user', content: deductionsPrompt }
@@ -603,7 +603,7 @@ Write 2-3 paragraphs of narrative followed by a DEDUCTIONS: paragraph. Use execu
 OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbols. No bullet points using asterisks. No bold formatting. Write in complete sentences.`;
 
         const narrativeResult = await callAiGateway({
-          model: 'gemini-2.5-flash',
+          model: 'gpt-4o-mini',
           messages: [
             { role: 'system', content: 'You are an intelligence analyst writing for executives.' },
             { role: 'user', content: narrativePrompt }

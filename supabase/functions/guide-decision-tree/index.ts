@@ -122,7 +122,7 @@ Generate a dynamic decision tree node that guides the analyst through optimal re
 
     // Call AI for decision guidance
     const aiResult = await callAiGateway({
-      model: "gemini-2.5-flash",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",

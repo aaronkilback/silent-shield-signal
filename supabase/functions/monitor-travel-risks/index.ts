@@ -141,7 +141,7 @@ Return as JSON: { "flights": [...], "airport_conditions": {...}, "weather_impact
       // Fallback: use AI gateway with web-search-capable model
       try {
         const fallbackResult = await callAiGateway({
-          model: 'gemini-2.5-flash',
+          model: 'gpt-4o-mini',
           messages: [
             { role: "system", content: "You are a flight status analyst. Use your knowledge of current airline schedules and conditions to provide the best available flight status information. Return valid JSON only, no markdown." },
             { role: "user", content: flightPrompt }
@@ -219,7 +219,7 @@ Return as JSON: { "safety_level": "low|medium|high|critical", "advisories": [...
       // Fallback: use AI gateway
       try {
         const fallbackResult = await callAiGateway({
-          model: 'gemini-2.5-flash',
+          model: 'gpt-4o-mini',
           messages: [
             { role: "system", content: "You are a travel security analyst. Using your knowledge of current world events, provide the most up-to-date destination intelligence. Focus on real, verifiable conditions. Return detailed analysis as prose, not JSON." },
             { role: "user", content: `Provide current travel security intelligence for ${city}, ${country} for travel around ${travelDates}. Cover: travel advisories, weather conditions, security threats, civil unrest, health risks, infrastructure issues, and any major events affecting travel. Be specific about current conditions.` }
@@ -529,7 +529,7 @@ Respond with a JSON object:
 
       // Call AI for risk assessment via resilient gateway
       const aiResult = await callAiGateway({
-        model: 'gemini-2.5-flash',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: "system",

@@ -40,10 +40,7 @@ serve(async (req) => {
 
     console.log('Briefing chat response request:', { briefing_id, agent_id, is_group_question, scope });
 
-    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-    if (!GEMINI_API_KEY) {
-      throw new Error('GEMINI_API_KEY not configured');
-    }
+    // AI calls route through callAiGateway → OpenAI (GEMINI_API_KEY guard removed)
 
     // Detect simple acknowledgment messages that don't need full processing
     const isSimpleAcknowledgment = (msg: string): boolean => {
@@ -72,7 +69,7 @@ serve(async (req) => {
       console.log("Detected simple acknowledgment in briefing chat, using fast response path");
       
       const ackResult = await callAiGateway({
-        model: 'gemini-2.5-flash-lite',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
@@ -485,7 +482,7 @@ RESPONSE GUIDELINES:
 
     // Call AI Gateway (resilient)
     const mainResult = await callAiGateway({
-      model: 'gemini-3-flash-preview',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessageForModel }
@@ -541,7 +538,7 @@ RESPONSE GUIDELINES:
       ].join('\n');
 
       const correctionResult = await callAiGateway({
-        model: 'gemini-3-flash-preview',
+        model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: correctionUserMessage },

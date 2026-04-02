@@ -36,7 +36,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
     if (isStreaming) {
       // Streaming call — return SSE stream
       const result = await callAiGatewayStream({
-        model: bodyObj.model || 'gemini-2.5-flash',
+        model: bodyObj.model || 'gpt-4o-mini',
         messages: bodyObj.messages || [],
         functionName: 'dashboard-ai-assistant',
         timeoutMs,
@@ -54,7 +54,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
     } else {
       // Non-streaming call — return JSON response (for tool-use decisions)
       const result = await callAiGateway({
-        model: bodyObj.model || 'gemini-2.5-flash',
+        model: bodyObj.model || 'gpt-4o-mini',
         messages: bodyObj.messages || [],
         functionName: 'dashboard-ai-assistant',
         retries: 2,
@@ -1025,9 +1025,9 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
           ai: {
             provider: 'Lovable AI Gateway',
             models: [
-              'gemini-3-pro-preview (primary - advanced reasoning)',
-              'gemini-2.5-flash (utility/summarization)',
-              'gemini-2.5-flash-lite (classification)',
+              'gpt-4o-mini (primary - advanced reasoning)',
+              'gpt-4o-mini (utility/summarization)',
+              'gpt-4o-mini (classification)',
               'openai/gpt-5-mini (alternative)'
             ],
             uses: [
@@ -1704,7 +1704,7 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              model: 'gemini-2.5-flash',
+              model: 'gpt-4o-mini',
               messages: [{
                 role: 'user',
                 content: [
@@ -1766,7 +1766,7 @@ Be comprehensive - list all road names, milepost markers, facility names, pipeli
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              model: 'gemini-2.5-pro',
+              model: 'gpt-4o-mini',
               messages: [{
                 role: 'user',
                 content: [
@@ -3494,7 +3494,7 @@ Be thorough and include every piece of visible text and data.`,
           "Be ready to rollback if issues arise"
         ],
         generated_at: new Date().toISOString(),
-        ai_model: "gemini-2.5-flash"
+        ai_model: "gpt-4o-mini"
       };
 
       // Update bug report with fix proposal
@@ -6737,7 +6737,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
                   "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                  model: "gemini-2.5-flash-image",
+                  model: "gpt-4o-mini-image",
                   messages: [{ role: "user", content: imgPrompt }],
                   modalities: ["image", "text"],
                 }),
@@ -7769,7 +7769,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
           content = `[YouTube Video]\nTitle: ${data.title}\nChannel: ${data.author_name}\nURL: ${url}\n\nNote: Full transcript/description requires YouTube Data API access.`;
         } else if (isTelegram) {
           const rawText = await response.text();
-          const messages = rawText.match(/<div class="tgme_widget_message_text[^"]*"[^>]*>([sS]*?)</div>/gi) || [];
+          const messages = rawText.match(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/gi) || [];
           content = messages
             .slice(0, 5)
             .map(m => m.replace(/<[^>]+>/g, ' ').replace(/\s{2,}/g, ' ').trim())
@@ -7832,50 +7832,521 @@ The signal is now in the database with status 'triaged' and rules have been appl
       }
     }
 
+    case "get_agent_responses":
     case "broadcast_to_agents": {
       const { message, priority = "normal" } = args;
-      
-      // Get all active agents
+
+      // Get all active agents with their system prompts and models
       const { data: activeAgents, error: agentsErr } = await supabaseClient
         .from("ai_agents")
-        .select("id, call_sign, codename")
+        .select("id, call_sign, codename, system_prompt, specialty")
         .eq("is_active", true);
-      
+
       if (agentsErr || !activeAgents?.length) {
         return { error: "Failed to fetch active agents", details: agentsErr?.message };
       }
 
-      // Get the sender's profile
-      const senderUserId = userId || null;
+      // ── Real-time agent polling (parallel) ───────────────────────────────
+      // Invoke each agent directly and collect live responses.
+      const agentQuery = async (agent: any): Promise<{ call_sign: string; codename: string; response: string }> => {
+        try {
+          const systemPrompt = (agent.system_prompt || `You are ${agent.call_sign}, a specialist AI agent. Specialty: ${agent.specialty || 'general intelligence'}.`)
+            + `\n\nYou are responding to a direct broadcast from the Principal (Command). Be concise, honest, and in-character. Today's date: ${new Date().toISOString().split('T')[0]}.`;
 
-      // Insert a pending message for each agent
-      const pendingMessages = activeAgents.map((agent: any) => ({
-        agent_id: agent.id,
-        recipient_user_id: senderUserId, // The user sending is also the recipient context
-        sender_user_id: senderUserId,
-        message: `[BROADCAST FROM PRINCIPAL] ${message}`,
-        priority,
-        trigger_event: "principal_broadcast",
-      }));
+          const result = await callAiGateway({
+            model: 'gpt-4o-mini',
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: `[BROADCAST FROM PRINCIPAL]\n\n${message}` },
+            ],
+            functionName: `agent-broadcast-${agent.call_sign}`,
+            retries: 1,
+            extraBody: { max_completion_tokens: 400 },
+          });
+          return {
+            call_sign: agent.call_sign,
+            codename: agent.codename,
+            response: result.error ? `(unavailable: ${result.error})` : (result.content || '(no response)'),
+          };
+        } catch (e) {
+          return { call_sign: agent.call_sign, codename: agent.codename, response: `(error: ${e})` };
+        }
+      };
 
-      const { error: insertErr } = await supabaseClient
-        .from("agent_pending_messages")
-        .insert(pendingMessages);
+      // Run all agents in parallel with a 20-second race timeout
+      const timeout = new Promise<null>(resolve => setTimeout(() => resolve(null), 20000));
+      const responses = await Promise.race([
+        Promise.allSettled(activeAgents.map(agentQuery)),
+        timeout,
+      ]) as PromiseSettledResult<{ call_sign: string; codename: string; response: string }>[] | null;
 
-      if (insertErr) {
-        return { error: "Failed to deliver broadcast", details: insertErr.message };
+      const agentResponses: { call_sign: string; codename: string; response: string }[] = [];
+      if (responses) {
+        for (const r of responses) {
+          if (r.status === 'fulfilled') agentResponses.push(r.value);
+        }
       }
 
-      // Also log as agent messages in each agent's conversation (if they have one)
-      const deliveredTo = activeAgents.map((a: any) => a.call_sign);
-      
+      // ── Also store in pending messages for audit trail ────────────────────
+      const senderUserId = userId || null;
+      await supabaseClient.from("agent_pending_messages").insert(
+        activeAgents.map((agent: any) => ({
+          agent_id: agent.id,
+          recipient_user_id: senderUserId,
+          sender_user_id: senderUserId,
+          message: `[BROADCAST FROM PRINCIPAL] ${message}`,
+          priority,
+          trigger_event: "principal_broadcast",
+          delivered_at: new Date().toISOString(), // mark delivered since we got live response
+        }))
+      );
+
+      const responseLines = agentResponses.map(r =>
+        `**${r.call_sign}** (${r.codename}): ${r.response}`
+      ).join('\n\n');
+
       return {
         success: true,
-        delivered_to: deliveredTo,
         agent_count: activeAgents.length,
-        message_preview: message.substring(0, 100),
-        summary: `Message broadcast to ${activeAgents.length} agents: ${deliveredTo.join(", ")}`,
+        responses_received: agentResponses.length,
+        agent_responses: agentResponses,
+        formatted_responses: responseLines || 'No responses received.',
+        summary: `Live responses collected from ${agentResponses.length}/${activeAgents.length} agents.`,
       };
+    }
+
+    case "agent_self_assessment": {
+      // ── Pull system-wide context to give agents real grounding ──────────
+      const [
+        { data: activeAgents2, error: agentsErr2 },
+        { count: signalCount },
+        { count: incidentCount },
+        { count: entityCount },
+      ] = await Promise.all([
+        supabaseClient
+          .from("ai_agents")
+          .select("id, call_sign, codename, specialty, mission_scope, input_sources, output_types, system_prompt")
+          .eq("is_active", true),
+        supabaseClient.from("signals").select("*", { count: "exact", head: true }),
+        supabaseClient.from("incidents").select("*", { count: "exact", head: true }),
+        supabaseClient.from("entities").select("*", { count: "exact", head: true }),
+      ]);
+
+      if (agentsErr2 || !activeAgents2?.length) {
+        return { error: "Failed to fetch active agents", details: agentsErr2?.message };
+      }
+
+      const systemContext = `
+SYSTEM CONTEXT (real operational data as of ${new Date().toISOString().split('T')[0]}):
+- Total signals in database: ${signalCount ?? 'unknown'}
+- Total incidents tracked: ${incidentCount ?? 'unknown'}
+- Total entities monitored: ${entityCount ?? 'unknown'}
+- Active agents in network: ${activeAgents2.length}
+- Available data sources: signals, incidents, entities, OSINT content, entity_content, watchlists, poi_investigations, poi_reports, travel advisories, neural constellation graph
+- Available tools you can request: OSINT search, web fetch, entity lookup, signal analysis, threat scoring, breach checking (HIBP), travel risk assessment, incident playbooks
+`.trim();
+
+      const selfAssessmentPrompt = `
+${systemContext}
+
+Your own configuration:
+- Call sign: {{CALL_SIGN}}
+- Codename: {{CODENAME}}
+- Specialty: {{SPECIALTY}}
+- Mission scope: {{MISSION_SCOPE}}
+- Input sources you're designed to use: {{INPUT_SOURCES}}
+- Output types you produce: {{OUTPUT_TYPES}}
+
+You are being asked to perform a structured self-assessment. Be completely honest — this is a direct line to the Principal (Command). Do not give generic answers. Think about your actual operational constraints given the real data above.
+
+Respond ONLY with a valid JSON object in this exact format:
+
+{
+  "worries": [
+    {
+      "concern": "specific concern in 1-2 sentences",
+      "severity": "low|medium|high|critical",
+      "category": "data_access|capability|coordination|risk|resource|blind_spot|other"
+    }
+  ],
+  "goals": [
+    {
+      "goal": "specific goal in 1-2 sentences",
+      "priority": "low|medium|high|critical",
+      "blocker": "what is currently preventing this, if anything"
+    }
+  ],
+  "improvements": [
+    {
+      "improvement": "specific improvement in 1-2 sentences",
+      "type": "data|tooling|coordination|training|access|protocol|other",
+      "effort": "low|medium|high"
+    }
+  ],
+  "summary": "2-3 sentence honest overall assessment of your current operational effectiveness and biggest gap"
+}
+
+No text before or after the JSON. Only the JSON object.
+`.trim();
+
+      // ── Invoke each agent in parallel with personalized context ─────────
+      const assessAgent = async (agent: any) => {
+        const personalizedPrompt = selfAssessmentPrompt
+          .replace('{{CALL_SIGN}}', agent.call_sign)
+          .replace('{{CODENAME}}', agent.codename)
+          .replace('{{SPECIALTY}}', agent.specialty || 'general')
+          .replace('{{MISSION_SCOPE}}', agent.mission_scope || 'not specified')
+          .replace('{{INPUT_SOURCES}}', (agent.input_sources || []).join(', ') || 'not specified')
+          .replace('{{OUTPUT_TYPES}}', (agent.output_types || []).join(', ') || 'not specified');
+
+        const agentSystemPrompt = (agent.system_prompt || `You are ${agent.call_sign}, specialty: ${agent.specialty}.`)
+          + `\n\nToday's date: ${new Date().toISOString().split('T')[0]}. You must respond with valid JSON only.`;
+
+        const result = await callAiGateway({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: agentSystemPrompt },
+            { role: 'user', content: `[DIRECT ORDER FROM PRINCIPAL — STRUCTURED SELF-ASSESSMENT REQUIRED]\n\n${personalizedPrompt}` },
+          ],
+          functionName: `agent-assess-${agent.call_sign}`,
+          retries: 1,
+          extraBody: { max_completion_tokens: 1000 },
+        });
+
+        const rawResponse = result.content || '';
+        let parsed: any = null;
+        let parseError: string | null = null;
+
+        try {
+          // Strip markdown code fences if present
+          const cleaned = rawResponse.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+          parsed = JSON.parse(cleaned);
+        } catch (e) {
+          parseError = e instanceof Error ? e.message : String(e);
+        }
+
+        return {
+          agent_id: agent.id,
+          call_sign: agent.call_sign,
+          codename: agent.codename,
+          worries: parsed?.worries || [],
+          goals: parsed?.goals || [],
+          improvements: parsed?.improvements || [],
+          summary: parsed?.summary || null,
+          raw_response: rawResponse,
+          parse_error: parseError,
+        };
+      };
+
+      const timeout2 = new Promise<null>((resolve) => setTimeout(() => resolve(null), 55000));
+      const assessments2 = await Promise.race([
+        Promise.allSettled(activeAgents2.map(assessAgent)),
+        timeout2,
+      ]) as PromiseSettledResult<any>[] | null;
+
+      const results: any[] = [];
+      if (assessments2) {
+        for (const r of assessments2) {
+          if (r.status === 'fulfilled' && r.value) results.push(r.value);
+        }
+      }
+
+      // ── Persist to agent_assessments table ──────────────────────────────
+      if (results.length > 0) {
+        const rows = results.map(r => ({
+          agent_id: r.agent_id || null,
+          call_sign: r.call_sign,
+          codename: r.codename,
+          prompt_context: 'principal_self_assessment_request',
+          worries: r.worries,
+          goals: r.goals,
+          improvements: r.improvements,
+          raw_response: r.raw_response,
+          parse_error: r.parse_error || null,
+        }));
+        await supabaseClient.from('agent_assessments').insert(rows);
+      }
+
+      // ── Format readable summary for Aegis ───────────────────────────────
+      const formatted = results.map(r => {
+        const warnList = (r.worries as any[]).map((w: any) =>
+          `  [${(w.severity || '?').toUpperCase()}] ${w.concern}`).join('\n') || '  None reported';
+        const goalList = (r.goals as any[]).map((g: any) =>
+          `  [${(g.priority || '?').toUpperCase()}] ${g.goal}${g.blocker ? ` — Blocker: ${g.blocker}` : ''}`).join('\n') || '  None reported';
+        const improveList = (r.improvements as any[]).map((i: any) =>
+          `  [${(i.type || '?').toUpperCase()}] ${i.improvement}`).join('\n') || '  None reported';
+        return `**${r.call_sign}** (${r.codename})${r.parse_error ? ' ⚠️ parse error' : ''}
+Worries:
+${warnList}
+Goals:
+${goalList}
+Improvements:
+${improveList}${r.summary ? `\nSummary: ${r.summary}` : ''}`;
+      }).join('\n\n---\n\n');
+
+      return {
+        success: true,
+        agents_assessed: results.length,
+        parse_failures: results.filter(r => r.parse_error).length,
+        assessments: results,
+        formatted_report: formatted || 'No assessments received.',
+        persisted: results.length > 0,
+      };
+    }
+
+    case "add_expert_source": {
+      const {
+        name, title, expertise_domains = [], youtube_channel_url,
+        podcast_rss_url, linkedin_url, website_url,
+        relevant_agent_call_signs = [], notes, ingest_immediately = true,
+      } = args;
+
+      if (!name) return { error: 'name is required' };
+
+      // Check if expert already exists
+      const { data: existing } = await supabaseClient
+        .from('expert_profiles')
+        .select('id, name')
+        .ilike('name', name)
+        .limit(1);
+
+      let profileId: string;
+      if (existing?.length) {
+        profileId = existing[0].id;
+        // Update with any new info
+        await supabaseClient.from('expert_profiles').update({
+          title: title || undefined,
+          expertise_domains: expertise_domains.length ? expertise_domains : undefined,
+          youtube_channel_url: youtube_channel_url || undefined,
+          podcast_rss_url: podcast_rss_url || undefined,
+          linkedin_url: linkedin_url || undefined,
+          website_url: website_url || undefined,
+          relevant_agent_call_signs: relevant_agent_call_signs.length ? relevant_agent_call_signs : undefined,
+          notes: notes || undefined,
+          updated_at: new Date().toISOString(),
+        }).eq('id', profileId);
+      } else {
+        const { data: inserted, error: insertErr } = await supabaseClient
+          .from('expert_profiles')
+          .insert({
+            name, title, expertise_domains, youtube_channel_url, podcast_rss_url,
+            linkedin_url, website_url, relevant_agent_call_signs, notes,
+          })
+          .select('id')
+          .single();
+
+        if (insertErr || !inserted) {
+          return { error: `Failed to create expert profile: ${insertErr?.message}` };
+        }
+        profileId = inserted.id;
+      }
+
+      let ingestionResult: any = null;
+      if (ingest_immediately) {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL');
+        const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+        if (supabaseUrl && serviceKey) {
+          try {
+            const resp = await fetch(`${supabaseUrl}/functions/v1/ingest-expert-media`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` },
+              body: JSON.stringify({ expert_profile_id: profileId }),
+              signal: AbortSignal.timeout(55000),
+            });
+            ingestionResult = await resp.json();
+          } catch (e) {
+            ingestionResult = { error: e instanceof Error ? e.message : 'Ingestion timed out' };
+          }
+        }
+      }
+
+      return {
+        success: true,
+        profile_id: profileId,
+        expert: name,
+        action: existing?.length ? 'updated' : 'created',
+        ingestion: ingestionResult,
+        message: `${name} added as an expert source. ${ingest_immediately ? `Ingestion ${ingestionResult?.error ? 'failed: ' + ingestionResult.error : `complete — ${ingestionResult?.total_entries || 0} knowledge entries stored.`}` : 'Ingestion will run on next scheduled sweep.'}`,
+      };
+    }
+
+    case "synthesize_knowledge": {
+      const { agent_call_sign: synthCallSign, since_days = 7, force: synthForce } = args;
+      const supabaseUrl3 = Deno.env.get('SUPABASE_URL');
+      const serviceKey3 = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      if (!supabaseUrl3 || !serviceKey3) return { error: 'Missing environment configuration' };
+      try {
+        const resp = await fetch(`${supabaseUrl3}/functions/v1/knowledge-synthesizer`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey3}` },
+          body: JSON.stringify({ agent_call_sign: synthCallSign, since_days, force: synthForce }),
+          signal: AbortSignal.timeout(120000),
+        });
+        const result = await resp.json();
+        return {
+          success: true,
+          ...result,
+          message: result.message || `Knowledge synthesis complete. ${result.beliefs_created || 0} new beliefs formed, ${result.beliefs_updated || 0} updated, ${result.connections_created || 0} cross-domain connections discovered across ${result.agents_synthesized || 0} agents.`,
+        };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : 'Knowledge synthesis failed' };
+      }
+    }
+
+    case "run_agent_knowledge_hunt": {
+      const { agent_call_sign: huntCallSign, max_agents = 5, force: huntForce, angles: huntAngles } = args;
+      const supabaseUrl2 = Deno.env.get('SUPABASE_URL');
+      const serviceKey2 = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      if (!supabaseUrl2 || !serviceKey2) return { error: 'Missing environment configuration' };
+      try {
+        const resp = await fetch(`${supabaseUrl2}/functions/v1/agent-knowledge-seeker`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey2}` },
+          body: JSON.stringify({ agent_call_sign: huntCallSign, max_agents, force: huntForce, angles: huntAngles }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const result = await resp.json();
+        return {
+          success: true,
+          ...result,
+          message: result.message || `Knowledge hunt initiated for ${result.agents_queued || 'all'} agents across ${result.angles_per_agent || 8} knowledge angles. Searching books, podcasts, practitioners, frameworks, case studies, research, emerging trends, and tools. Results stored in knowledge base as they arrive.`,
+        };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : 'Knowledge hunt failed to start' };
+      }
+    }
+
+    case "ingest_expert_topics": {
+      const { expert_name: etName, expert_profile_id: etProfileId, force: etForce } = args;
+
+      let resolvedEtId = etProfileId;
+      if (!resolvedEtId && etName) {
+        const { data: found } = await supabaseClient
+          .from('expert_profiles')
+          .select('id, name')
+          .ilike('name', `%${etName}%`)
+          .eq('is_active', true)
+          .limit(1);
+        if (found?.length) resolvedEtId = found[0].id;
+        else return { error: `No expert profile found matching "${etName}"` };
+      }
+      if (!resolvedEtId) return { error: 'Provide expert_name or expert_profile_id' };
+
+      const supabaseUrl = Deno.env.get('SUPABASE_URL');
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      if (!supabaseUrl || !serviceKey) return { error: 'Missing environment configuration' };
+
+      try {
+        const resp = await fetch(`${supabaseUrl}/functions/v1/ingest-expert-media`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` },
+          body: JSON.stringify({ expert_profile_id: resolvedEtId, topics_only: true, force: etForce }),
+          signal: AbortSignal.timeout(58000),
+        });
+        const result = await resp.json();
+        const topicResult = result.results?.find((r: any) => r.source === 'topic_ingestion');
+        return {
+          success: true,
+          expert: result.expert,
+          topics_processed: topicResult?.topics_processed || 0,
+          entries_stored: topicResult?.entries_stored || 0,
+          topic_detail: topicResult?.topic_results || [],
+          message: `Topic sweep complete — ${topicResult?.entries_stored || 0} knowledge entries stored across ${topicResult?.topics_processed || 0} topics.`,
+        };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : 'Topic ingestion failed' };
+      }
+    }
+
+    case "list_expert_profiles": {
+      const { data: profiles } = await supabaseClient
+        .from('expert_profiles')
+        .select('id, name, title, expertise_domains, youtube_channel_url, podcast_rss_url, linkedin_url, relevant_agent_call_signs, last_ingested_at, ingestion_count, notes')
+        .eq('is_active', true)
+        .order('name');
+
+      return {
+        success: true,
+        count: (profiles || []).length,
+        experts: (profiles || []).map(p => ({
+          id: p.id,
+          name: p.name,
+          title: p.title,
+          domains: p.expertise_domains,
+          agents: p.relevant_agent_call_signs,
+          sources: [
+            p.youtube_channel_url ? 'youtube' : null,
+            p.podcast_rss_url ? 'podcast' : null,
+            p.linkedin_url ? 'linkedin' : null,
+          ].filter(Boolean),
+          last_ingested: p.last_ingested_at,
+          entries_ingested: p.ingestion_count,
+          notes: p.notes,
+        })),
+      };
+    }
+
+    case "ingest_expert_content": {
+      const { url, expert_profile_id, expert_name, domain, force } = args;
+
+      const supabaseUrl = Deno.env.get('SUPABASE_URL');
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+      // If only a name was provided, look up the profile ID
+      let resolvedProfileId = expert_profile_id;
+      if (!url && !resolvedProfileId && expert_name) {
+        const { data: found } = await supabaseClient
+          .from('expert_profiles')
+          .select('id, name')
+          .ilike('name', `%${expert_name}%`)
+          .eq('is_active', true)
+          .limit(1);
+        if (found?.length) {
+          resolvedProfileId = found[0].id;
+        } else {
+          return { error: `No expert profile found matching "${expert_name}". Use list_expert_profiles to see available experts, or add_expert_source to register a new one.` };
+        }
+      }
+
+      if (!url && !resolvedProfileId) {
+        // List available profiles to help Aegis
+        const { data: profiles } = await supabaseClient
+          .from('expert_profiles')
+          .select('id, name, title, expertise_domains')
+          .eq('is_active', true)
+          .order('name');
+        return {
+          error: 'Provide either url, expert_profile_id, or expert_name',
+          available_experts: (profiles || []).map(p => ({ id: p.id, name: p.name, title: p.title })),
+          hint: 'Use the id from available_experts as expert_profile_id, or pass expert_name to search by name',
+        };
+      }
+
+      if (!supabaseUrl || !serviceKey) {
+        return { error: 'Missing environment configuration' };
+      }
+      if (!supabaseUrl || !serviceKey) {
+        return { error: 'Missing environment configuration' };
+      }
+
+      try {
+        const resp = await fetch(`${supabaseUrl}/functions/v1/ingest-expert-media`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` },
+          body: JSON.stringify({ url, expert_profile_id: resolvedProfileId, expert_name, domain, force }),
+          signal: AbortSignal.timeout(58000),
+        });
+        const result = await resp.json();
+        return {
+          success: !result.error,
+          ...result,
+          message: result.error
+            ? `Ingestion failed: ${result.error}`
+            : `Ingestion complete — ${result.total_entries || result.entries_stored || 0} knowledge entries stored.`,
+        };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : 'Ingestion timed out or failed' };
+      }
     }
 
     case "send_message_to_agent": {
@@ -7928,27 +8399,115 @@ The signal is now in the database with status 'triaged' and rules have been appl
         return { error: "Agent is not active", details: `${targetAgent.call_sign} (${targetAgent.codename}) is currently inactive.` };
       }
 
-      const { error: insertErr } = await supabaseClient
-        .from("agent_pending_messages")
-        .insert({
-          agent_id: targetAgent.id,
-          recipient_user_id: userId || null,
-          sender_user_id: userId || null,
-          message: `[DIRECT TASKING FROM PRINCIPAL] ${agentMsg}`,
-          priority: agentPriority,
-          trigger_event: "principal_direct_message",
-        });
+      // ── Get live response from agent ──────────────────────────────────────
+      const { data: agentFull } = await supabaseClient
+        .from("ai_agents")
+        .select("system_prompt, specialty")
+        .eq("id", targetAgent.id)
+        .single();
 
-      if (insertErr) {
-        return { error: "Failed to deliver message to agent", details: insertErr.message };
-      }
+      let liveResponse = '';
+      try {
+        const systemPrompt = (agentFull?.system_prompt || `You are ${targetAgent.call_sign}, a specialist AI agent.`)
+          + `\n\nYou are responding to a direct message from the Principal (Command). Be concise, honest, and in-character. Today's date: ${new Date().toISOString().split('T')[0]}.`;
+
+        const result = await callAiGateway({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `[DIRECT TASKING FROM PRINCIPAL]\n\n${agentMsg}` },
+          ],
+          functionName: `agent-direct-${targetAgent.call_sign}`,
+          retries: 1,
+          extraBody: { max_completion_tokens: 600 },
+        });
+        liveResponse = result.error ? '' : (result.content || '');
+      } catch { /* fall through */ }
+
+      // Store in pending messages for audit trail
+      await supabaseClient.from("agent_pending_messages").insert({
+        agent_id: targetAgent.id,
+        recipient_user_id: userId || null,
+        sender_user_id: userId || null,
+        message: `[DIRECT TASKING FROM PRINCIPAL] ${agentMsg}`,
+        priority: agentPriority,
+        trigger_event: "principal_direct_message",
+        delivered_at: liveResponse ? new Date().toISOString() : null,
+      });
 
       return {
         success: true,
         delivered_to: targetAgent.call_sign,
         codename: targetAgent.codename,
-        message_preview: agentMsg.substring(0, 100),
-        summary: `Message delivered to ${targetAgent.call_sign} (${targetAgent.codename}). It will appear in their next conversation.`,
+        response: liveResponse || '(agent did not respond)',
+        summary: liveResponse
+          ? `**${targetAgent.call_sign}** (${targetAgent.codename}) responds:\n\n${liveResponse}`
+          : `Message delivered to ${targetAgent.call_sign}. No live response received.`,
+      };
+    }
+
+    case "add_entity_to_watchlist": {
+      const { entity_name, watch_level, reason, client_id, expiry_days, entity_id } = args;
+      const severityBoostMap: Record<string, number> = { monitor: 10, alert: 20, critical: 35 };
+      const expiry = expiry_days
+        ? new Date(Date.now() + expiry_days * 86400000).toISOString()
+        : null;
+
+      const { data: watchEntry, error: watchErr } = await supabaseClient
+        .from('entity_watch_list')
+        .insert({
+          entity_name,
+          entity_id: entity_id || null,
+          client_id: client_id || null,
+          watch_level,
+          reason,
+          added_by: userId || 'AEGIS',
+          added_by_type: userId ? 'user' : 'agent',
+          expiry_date: expiry,
+          severity_boost: severityBoostMap[watch_level] || 10,
+        })
+        .select('id')
+        .single();
+
+      if (watchErr) return { success: false, error: watchErr.message };
+      return {
+        success: true,
+        watch_list_id: watchEntry.id,
+        entity_name,
+        watch_level,
+        severity_boost: severityBoostMap[watch_level] || 10,
+        expires: expiry ? `in ${expiry_days} days` : 'never',
+        summary: `"${entity_name}" added to watch list at ${watch_level} level. Future signals mentioning this entity will have their severity score boosted by ${severityBoostMap[watch_level] || 10} points.`,
+      };
+    }
+
+    case "investigate_poi": {
+      const { entity_id } = args;
+      const { data: invData, error: invErr } = await supabaseClient.functions.invoke(
+        'investigate-poi',
+        { body: { entity_id } }
+      );
+      if (invErr) return { success: false, error: invErr.message };
+      return {
+        success: true,
+        ...invData,
+      };
+    }
+
+    case "generate_poi_report": {
+      const { entity_id, investigation_id } = args;
+      const { data: rptData, error: rptErr } = await supabaseClient.functions.invoke(
+        'generate-poi-report',
+        { body: { entity_id, investigation_id: investigation_id || undefined } }
+      );
+      if (rptErr) return { success: false, error: rptErr.message };
+      return {
+        success: true,
+        report_id: rptData?.report_id,
+        entity_id,
+        confidence_score: rptData?.confidence_score,
+        threat_level: rptData?.threat_level,
+        summary: `Intelligence report generated for entity. Confidence: ${rptData?.confidence_score}%. Threat level: ${rptData?.threat_level?.toUpperCase()}. View the full report in the Entity Detail dialog under the Report tab.`,
       };
     }
 
@@ -8215,7 +8774,7 @@ Deno.serve(async (req) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "gemini-2.5-flash-lite",
+          model: "gpt-4o-mini",
           messages: [
             {
               role: "system",
@@ -8340,7 +8899,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
@@ -8411,7 +8970,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "gemini-2.5-flash",
+            model: "gpt-4o-mini",
             messages: [
               {
                 role: "system",
@@ -8536,7 +9095,7 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
-                model: "gemini-2.5-flash",
+                model: "gpt-4o-mini",
                 messages: [{ role: "user", content: extractionPrompt }],
                 stream: false,
               }),
@@ -8627,7 +9186,7 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "gemini-2.5-flash",
+            model: "gpt-4o-mini",
             messages: [
               {
                 role: "system",
@@ -8721,7 +9280,7 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
                   "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                  model: "gemini-2.5-flash",
+                  model: "gpt-4o-mini",
                   messages: [{ role: "user", content: extractionPrompt2 }],
                   stream: false,
                 }),
@@ -8808,7 +9367,7 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              model: "gemini-2.5-flash",
+              model: "gpt-4o-mini",
               messages: [
                 {
                   role: "system",
@@ -8853,7 +9412,7 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "gemini-2.5-flash",
+            model: "gpt-4o-mini",
             messages: [
               {
                 role: "system",
@@ -8917,7 +9476,7 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "gemini-2.5-flash",
+            model: "gpt-4o-mini",
             messages: [
               {
                 role: "system",
@@ -8998,7 +9557,7 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "gemini-2.5-flash",
+          model: "gpt-4o-mini",
           messages: [
             {
               role: "system",
@@ -9029,7 +9588,7 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",

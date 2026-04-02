@@ -407,7 +407,7 @@ ${feedbackRejectionContext}
 
     // Call AI for extraction via resilient gateway
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-pro',
+      model: 'google/gpt-4o-mini',
       messages: [
         {
           role: 'system',

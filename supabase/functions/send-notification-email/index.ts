@@ -139,7 +139,7 @@ Deno.serve(async (req) => {
     const { subject, html } = getEmailContent(type, data);
 
     const emailResponse = await resend.emails.send({
-      from: "Fortress AI <notifications@updates.lovableproject.com>",
+      from: Deno.env.get('RESEND_FROM_EMAIL') || "Fortress AI <notifications@silentshieldsecurity.com>",
       to: [to],
       subject,
       html,

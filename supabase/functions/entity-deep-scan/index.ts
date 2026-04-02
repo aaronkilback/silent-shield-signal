@@ -346,7 +346,7 @@ Deno.serve(async (req) => {
 
         const apiUrl = PERPLEXITY_API_KEY ? 'https://api.perplexity.ai/chat/completions' : 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
         const apiKey = PERPLEXITY_API_KEY || GEMINI_API_KEY;
-        const model = PERPLEXITY_API_KEY ? 'sonar' : 'gemini-2.5-flash';
+        const model = PERPLEXITY_API_KEY ? 'sonar' : 'gpt-4o-mini';
 
         const aiResponse = await fetchWithRetry(apiUrl, {
           method: 'POST',
@@ -503,7 +503,7 @@ If no matches found for a category, include an entry with risk_level "info" conf
 
         const apiUrl = PERPLEXITY_API_KEY ? 'https://api.perplexity.ai/chat/completions' : 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
         const apiKey = PERPLEXITY_API_KEY || GEMINI_API_KEY;
-        const model = PERPLEXITY_API_KEY ? 'sonar' : 'gemini-2.5-flash';
+        const model = PERPLEXITY_API_KEY ? 'sonar' : 'gpt-4o-mini';
 
         const sanctionsResponse = await fetchWithRetry(apiUrl, {
           method: 'POST',
@@ -624,27 +624,36 @@ If no matches found for a category, include an entry with risk_level "info" conf
       })
       .eq('id', entity_id);
 
-    // Store findings in entity_content for reference
-    for (const result of results.filter(r => r.url)) {
-      await supabase
-        .from('entity_content')
-        .upsert({
-          entity_id,
-          content_type: result.category,
-          title: result.label,
-          url: result.url!,
-          source: result.source,
-          excerpt: result.value,
-          content_text: result.commentary,
-          relevance_score: result.confidence,
-          metadata: {
-            risk_level: result.riskLevel,
-            scan_type: 'deep_scan',
-            discovered_at: new Date().toISOString()
-          }
-        }, {
-          onConflict: 'entity_id,url'
-        });
+    // Store ALL findings in entity_content (including non-URL findings like HIBP/sanctions)
+    // Non-URL findings get a synthetic URN so they survive the UNIQUE(entity_id, url) constraint
+    for (const result of results) {
+      try {
+        const labelSafe = typeof result.label === 'string' ? result.label : String(result.label || result.type || 'finding');
+        const url = result.url || `urn:deep-scan:${entity_id}:${result.category || 'unknown'}:${encodeURIComponent(labelSafe.slice(0, 80))}`;
+        await supabase
+          .from('entity_content')
+          .upsert({
+            entity_id,
+            content_type: result.category || 'finding',
+            title: labelSafe.slice(0, 500),
+            url,
+            source: result.source || 'Deep Scan',
+            excerpt: result.value || '',
+            content_text: result.commentary || '',
+            relevance_score: typeof result.confidence === 'number' ? Math.min(100, result.confidence) : 50,
+            metadata: {
+              risk_level: result.riskLevel || 'info',
+              scan_type: 'deep_scan',
+              has_url: !!result.url,
+              discovered_at: new Date().toISOString()
+            }
+          }, {
+            onConflict: 'entity_id,url'
+          });
+      } catch (storeErr) {
+        console.error(`[DEEP-SCAN] Failed to store finding "${result?.label}":`, storeErr);
+        // continue — one failed store should not abort the whole scan
+      }
     }
 
     console.log(`Deep scan complete for ${entity.name}: ${results.length} findings, ${criticalCount} critical, ${highCount} high`);

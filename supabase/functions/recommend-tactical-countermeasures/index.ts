@@ -94,7 +94,7 @@ Focus on practical, implementable measures across:
 Format your response as a structured JSON array of countermeasures.`;
 
     const aiResult = await callAiGateway({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are an expert tactical security advisor specializing in threat mitigation and defense optimization.' },
         { role: 'user', content: analysisPrompt }

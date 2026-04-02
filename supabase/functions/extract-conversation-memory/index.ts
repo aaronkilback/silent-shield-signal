@@ -85,7 +85,7 @@ Return JSON:
 }`;
 
       const aiResult = await callAiGateway({
-        model: 'google/gemini-2.5-flash',
+        model: 'google/gpt-4o-mini',
         messages: [{ role: 'user', content: extractionPrompt }],
         functionName: 'extract-conversation-memory',
         dlqOnFailure: false,

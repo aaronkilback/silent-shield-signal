@@ -189,7 +189,7 @@ Deno.serve(async (req) => {
       });
 
     // Build invite URL - use origin from request or fallback
-    const origin = req.headers.get('origin') || 'https://silent-shield-signal.lovable.app';
+    const origin = req.headers.get('origin') || 'https://fortress.silentshieldsecurity.com';
     const inviteUrl = `${origin}/invite/accept?token=${token}`;
 
     // Send email if Resend is configured

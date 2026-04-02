@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -28,7 +29,7 @@ Deno.serve(async (req) => {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-    if (!GEMINI_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
       throw new Error("Missing required environment variables");
     }
 
@@ -236,19 +237,14 @@ ${entities?.length > 0
   : "No entities tracked."}
 ${parentContext}`;
 
-  // Call AI
-  const aiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gemini-3-flash-preview",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: question },
-      ],
+  // Call AI via gateway
+  const { raw: aiData, error: aiErr } = await callAiGateway({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: question },
+    ],
+    extraBody: {
       tools: [
         {
           type: "function",
@@ -301,24 +297,17 @@ ${parentContext}`;
         },
       ],
       tool_choice: { type: "function", function: { name: "answer_briefing_query" } },
-    }),
+    },
+    functionName: "briefing-query:ask",
   });
 
-  if (!aiResponse.ok) {
-    const errorText = await aiResponse.text();
-    console.error("AI gateway error:", aiResponse.status, errorText);
-    
-    if (aiResponse.status === 429) {
-      throw new Error("Rate limit exceeded. Please try again shortly.");
-    }
-    if (aiResponse.status === 402) {
-      throw new Error("AI service payment required.");
-    }
+  if (aiErr) {
+    if (aiErr.includes('429')) throw new Error("Rate limit exceeded. Please try again shortly.");
+    if (aiErr.includes('402')) throw new Error("AI service payment required.");
     throw new Error("AI service error");
   }
 
-  const aiData = await aiResponse.json();
-  const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+  const toolCall = aiData?.choices?.[0]?.message?.tool_calls?.[0];
   
   if (!toolCall) {
     throw new Error("Invalid AI response format");
@@ -501,18 +490,13 @@ ${agentReports.length > 0
   ? agentReports.map((r: any) => `[${r.agent}]: ${r.report}`).join("\n\n")
   : "No team reports yet."}`;
 
-  const aiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gemini-3-flash-preview",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `${askingAgent?.codename || "Team member"} asks: ${question}` },
-      ],
+  const { raw: aiData, error: aiErr } = await callAiGateway({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `${askingAgent?.codename || "Team member"} asks: ${question}` },
+    ],
+    extraBody: {
       tools: [
         {
           type: "function",
@@ -525,10 +509,10 @@ ${agentReports.length > 0
                 answer: { type: "string", description: "Your response to the question" },
                 confidence: { type: "number", description: "Confidence in your answer (0-1)" },
                 needs_clarification: { type: "boolean", description: "Whether you need more info from another agent" },
-                suggested_agents: { 
-                  type: "array", 
+                suggested_agents: {
+                  type: "array",
                   items: { type: "string" },
-                  description: "Other agents who might provide additional insight" 
+                  description: "Other agents who might provide additional insight"
                 },
               },
               required: ["answer", "confidence"],
@@ -537,21 +521,17 @@ ${agentReports.length > 0
         },
       ],
       tool_choice: { type: "function", function: { name: "agent_response" } },
-    }),
+    },
+    functionName: "briefing-query:agent-followup",
   });
 
-  if (!aiResponse.ok) {
-    if (aiResponse.status === 429) {
-      throw new Error("Rate limit exceeded. Please try again shortly.");
-    }
-    if (aiResponse.status === 402) {
-      throw new Error("AI service payment required.");
-    }
+  if (aiErr) {
+    if (aiErr.includes('429')) throw new Error("Rate limit exceeded. Please try again shortly.");
+    if (aiErr.includes('402')) throw new Error("AI service payment required.");
     throw new Error("AI service error");
   }
 
-  const aiData = await aiResponse.json();
-  const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+  const toolCall = aiData?.choices?.[0]?.message?.tool_calls?.[0];
   
   if (!toolCall) {
     throw new Error("Invalid AI response format");

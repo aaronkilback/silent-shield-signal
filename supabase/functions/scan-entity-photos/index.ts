@@ -282,7 +282,7 @@ Deno.serve(async (req) => {
           }
 
           const verifyResult = await callAiGateway({
-            model: 'gemini-2.5-flash',
+            model: 'gpt-4o-mini',
             messages: [{ role: 'user', content: aiContent }],
             functionName: 'scan-entity-photos',
             extraBody: { max_tokens: 10 },

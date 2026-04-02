@@ -37,7 +37,7 @@ function detectBugReport(messages: any[]): boolean {
 async function extractBugDetails(messages: any[]): Promise<BugReport | null> {
   try {
     const result = await callAiGateway({
-      model: "google/gemini-2.5-flash-lite",
+      model: "google/gpt-4o-mini",
       messages: [
         {
           role: "system",
@@ -216,7 +216,7 @@ Deno.serve(async (req) => {
 
     if (isSimpleAcknowledgment(messages)) {
       const ackResult = await callAiGatewayStream({
-        model: "google/gemini-2.5-flash-lite",
+        model: "google/gpt-4o-mini",
         messages: [
           {
             role: "system",
@@ -290,7 +290,7 @@ ${bugReportContext}
 Be helpful, concise, and professional. If you don't know something, say so.`;
 
     const streamResult = await callAiGatewayStream({
-      model: "google/gemini-2.5-flash",
+      model: "google/gpt-4o-mini",
       messages: [
         { role: "system", content: systemPrompt },
         ...messages.slice(-20),

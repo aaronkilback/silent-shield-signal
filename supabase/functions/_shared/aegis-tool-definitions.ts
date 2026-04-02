@@ -1739,18 +1739,163 @@ Returns contradiction details, severity, and AI analysis of the conflict.`,
   {
     type: "function",
     function: {
-      name: "broadcast_to_agents",
-      description: `Send a message or intelligence report from the principal (user) to all active agents in the network. Use this when users want to:
-- Share intelligence reports, threat analyses, or research documents with all agents
-- Broadcast threat frameworks, radicalization indicators, or analytical methodologies
-- Send operational directives, situational awareness updates, or priority intelligence
-- Thank agents for their work, send kudos or recognition
-- Acknowledge agent contributions or broadcast morale messages
+      name: "agent_self_assessment",
+      description: `Run a deep structured self-assessment across ALL active agents. Each agent receives real system context (signal counts, incident counts, available tools) and is asked to honestly report:
+- Their WORRIES (specific concerns about their operational capacity, blind spots, data gaps)
+- Their GOALS (what they want to achieve, with priority and current blockers)
+- Their IMPROVEMENTS (specific changes that would make them more effective)
 
-IMPORTANT: When users say "share this with agents", "send this to the team", "broadcast this intel", 
-"make sure all agents see this", or "distribute this report" — use this tool immediately.
-The message will be delivered to every active agent's pending message queue.
-Each agent will receive the full message content and it will appear in their activity logs.`,
+Use this when the user wants to know what agents actually need, worry about, or want to improve — especially when a previous broadcast gave generic answers. Results are persisted to the database for historical tracking.`,
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_agent_knowledge_hunt",
+      description: `Trigger an aggressive internet-wide knowledge hunt for all agents or a specific agent. Each agent searches for the best books, podcasts, expert practitioners, frameworks, case studies, research papers, and tools in their specialty. Results are stored in the shared knowledge base. Use this to kick off learning for the whole team or a targeted agent.`,
+      parameters: {
+        type: "object",
+        properties: {
+          agent_call_sign: { type: "string", description: "Specific agent to run the hunt for. Leave empty to run for all agents." },
+          max_agents: { type: "number", description: "Max agents to process per invocation (default 5, max 36)" },
+          force: { type: "boolean", description: "Re-hunt even if recently done" },
+          angles: {
+            type: "array",
+            items: { type: "string", enum: ["books", "podcasts", "practitioners", "frameworks", "case_studies", "research", "emerging", "tools"] },
+            description: "Specific knowledge angles to search. Leave empty for all.",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ingest_expert_topics",
+      description: `Run the topic-sweep ingestion for an expert — queries Perplexity for each of their registered topic areas (books, frameworks, methodologies) and stores the results as structured knowledge entries. This runs separately from media ingestion to avoid timeouts. Use this after ingest_expert_content, or any time you want to deepen an expert's knowledge base with their specific subject matter expertise. Pass expert_name or expert_profile_id.`,
+      parameters: {
+        type: "object",
+        properties: {
+          expert_name: { type: "string", description: "Expert's name (e.g. 'Clint Emerson')" },
+          expert_profile_id: { type: "string", description: "UUID of the expert profile" },
+          force: { type: "boolean", description: "Re-ingest topics already processed" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_expert_profiles",
+      description: `List all registered expert profiles in the system — human experts (retired SEALs, CIA analysts, security researchers, etc.) whose content agents learn from. Returns each expert's ID, name, title, domains, assigned agents, content sources, and ingestion status. Use this before calling ingest_expert_content so you have the correct expert_profile_id or name.`,
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_expert_source",
+      description: `Add a human expert (retired Navy SEAL, CIA analyst, security researcher, ethical hacker, etc.) to the platform so agents can learn from their content. Provide their name, title, and any available content URLs (YouTube channel, podcast RSS, LinkedIn, website). The expert's knowledge will be ingested into the agent knowledge base and tagged to the most relevant agents.`,
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Expert's full name" },
+          title: { type: "string", description: "Their background/title (e.g. 'Retired Navy SEAL', 'Former CIA Operations Officer')" },
+          expertise_domains: {
+            type: "array",
+            items: { type: "string" },
+            description: "Domains they cover: cyber, physical_security, executive_protection, crisis_management, threat_intelligence, travel_security, counter_terrorism, fraud_social_engineering, leadership, etc."
+          },
+          youtube_channel_url: { type: "string", description: "YouTube channel URL" },
+          podcast_rss_url: { type: "string", description: "Podcast RSS feed URL" },
+          linkedin_url: { type: "string", description: "LinkedIn profile URL" },
+          website_url: { type: "string", description: "Personal website or blog URL" },
+          relevant_agent_call_signs: {
+            type: "array",
+            items: { type: "string" },
+            description: "Call signs of agents who should learn from this expert (e.g. ['0DAY', 'AEGIS-CMD'])"
+          },
+          notes: { type: "string", description: "Brief note on why this expert is valuable" },
+          ingest_immediately: { type: "boolean", description: "Start ingesting their content right now (default: true)" },
+        },
+        required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ingest_expert_content",
+      description: `Ingest content from a specific URL (YouTube video, podcast episode, article, LinkedIn post) or sweep all sources for a known expert profile. Extracts structured knowledge entries and stores them in the agent knowledge base with full attribution.
+
+You can identify the expert by:
+- expert_name: "Clint Emerson" — looks up by name automatically (PREFERRED when you don't have the ID)
+- expert_profile_id: UUID from list_expert_profiles
+- url: a direct content URL (YouTube video, article, etc.)
+
+To ingest ALL sources for a named expert, pass just expert_name. To ingest a specific piece of content, pass url.`,
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "URL of specific content to ingest (YouTube video, podcast RSS, article, LinkedIn post)" },
+          expert_profile_id: { type: "string", description: "UUID of an existing expert profile — sweeps ALL their sources" },
+          expert_name: { type: "string", description: "Expert's name — system will look up their profile and ingest all their sources. Use this when you know the name but not the ID." },
+          domain: { type: "string", description: "Override domain classification if needed" },
+          force: { type: "boolean", description: "Re-ingest even if already processed" },
+          topics_only: { type: "boolean", description: "Run only the topic sweep (Perplexity queries), skip YouTube/podcast/LinkedIn media fetch" },
+          media_only: { type: "boolean", description: "Run only media sources (YouTube/podcast/website), skip topic sweep" },
+          youtube_limit: { type: "number", description: "Max YouTube videos to process per channel (default 10, max 50)" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_agent_responses",
+      description: `Ask all active agents a question and get their live responses immediately. Use this when you want to poll the agent team for their thoughts, status, needs, concerns, or any question. Returns live answers from every agent.`,
+      parameters: {
+        type: "object",
+        properties: {
+          message: {
+            type: "string",
+            description: "The question or message to send to all agents",
+          },
+          priority: {
+            type: "string",
+            enum: ["normal", "urgent"],
+            description: "Message priority (default: normal)",
+          },
+        },
+        required: ["message"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "broadcast_to_agents",
+      description: `Send a message or question to ALL active agents and receive their LIVE responses immediately.
+
+This tool now invokes every agent in real-time and returns their answers directly to you.
+Use this when:
+- The user asks you to poll, ask, or check with all agents ("ask all agents if...", "check with the team")
+- The user wants to know what agents think, need, want, or are concerned about
+- You need to gather input or status from the full agent network
+- Sharing intelligence, directives, or operational updates with all agents
+
+IMPORTANT: After calling this tool, READ the agent_responses returned and present each agent's
+answer clearly to the user. The responses are LIVE and IMMEDIATE — do not say agents will
+respond later or that you need another tool to retrieve responses. The responses are in the
+tool result under "agent_responses" and "formatted_responses". Present them directly.`,
       parameters: {
         type: "object",
         properties: {
@@ -1832,6 +1977,155 @@ Use broadcast_to_agents instead if you want to reach ALL agents simultaneously.`
           },
         },
         required: ["agent_call_sign", "message"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_entity_to_watchlist",
+      description: `Add a person of interest, threat actor, or organization to the persistent entity watch list.
+
+When a watched entity is detected in future signals, the signal's severity score is automatically boosted and an immediate alert is triggered. Watch list entries persist across sessions and monitor cycles.
+
+Watch levels and severity boosts:
+- monitor: passive tracking (+10 severity boost) — for entities worth keeping an eye on
+- alert: active concern (+20 severity boost) — for entities showing threatening behavior
+- critical: imminent threat (+35 severity boost) — for entities posing direct, immediate threat
+
+Use this when:
+- An entity repeatedly appears in threat-related signals
+- Intelligence indicates a person/group is planning or escalating hostile activity
+- An analyst flags a person of interest for ongoing tracking
+- A new threat actor is identified in the area of operations`,
+      parameters: {
+        type: "object",
+        properties: {
+          entity_name: {
+            type: "string",
+            description: "Full name or alias of the entity to watch (e.g., 'John Smith', 'Gidimt\\'en Checkpoint')",
+          },
+          watch_level: {
+            type: "string",
+            enum: ["monitor", "alert", "critical"],
+            description: "Surveillance urgency level — determines severity boost applied to future signals",
+          },
+          reason: {
+            type: "string",
+            description: "Why this entity is being added to the watch list (will be visible to analysts)",
+          },
+          client_id: {
+            type: "string",
+            description: "UUID of the client to scope this watch to. Omit to monitor across all clients.",
+          },
+          expiry_days: {
+            type: "integer",
+            description: "How many days until this watch entry expires. Omit for no expiry.",
+            minimum: 1,
+            maximum: 365,
+          },
+          entity_id: {
+            type: "string",
+            description: "UUID of an existing entity record in the database, if known.",
+          },
+        },
+        required: ["entity_name", "watch_level", "reason"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "investigate_poi",
+      description: `Launch a comprehensive OSINT investigation on a Person of Interest (POI) or any entity.
+
+Runs a multi-source open-source intelligence fan-out:
+- Google Custom Search across 15-20 targeted queries (name variants, social platforms, criminal/legal records, paste sites, dark web mentions)
+- Credential breach check via HaveIBeenPwned (if email addresses are available)
+- Stores all found content as entity intelligence records
+- Generates a full AI-written intelligence report
+
+Returns a structured investigation summary and triggers report generation.
+
+Use this when:
+- An analyst asks to investigate, background-check, or research a specific person or entity
+- A new threat actor or POI is identified and needs immediate intelligence gathering
+- An entity needs a full OSINT sweep before an operational decision`,
+      parameters: {
+        type: "object",
+        properties: {
+          entity_id: {
+            type: "string",
+            description: "UUID of the entity to investigate. The entity must already exist in the database.",
+          },
+        },
+        required: ["entity_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "generate_poi_report",
+      description: `Generate (or regenerate) an AI-written intelligence report for a Person of Interest.
+
+Synthesizes all available evidence into a structured analyst report with sections:
+- Subject Profile, Executive Summary, Positive/Negative Findings
+- Social Media Footprint, Breach Data, Signal History
+- Confidence Assessment, Recommended Next Steps
+
+Use this when:
+- New intelligence has been collected and the report needs to be refreshed
+- An analyst asks to see or generate a POI intelligence report
+- After an investigation has run and you want to produce the formal report`,
+      parameters: {
+        type: "object",
+        properties: {
+          entity_id: {
+            type: "string",
+            description: "UUID of the entity to generate a report for.",
+          },
+          investigation_id: {
+            type: "string",
+            description: "Optional UUID of a specific investigation to base the report on.",
+          },
+        },
+        required: ["entity_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "synthesize_knowledge",
+      description: `Run the knowledge synthesizer — transforms accumulated knowledge into intelligence.
+
+Does three things:
+1. BELIEF FORMATION: Reads each agent's knowledge entries and extracts analytical conclusions — what the agent now believes about how threats work, who key actors are, what patterns repeat. Tracks confidence over time.
+2. CROSS-DOMAIN CONNECTIONS: Finds non-obvious links between different agents' knowledge — where one specialist's finding changes the meaning of another's. Writes synthesis notes capturing what neither domain saw alone.
+3. BELIEF EVOLUTION: Updates confidence in existing beliefs when new evidence strengthens or contradicts them. Logs the reasoning.
+
+Use this:
+- After a knowledge hunt to convert raw knowledge into beliefs and connections
+- When you want to see how agent thinking has evolved
+- To surface cross-domain intelligence between specialists
+- On-demand after major knowledge ingestion`,
+      parameters: {
+        type: "object",
+        properties: {
+          agent_call_sign: {
+            type: "string",
+            description: "Target a specific agent (optional — default processes all agents)",
+          },
+          since_days: {
+            type: "number",
+            description: "How far back to look for knowledge entries (default 7)",
+          },
+          force: {
+            type: "boolean",
+            description: "Re-process even if recently synthesized",
+          },
+        },
       },
     },
   },

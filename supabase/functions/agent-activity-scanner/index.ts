@@ -172,7 +172,7 @@ Deno.serve(async (req) => {
     };
 
     const { content: aiFindings } = await callAiGateway({
-      model: "gemini-2.0-flash",
+      model: "gpt-4o-mini",
       functionName: "agent-activity-scanner",
       messages: [
         {

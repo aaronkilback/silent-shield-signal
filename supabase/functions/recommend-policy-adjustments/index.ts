@@ -67,7 +67,7 @@ Recommend specific adjustments to security policies and operational procedures t
 Focus on practical, enforceable policies that directly address observed threat patterns and incident lessons learned.`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are an expert security policy strategist specializing in security program governance and operational procedures.' },
         { role: 'user', content: recommendationPrompt }

@@ -42,8 +42,7 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
-    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-    if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
+    // AI calls route through callAiGateway → OpenAI (GEMINI_API_KEY guard removed)
 
     const dateContext = getCriticalDateContext();
     console.log(`[AutonomousLoop] Starting OODA cycle at ${dateContext.currentDateTimeLocal}`);
@@ -183,7 +182,7 @@ Deno.serve(async (req) => {
         // Generate a quick situational briefing
         try {
           const briefingResult = await callAiGateway({
-            model: 'gemini-3-flash-preview',
+            model: 'gpt-4o-mini',
             messages: [
               {
                 role: 'system',

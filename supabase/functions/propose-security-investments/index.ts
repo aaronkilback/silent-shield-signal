@@ -121,7 +121,7 @@ Develop a strategic security investment portfolio prioritized by risk reduction 
 Tailor recommendations to client industry, threat profile, and operational requirements. Focus on practical, defensible investments that directly address observed threat patterns.`;
 
     const aiResult = await callAiGateway({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are an expert strategic security investment advisor specializing in security capital planning and ROI optimization.' },
         { role: 'user', content: proposalPrompt }

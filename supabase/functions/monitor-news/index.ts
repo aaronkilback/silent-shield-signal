@@ -120,8 +120,14 @@ Deno.serve(async (req) => {
           if (!titleMatch || !descMatch) continue;
 
           const title = titleMatch[1];
-          const description = descMatch[1];
+          const rawDescription = descMatch[1];
+          // Strip HTML tags from RSS description
+          const description = rawDescription.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
           const link = linkMatch ? linkMatch[1] : '';
+
+          // Skip items with no meaningful content beyond the title
+          if (description.length < 40) continue;
+
           const fullContent = `${title}\n\n${description}`.toLowerCase();
 
           try {
@@ -151,101 +157,42 @@ Deno.serve(async (req) => {
             }
 
             if (matchedClient) {
-              // Generate content hash for deduplication
-              const contentToHash = `${link}|${title}`;
-              const encoder = new TextEncoder();
-              const data = encoder.encode(contentToHash);
-              const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-              const hashArray = Array.from(new Uint8Array(hashBuffer));
-              const contentHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+              const signalText = `${title}\n\n${description.slice(0, 1000)}`;
 
-              // Check for existing signal with same content hash
-              const { data: existingSignal } = await supabase
-                .from('signals')
-                .select('id')
-                .eq('content_hash', contentHash)
-                .single();
-
-              if (existingSignal) {
-                console.log(`Skipping duplicate news signal: ${title.substring(0, 50)}...`);
-                continue;
-              }
-
-              // Check if this content was previously rejected/deleted
-              const { data: rejectedHash } = await supabase
-                .from('rejected_content_hashes')
-                .select('id')
-                .eq('content_hash', contentHash)
-                .limit(1)
-                .maybeSingle();
-
-              if (rejectedHash) {
-                console.log(`Skipping previously rejected news signal: ${title.substring(0, 50)}...`);
-                continue;
-              }
-
-              let category = 'news';
-              let severity = 'low';
-
-              if (SECURITY_KEYWORDS.some(kw => fullContent.includes(kw))) {
-                category = 'cybersecurity';
-                severity = 'medium';
-              } else if (REPUTATIONAL_KEYWORDS.some(kw => fullContent.includes(kw))) {
-                category = 'reputation';
-                severity = 'medium';
-              } else if (DEAL_KEYWORDS.some(kw => fullContent.includes(kw))) {
-                category = 'business_intelligence';
-                severity = 'low';
-              }
-
-              const { error: signalError } = await supabase
-                .from('signals')
-                .insert({
+              // Route through ingest-signal for PECL classification, relevance gate, and dedup
+              const ingestResult = await supabase.functions.invoke('ingest-signal', {
+                body: {
+                  text: signalText,
+                  source_url: link || null,
                   client_id: matchedClient.id,
-                  normalized_text: `News: ${title}`,
-                  category,
-                  severity,
-                  location: 'Google News',
-                  content_hash: contentHash,
                   raw_json: {
-                    source: 'news',
-                    url: link,
+                    source: 'google_news_rss',
+                    source_url: link,
                     description,
                     search_query: query,
-                    matched_keywords: matchedKeywords
+                    matched_keywords: matchedKeywords,
+                    matched_client: matchedClient.name,
                   },
-                  status: 'new',
-                  confidence: 0.8
-                });
+                },
+              });
 
-              if (!signalError) {
-                signalsCreated++;
-                console.log(`✓ CREATED SIGNAL for ${matchedClient.name}: ${title.substring(0, 60)}... (matched: ${matchedKeywords.join(', ')})`);
+              if (ingestResult.error) {
+                console.error(`ingest-signal error for "${title.substring(0, 50)}":`, ingestResult.error);
+                continue;
               }
 
-              // Ingest for deeper AI analysis
-              const { error: ingestError } = await supabase
-                .from('ingested_documents')
-                .insert({
-                  title: title,
-                  raw_text: `${title}\n\n${description}`,
-                  metadata: {
-                    url: link,
-                    source_type: 'news',
-                    source_name: 'Google News',
-                    search_query: query,
-                    matched_client: matchedClient.name,
-                    matched_keywords: matchedKeywords
-                  },
-                  processing_status: 'pending'
-                });
+              const ingestData = ingestResult.data as any;
+              const ingestStatus = ingestData?.status || 'unknown';
 
-              if (!ingestError) {
+              if (ingestStatus === 'rejected' || ingestStatus === 'suppressed' || ingestStatus === 'filed_as_update') {
+                console.log(`↳ ${ingestStatus}: ${title.substring(0, 50)}... (${ingestData?.reason || ingestData?.detail || ''})`);
+                continue;
+              }
+
+              if (ingestData?.signal_id || ingestStatus === 'enqueued' || ingestStatus === 'critical_processed') {
+                signalsCreated++;
                 documentsIngested++;
-                
-                supabase.functions.invoke('process-intelligence-document', {
-                  body: { document_id: null, content: `${title}\n\n${description}`, metadata: { url: link } }
-                }).catch(err => console.error('Failed to trigger processing:', err));
+                console.log(`✓ CREATED SIGNAL for ${matchedClient.name}: ${title.substring(0, 60)}... (matched: ${matchedKeywords.join(', ')})`);
               }
             } else {
               console.log(`- No keyword match for: ${title.substring(0, 60)}...`);

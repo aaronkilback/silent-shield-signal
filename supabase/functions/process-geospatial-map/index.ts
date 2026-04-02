@@ -54,7 +54,7 @@ For each asset, provide:
 Return as JSON array of assets. Be thorough - extract every identifiable feature.`;
 
         const aiResult = await callAiGateway({
-          model: 'gemini-2.5-pro',
+          model: 'gpt-4o-mini',
           messages: [
             { role: 'user', content: extractionPrompt }
           ],

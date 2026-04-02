@@ -257,7 +257,7 @@ Format your response as valid JSON.`;
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "gemini-2.5-flash",
+            model: "gpt-4o-mini",
             messages: [
               { role: "system", content: "You are a corporate security analyst. Respond only with valid JSON." },
               { role: "user", content: prompt }

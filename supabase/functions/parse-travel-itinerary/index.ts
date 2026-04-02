@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
     console.log("Calling AI to parse itinerary with structured segments");
 
     const aiResult = await callAiGateway({
-      model: "gemini-2.5-flash",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",

@@ -166,7 +166,7 @@ STRICT RULES — VIOLATIONS WILL BE REJECTED:
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'gemini-2.5-flash',
+          model: 'gpt-4o-mini',
           messages: [
             { role: 'system', content: 'You are a security intelligence analyst. Return structured proposals only. Quality over quantity — an empty proposal list is better than noisy suggestions.' },
             { role: 'user', content: prompt }

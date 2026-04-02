@@ -167,7 +167,7 @@ Conduct a comprehensive compliance audit for the specified policy area. Provide:
 Provide evidence-based findings derived from the operational data provided.`;
 
     const aiResult = await callAiGateway({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are an expert compliance auditor specializing in security and operational compliance assessments.' },
         { role: 'user', content: auditPrompt }

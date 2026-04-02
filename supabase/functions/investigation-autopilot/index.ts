@@ -360,7 +360,7 @@ async function taskEntityExtraction(supabase: any, investigation: any, lovableKe
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "gemini-2.5-flash",
+          model: "gpt-4o-mini",
           messages: [
             {
               role: "system",
@@ -545,7 +545,7 @@ async function taskPatternMatching(supabase: any, investigation: any, lovableKey
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
@@ -713,7 +713,7 @@ async function taskRiskAssessment(supabase: any, investigation: any, sessionId: 
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
@@ -835,7 +835,7 @@ async function generateOverallSummary(supabase: any, investigation: any, tasks: 
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.5-flash",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",

@@ -75,7 +75,7 @@ Extract the following information in a structured JSON format:
 Parse the document content carefully and extract all relevant security intelligence.`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         {
           role: 'user',

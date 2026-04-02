@@ -120,7 +120,29 @@ interface ProviderConfig {
   keyName: string; // for error messages
 }
 
+// Model normalization — redirect broken/fictional/deprecated Gemini models to working alternatives.
+// Gemini 3 never existed. Gemini 2.0/2.5 models are deprecated for new API keys.
+const MODEL_NORMALIZATION: Record<string, string> = {
+  // Fictional Gemini 3 models — never existed
+  'gemini-3-flash-preview': 'gpt-4o-mini',
+  'gemini-3-pro-preview': 'gpt-4o-mini',
+  'gemini-3-pro': 'gpt-4o-mini',
+  'gemini-3-pro-image-preview': 'gpt-4o-mini',
+  // Non-existent Gemini 2.5 lite variant
+  'gemini-2.5-flash-lite': 'gpt-4o-mini',
+  // Deprecated/broken for new API keys
+  'gemini-2.0-flash': 'gpt-4o-mini',
+  'gemini-2.5-flash': 'gpt-4o-mini',
+  'gemini-2.5-pro': 'gpt-4o-mini',
+  // Image generation models — intentionally NOT remapped here (separate fix needed)
+  // 'gemini-2.5-flash-image-preview', 'gemini-2.5-flash-image', 'gemini-3-pro-image-preview'
+};
+
 function getProviderConfig(model: string): ProviderConfig {
+  // Normalize broken/deprecated model names before routing
+  const normalizedModel = MODEL_NORMALIZATION[model] ?? MODEL_NORMALIZATION[model.replace(/^(?:google|openai)\//, '')] ?? model;
+  model = normalizedModel;
+
   // Google Gemini — OpenAI-compatible endpoint
   if (model.startsWith('google/') || model.startsWith('gemini-')) {
     const modelName = model.startsWith('google/') ? model.slice('google/'.length) : model;

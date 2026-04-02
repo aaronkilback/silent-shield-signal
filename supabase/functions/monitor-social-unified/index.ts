@@ -479,7 +479,7 @@ async function aiRelevanceGate(
 
   try {
     const result = await callAiGatewayJson<AiVerdict>({
-      model: 'google/gemini-2.5-flash-lite',
+      model: 'google/gpt-4o-mini',
       functionName: 'monitor-social-unified',
       messages: [
         {

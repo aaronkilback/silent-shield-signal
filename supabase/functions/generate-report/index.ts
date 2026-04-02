@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
         
         try {
           const aiResult = await callAiGateway({
-            model: 'gemini-2.5-flash',
+            model: 'gpt-4o-mini',
             messages: [
               { role: 'system', content: 'You are a cybersecurity analyst. Provide 3-4 brief, actionable recommendations for responding to this security signal. Be concise and specific.' },
               { role: 'user', content: `Signal: ${signal.normalized_text}\nSeverity: ${signal.severity}\nCategory: ${signal.category}\nLocation: ${signal.location || 'Unknown'}` }
@@ -138,7 +138,7 @@ Provide:
 Keep it executive-friendly and action-oriented.`;
 
     const summaryResult = await callAiGateway({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are a security intelligence analyst creating executive briefings.' },
         { role: 'user', content: summaryPrompt }

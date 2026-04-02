@@ -208,7 +208,7 @@ Provide a concise analysis in this exact JSON format:
 
         try {
           const aiResult = await callAiGateway({
-            model: 'google/gemini-2.5-flash',
+            model: 'google/gpt-4o-mini',
             messages: [
               { role: 'system', content: 'You are MERIDIAN, a geopolitical intelligence specialist. Respond only with valid JSON.' },
               { role: 'user', content: analysisPrompt }
@@ -329,7 +329,7 @@ Provide a comprehensive MERIDIAN assessment covering:
 Write as an intelligence officer, not a reporter. Every sentence must add decision value.`;
 
       const result = await callAiGateway({
-        model: 'google/gemini-2.5-flash',
+        model: 'google/gpt-4o-mini',
         messages: [
           { role: 'system', content: 'You are MERIDIAN, a senior geopolitical intelligence analyst. Provide actionable strategic foresight.' },
           { role: 'user', content: deepPrompt }

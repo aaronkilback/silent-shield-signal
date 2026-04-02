@@ -114,7 +114,7 @@ Deno.serve(async (req) => {
             reasoning: emailData.reasoning || '',
             containmentActions: emailData.containment_actions || [],
             incidentId: alert.incident_id,
-            dashboardUrl: `${Deno.env.get('SUPABASE_URL')?.replace('supabase.co', 'lovable.app') || ''}`
+            dashboardUrl: Deno.env.get('APP_URL') || 'https://fortress.silentshieldsecurity.com'
           });
 
           // Send email via Resend

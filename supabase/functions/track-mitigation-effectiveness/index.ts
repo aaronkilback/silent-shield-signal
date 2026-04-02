@@ -104,7 +104,7 @@ HISTORICAL METRICS:
 Provide: Effectiveness Rating (1-5), What Worked, What Didn't, Comparison to Baseline, Specific Improvements, Integration Recommendations, Training Recommendations, Decision Point (Continue/Modify/Deprecate).`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are a security operations effectiveness expert. Analyze playbook effectiveness using quantitative metrics and qualitative insights.' },
         { role: 'user', content: trackingPrompt }

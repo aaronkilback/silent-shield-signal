@@ -263,7 +263,7 @@ Format as structured JSON:
     }
 
     const aiResult = await callAiGateway({
-      model: 'gemini-2.5-pro',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are an industry standards expert with deep knowledge of security, safety, and compliance frameworks across Canadian industries. Provide accurate, actionable guidance.' },
         { role: 'user', content: standardsPrompt }

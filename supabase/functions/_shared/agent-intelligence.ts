@@ -605,6 +605,56 @@ export async function resolveAgentPrediction(
 }
 
 /**
+ * Resolve all open predictions for a closed/resolved incident.
+ * Compares each prediction_value against the incident's final priority,
+ * marks was_correct, and returns the count resolved.
+ * Call this from fortress-loop-closer when incidents are resolved.
+ */
+export async function resolveIncidentPredictions(
+  supabase: SupabaseClient,
+  incidentId: string,
+  finalPriority: string
+): Promise<number> {
+  try {
+    const { data: openPredictions } = await supabase
+      .from('agent_accuracy_tracking')
+      .select('id, prediction_type, prediction_value, confidence_at_prediction')
+      .eq('incident_id', incidentId)
+      .is('was_correct', null);
+
+    if (!openPredictions || openPredictions.length === 0) return 0;
+
+    let resolved = 0;
+    for (const pred of openPredictions) {
+      // For threat_assessment: correct if predicted priority matches final priority
+      // For hypothesis: mark correct if priority escalated (p1/p2) and prediction contained "threat"
+      let wasCorrect = false;
+      if (pred.prediction_type === 'threat_assessment') {
+        wasCorrect = pred.prediction_value === finalPriority;
+      } else if (pred.prediction_type === 'hypothesis') {
+        const isEscalated = ['p1', 'p2'].includes(finalPriority);
+        const predictedThreat = /threat|attack|sabotage|escalat/i.test(pred.prediction_value);
+        wasCorrect = isEscalated === predictedThreat;
+      }
+
+      await supabase.from('agent_accuracy_tracking').update({
+        was_correct: wasCorrect,
+        actual_outcome: `Incident resolved as ${finalPriority}`,
+        resolved_at: new Date().toISOString(),
+      }).eq('id', pred.id);
+
+      resolved++;
+    }
+
+    console.log(`[AgentAccuracy] Resolved ${resolved} predictions for incident ${incidentId} (final: ${finalPriority})`);
+    return resolved;
+  } catch (err) {
+    console.error('[AgentAccuracy] resolveIncidentPredictions error:', err);
+    return 0;
+  }
+}
+
+/**
  * Get an agent's accuracy calibration factor.
  * Returns a multiplier (0.5-1.5) to adjust confidence scores.
  */

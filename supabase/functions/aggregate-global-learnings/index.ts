@@ -180,7 +180,7 @@ ${patterns.map(p => `- ${p.type}: ${p.content} (confidence: ${p.confidence.toFix
 Provide insights that would help ANY security team, without revealing specifics about individual organizations. Format as a JSON array of strings.`;
 
         const aiResult = await callAiGateway({
-          model: 'gemini-2.5-flash',
+          model: 'gpt-4o-mini',
           messages: [
             { role: 'system', content: 'You are a security intelligence analyst. Provide actionable, anonymized insights based on aggregate patterns. Return only a JSON array of insight strings.' },
             { role: 'user', content: analysisPrompt }

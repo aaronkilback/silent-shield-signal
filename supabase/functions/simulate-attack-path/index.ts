@@ -95,7 +95,7 @@ Provide a structured, realistic attack path simulation with specific technical d
 
     // Call AI for simulation
     const aiResult = await callAiGateway({
-      model: "google/gemini-2.5-flash",
+      model: "google/gpt-4o-mini",
       messages: [
         { role: "system", content: "You are a threat modeling and attack simulation expert. Provide detailed, realistic attack path simulations based on threat intelligence." },
         { role: "user", content: simulationPrompt }

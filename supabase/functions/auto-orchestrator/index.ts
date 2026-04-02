@@ -29,7 +29,8 @@ Deno.serve(async (req) => {
       escalateIncidentsInBackground(supabase),
       autoCloseIncidentsInBackground(supabase),
       runOSINTMonitorsInBackground(supabase),
-      cleanupQueueInBackground(supabase)
+      cleanupQueueInBackground(supabase),
+      detectThreatPatternsInBackground(supabase),
     ];
 
     // Use EdgeRuntime.waitUntil to run tasks without blocking
@@ -440,6 +441,41 @@ async function runOSINTMonitorsInBackground(supabase: any) {
     console.log(`OSINT monitors complete: ${monitorsRun} executed`);
   } catch (error) {
     console.error('Error in OSINT monitors background task:', error);
+  }
+}
+
+// Background task: Detect threat patterns (entity escalation, geo clusters, frequency spikes, type clusters)
+async function detectThreatPatternsInBackground(supabase: any) {
+  try {
+    console.log('Starting threat pattern detection...');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 90000);
+
+    const response = await fetch(
+      `${Deno.env.get('SUPABASE_URL')}/functions/v1/detect-threat-patterns`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+        },
+        body: JSON.stringify({}),
+        signal: controller.signal,
+      }
+    ).finally(() => clearTimeout(timeout));
+
+    if (response.ok) {
+      const result = await response.json();
+      console.log(`Threat pattern detection complete: ${result.patterns_detected || 0} patterns detected`);
+    } else {
+      console.error(`Threat pattern detection failed: ${response.status} ${response.statusText}`);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.log('Threat pattern detection timed out after 90s');
+    } else {
+      console.error('Error in threat pattern detection:', error);
+    }
   }
 }
 

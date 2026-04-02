@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
     }
 
     const mcmRoleLabel = mcmRoleLabels[effectiveMcmRole] || effectiveMcmRole;
-    const appUrl = Deno.env.get("APP_URL") || "https://silent-shield-signal.lovable.app";
+    const appUrl = Deno.env.get("APP_URL") || "https://fortress.silentshieldsecurity.com";
     const signupUrl = `${appUrl}/auth?invite=${invitation.token}`;
 
     // Send invitation email

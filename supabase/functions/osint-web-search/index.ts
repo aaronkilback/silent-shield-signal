@@ -4,6 +4,23 @@ import { callAiGateway } from "../_shared/ai-gateway.ts";
 const FETCH_TIMEOUT_MS = 8000;
 const MAX_ARTICLE_LENGTH = 15000; // chars to keep from fetched articles
 
+const AI_REFUSAL_PATTERNS = [
+  /i cannot (fulfill|provide|complete|generate)/i,
+  /i('m| am) unable to/i,
+  /i (don't|do not) have (access|information|enough)/i,
+  /i (don't|do not) have sufficient/i,
+  /not able to provide/i,
+  /cannot (search|access|retrieve|browse)/i,
+  /no (information|data|results) available/i,
+  /based on (the |my )?(search results|information provided)/i,
+  /sufficient information to (answer|provide|fulfill)/i,
+];
+
+function isAiRefusal(text: string): boolean {
+  if (!text) return false;
+  return AI_REFUSAL_PATTERNS.some((p) => p.test(text));
+}
+
 /**
  * Fetch full article text from a URL, stripping HTML to plain text.
  * Returns snippet as fallback if fetch fails.
@@ -148,7 +165,7 @@ Deno.serve(async (req) => {
             : `Analyze for entity "${entity.name}": Title: ${item.title}, URL: ${item.link}, Snippet: ${item.snippet}`;
 
           const aiResult = await callAiGateway({
-            model: 'google/gemini-2.5-flash',
+            model: 'google/gpt-4o-mini',
             messages: [
               { role: 'system', content: 'Analyze web content for relevance to the target entity. Return JSON with: relevance_score (0-1), is_relevant (boolean), summary (2-3 sentence distillation of key facts), sentiment, security_concerns array, create_signal (boolean), signal_severity.' },
               { role: 'user', content: analysisContent }
@@ -161,6 +178,12 @@ Deno.serve(async (req) => {
 
           const analysis = JSON.parse(aiResult.content);
           if (!analysis.is_relevant || analysis.relevance_score < 0.5) continue;
+
+          // Skip if the AI returned a refusal instead of a real summary
+          if (isAiRefusal(analysis.summary)) {
+            console.log(`[OSINT] Skipping AI refusal response for "${item.title?.slice(0, 60)}"`);
+            continue;
+          }
 
           const relevanceInt = Math.round((analysis.relevance_score || 0) * 100);
           const { error: contentError } = await supabase.from('entity_content').insert({

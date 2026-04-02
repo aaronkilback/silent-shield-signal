@@ -90,7 +90,7 @@ Extract and return a JSON object with:
 Return ONLY valid JSON, no markdown.`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are an expert at pattern recognition in security investigation workflows. Extract actionable, reusable patterns. Return ONLY valid JSON.' },
         { role: 'user', content: extractionPrompt }

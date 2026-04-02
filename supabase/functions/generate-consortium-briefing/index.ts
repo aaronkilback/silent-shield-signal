@@ -176,7 +176,7 @@ ${JSON.stringify(signalSummary, null, 2)}
 If there are no incidents or signals, generate a report noting the quiet period but maintaining vigilance for emerging threats in the ${consortium.region || "operational"} area.`;
 
     const aiResult = await callAiGateway({
-      model: "gemini-2.5-flash",
+      model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },

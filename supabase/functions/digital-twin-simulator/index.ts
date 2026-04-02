@@ -182,7 +182,7 @@ OUTPUT FORMAT (respond ONLY with valid JSON):
 }`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-3-pro-preview',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `${prompt}\n\n${contextBlock}` },

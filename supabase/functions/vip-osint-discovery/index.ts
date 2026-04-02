@@ -475,7 +475,7 @@ Be direct and actionable.`;
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
-                model: "gemini-2.5-flash",
+                model: "gpt-4o-mini",
                 messages: [
                   { role: "system", content: "You are a corporate security intelligence analyst." },
                   { role: "user", content: analysisPrompt }

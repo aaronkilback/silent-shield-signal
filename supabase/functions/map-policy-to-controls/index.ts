@@ -100,7 +100,7 @@ Analyze the policy document and map each policy requirement to existing or missi
 Provide a clear, actionable compliance gap analysis that enables prioritized remediation planning.`;
 
     const result = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are an expert compliance analyst specializing in security control mapping and gap analysis.' },
         { role: 'user', content: mappingPrompt }

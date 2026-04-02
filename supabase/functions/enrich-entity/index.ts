@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
     ];
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are a threat intelligence analyst. Extract and structure entity information for security analysis.' },
         { role: 'user', content: `Research and provide structured information about: ${entityName}\n\nContext: ${context || 'No additional context'}\n\nProvide:\n1. Entity type\n2. Brief description\n3. Risk level with justification\n4. Known aliases\n5. Threat indicators\n6. Associated organizations or locations\n7. Contact information\n8. Threat score (0-10)\n\nFormat as JSON.` }

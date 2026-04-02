@@ -80,7 +80,7 @@ Deno.serve(async (req) => {
       const contextText = enrichedResults.slice(0, 5).map((r: any) => `[${r.source.title}] ${r.content}`).join('\n\n');
 
       const summaryResult = await callAiGateway({
-        model: 'google/gemini-2.5-flash',
+        model: 'google/gpt-4o-mini',
         messages: [
           { role: 'system', content: 'You are a concise intelligence analyst. Synthesize the provided document excerpts into a brief, actionable summary answering the user\'s query. Cite source document titles. Keep under 200 words.' },
           { role: 'user', content: `Query: "${query}"\n\nRelevant excerpts:\n${contextText}` },

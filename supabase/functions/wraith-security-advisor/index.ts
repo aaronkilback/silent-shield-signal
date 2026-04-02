@@ -80,7 +80,7 @@ async function analyzeUrl(url: string) {
   
   // Use AI to analyze URL for phishing indicators
   const aiResult = await callAiGateway({
-    model: 'google/gemini-2.5-flash',
+    model: 'google/gpt-4o-mini',
     messages: [
       { role: 'system', content: `You are WRAITH (0DAY), an elite offensive security specialist. Analyze URLs for security threats. Return a JSON object with: risk_level (critical/high/medium/low), threat_type (phishing/malware/safe/suspicious), indicators (array of specific concerns), recommendation (string). Be thorough but concise.` },
       { role: 'user', content: `Analyze this URL for phishing, malware, and security threats: ${url}\n\nCheck for: typosquatting, suspicious TLDs, encoded characters, known malicious patterns, homograph attacks, redirect chains, and data exfiltration indicators.` }
@@ -100,7 +100,7 @@ async function analyzeEmailPhishing(emailContent: string) {
   if (!emailContent) return { error: 'Email content is required' };
   
   const aiResult = await callAiGateway({
-    model: 'google/gemini-2.5-flash',
+    model: 'google/gpt-4o-mini',
     messages: [
       { role: 'system', content: `You are WRAITH (0DAY), an elite offensive security specialist trained in social engineering detection. Analyze email content for phishing indicators. Return a JSON object with: risk_level (critical/high/medium/low), phishing_score (0-100), indicators (array of specific red flags), social_engineering_tactics (array), recommendation (string).` },
       { role: 'user', content: `Analyze this email/message for phishing and social engineering: ${emailContent.substring(0, 3000)}` }
@@ -340,7 +340,7 @@ async function scanIpExposure() {
 
     // Use AI to analyze the IP context
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: `You are WRAITH (0DAY). Analyze a public IP for exposure risks. Return JSON: { "open_port_risks": string[], "exposure_summary": string, "recommendations": string[], "geolocation_risk": string }` },
         { role: 'user', content: `Analyze public IP ${ip} for exposure. Consider: residential vs datacenter, common port exposure risks for consumer IPs, VPN detection indicators, and ISP-level security. Findings so far: ${JSON.stringify(findings)}` }
@@ -512,7 +512,7 @@ async function checkSslTls(domain: string) {
 
     // Use AI for deeper analysis
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: `You are WRAITH (0DAY). Analyze SSL/TLS and security header findings for a domain. Return JSON: { "grade": "A+/A/B/C/D/F", "certificate_analysis": string, "cipher_concerns": string[], "recommendations": string[] }` },
         { role: 'user', content: `Domain: ${cleanDomain}\nPresent headers: ${presentHeaders.join(', ')}\nMissing headers: ${missingHeaders.join(', ')}\nHTTPS status: ${response.status}\nFindings: ${JSON.stringify(findings)}` }

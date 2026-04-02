@@ -100,7 +100,7 @@ Design a comprehensive remediation plan to close this compliance gap. Provide:
 Provide a practical, implementable remediation plan prioritized by risk reduction impact.`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are an expert compliance remediation specialist designing actionable plans to close compliance gaps and reduce regulatory risk.' },
         { role: 'user', content: remediationPrompt }

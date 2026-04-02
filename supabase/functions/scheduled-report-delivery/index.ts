@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
     const supabase = createServiceClient();
     const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
     const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Fortress AI <notifications@updates.lovableproject.com>';
+    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Fortress AI <notifications@silentshieldsecurity.com>';
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 

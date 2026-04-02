@@ -67,7 +67,7 @@ Respond in this exact JSON format only:
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gemini-2.5-flash-lite',
+        model: 'gpt-4o-mini',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0,
         max_tokens: 150,

@@ -367,7 +367,7 @@ Deno.serve(async (req) => {
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                  model: 'gemini-2.5-flash',
+                  model: 'gpt-4o-mini',
                   messages: [
                     {
                       role: 'user',
@@ -526,7 +526,7 @@ Deno.serve(async (req) => {
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                model: 'gemini-2.5-flash',
+                model: 'gpt-4o-mini',
                 messages: [{
                   role: 'user',
                   content: [
@@ -655,7 +655,7 @@ INSTRUCTIONS:
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                model: 'gemini-2.5-flash',
+                model: 'gpt-4o-mini',
                 messages: [{
                   role: 'user',
                   content: [
@@ -710,7 +710,7 @@ Return the full extracted text and/or description.`
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                  model: 'gemini-2.5-pro',
+                  model: 'gpt-4o-mini',
                   messages: [{
                     role: 'user',
                     content: [
@@ -848,7 +848,7 @@ Return the full extracted text and/or description.`
 
     // Build the entity extraction request body (shared between Gemini and OpenAI)
     const entityExtractionBody = {
-      model: GEMINI_API_KEY ? 'gemini-2.5-flash' : 'gpt-4o-mini',
+      model: GEMINI_API_KEY ? 'gpt-4o-mini' : 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
@@ -1126,7 +1126,7 @@ Think like a professional intelligence analyst reading an opposition research do
         ? 'https://api.openai.com/v1/chat/completions'
         : 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
       const key = (!GEMINI_API_KEY || useOpenAIFallback) ? OPENAI_API_KEY! : GEMINI_API_KEY!;
-      const model = (!GEMINI_API_KEY || useOpenAIFallback) ? 'gpt-4o-mini' : 'gemini-2.5-flash';
+      const model = (!GEMINI_API_KEY || useOpenAIFallback) ? 'gpt-4o-mini' : 'gpt-4o-mini';
       console.log(`Calling ${useOpenAIFallback ? 'OpenAI' : 'Gemini'} for entity extraction...`);
       return fetchWithRetry(endpoint, {
         method: 'POST',

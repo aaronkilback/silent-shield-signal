@@ -250,7 +250,7 @@ Format as structured JSON:
 }`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-pro',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are a regulatory document expert specializing in Canadian law. Provide accurate, detailed information about regulatory documents with proper citations.' },
         { role: 'user', content: documentPrompt }

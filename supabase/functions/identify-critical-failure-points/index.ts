@@ -134,7 +134,7 @@ ANALYSIS REQUIREMENTS:
 Provide a structured, actionable failure point analysis with specific technical and operational details.`;
 
     const aiResult = await callAiGateway({
-      model: "gemini-2.5-flash",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",

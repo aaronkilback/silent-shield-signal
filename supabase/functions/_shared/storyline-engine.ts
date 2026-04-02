@@ -78,7 +78,7 @@ export async function classifySignalIntoStoryline(
       is_contradiction: boolean;
       reasoning: string;
     }>({
-      model: 'google/gemini-2.5-flash-lite',
+      model: 'google/gpt-4o-mini',
       messages: [
         {
           role: 'system',
@@ -171,7 +171,7 @@ async function createNewStoryline(
 ): Promise<StorylineResult> {
   // Generate a concise title via AI
   const titleResult = await callAiGatewayJson<{ title: string; summary: string }>({
-    model: 'google/gemini-2.5-flash-lite',
+    model: 'google/gpt-4o-mini',
     messages: [
       { role: 'system', content: 'Generate a concise storyline title (max 10 words) and one-sentence summary for this intelligence signal. Return JSON: { "title": "...", "summary": "..." }' },
       { role: 'user', content: signal.normalized_text.substring(0, 500) }

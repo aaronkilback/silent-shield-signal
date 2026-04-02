@@ -5,7 +5,7 @@ async function extractNamesFromPDF(base64Data: string, columnName: string): Prom
   const pdfBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
 
   const aiResult = await callAiGateway({
-    model: 'google/gemini-2.5-flash',
+    model: 'google/gpt-4o-mini',
     messages: [
       {
         role: 'system',

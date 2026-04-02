@@ -108,7 +108,7 @@ Rules:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-3-flash-preview",
+        model: "gpt-4o-mini",
         messages: [
           { role: "system", content: "You are a precision regex pattern engineer. Output only valid JSON arrays." },
           { role: "user", content: aiPrompt },

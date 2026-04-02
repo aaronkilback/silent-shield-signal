@@ -319,7 +319,7 @@ Be specific, actionable, and ALWAYS cite the data source for each claim.`;
 
       try {
         const aiResult = await callAiGateway({
-          model: 'gemini-3-pro-preview',
+          model: 'gpt-4o-mini',
           messages: [
             { 
               role: 'system', 

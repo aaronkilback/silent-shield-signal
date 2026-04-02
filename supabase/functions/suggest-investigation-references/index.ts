@@ -69,7 +69,7 @@ Format: ["id1", "id2", "id3"]
 Maximum 5 suggestions.`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are an expert investigation analyst. Return ONLY valid JSON arrays.' },
         { role: 'user', content: prompt }

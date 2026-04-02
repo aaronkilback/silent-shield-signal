@@ -83,7 +83,7 @@ Consider:
 Provide actionable foresight for strategic decision-making.`;
 
     const result = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are an expert geopolitical risk analyst specializing in long-term strategic foresight and security planning for global operations.' },
         { role: 'user', content: analysisPrompt }

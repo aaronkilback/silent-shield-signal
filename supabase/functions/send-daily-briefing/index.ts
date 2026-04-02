@@ -143,7 +143,7 @@ Deno.serve(async (req) => {
       const doctrineContext = prioritized.map((d: any) => `- ${d.title}: ${d.content_text}`).join('\n');
 
       const doctrineResult = await callAiGateway({
-        model: 'google/gemini-2.5-flash',
+        model: 'google/gpt-4o-mini',
         messages: [
           { role: 'system', content: `You are the Silent Shield doctrine advisor. Pick ONE entry from the library and rephrase it as a sharp, memorable one-liner (max 20 words).\n\nSILENT SHIELD DOCTRINE LIBRARY:\n${doctrineContext}\n\nOUTPUT: JSON with one field "doctrine_line". Respond ONLY with valid JSON.` },
           { role: 'user', content: 'Generate today\'s doctrine line.' },
@@ -164,7 +164,7 @@ Deno.serve(async (req) => {
 
     // Generate briefing content
     const briefingResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         {
           role: 'system',

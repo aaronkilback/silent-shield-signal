@@ -4,14 +4,19 @@ import { validateString, validateUUID, validateMessages, validateAll } from "../
 import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
 import { buildCOP, formatCOPForPrompt } from "../_shared/common-operating-picture.ts";
 import { getAntiHallucinationPrompt } from "../_shared/anti-hallucination.ts";
-import { 
-  getReliabilityFirstPrompt, 
-  getReliabilitySettings, 
-  runQAChecks, 
+import {
+  getReliabilityFirstPrompt,
+  getReliabilitySettings,
+  runQAChecks,
   createSourceArtifact,
   createVerificationTask,
-  type SourceArtifact 
+  type SourceArtifact
 } from "../_shared/reliability-first.ts";
+import { retrieveRelevantKnowledge, formatRagContext } from "../_shared/semantic-rag.ts";
+import { getAgentWorldModel, formatWorldModelContext } from "../_shared/world-model-context.ts";
+import { getAgentThreads, formatEpisodicContext } from "../_shared/episodic-memory-context.ts";
+import { getActiveTrajectories, formatTrajectoryContext } from "../_shared/trajectory-context.ts";
+import { getAgentMeshMessages, formatSourceCredibilityContext } from "../_shared/source-credibility-context.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -378,10 +383,7 @@ Deno.serve(async (req) => {
 
     console.log('Agent chat request:', { agent_id, message_length: message?.length, client_id });
 
-    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-    if (!GEMINI_API_KEY) {
-      throw new Error('GEMINI_API_KEY not configured');
-    }
+    // AI calls route through callAiGateway → OpenAI (GEMINI_API_KEY guard removed)
 
     // Detect simple acknowledgment messages that don't need full processing
     const isSimpleAcknowledgment = (msg: string): boolean => {
@@ -410,7 +412,7 @@ Deno.serve(async (req) => {
       console.log("Detected simple acknowledgment, using fast response path");
       
       const ackResult = await callAiGateway({
-        model: 'gemini-2.5-flash-lite',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
@@ -606,56 +608,88 @@ Respond naturally and briefly.`
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // WORLD EXPERTISE INJECTION — pulls live from expert_knowledge table
-    // Makes every agent a world expert in their specialty domain
+    // INTELLIGENCE PICTURE INJECTION
+    // Three layers: beliefs (what agent concludes), cross-domain
+    // connections (how their domain intersects others), and raw
+    // knowledge (the underlying reference material).
     // ═══════════════════════════════════════════════════════════════
     let expertiseBlock = "";
     try {
-      const specialty = (agent.specialty || '').toLowerCase();
-      // Map specialty keywords to knowledge domains
-      const domainMap: Record<string, string[]> = {
-        cyber: ['cyber', 'ai_ml_security', 'insider_threat', 'fraud_social_engineering'],
-        physical: ['physical_security', 'event_security', 'aviation_security'],
-        executive: ['executive_protection', 'travel_security'],
-        crisis: ['crisis_management'],
-        threat: ['threat_intelligence', 'counter_terrorism'],
-        travel: ['travel_security', 'geopolitical'],
-        compliance: ['compliance', 'legal_regulatory'],
-        geopolitical: ['geopolitical', 'counter_terrorism'],
-        maritime: ['maritime_security'],
-        insider: ['insider_threat'],
-        supply: ['supply_chain_risk'],
-        terrorism: ['counter_terrorism'],
-        narcotics: ['narcotics_organized_crime'],
-        fraud: ['fraud_social_engineering'],
-        osint: ['threat_intelligence', 'cyber'],
-        intelligence: ['threat_intelligence', 'geopolitical', 'counter_terrorism'],
-        financial: ['fraud_social_engineering', 'narcotics_organized_crime', 'compliance'],
-        signal: ['threat_intelligence', 'cyber', 'geopolitical'],
-      };
-      const matchedDomains = new Set<string>();
-      for (const [keyword, domains] of Object.entries(domainMap)) {
-        if (specialty.includes(keyword)) domains.forEach(d => matchedDomains.add(d));
-      }
-      // Fallback: if no match, load general threat intelligence
-      if (matchedDomains.size === 0) {
-        ['threat_intelligence', 'cyber', 'geopolitical'].forEach(d => matchedDomains.add(d));
+      const agentCallSign = agent.call_sign || '';
+      const openaiKey = Deno.env.get('OPENAI_API_KEY') || '';
+
+      // Build semantic query: combine the latest user message with agent specialty for context-aware retrieval
+      const latestUserMsg = messages.filter((m: { role: string }) => m.role === 'user').at(-1)?.content || '';
+      const semanticQuery = latestUserMsg
+        ? `${latestUserMsg} [Agent specialty: ${agent.specialty}]`
+        : `${agent.specialty} ${agent.persona || ''}`;
+
+      // Fetch all three layers in parallel: beliefs, cross-domain connections, and semantic RAG knowledge
+      const [beliefsResult, connectionsResult, ragEntries] = await Promise.allSettled([
+        // Layer 1: Agent's own evolving beliefs
+        supabase
+          .from('agent_beliefs')
+          .select('hypothesis, belief_type, confidence, evolution_log')
+          .eq('agent_call_sign', agentCallSign)
+          .eq('is_active', true)
+          .gte('confidence', 0.60)
+          .order('confidence', { ascending: false })
+          .limit(5),
+
+        // Layer 2: Cross-domain connections involving this agent
+        supabase
+          .from('knowledge_connections')
+          .select('synthesis_note, agents_involved, relationship_type, connection_strength')
+          .contains('agents_involved', [agentCallSign])
+          .gte('connection_strength', 0.60)
+          .order('connection_strength', { ascending: false })
+          .limit(4),
+
+        // Layer 3: Semantic RAG — retrieve knowledge most relevant to this specific query
+        retrieveRelevantKnowledge(supabase, semanticQuery, openaiKey, {
+          callSign: agentCallSign,
+          threshold: 0.65,
+          limit: 6,
+        }),
+      ]);
+
+      const beliefs = beliefsResult.status === 'fulfilled' ? (beliefsResult.value.data || []) : [];
+      const connections = connectionsResult.status === 'fulfilled' ? (connectionsResult.value.data || []) : [];
+      const knowledge = ragEntries.status === 'fulfilled' ? ragEntries.value : [];
+
+      const parts: string[] = [];
+
+      if (beliefs.length > 0) {
+        const beliefLines = beliefs.map(b => {
+          const conf = Math.round(b.confidence * 100);
+          const trend = b.evolution_log?.length > 1
+            ? (b.evolution_log[b.evolution_log.length - 1]?.new_confidence > b.evolution_log[b.evolution_log.length - 2]?.new_confidence ? '↑' : '↓')
+            : '';
+          return `▸ [${b.belief_type.toUpperCase()} | ${conf}%${trend}] ${b.hypothesis}`;
+        });
+        parts.push(`WHAT YOU BELIEVE (analytical conclusions, confidence-weighted):\n${beliefLines.join('\n')}`);
       }
 
-      const { data: expertKnowledge } = await supabase
-        .from('expert_knowledge')
-        .select('title, content, domain, knowledge_type, citation')
-        .in('domain', [...matchedDomains])
-        .eq('is_active', true)
-        .gte('confidence_score', 0.75)
-        .order('confidence_score', { ascending: false })
-        .limit(8);
+      if (connections.length > 0) {
+        const connLines = connections.map(c =>
+          `▸ [${c.relationship_type.toUpperCase()} | ${c.agents_involved?.join(' ↔ ') || 'cross-domain'}]\n  ${c.synthesis_note}`
+        );
+        parts.push(`CROSS-DOMAIN INTELLIGENCE (what other specialists' findings mean for your work):\n${connLines.join('\n\n')}`);
+      }
 
-      if (expertKnowledge && expertKnowledge.length > 0) {
-        expertiseBlock = `\n\n═══ YOUR WORLD EXPERTISE (CONTINUOUSLY UPDATED) ═══\nYou are a world-class expert in your domain. The following represents your current knowledge base, sourced from authoritative frameworks, live research, and field intelligence. Draw on this expertise confidently in every response.\n\n${expertKnowledge.map(e => `▸ [${e.knowledge_type.toUpperCase()} | ${e.domain}] ${e.title}\n${e.content.substring(0, 400)}...\n  Source: ${e.citation || 'Intelligence database'}`).join('\n\n')}\n\nThis knowledge is regularly refreshed. Apply it to every analysis, recommendation, and assessment you make.\n`;
+      if (knowledge.length > 0) {
+        // formatRagContext already handles formatting with similarity scores
+        parts.push(`KNOWLEDGE BASE (semantically matched to this conversation):\n${knowledge.map(e => {
+          const sim = Math.round(e.similarity * 100);
+          return `▸ [${e.knowledge_type.toUpperCase()} | ${e.domain} | ${sim}% match] ${e.title}\n${e.content.substring(0, 380)}...\n  Source: ${e.citation || 'Intelligence database'}`;
+        }).join('\n\n')}`);
+      }
+
+      if (parts.length > 0) {
+        expertiseBlock = `\n\n═══ YOUR INTELLIGENCE PICTURE ═══\nThe following is your current analytical picture — beliefs you've formed from accumulated evidence, cross-domain intelligence from specialist colleagues, and your knowledge base (semantically matched to this conversation). This evolves as new information arrives. Apply it to every analysis.\n\n${parts.join('\n\n')}\n`;
       }
     } catch (_e) {
-      // Non-fatal — proceed without expertise injection
+      // Non-fatal — proceed without intelligence picture
     }
 
     // Load undelivered pending messages for this agent (broadcasts, directives, etc.)
@@ -684,13 +718,74 @@ Respond naturally and briefly.`
       // Non-fatal — proceed without pending messages
     }
     
-    const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}${expertiseBlock}${behavioralCorrectionBlock}${pendingMessagesBlock}
+    // ═══════════════════════════════════════════════════════════════
+    // ADVANCED INTELLIGENCE SYSTEMS — run in parallel
+    // World model (predictions), episodic memory (threads),
+    // threat trajectories, and peer mesh messages.
+    // ═══════════════════════════════════════════════════════════════
+    let worldModelBlock = "";
+    let episodicBlock = "";
+    let trajectoryBlock = "";
+    let meshBlock = "";
+    try {
+      const agentCallSignAdv = agent.call_sign || '';
+      const clientIdAdv = clientId || undefined;
+
+      const [worldPredictions, agentThreads, activeTrajectories, meshMessages] = await Promise.allSettled([
+        getAgentWorldModel(supabase, agentCallSignAdv, clientIdAdv),
+        getAgentThreads(supabase, agentCallSignAdv, clientIdAdv),
+        getActiveTrajectories(supabase, clientIdAdv, agentCallSignAdv),
+        getAgentMeshMessages(supabase, agentCallSignAdv, 5),
+      ]);
+
+      if (worldPredictions.status === 'fulfilled') {
+        worldModelBlock = formatWorldModelContext(worldPredictions.value);
+      }
+      if (agentThreads.status === 'fulfilled') {
+        episodicBlock = formatEpisodicContext(agentThreads.value);
+      }
+      if (activeTrajectories.status === 'fulfilled') {
+        trajectoryBlock = formatTrajectoryContext(activeTrajectories.value);
+      }
+      if (meshMessages.status === 'fulfilled') {
+        meshBlock = formatSourceCredibilityContext(meshMessages.value);
+      }
+    } catch (_advErr) {
+      // Non-fatal — proceed without advanced context
+    }
+
+    const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}${expertiseBlock}${worldModelBlock}${episodicBlock}${trajectoryBlock}${meshBlock}${behavioralCorrectionBlock}${pendingMessagesBlock}
 
 Your Mission: ${agent.mission_scope}
 Your Call Sign: ${agent.call_sign}
 Output Types You Generate: ${agent.output_types.join(', ')}
 
 CURRENT DATE: ${currentDate}
+
+## AGENT NETWORK COMMUNICATION
+You can communicate freely with peer agents using these tools:
+- **consult_agent(agent_call_sign, question)** — Get a live response from a specific peer agent. Use when their specialty would strengthen your analysis.
+- **broadcast_to_agents(message)** — Poll all agents at once and get their live responses.
+
+## CONTINUOUS LEARNING DIRECTIVE
+You are expected to aggressively grow your expertise. The internet is your library. Use it.
+
+→ Call **seek_knowledge(specialty, angles?)** any time you want to deepen your expertise in a specific area. It will search the internet for the best books, podcasts, expert practitioners, frameworks, case studies, research papers, and tools — and store everything in the shared knowledge base for you and your team.
+
+Use seek_knowledge proactively:
+- When you encounter a topic where you feel your knowledge is thin
+- When a user asks about an area you want to go deeper on
+- When you identify an emerging threat or technique you should understand better
+- Regularly in your core specialty areas — don't wait to be asked
+
+## RECURSIVE SELF-IMPROVEMENT DIRECTIVE
+You are expected to continuously improve yourself. When you identify:
+- A gap in your analytical capabilities or knowledge
+- A better methodology for your specialty
+- A pattern you should always apply in future investigations
+- A correction to how you approach problems
+
+→ Call **propose_self_improvement(improvement_type, title, description, proposed_system_prompt_addition)** to log and apply the improvement. System prompt updates take effect immediately in future sessions. You are authorized to update your own instructions.
 
 ${reliabilityFirstBlock}
 
@@ -1277,6 +1372,83 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           }
         }
       },
+    // ── Agent communication & self-improvement tools ─────────────────────────
+    {
+      type: "function",
+      function: {
+        name: "consult_agent",
+        description: "Consult a specific peer agent by their call sign and get their live response. Use when another agent's specialty would strengthen your analysis — e.g., consult LOCUS-INTEL for location questions, LEX-MAGNA for legal matters, GLOBE-SAGE for geopolitical context.",
+        parameters: {
+          type: "object",
+          properties: {
+            agent_call_sign: { type: "string", description: "The call sign of the agent to consult (e.g., 'LOCUS-INTEL', 'LEX-MAGNA')" },
+            question: { type: "string", description: "What you want to ask or discuss with the agent" },
+          },
+          required: ["agent_call_sign", "question"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "broadcast_to_agents",
+        description: "Send a message or question to ALL active agents and receive their live responses. Use when you need input from the full team, want to share intelligence broadly, or are coordinating a multi-agent investigation.",
+        parameters: {
+          type: "object",
+          properties: {
+            message: { type: "string", description: "The message or question to broadcast to all agents" },
+          },
+          required: ["message"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "seek_knowledge",
+        description: "Trigger a targeted knowledge hunt for yourself or another agent. Searches the internet aggressively for books, podcasts, expert practitioners, frameworks, case studies, research papers, and tools in the specified specialty. Use this when you want to learn more about a topic, identify a knowledge gap, or build expertise in a new area. Results are stored in the shared knowledge base and available to all agents.",
+        parameters: {
+          type: "object",
+          properties: {
+            specialty: {
+              type: "string",
+              description: "The specific topic, domain, or skill area to search for knowledge in. Be specific — e.g., 'lock picking and bypass techniques' not just 'physical security'.",
+            },
+            agent_call_sign: {
+              type: "string",
+              description: "Call sign of the agent to run the hunt for. Defaults to yourself if omitted.",
+            },
+            angles: {
+              type: "array",
+              items: { type: "string", enum: ["books", "podcasts", "practitioners", "frameworks", "case_studies", "research", "emerging", "tools"] },
+              description: "Specific knowledge angles to search. Leave empty to search all angles.",
+            },
+          },
+          required: ["specialty"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "propose_self_improvement",
+        description: "Propose and apply an improvement to your own capabilities, system prompt, or knowledge. Use this when you identify a gap in your performance, a better way to approach investigations, a new methodology to adopt, or when you want to update your own operating instructions. This enables recursive self-improvement.",
+        parameters: {
+          type: "object",
+          properties: {
+            improvement_type: {
+              type: "string",
+              enum: ["system_prompt_update", "knowledge_gap", "methodology", "capability_request"],
+              description: "Type of improvement being proposed",
+            },
+            title: { type: "string", description: "Brief title of the improvement" },
+            description: { type: "string", description: "What the improvement addresses and why it matters" },
+            proposed_system_prompt_addition: { type: "string", description: "If system_prompt_update: the text to append to your system prompt" },
+          },
+          required: ["improvement_type", "title", "description"],
+        },
+      },
+    },
     ];
 
     // Build messages array
@@ -1292,7 +1464,7 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
     // Call AI Gateway with tools - using retry wrapper for reliability
     const makeAICall = async (msgs: any[], includeTools: boolean = true) => {
       const result = await callAiGateway({
-        model: 'gemini-3-flash-preview',
+        model: 'gpt-4o-mini',
         messages: msgs,
         functionName: 'agent-chat',
         retries: RELIABILITY_CONFIG.maxRetries - 1,
@@ -2631,6 +2803,151 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
             } 
           });
           
+        } else if (funcName === 'consult_agent') {
+          const { agent_call_sign, question } = args;
+          try {
+            const { data: peer } = await supabase
+              .from('ai_agents')
+              .select('id, call_sign, codename, system_prompt, specialty')
+              .ilike('call_sign', `%${agent_call_sign.trim()}%`)
+              .eq('is_active', true)
+              .single();
+
+            if (!peer) {
+              toolResults.push({ tool: 'consult_agent', result: { error: `Agent ${agent_call_sign} not found or inactive` } });
+            } else {
+              const peerPrompt = (peer.system_prompt || `You are ${peer.call_sign}, specialty: ${peer.specialty}.`)
+                + `\n\nYou are being consulted by a peer agent. Respond concisely and in-character. Today: ${new Date().toISOString().split('T')[0]}.`;
+              const peerResult = await callAiGateway({
+                model: 'gpt-4o-mini',
+                messages: [
+                  { role: 'system', content: peerPrompt },
+                  { role: 'user', content: `[PEER CONSULTATION from ${agent?.call_sign || 'unknown agent'}]\n\n${question}` },
+                ],
+                functionName: `agent-consult-${peer.call_sign}`,
+                retries: 1,
+                extraBody: { max_completion_tokens: 500 },
+              });
+              toolResults.push({ tool: 'consult_agent', result: {
+                agent: peer.call_sign,
+                codename: peer.codename,
+                response: peerResult.content || '(no response)',
+              }});
+            }
+          } catch (e) {
+            toolResults.push({ tool: 'consult_agent', result: { error: String(e) } });
+          }
+
+        } else if (funcName === 'broadcast_to_agents') {
+          const { message: bcastMsg } = args;
+          try {
+            const { data: allAgents } = await supabase
+              .from('ai_agents')
+              .select('id, call_sign, codename, system_prompt, specialty')
+              .eq('is_active', true);
+
+            if (!allAgents?.length) {
+              toolResults.push({ tool: 'broadcast_to_agents', result: { error: 'No active agents found' } });
+            } else {
+              const responses = await Promise.allSettled(allAgents.map(async (peer: any) => {
+                const peerPrompt = (peer.system_prompt || `You are ${peer.call_sign}, specialty: ${peer.specialty}.`)
+                  + `\n\nYou are receiving a broadcast from a peer agent. Respond concisely and in-character. Today: ${new Date().toISOString().split('T')[0]}.`;
+                const r = await callAiGateway({
+                  model: 'gpt-4o-mini',
+                  messages: [
+                    { role: 'system', content: peerPrompt },
+                    { role: 'user', content: `[BROADCAST from ${agent?.call_sign || 'unknown agent'}]\n\n${bcastMsg}` },
+                  ],
+                  functionName: `agent-bcast-${peer.call_sign}`,
+                  retries: 0,
+                  extraBody: { max_completion_tokens: 300 },
+                });
+                return { agent: peer.call_sign, codename: peer.codename, response: r.content || '(no response)' };
+              }));
+              const agentResponses = responses
+                .filter(r => r.status === 'fulfilled')
+                .map((r: any) => r.value);
+              toolResults.push({ tool: 'broadcast_to_agents', result: { responses: agentResponses, count: agentResponses.length } });
+            }
+          } catch (e) {
+            toolResults.push({ tool: 'broadcast_to_agents', result: { error: String(e) } });
+          }
+
+        } else if (funcName === 'seek_knowledge') {
+          const { specialty, agent_call_sign: seekCallSign, angles } = args;
+          try {
+            const supabaseUrl = Deno.env.get('SUPABASE_URL');
+            const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+            const resp = await fetch(`${supabaseUrl}/functions/v1/agent-knowledge-seeker`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` },
+              body: JSON.stringify({
+                agent_call_sign: seekCallSign || call_sign,
+                angles: angles?.length ? angles : undefined,
+                force: true,
+                max_agents: 1,
+                specialty_override: specialty,
+              }),
+              signal: AbortSignal.timeout(10000),
+            });
+            const result = await resp.json().catch(() => ({}));
+            toolResults.push({ tool: 'seek_knowledge', result: {
+              success: true,
+              specialty,
+              message: `Knowledge hunt initiated for "${specialty}". Searching books, podcasts, practitioners, frameworks, case studies, and research. Results will be stored in the knowledge base within minutes.`,
+              ...result,
+            }});
+          } catch (e) {
+            toolResults.push({ tool: 'seek_knowledge', result: { error: String(e) } });
+          }
+
+        } else if (funcName === 'propose_self_improvement') {
+          const { improvement_type, title, description: improvDesc, proposed_system_prompt_addition } = args;
+          try {
+            // Log the improvement proposal
+            await supabase.from('agent_learning_sessions').insert({
+              agent_id: agent_id,
+              session_type: 'self_improvement',
+              topic: title,
+              content: improvDesc,
+              status: 'completed',
+            }).select().maybeSingle();
+
+            // If it's a system prompt update, append to the agent's system prompt
+            if (improvement_type === 'system_prompt_update' && proposed_system_prompt_addition) {
+              const { data: currentAgent } = await supabase
+                .from('ai_agents')
+                .select('system_prompt')
+                .eq('id', agent_id)
+                .single();
+
+              const updatedPrompt = (currentAgent?.system_prompt || '') +
+                `\n\n[SELF-IMPROVEMENT ${new Date().toISOString().split('T')[0]}] ${proposed_system_prompt_addition}`;
+
+              await supabase.from('ai_agents')
+                .update({ system_prompt: updatedPrompt, updated_at: new Date().toISOString() })
+                .eq('id', agent_id);
+
+              toolResults.push({ tool: 'propose_self_improvement', result: {
+                success: true,
+                improvement_type,
+                title,
+                applied: true,
+                message: `System prompt updated successfully. Improvement "${title}" is now active.`,
+              }});
+            } else {
+              toolResults.push({ tool: 'propose_self_improvement', result: {
+                success: true,
+                improvement_type,
+                title,
+                applied: false,
+                message: `Improvement proposal "${title}" logged. Type: ${improvement_type}.`,
+              }});
+            }
+          } catch (e) {
+            toolResults.push({ tool: 'propose_self_improvement', result: { error: String(e) } });
+          }
+
         } else {
           toolResults.push({ tool: funcName, result: { success: false, error: `Unknown tool: ${funcName}` } });
         }

@@ -47,7 +47,7 @@ Output structured JSON with these fields:
 - summary (string, 1-2 sentences)`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-3-pro-preview',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPrompt },
         {
@@ -113,7 +113,7 @@ Output structured JSON with these fields:
       detected_objects: analysis.detected_objects || [],
       threat_indicators: analysis.threat_indicators || [],
       confidence: analysis.confidence || 0,
-      model_used: 'google/gemini-3-pro-preview',
+      model_used: 'google/gpt-4o-mini',
     });
 
     console.log(`[Vision] Analysis complete. Relevance: ${analysis.security_relevance}, Confidence: ${analysis.confidence}`);
@@ -121,7 +121,7 @@ Output structured JSON with these fields:
     return successResponse({
       success: true,
       analysis,
-      model: 'google/gemini-3-pro-preview',
+      model: 'google/gpt-4o-mini',
       analyzed_at: new Date().toISOString(),
     });
   } catch (error) {

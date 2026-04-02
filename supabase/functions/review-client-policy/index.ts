@@ -181,7 +181,7 @@ Format as structured JSON:
 }`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-pro',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are a policy analysis expert specializing in security, HR, and operational policies. Provide thorough, actionable analysis while maintaining confidentiality.' },
         { role: 'user', content: analysisPrompt }

@@ -62,7 +62,7 @@ Provide:
 5. Similar historical cases`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-3-flash-preview',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are a security threat analyst specializing in threat escalation prediction.' },
         { role: 'user', content: analysisPrompt }

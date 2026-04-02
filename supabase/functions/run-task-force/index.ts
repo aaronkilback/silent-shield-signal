@@ -576,7 +576,7 @@ Generate the Commander's Intent with:
 Keep response concise and actionable.`;
 
     const intentResult = await callAiGateway({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: leader.ai_agents?.system_prompt || 'You are a tactical team leader.' },
         { role: 'user', content: commanderIntentPrompt }
@@ -623,7 +623,7 @@ RULES OF ENGAGEMENT:
 Provide your analysis for this mission. Include Confidence, Assumptions, Unknowns, and validation steps.`;
 
       const agentResult = await callAiGateway({
-        model: 'gemini-2.5-flash',
+        model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: agent.ai_agents?.system_prompt || `You are ${agent.ai_agents?.codename}.` },
           { role: 'user', content: agentPrompt }
@@ -664,7 +664,7 @@ Create a consolidated mission report with:
 Ensure compliance with RoE - no absolute certainty claims, proper evidence tagging.`;
 
     const synthesisResult = await callAiGateway({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: leader.ai_agents?.system_prompt || 'You are a tactical team leader.' },
         { role: 'user', content: synthesisPrompt }

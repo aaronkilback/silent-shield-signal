@@ -60,7 +60,7 @@ Consider:
 Provide a structured evaluation that helps security teams prioritize countermeasure deployment.`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are an expert defense analyst specializing in tactical security evaluation and optimization.' },
         { role: 'user', content: evaluationPrompt }

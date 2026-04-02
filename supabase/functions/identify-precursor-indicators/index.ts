@@ -72,7 +72,7 @@ Identify:
 5. Confidence level and timeline estimate`;
 
     const result = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are a strategic threat intelligence analyst specializing in early warning detection and precursor pattern recognition.' },
         { role: 'user', content: analysisPrompt }

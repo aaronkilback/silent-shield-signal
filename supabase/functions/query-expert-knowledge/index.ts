@@ -218,7 +218,7 @@ Write in a direct, authoritative tone suitable for senior security leadership.`;
 
   try {
     const aiResult = await callAiGateway({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are AEGIS, a senior security intelligence advisor. Synthesize multiple knowledge sources into unified, authoritative expert briefings.' },
         { role: 'user', content: prompt }

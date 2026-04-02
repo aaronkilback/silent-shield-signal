@@ -11,7 +11,7 @@
  */
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
-import { generateHypothesisTree } from "../_shared/agent-intelligence.ts";
+import { generateHypothesisTree, resolveIncidentPredictions } from "../_shared/agent-intelligence.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -69,7 +69,7 @@ Deno.serve(async (req) => {
           evidenceContext,
           incident.id,
           incident.signal_id || null,
-          'google/gemini-2.5-flash'
+          'google/gpt-4o-mini'
         );
 
         if (tree.treeId) treesGenerated++;
@@ -524,6 +524,38 @@ Deno.serve(async (req) => {
     } catch (err) {
       console.error('[LoopCloser] Debate Records error:', err);
       results.debate_records = { error: String(err) };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // LOOP 7: PREDICTION RESOLUTION + WATCH LIST EXPIRY
+    //   a) Resolve open agent predictions for recently-resolved incidents
+    //   b) Expire watch list entries past their expiry_date
+    // ═══════════════════════════════════════════════════════════════════
+    try {
+      // Find recently resolved/closed incidents with open predictions
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const { data: resolvedIncidents } = await supabase
+        .from('incidents')
+        .select('id, priority, status, resolved_at')
+        .in('status', ['resolved', 'closed'])
+        .gte('resolved_at', sevenDaysAgo)
+        .limit(10);
+
+      let predictionsResolved = 0;
+      for (const incident of resolvedIncidents || []) {
+        const count = await resolveIncidentPredictions(supabase, incident.id, incident.priority || 'p3');
+        predictionsResolved += count;
+      }
+
+      // Expire stale watch list entries
+      const { data: expiredCount } = await supabase.rpc('expire_watch_list_entries');
+
+      results.prediction_resolution = { resolved: predictionsResolved, incidents_checked: (resolvedIncidents || []).length };
+      results.watch_list_expiry = { expired: expiredCount || 0 };
+      console.log(`[LoopCloser] Prediction Resolution: ${predictionsResolved} resolved. Watch list expiry: ${expiredCount || 0} entries deactivated.`);
+    } catch (err) {
+      console.error('[LoopCloser] Loop 7 error:', err);
+      results.prediction_resolution = { error: String(err) };
     }
 
     console.log(`[LoopCloser] Complete:`, JSON.stringify(results));

@@ -208,7 +208,7 @@ Deno.serve(async (req) => {
     const topInsights = [...urgentInsights, ...highInsights].slice(0, 3);
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gpt-4o-mini',
       functionName: 'proactive-intelligence-push',
       messages: [
         {

@@ -256,9 +256,10 @@ serve(async (req) => {
     // Build dashboard URL
     const baseUrl = Deno.env.get('SUPABASE_URL')?.replace('.supabase.co', '') || '';
     const projectId = baseUrl.split('//')[1]?.split('.')[0] || '';
-    payload.dashboard_url = payload.incident_id 
-      ? `https://silent-shield-signal.lovable.app/incidents?id=${payload.incident_id}`
-      : 'https://silent-shield-signal.lovable.app/incidents';
+    const appUrl = Deno.env.get('APP_URL') || 'https://fortress.silentshieldsecurity.com';
+    payload.dashboard_url = payload.incident_id
+      ? `${appUrl}/incidents?id=${payload.incident_id}`
+      : `${appUrl}/incidents`;
 
     const deliveryResults: Record<string, { success: boolean; error?: string; duration_ms?: number }> = {};
 

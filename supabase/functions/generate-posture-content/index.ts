@@ -65,7 +65,7 @@ Respond ONLY with valid JSON. No markdown. No explanation.`;
 
     const { callAiGateway } = await import("../_shared/ai-gateway.ts");
     const aiResult = await callAiGateway({
-      model: "gemini-2.5-flash",
+      model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: "Generate today's doctrine anchor and exposure question." },

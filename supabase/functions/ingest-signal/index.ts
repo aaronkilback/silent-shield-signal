@@ -232,7 +232,7 @@ Deno.serve(async (req) => {
 
         // Enhanced AI analysis with better prompting (resilient)
         const analysisResult = await callAiGateway({
-          model: 'gemini-2.5-flash',
+          model: 'gpt-4o-mini',
           messages: [
             {
               role: 'system',
@@ -354,7 +354,7 @@ Be specific and concise. Focus on facts, not speculation.`
     } catch { /* non-blocking */ }
 
     const classResult = await callAiGatewayJson({
-      model: 'gemini-2.5-flash',
+      model: 'gpt-4o-mini',
       messages: [
         {
           role: 'system',
@@ -534,8 +534,6 @@ Respond ONLY with valid JSON.`
       if (!clientId) {
         console.log('No keyword match found, trying AI matching...');
         
-        const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-        
         // Build client context for AI matching
         const clientsContext = clients.map(c => ({
           id: c.id,
@@ -546,20 +544,14 @@ Respond ONLY with valid JSON.`
           assets: c.high_value_assets,
           keywords: c.monitoring_keywords
         }));
-        
+
         try {
-          const matchResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${GEMINI_API_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: 'gemini-2.5-flash',
-              messages: [
-                {
-                  role: 'system',
-                  content: `You are a client matching specialist. Match security signals to clients based on:
+          const { data: matchResult, error: matchErr } = await callAiGatewayJson({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content: `You are a client matching specialist. Match security signals to clients based on:
 - Direct mentions of client names or organizations
 - Monitoring keywords configured for each client
 - Industry relevance (e.g., pipeline activism → energy companies)
@@ -568,27 +560,17 @@ Respond ONLY with valid JSON.`
 - Project connections (e.g., LNG projects → energy sector)
 
 Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": null} if no match.`
-                },
-                {
-                  role: 'user',
-                  content: `Signal content:\n${signalText.substring(0, 2000)}\n\nAvailable clients:\n${JSON.stringify(clientsContext, null, 2)}\n\nWhich client does this signal relate to?`
-                }
-              ],
-              max_completion_tokens: 150
-            }),
+              },
+              {
+                role: 'user',
+                content: `Signal content:\n${signalText.substring(0, 2000)}\n\nAvailable clients:\n${JSON.stringify(clientsContext, null, 2)}\n\nWhich client does this signal relate to?`
+              }
+            ],
+            extraBody: { max_completion_tokens: 150 },
+            functionName: 'ingest-signal',
           });
 
-          if (matchResponse.ok) {
-            const matchData = await matchResponse.json();
-            let matchContent = matchData.choices?.[0]?.message?.content || '';
-            
-            // Strip markdown if present
-            if (matchContent.startsWith('```')) {
-              matchContent = matchContent.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-            }
-            
-            const matchResult = JSON.parse(matchContent);
-            if (matchResult.client_id) {
+          if (!matchErr && matchResult?.client_id) {
               // Validate AI-suggested client_id exists
               const aiSuggestedClient = clients.find(c => c.id === matchResult.client_id);
               if (aiSuggestedClient) {
@@ -599,7 +581,6 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
               } else {
                 console.warn(`⚠ AI suggested invalid client_id: ${matchResult.client_id}`);
               }
-            }
           }
         } catch (error) {
           console.error('AI client matching failed:', error);
@@ -705,7 +686,7 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
           const newTitle = (classification.normalized_text || signalText).substring(0, 300);
           
           const sameStoryCheck = await callAiGatewayJson({
-            model: 'gemini-2.5-flash-lite',
+            model: 'gpt-4o-mini',
             messages: [
               {
                 role: 'system',
@@ -814,7 +795,7 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
 
         if (clientForGate) {
           const gateResult = await callAiGatewayJson({
-            model: 'gemini-2.5-flash-lite',
+            model: 'gpt-4o-mini',
             messages: [
               {
                 role: 'system',

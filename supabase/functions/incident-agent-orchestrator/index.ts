@@ -314,15 +314,15 @@ ${buildPersonalizationPrompt(analystPrefs)}
 
     // Tier 1: Use upgraded models based on agent specialization
     const AGENT_MODELS: Record<string, string> = {
-      'GLOBE-SAGE': 'gemini-3-pro-preview',
+      'GLOBE-SAGE': 'gpt-4o-mini',
       'AEGIS-CMD': 'openai/gpt-5.2',
       'LEX-MAGNA': 'openai/gpt-5.2',
-      'BIRD-DOG': 'gemini-3-pro-preview',
-      'LOCUS-INTEL': 'gemini-3-flash-preview',
-      'TIME-WARP': 'gemini-3-flash-preview',
+      'BIRD-DOG': 'gpt-4o-mini',
+      'LOCUS-INTEL': 'gpt-4o-mini',
+      'TIME-WARP': 'gpt-4o-mini',
       'PATTERN-SEEKER': 'openai/gpt-5.2',
     };
-    const agentModel = AGENT_MODELS[selectedAgent] || 'gemini-3-flash-preview';
+    const agentModel = AGENT_MODELS[selectedAgent] || 'gpt-4o-mini';
 
     // Intelligence upgrades: CoT + Evidence Citations
     const intelligenceUpgrade = getIntelligenceUpgradePrompt();
@@ -441,6 +441,24 @@ Provide your specialized analysis following the output format specified.`;
     }
     await Promise.all(predictionPromises);
 
+    // Extract a 0-100 severity score from the CoT analysis text, adjusted by calibration
+    function extractWeightedSeverityScore(analysisText: string, calibration: number): number | null {
+      // Look for explicit confidence percentage in Step 5 output
+      const confMatch = analysisText.match(/(?:confidence|certainty)[:\s]+(\d{1,3})%/i)
+        || analysisText.match(/(\d{1,3})%\s+(?:confidence|certainty)/i);
+      if (confMatch) {
+        const base = Math.min(100, Math.max(0, parseInt(confMatch[1])));
+        return Math.round(base * calibration);
+      }
+      // Fallback: map HIGH/MEDIUM/LOW confidence keywords to numeric scores
+      if (/\bHIGH\s+CONFIDENCE\b/i.test(analysisText)) return Math.round(80 * calibration);
+      if (/\bMEDIUM\s+CONFIDENCE\b/i.test(analysisText)) return Math.round(55 * calibration);
+      if (/\bLOW\s+CONFIDENCE\b/i.test(analysisText)) return Math.round(30 * calibration);
+      return null;
+    }
+
+    const weightedScore = extractWeightedSeverityScore(analysisContent, agentCalibration.calibration);
+
     // Create analysis log entry
     const analysisEntry = {
       timestamp: new Date().toISOString(),
@@ -464,6 +482,14 @@ Provide your specialized analysis following the output format specified.`;
         accuracy: agentCalibration.accuracy,
         calibration_factor: agentCalibration.calibration,
         total_tracked: agentCalibration.totalPredictions,
+      },
+      // Accuracy-weighted severity: only applied when agent has sufficient history
+      weighted_severity_score: weightedScore,
+      agent_reliability: {
+        accuracy_pct: Math.round(agentCalibration.accuracy * 100),
+        calibration_factor: agentCalibration.calibration,
+        total_predictions: agentCalibration.totalPredictions,
+        weight_applied: agentCalibration.totalPredictions >= 5,
       },
     };
 

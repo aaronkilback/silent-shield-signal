@@ -7,6 +7,7 @@
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { getCriticalDateContext } from "../_shared/anti-hallucination.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -14,8 +15,7 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
-    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-    if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
+    // GEMINI_API_KEY guard removed — now routes through ai-gateway with OPENAI_API_KEY
 
     const dateContext = getCriticalDateContext();
     console.log(`[AutoScan] Starting autonomous threat sweep at ${dateContext.currentDateTimeLocal}`);
@@ -113,30 +113,19 @@ Deno.serve(async (req) => {
     );
 
     try {
-      const aiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${GEMINI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'gemini-3-flash-preview',
-          messages: [
-            {
-              role: 'system',
-              content: `You are an autonomous threat monitoring agent. Analyze the scan data and produce a concise threat assessment (200 words max). Focus on: 1) Most concerning anomaly, 2) Entity clustering significance, 3) Overall threat posture, 4) Recommended immediate actions. Use measured, non-alarmist language. Current date: ${dateContext.currentDateISO}.`,
-            },
-            { role: 'user', content: JSON.stringify(scanData, null, 2) },
-          ],
-          max_tokens: 1000,
-          temperature: 0.3,
-        }),
+      const { content } = await callAiGateway({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: `You are an autonomous threat monitoring agent. Analyze the scan data and produce a concise threat assessment (200 words max). Focus on: 1) Most concerning anomaly, 2) Entity clustering significance, 3) Overall threat posture, 4) Recommended immediate actions. Use measured, non-alarmist language. Current date: ${dateContext.currentDateISO}.`,
+          },
+          { role: 'user', content: JSON.stringify(scanData, null, 2) },
+        ],
+        extraBody: { max_tokens: 1000, temperature: 0.3 },
+        functionName: 'autonomous-threat-scan',
       });
-
-      if (aiResponse.ok) {
-        const data = await aiResponse.json();
-        aiFindings = data.choices?.[0]?.message?.content || '';
-      }
+      aiFindings = content || '';
     } catch (err) {
       console.error('[AutoScan] AI synthesis error:', err);
     }

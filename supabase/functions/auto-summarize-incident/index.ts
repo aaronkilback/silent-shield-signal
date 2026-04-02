@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
         }
 
         const aiResult = await callAiGateway({
-          model: 'gemini-2.5-flash',
+          model: 'gpt-4o-mini',
           messages: [
             {
               role: 'system',

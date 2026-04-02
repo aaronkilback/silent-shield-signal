@@ -98,7 +98,7 @@ Format your response as structured JSON with the following schema:
 }`;
 
     const aiResult = await callAiGateway({
-      model: 'google/gemini-2.5-pro',
+      model: 'google/gpt-4o-mini',
       messages: [
         { role: 'system', content: 'You are a legal research AI with deep knowledge of Canadian law, particularly security, employment, and regulatory matters in BC and Alberta. Always provide accurate, well-sourced information with appropriate legal disclaimers.' },
         { role: 'user', content: legalPrompt }

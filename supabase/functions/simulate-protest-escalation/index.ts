@@ -114,7 +114,7 @@ Provide a data-driven, realistic escalation forecast with specific probabilities
 
     // Call AI for simulation
     const aiResult = await callAiGateway({
-      model: "google/gemini-2.5-flash",
+      model: "google/gpt-4o-mini",
       messages: [
         { role: "system", content: "You are a civil unrest and protest escalation expert. Provide realistic, data-driven escalation forecasts based on intelligence." },
         { role: "user", content: simulationPrompt }

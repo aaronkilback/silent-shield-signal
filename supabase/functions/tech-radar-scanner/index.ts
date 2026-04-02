@@ -159,7 +159,7 @@ For each technology, return a JSON array with objects containing:
 Return ONLY the JSON array.`;
 
   const aiResult = await callAiGateway({
-    model: 'google/gemini-2.5-flash',
+    model: 'google/gpt-4o-mini',
     messages: [
       { role: 'system', content: 'You are a senior security technology strategist advising Fortune 500 CISOs. Generate precise, evidence-based technology adoption recommendations.' },
       { role: 'user', content: prompt }

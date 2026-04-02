@@ -251,7 +251,7 @@ Deno.serve(async (req) => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: 'gemini-3-pro-preview',
+            model: 'gpt-4o-mini',
             messages: [
               {
                 role: 'system',

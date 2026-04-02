@@ -21,6 +21,7 @@
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import type { SystemOpsAction, HealthCheckResult as SharedHealthCheckResult, HealthStatus, DomainRequest } from "../_shared/types.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 // ═══════════════════════════════════════════════════════════════
 //                      ACTION ROUTER
@@ -473,15 +474,15 @@ async function checkExternalAPI(name: string, url: string, timeout: number = 100
 
 async function checkAIGateway(): Promise<HealthCheckResult> {
   const start = Date.now();
-  const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-  if (!GEMINI_API_KEY) return { name: 'ai_gateway', status: 'unhealthy', latency_ms: 0, message: 'GEMINI_API_KEY not configured', last_checked: new Date().toISOString() };
+  const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+  if (!OPENAI_API_KEY) return { name: 'ai_gateway', status: 'unhealthy', latency_ms: 0, message: 'OPENAI_API_KEY not configured', last_checked: new Date().toISOString() };
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
-    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${GEMINI_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'gemini-2.5-flash-lite', messages: [{ role: 'user', content: 'ping' }], max_completion_tokens: 1 }),
+      headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'ping' }], max_completion_tokens: 1 }),
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
@@ -847,9 +848,6 @@ async function handleDetectContradictions(body: Record<string, unknown>): Promis
     return successResponse({ success: true, contradictions: 0, message: 'No potential contradictions found' });
   }
 
-  const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
-
   const chunks: typeof candidatePairs[] = [];
   for (let i = 0; i < candidatePairs.length; i += 10) {
     chunks.push(candidatePairs.slice(i, i + 10));
@@ -871,16 +869,16 @@ Signal A [${p.signalA.severity}/${p.signalA.category}]: ${(p.signalA.normalized_
 Signal B [${p.signalB.severity}/${p.signalB.category}]: ${(p.signalB.normalized_text || p.signalB.title || '').substring(0, 300)}`).join('\n')}`;
 
     try {
-      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${GEMINI_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'gemini-2.5-flash', messages: [{ role: 'user', content: prompt }], temperature: 0.1 }),
+      const { content: rawContent, error: aiErr } = await callAiGateway({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        extraBody: { temperature: 0.1 },
+        functionName: 'system-ops:detect-contradictions',
       });
 
-      if (!response.ok) { console.error(`[SystemOps:contradictions] AI call failed: ${response.status}`); await response.text(); continue; }
+      if (aiErr || !rawContent) { console.error(`[SystemOps:contradictions] AI call failed: ${aiErr}`); continue; }
 
-      const data = await response.json();
-      let content = (data.choices?.[0]?.message?.content || '').trim();
+      let content = rawContent.trim();
       if (content.startsWith('```')) content = content.replace(/```json?\n?/g, '').replace(/```$/g, '').trim();
 
       const result = JSON.parse(content);

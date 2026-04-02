@@ -214,7 +214,7 @@ Deno.serve(async (req) => {
       }).join('\n');
 
       const aiResult = await callAiGateway({
-        model: 'google/gemini-3-flash-preview',
+        model: 'google/gpt-4o-mini',
         messages: [
           {
             role: 'system',

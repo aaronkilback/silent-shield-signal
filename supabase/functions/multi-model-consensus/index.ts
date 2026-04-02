@@ -41,13 +41,13 @@ ${context ? `Additional Context: ${JSON.stringify(context).substring(0, 500)}` :
 
     // Run two models in parallel — both using TOOL CALLING (not free-text JSON)
     const [model1Response, model2Response] = await Promise.all([
-      fetchStructuredAssessment('google/gemini-3-pro-preview', systemPrompt, userPrompt),
-      fetchStructuredAssessment('google/gemini-2.5-flash', systemPrompt, userPrompt),
+      fetchStructuredAssessment('google/gpt-4o-mini', systemPrompt, userPrompt),
+      fetchStructuredAssessment('google/gpt-4o-mini', systemPrompt, userPrompt),
     ]);
 
     // Parse tool call results (guaranteed schema compliance)
-    const result1 = parseToolCallResult(model1Response, 'google/gemini-3-pro-preview');
-    const result2 = parseToolCallResult(model2Response, 'google/gemini-2.5-flash');
+    const result1 = parseToolCallResult(model1Response, 'google/gpt-4o-mini');
+    const result2 = parseToolCallResult(model2Response, 'google/gpt-4o-mini');
 
     // Determine consensus
     const assessmentsMatch = result1.assessment === result2.assessment;
@@ -79,7 +79,7 @@ ${context ? `Additional Context: ${JSON.stringify(context).substring(0, 500)}` :
     if (signal_id) {
       await supabase.from('agent_debate_records').insert({
         debate_type: 'multi_model_consensus_v2',
-        participating_agents: ['gemini-3-pro', 'gemini-2.5-flash'],
+        participating_agents: ['gpt-4o-mini', 'gpt-4o-mini'],
         individual_analyses: { model_1: result1, model_2: result2 },
         synthesis: {
           consensus_score: consensusScore,
