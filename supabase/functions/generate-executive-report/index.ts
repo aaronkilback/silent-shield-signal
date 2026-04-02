@@ -656,462 +656,310 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Executive Intelligence Brief - ${client.name}</title>
   <style>
-    @page { margin: 0.75in; }
+    @page { margin: 1in 0.9in; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    
+
     body {
-      font-family: 'Arial', 'Helvetica', sans-serif;
-      font-size: 10pt;
-      line-height: 1.5;
-      color: #1a1a1a;
+      font-family: 'Georgia', 'Times New Roman', serif;
+      font-size: 10.5pt;
+      line-height: 1.6;
+      color: #111;
       background: white;
-      max-width: 900px;
+      max-width: 860px;
       margin: 0 auto;
     }
 
+    /* HEADER */
     .header {
-      border-bottom: 3px solid #7c3aed;
-      padding-bottom: 12pt;
-      margin-bottom: 16pt;
+      border-bottom: 1px solid #111;
+      padding-bottom: 10pt;
+      margin-bottom: 18pt;
     }
-
     .header-top {
       display: flex;
       justify-content: space-between;
-      align-items: start;
-      margin-bottom: 12pt;
+      align-items: baseline;
+      margin-bottom: 8pt;
     }
-
     .classification {
-      background: #7c3aed;
-      color: white;
-      padding: 6pt 12pt;
+      font-family: 'Arial', sans-serif;
+      font-size: 8pt;
       font-weight: 700;
-      font-size: 9pt;
-      letter-spacing: 1px;
+      letter-spacing: 1.5pt;
+      text-transform: uppercase;
+      color: #111;
+      border: 1px solid #111;
+      padding: 2pt 8pt;
     }
+    .report-date { font-family: 'Arial', sans-serif; font-size: 9pt; color: #555; }
+    .logo-area { text-align: center; margin-bottom: 4pt; }
+    .company-name { font-family: 'Arial', sans-serif; font-size: 16pt; font-weight: 700; color: #111; letter-spacing: 2pt; text-transform: uppercase; margin-bottom: 3pt; }
+    .report-title { font-family: 'Arial', sans-serif; font-size: 11pt; color: #333; }
 
-    .report-date { font-size: 10pt; color: #666; font-weight: 600; }
-    .logo-area { text-align: center; margin-bottom: 6pt; }
-    .company-name { font-size: 20pt; font-weight: 700; color: #7c3aed; margin-bottom: 4pt; }
-    .report-title { font-size: 14pt; color: #333; font-weight: 600; }
-
-    /* EXECUTIVE FLASH BANNER */
+    /* EXECUTIVE FLASH */
     .executive-flash {
-      background: #1B2A4A;
-      color: white;
-      padding: 20pt;
-      margin: 16pt 0;
-      border-radius: 6pt;
+      border: 1px solid #111;
+      padding: 16pt;
+      margin: 18pt 0;
     }
-
     .flash-header {
       display: flex;
       justify-content: space-between;
-      align-items: center;
-      margin-bottom: 12pt;
-      border-bottom: 1px solid rgba(255,255,255,0.3);
-      padding-bottom: 8pt;
+      align-items: baseline;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 6pt;
+      margin-bottom: 10pt;
     }
-
     .flash-title {
-      font-size: 11pt;
+      font-family: 'Arial', sans-serif;
+      font-size: 9pt;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 1.5pt;
     }
-
     .flash-confidence {
-      background: rgba(255,255,255,0.2);
-      padding: 4pt 10pt;
-      border-radius: 3pt;
-      font-size: 9pt;
-      font-weight: 600;
+      font-family: 'Arial', sans-serif;
+      font-size: 8pt;
+      color: #555;
     }
-
     .flash-issue {
-      font-size: 14pt;
-      font-weight: 700;
-      margin-bottom: 12pt;
+      font-size: 12pt;
+      font-weight: bold;
+      margin-bottom: 10pt;
       line-height: 1.4;
     }
-
     .flash-action {
-      background: rgba(255,255,255,0.15);
-      padding: 12pt;
-      border-radius: 4pt;
+      border-left: 3pt solid #111;
+      padding-left: 10pt;
       margin-bottom: 10pt;
     }
-
     .flash-action-label {
-      font-size: 9pt;
+      font-family: 'Arial', sans-serif;
+      font-size: 8pt;
+      font-weight: 700;
       text-transform: uppercase;
-      opacity: 0.8;
-      margin-bottom: 4pt;
+      letter-spacing: 1pt;
+      color: #555;
+      margin-bottom: 3pt;
     }
-
-    .flash-action-text {
-      font-size: 12pt;
-      font-weight: 600;
-    }
-
+    .flash-action-text { font-size: 10.5pt; }
     .flash-meta {
       display: flex;
-      gap: 20pt;
-      font-size: 9pt;
-      opacity: 0.9;
+      gap: 24pt;
+      font-family: 'Arial', sans-serif;
+      font-size: 8.5pt;
+      color: #333;
+      border-top: 1px solid #ccc;
+      padding-top: 8pt;
+      margin-top: 8pt;
     }
+    .flash-meta-item strong { font-weight: 700; }
 
-    .flash-meta-item strong {
-      font-weight: 700;
-    }
-
+    /* REPORT META */
     .meta-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 12pt;
-      background: #f8f9fa;
-      padding: 12pt;
-      border-radius: 4pt;
-      margin-bottom: 24pt;
-      border: 1px solid #e0e0e0;
+      gap: 0;
+      margin-bottom: 22pt;
+      border: 1px solid #ccc;
     }
+    .meta-item {
+      font-family: 'Arial', sans-serif;
+      font-size: 8.5pt;
+      padding: 8pt 10pt;
+      border-right: 1px solid #ccc;
+    }
+    .meta-item:last-child { border-right: none; }
+    .meta-label { text-transform: uppercase; font-weight: 700; color: #666; font-size: 7.5pt; letter-spacing: 0.5pt; margin-bottom: 2pt; }
+    .meta-value { color: #111; font-weight: 600; }
 
-    .meta-item { font-size: 9pt; }
-    .meta-label { text-transform: uppercase; font-weight: 700; color: #666; letter-spacing: 0.5pt; margin-bottom: 2pt; }
-    .meta-value { color: #1a1a1a; font-weight: 600; }
-
-    .section { margin-bottom: 28pt; page-break-inside: avoid; }
+    /* SECTIONS */
+    .section { margin-bottom: 26pt; }
     .section-title {
-      font-size: 12pt;
-      font-weight: 700;
-      color: #1a1a1a;
-      margin-bottom: 12pt;
-      padding-bottom: 6pt;
-      border-bottom: 2px solid #7c3aed;
-    }
-
-    .subsection-title { font-size: 12pt; font-weight: 700; color: #7c3aed; margin: 18pt 0 8pt 0; }
-
-    .executive-summary {
-      background: #f0f0f0;
-      border-left: 4pt solid #7c3aed;
-      padding: 16pt;
-      margin: 16pt 0;
-      font-size: 10.5pt;
-      line-height: 1.6;
-    }
-
-    /* IMPACT LADDER - New */
-    .impact-ladder {
-      background: #fef3c7;
-      border: 2pt solid #f59e0b;
-      border-radius: 6pt;
-      padding: 16pt;
-      margin: 16pt 0;
-    }
-
-    .impact-ladder-title {
-      font-weight: 700;
-      color: #b45309;
-      font-size: 11pt;
-      margin-bottom: 12pt;
-      display: flex;
-      align-items: center;
-      gap: 8pt;
-    }
-
-    .impact-item {
-      background: white;
-      border-radius: 4pt;
-      padding: 12pt;
-      margin-bottom: 10pt;
-      border-left: 4pt solid #f59e0b;
-    }
-
-    .impact-issue {
-      font-weight: 700;
-      color: #1a1a1a;
-      margin-bottom: 8pt;
-      font-size: 10.5pt;
-    }
-
-    .impact-row {
-      display: flex;
-      margin: 6pt 0;
-      font-size: 9.5pt;
-    }
-
-    .impact-label {
-      width: 140pt;
-      font-weight: 600;
-      color: #666;
-    }
-
-    .impact-value {
-      flex: 1;
-      color: #1a1a1a;
-    }
-
-    /* INCIDENT DETAIL TABLE - Enhanced */
-    .incident-detail-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 16pt 0;
-      font-size: 9pt;
-    }
-
-    .incident-detail-table th {
-      background: #991b1b;
-      color: white;
-      padding: 8pt;
-      text-align: left;
-      font-weight: 700;
-      text-transform: uppercase;
-      font-size: 8pt;
-      letter-spacing: 0.5pt;
-    }
-
-    .incident-detail-table td {
-      padding: 8pt;
-      border-bottom: 1px solid #e0e0e0;
-      vertical-align: top;
-    }
-
-    .incident-detail-table tbody tr:nth-child(even) { background: #fef2f2; }
-
-    .incident-id-link {
-      color: #7c3aed;
-      font-family: monospace;
-      font-size: 8pt;
-    }
-
-    .system-badge {
-      display: inline-block;
-      padding: 2pt 6pt;
-      border-radius: 3pt;
-      font-size: 8pt;
-      font-weight: 600;
-      text-transform: uppercase;
-    }
-
-    .system-cyber { background: #dbeafe; color: #1e40af; }
-    .system-physical { background: #dcfce7; color: #166534; }
-    .system-intel { background: #f3e8ff; color: #7c3aed; }
-    .system-social { background: #fef3c7; color: #b45309; }
-
-    /* OWNERSHIP MATRIX - New */
-    .ownership-section {
-      background: #f0fdf4;
-      border: 2pt solid #22c55e;
-      border-radius: 6pt;
-      padding: 16pt;
-      margin: 16pt 0;
-    }
-
-    .ownership-title {
-      font-weight: 700;
-      color: #166534;
-      font-size: 11pt;
-      margin-bottom: 12pt;
-    }
-
-    .action-item {
-      background: white;
-      border-radius: 4pt;
-      padding: 12pt;
-      margin-bottom: 10pt;
-      border-left: 4pt solid #22c55e;
-    }
-
-    .action-description {
-      font-weight: 600;
-      color: #1a1a1a;
-      margin-bottom: 8pt;
+      font-family: 'Arial', sans-serif;
       font-size: 10pt;
-    }
-
-    .action-meta {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 10pt;
-      font-size: 9pt;
-    }
-
-    .action-meta-item {
-      display: flex;
-      flex-direction: column;
-    }
-
-    .action-meta-label {
       font-weight: 700;
-      color: #666;
-      font-size: 8pt;
       text-transform: uppercase;
-      margin-bottom: 2pt;
+      letter-spacing: 1pt;
+      color: #111;
+      margin-bottom: 10pt;
+      padding-bottom: 4pt;
+      border-bottom: 1px solid #111;
+    }
+    .subsection-title {
+      font-family: 'Arial', sans-serif;
+      font-size: 10pt;
+      font-weight: 700;
+      color: #111;
+      margin: 16pt 0 6pt 0;
     }
 
-    .action-meta-value {
-      color: #1a1a1a;
+    /* EXECUTIVE SUMMARY */
+    .executive-summary {
+      border-left: 3pt solid #111;
+      padding-left: 14pt;
+      margin: 12pt 0;
+      font-size: 10.5pt;
+      line-height: 1.7;
     }
 
-    .priority-badge {
-      display: inline-block;
-      padding: 2pt 6pt;
-      border-radius: 3pt;
-      font-size: 8pt;
-      font-weight: 600;
-      text-transform: uppercase;
-    }
-
-    .priority-critical { background: #fee2e2; color: #dc2626; }
-    .priority-high { background: #fef3c7; color: #b45309; }
-    .priority-medium { background: #dbeafe; color: #2563eb; }
-
-    /* EVIDENCE CITATIONS - Enhanced */
-    .evidence-citation {
-      background: white;
-      border-left: 3pt solid #7c3aed;
-      padding: 10pt 12pt;
-      margin: 8pt 0;
-      font-size: 9.5pt;
-      color: #333;
-    }
-
-    .evidence-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: start;
-      margin-bottom: 6pt;
-    }
-
-    .evidence-source {
-      font-size: 8pt;
-      color: #7c3aed;
-      font-weight: 600;
-    }
-
-    .evidence-timestamp {
-      font-size: 8pt;
-      color: #888;
-      font-family: monospace;
-    }
-
-    .evidence-text {
-      color: #1a1a1a;
-      line-height: 1.5;
-    }
-
-    .evidence-links {
-      display: flex;
-      gap: 12pt;
-      margin-top: 6pt;
-      font-size: 8pt;
-    }
-
-    .evidence-link {
-      color: #7c3aed;
-      text-decoration: none;
-    }
-
-    .evidence-link:hover { text-decoration: underline; }
-
-    .evidence-id {
-      color: #888;
-      font-family: monospace;
-      font-size: 7pt;
-    }
-
+    /* RISK TABLE */
     .risk-table {
       width: 100%;
       border-collapse: collapse;
-      margin: 16pt 0;
-      font-size: 10pt;
+      margin: 12pt 0;
+      font-size: 9.5pt;
+      font-family: 'Arial', sans-serif;
     }
-
     .risk-table th {
-      background: #7c3aed;
-      color: white;
-      padding: 8pt;
+      border-bottom: 2px solid #111;
+      border-top: 1px solid #111;
+      padding: 6pt 8pt;
       text-align: left;
       font-weight: 700;
       text-transform: uppercase;
-      font-size: 9pt;
+      font-size: 8pt;
       letter-spacing: 0.5pt;
+      background: white;
+      color: #111;
     }
-
     .risk-table td {
-      padding: 8pt;
-      border-bottom: 1px solid #e0e0e0;
+      padding: 6pt 8pt;
+      border-bottom: 1px solid #ddd;
+      vertical-align: top;
     }
+    .risk-level { font-weight: 700; font-size: 9pt; text-transform: uppercase; }
+    .risk-low { color: #111; }
+    .risk-moderate { color: #111; }
+    .risk-elevated { color: #111; }
+    .risk-high { color: #111; }
 
-    .risk-table tbody tr:nth-child(even) { background: #f8f9fa; }
-
-    .risk-badge {
-      display: inline-block;
-      padding: 3pt 8pt;
-      border-radius: 3pt;
+    /* INCIDENT TABLE */
+    .incident-detail-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12pt 0;
+      font-size: 8.5pt;
+      font-family: 'Arial', sans-serif;
+    }
+    .incident-detail-table th {
+      border-bottom: 2px solid #111;
+      border-top: 1px solid #111;
+      padding: 6pt 8pt;
+      text-align: left;
       font-weight: 700;
-      font-size: 9pt;
       text-transform: uppercase;
+      font-size: 7.5pt;
       letter-spacing: 0.5pt;
+      background: white;
+      color: #111;
     }
-
-    .risk-low { background: #22c55e; color: white; }
-    .risk-moderate { background: #eab308; color: white; }
-    .risk-elevated { background: #f97316; color: white; }
-    .risk-high { background: #ef4444; color: white; }
-
-    .narrative-section {
-      margin: 20pt 0;
-      padding: 16pt;
-      background: #fafafa;
-      border-radius: 4pt;
-      border: 1px solid #e0e0e0;
+    .incident-detail-table td {
+      padding: 6pt 8pt;
+      border-bottom: 1px solid #ddd;
+      vertical-align: top;
     }
+    .incident-detail-table tbody tr:nth-child(even) { background: #f9f9f9; }
+    .incident-id-link { font-family: monospace; font-size: 8pt; color: #111; }
+    .priority-label { font-weight: 700; font-size: 8.5pt; }
+    .system-origin { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.3pt; color: #555; }
 
+    /* IMPACT ANALYSIS */
+    .impact-item {
+      border-left: 2pt solid #555;
+      padding-left: 12pt;
+      margin-bottom: 14pt;
+    }
+    .impact-issue {
+      font-weight: 700;
+      font-size: 10.5pt;
+      margin-bottom: 6pt;
+    }
+    .impact-row {
+      display: flex;
+      margin: 4pt 0;
+      font-family: 'Arial', sans-serif;
+      font-size: 9pt;
+    }
+    .impact-label {
+      width: 130pt;
+      font-weight: 600;
+      color: #555;
+    }
+    .impact-value { flex: 1; color: #111; }
+
+    /* ACTION ITEMS */
+    .action-item {
+      border-top: 1px solid #ddd;
+      padding-top: 10pt;
+      margin-bottom: 12pt;
+    }
+    .action-item:first-child { border-top: none; }
+    .action-description {
+      font-weight: bold;
+      font-size: 10.5pt;
+      margin-bottom: 6pt;
+    }
+    .action-meta {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8pt;
+      font-family: 'Arial', sans-serif;
+      font-size: 8.5pt;
+    }
+    .action-meta-label { font-weight: 700; color: #555; text-transform: uppercase; font-size: 7.5pt; margin-bottom: 1pt; }
+    .action-meta-value { color: #111; }
+    .priority-label-critical { font-weight: 700; }
+    .priority-label-high { font-weight: 700; }
+    .priority-label-medium { font-weight: 600; }
+
+    /* NARRATIVE */
+    .narrative-section { margin: 16pt 0 20pt 0; }
     .narrative-text {
       font-size: 10.5pt;
-      line-height: 1.6;
-      color: #1a1a1a;
+      line-height: 1.7;
+      color: #111;
+    }
+
+    /* EVIDENCE CITATIONS */
+    .evidence-citation {
+      border-left: 2pt solid #aaa;
+      padding: 6pt 12pt;
+      margin: 8pt 0;
+      font-family: 'Arial', sans-serif;
+      font-size: 8.5pt;
+      color: #333;
+    }
+
+    /* DEDUCTIONS */
+    .deduction-box {
+      border-left: 3pt solid #111;
+      padding-left: 14pt;
       margin: 12pt 0;
     }
-
-    .deduction-box {
-      background: #fff8e1;
-      border: 2pt solid #f59e0b;
-      border-radius: 4pt;
-      padding: 16pt;
-      margin: 16pt 0;
-    }
-
     .deduction-label {
+      font-family: 'Arial', sans-serif;
       font-weight: 700;
-      color: #f59e0b;
       text-transform: uppercase;
-      font-size: 9pt;
+      font-size: 8pt;
       letter-spacing: 1pt;
-      margin-bottom: 8pt;
+      color: #555;
+      margin-bottom: 6pt;
     }
-
-    .deduction-text {
-      font-size: 10.5pt;
-      line-height: 1.6;
-      color: #1a1a1a;
-    }
+    .deduction-text { font-size: 10.5pt; line-height: 1.7; }
 
     .footer {
       text-align: center;
-      font-size: 8pt;
-      color: #999;
-      padding: 12pt 0;
-      border-top: 1px solid #e0e0e0;
+      font-family: 'Arial', sans-serif;
+      font-size: 7.5pt;
+      color: #888;
+      padding: 10pt 0;
+      border-top: 1px solid #ccc;
       margin-top: 24pt;
     }
 
     .page-break { page-break-after: always; }
     @media print { .no-print { display: none; } }
-
   </style>
 </head>
 <body>
@@ -1126,7 +974,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
     </div>
   </div>
 
-  <!-- EXECUTIVE FLASH BANNER -->
+  <!-- EXECUTIVE FLASH -->
   <div class="executive-flash">
     <div class="flash-header">
       <div class="flash-title">Executive Flash</div>
@@ -1203,39 +1051,21 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
       <tbody>
         ${incidentsWithAge.slice(0, 10).map(incident => {
           const rationale = incident.incident_classification_rationale?.[0];
-          const systemOrigin = rationale?.system_of_origin || 'unknown';
-          const systemClass = systemOrigin.toLowerCase().includes('cyber') ? 'cyber' :
-                              systemOrigin.toLowerCase().includes('physical') ? 'physical' :
-                              systemOrigin.toLowerCase().includes('intel') ? 'intel' : 'social';
-          const ageLabel = incident.isNew ? '🆕 NEW' : (incident.isStale ? '⚠️ STALE' : `${incident.ageDays}d`);
-          const ageColor = incident.isNew ? '#22c55e' : (incident.isStale ? '#f97316' : '#6b7280');
+          const systemOrigin = rationale?.system_of_origin || 'Unknown';
+          const ageLabel = incident.isNew ? 'NEW' : (incident.isStale ? 'STALE' : `${incident.ageDays}d`);
           return `
         <tr>
-          <td>
-            <a href="/incidents?id=${incident.id}" class="evidence-link">
-              <span class="incident-id-link">${incident.id.substring(0, 8).toUpperCase()}</span>
-            </a>
-          </td>
-          <td>
-            <span class="risk-badge ${incident.priority === 'p1' ? 'risk-high' : 'risk-elevated'}">
-              ${incident.priority?.toUpperCase()}
-            </span>
-          </td>
-          <td style="font-size: 9pt; color: ${ageColor}; font-weight: bold;">
-            ${ageLabel}
-          </td>
-          <td>
-            <span class="system-badge system-${systemClass}">${systemOrigin}</span>
-          </td>
+          <td><span class="incident-id-link">${incident.id.substring(0, 8).toUpperCase()}</span></td>
+          <td><span class="priority-label">${incident.priority?.toUpperCase()}</span></td>
+          <td style="font-family: Arial, sans-serif; font-size: 8.5pt;">${ageLabel}</td>
+          <td><span class="system-origin">${systemOrigin}</span></td>
           <td>
             <strong>${incident.incident_type || 'Unknown'}</strong><br>
-            <span style="font-size: 8pt; color: #666;">
-              ${rationale?.rationale || 'Classification pending - requires analyst review'}
+            <span style="font-family: Arial, sans-serif; font-size: 8pt; color: #555;">
+              ${rationale?.rationale || 'Classification pending — requires analyst review'}
             </span>
           </td>
-          <td style="font-size: 9pt; font-family: monospace;">
-            ${incident.openedAtFormatted}
-          </td>
+          <td style="font-family: monospace; font-size: 8pt;">${incident.openedAtFormatted}</td>
         </tr>
           `;
         }).join('')}
@@ -1246,9 +1076,8 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
 
   <div class="section">
     <h2 class="section-title">Risk Assessment</h2>
-    <p style="margin-bottom: 12pt;">
-      Overall inherent risk rating for ${client.name}: 
-      <strong><span class="risk-badge risk-${overallRiskLevel.toLowerCase()}">${overallRiskLevel}</span></strong>
+    <p style="font-family: Arial, sans-serif; font-size: 9pt; margin-bottom: 12pt; color: #333;">
+      Overall inherent risk rating for ${client.name}: <strong>${overallRiskLevel}</strong>
     </p>
 
     <table class="risk-table">
@@ -1261,88 +1090,81 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
       </thead>
       <tbody>
         <tr>
-          <td><strong>Surveillance / Reconnaissance</strong></td>
-          <td><span class="risk-badge risk-${getRiskLevel(surveillanceRisk).toLowerCase()}">${getRiskLevel(surveillanceRisk)}</span></td>
+          <td>Surveillance / Reconnaissance</td>
+          <td><span class="risk-level">${getRiskLevel(surveillanceRisk)}</span></td>
           <td>${surveillanceRisk}</td>
         </tr>
         <tr>
-          <td><strong>Protest / Activism</strong></td>
-          <td><span class="risk-badge risk-${getRiskLevel(protestRisk).toLowerCase()}">${getRiskLevel(protestRisk)}</span></td>
+          <td>Protest / Activism</td>
+          <td><span class="risk-level">${getRiskLevel(protestRisk)}</span></td>
           <td>${protestRisk}</td>
         </tr>
         <tr>
-          <td><strong>Work Interruption</strong></td>
-          <td><span class="risk-badge risk-${getRiskLevel(incidents?.filter(i => i.status === 'open').length || 0).toLowerCase()}">${getRiskLevel(incidents?.filter(i => i.status === 'open').length || 0)}</span></td>
+          <td>Work Interruption</td>
+          <td><span class="risk-level">${getRiskLevel(incidents?.filter(i => i.status === 'open').length || 0)}</span></td>
           <td>${incidents?.filter(i => i.status === 'open').length || 0}</td>
         </tr>
         <tr>
-          <td><strong>Sabotage / Vandalism</strong></td>
-          <td><span class="risk-badge risk-${getRiskLevel(sabotageThreat).toLowerCase()}">${getRiskLevel(sabotageThreat)}</span></td>
+          <td>Sabotage / Vandalism</td>
+          <td><span class="risk-level">${getRiskLevel(sabotageThreat)}</span></td>
           <td>${sabotageThreat}</td>
         </tr>
         <tr>
-          <td><strong>Critical Threats</strong></td>
-          <td><span class="risk-badge risk-${getRiskLevel(criticalSignals.length).toLowerCase()}">${getRiskLevel(criticalSignals.length)}</span></td>
+          <td>Critical Threats</td>
+          <td><span class="risk-level">${getRiskLevel(criticalSignals.length)}</span></td>
           <td>${criticalSignals.length}</td>
         </tr>
       </tbody>
     </table>
   </div>
 
-  <!-- IMPACT LADDERS -->
+  <!-- IMPACT ANALYSIS -->
   ${impactLadders.length > 0 ? `
   <div class="section">
-    <div class="impact-ladder">
-      <div class="impact-ladder-title">📊 Impact Analysis</div>
-      ${impactLadders.map(ladder => `
-      <div class="impact-item">
-        <div class="impact-issue">${ladder.issue}</div>
-        <div class="impact-row">
-          <div class="impact-label">Worst Consequence:</div>
-          <div class="impact-value">${ladder.worstConsequence}</div>
-        </div>
-        <div class="impact-row">
-          <div class="impact-label">Earliest Indicator:</div>
-          <div class="impact-value">${ladder.earliestIndicator}</div>
-        </div>
-        <div class="impact-row">
-          <div class="impact-label">Mitigation:</div>
-          <div class="impact-value">${ladder.mitigation}</div>
-        </div>
+    <h2 class="section-title">Impact Analysis</h2>
+    ${impactLadders.map(ladder => `
+    <div class="impact-item">
+      <div class="impact-issue">${ladder.issue}</div>
+      <div class="impact-row">
+        <div class="impact-label">Worst Consequence:</div>
+        <div class="impact-value">${ladder.worstConsequence}</div>
       </div>
-      `).join('')}
+      <div class="impact-row">
+        <div class="impact-label">Earliest Indicator:</div>
+        <div class="impact-value">${ladder.earliestIndicator}</div>
+      </div>
+      <div class="impact-row">
+        <div class="impact-label">Mitigation:</div>
+        <div class="impact-value">${ladder.mitigation}</div>
+      </div>
     </div>
+    `).join('')}
   </div>
   ` : ''}
 
-  <!-- OWNERSHIP + TIMELINE -->
+  <!-- ACTION ITEMS -->
   ${actionItems.length > 0 ? `
   <div class="section">
-    <div class="ownership-section">
-      <div class="ownership-title">📋 Action Items & Ownership</div>
-      ${actionItems.map(item => `
-      <div class="action-item">
-        <div class="action-description">${item.description}</div>
-        <div class="action-meta">
-          <div class="action-meta-item">
-            <div class="action-meta-label">Owner</div>
-            <div class="action-meta-value">${item.ownerName || item.ownerRole}</div>
-          </div>
-          <div class="action-meta-item">
-            <div class="action-meta-label">Deadline</div>
-            <div class="action-meta-value">${new Date(item.deadline).toLocaleDateString()}</div>
-          </div>
-          <div class="action-meta-item">
-            <div class="action-meta-label">First Update</div>
-            <div class="action-meta-value">${new Date(item.firstUpdateDue).toLocaleDateString()}</div>
-          </div>
+    <h2 class="section-title">Action Items & Ownership</h2>
+    ${actionItems.map((item, idx) => `
+    <div class="action-item">
+      <div class="action-description">${idx + 1}. ${item.description}</div>
+      <div class="action-meta">
+        <div>
+          <div class="action-meta-label">Owner</div>
+          <div class="action-meta-value">${item.ownerName || item.ownerRole}</div>
         </div>
-        <div style="margin-top: 8pt;">
-          <span class="priority-badge priority-${item.priority}">${item.priority}</span>
+        <div>
+          <div class="action-meta-label">Deadline</div>
+          <div class="action-meta-value">${new Date(item.deadline).toLocaleDateString()}</div>
+        </div>
+        <div>
+          <div class="action-meta-label">Priority</div>
+          <div class="action-meta-value">${item.priority?.toUpperCase()}</div>
         </div>
       </div>
-      `).join('')}
     </div>
+    `).join('')}
   </div>
   ` : ''}
 
@@ -1356,19 +1178,17 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
         <div class="narrative-text">
           ${item.narrative.split('\n\n').map((p: string) => `<p style="margin-bottom: 10pt;">${p}</p>`).join('')}
         </div>
-        
         ${item.signals.slice(0, 3).map((signal: any) => `
-          <div style="border-left: 3px solid #7c3aed; padding: 8px 14px; margin-bottom: 12px; background: #0f0f0f;">
-            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-              <span style="color: #7c3aed; font-size: 11px; font-weight: bold;">Source: Fortress Intelligence Platform</span>
-              <span style="color: #555; font-size: 10px;">${new Date(signal.received_at).toISOString()}</span>
+          <div class="evidence-citation">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4pt;">
+              <span style="font-weight: 700; font-size: 8pt; text-transform: uppercase; letter-spacing: 0.5pt;">Source: Fortress Intelligence Platform</span>
+              <span style="font-family: monospace; font-size: 7.5pt; color: #666;">${new Date(signal.received_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</span>
             </div>
-            <p style="margin: 0 0 6px; font-size: 12px; color: #ccc; line-height: 1.5;">
-              <strong style="color: #aaa;">${getCategoryDisplay(signal.category || 'signal')}:</strong> ${signal.normalized_text?.substring(0, 250) || 'No details available'}
+            <p style="margin: 0 0 4pt; line-height: 1.5;">
+              <strong>${getCategoryDisplay(signal.category || 'signal')}:</strong> ${signal.normalized_text?.substring(0, 250) || 'No details available'}
             </p>
-            <div style="display: flex; gap: 12px; align-items: center;">
-              <span style="font-size: 10px; color: #444;">ID: ${signal.id.substring(0, 8).toUpperCase()}</span>
-              ${signal.source_url ? `<a href="${signal.source_url}" target="_blank" rel="noopener noreferrer" style="font-size: 11px; color: #7c3aed; text-decoration: underline;">Original Source →</a>` : ''}
+            <div style="font-size: 8pt; color: #666;">
+              ID: ${signal.id.substring(0, 8).toUpperCase()}${signal.source_url ? ` — <a href="${signal.source_url}" target="_blank" rel="noopener noreferrer" style="color: #333; text-decoration: underline;">Original Source</a>` : ''}
             </div>
           </div>
         `).join('')}
