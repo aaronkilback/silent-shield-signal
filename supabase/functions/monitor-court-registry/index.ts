@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 const COURT_KEYWORDS = [
   'fraud', 'theft', 'assault', 'breach', 'violation', 'charge', 'convicted',
@@ -37,36 +37,29 @@ Deno.serve(async (req) => {
           // Check against clients
           for (const client of clients || []) {
             if (content.includes(client.name.toLowerCase())) {
-              await createSignal(supabaseClient, {
-                client_id: client.id,
-                entity_id: null,
-                source: 'BC Courthouse Library',
-                category: 'legal-regulatory',
-                severity: determineSeverity(content),
-                title: item.title,
-                description: item.description,
-                url: item.link,
-                published_date: item.pubDate
+              const { error } = await supabaseClient.functions.invoke('ingest-signal', {
+                body: {
+                  text: `${item.title}\n\n${item.description}`,
+                  source_url: item.link || undefined,
+                  client_id: client.id,
+                  location: 'British Columbia, Canada',
+                },
               });
-              signalsCreated++;
+              if (!error) signalsCreated++;
             }
           }
 
-          // Check against entities
+          // Check against entities (ingest without explicit client — let AI match)
           for (const entity of entities || []) {
             if (content.includes(entity.name.toLowerCase())) {
-              await createSignal(supabaseClient, {
-                client_id: null,
-                entity_id: entity.id,
-                source: 'BC Courthouse Library',
-                category: 'legal-regulatory',
-                severity: determineSeverity(content),
-                title: item.title,
-                description: item.description,
-                url: item.link,
-                published_date: item.pubDate
+              const { error } = await supabaseClient.functions.invoke('ingest-signal', {
+                body: {
+                  text: `${item.title}\n\n${item.description}`,
+                  source_url: item.link || undefined,
+                  location: 'British Columbia, Canada',
+                },
               });
-              signalsCreated++;
+              if (!error) signalsCreated++;
             }
           }
         }
@@ -93,36 +86,29 @@ Deno.serve(async (req) => {
             // Check against clients
             for (const client of clients || []) {
               if (content.includes(client.name.toLowerCase())) {
-                await createSignal(supabaseClient, {
-                  client_id: client.id,
-                  entity_id: null,
-                  source: 'Supreme Court of Canada',
-                  category: 'legal-regulatory',
-                  severity: 'high',
-                  title: item.title,
-                  description: item.description,
-                  url: item.link,
-                  published_date: item.pubDate
+                const { error } = await supabaseClient.functions.invoke('ingest-signal', {
+                  body: {
+                    text: `${item.title}\n\n${item.description}`,
+                    source_url: item.link || undefined,
+                    client_id: client.id,
+                    location: 'Canada',
+                  },
                 });
-                signalsCreated++;
+                if (!error) signalsCreated++;
               }
             }
 
             // Check against entities
             for (const entity of entities || []) {
               if (content.includes(entity.name.toLowerCase())) {
-                await createSignal(supabaseClient, {
-                  client_id: null,
-                  entity_id: entity.id,
-                  source: 'Supreme Court of Canada',
-                  category: 'legal-regulatory',
-                  severity: 'high',
-                  title: item.title,
-                  description: item.description,
-                  url: item.link,
-                  published_date: item.pubDate
+                const { error } = await supabaseClient.functions.invoke('ingest-signal', {
+                  body: {
+                    text: `${item.title}\n\n${item.description}`,
+                    source_url: item.link || undefined,
+                    location: 'Canada',
+                  },
                 });
-                signalsCreated++;
+                if (!error) signalsCreated++;
               }
             }
           }
@@ -203,43 +189,3 @@ function determineSeverity(text: string): string {
   return 'low';
 }
 
-// Create a signal in the database
-async function createSignal(supabaseClient: any, data: {
-  client_id: string | null;
-  entity_id: string | null;
-  source: string;
-  category: string;
-  severity: string;
-  title: string;
-  description: string;
-  url?: string;
-  published_date?: string;
-}) {
-  try {
-    const { error } = await supabaseClient
-      .from('signals')
-      .insert({
-        client_id: data.client_id,
-        category: data.category,
-        severity: data.severity,
-        status: 'new',
-        normalized_text: `${data.title}\n\n${data.description}`,
-        raw_json: {
-          source: data.source,
-          title: data.title,
-          description: data.description,
-          url: data.url,
-          published_date: data.published_date,
-          entity_id: data.entity_id
-        },
-        confidence: 80,
-        received_at: new Date().toISOString()
-      });
-
-    if (error) {
-      console.error('Error creating signal:', error);
-    }
-  } catch (error) {
-    console.error('Error in createSignal:', error);
-  }
-}

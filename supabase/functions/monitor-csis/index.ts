@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 const SECURITY_KEYWORDS = [
   'espionage', 'terrorism', 'cybersecurity', 'foreign interference', 'threat',
@@ -42,22 +42,20 @@ Deno.serve(async (req) => {
           
           if (hasSecurityKeyword) {
             for (const client of clients) {
-              const isRelevant = client.name.toLowerCase().split(' ').some((word: string) => 
+              const isRelevant = client.name.toLowerCase().split(' ').some((word: string) =>
                 word.length > 3 && content.includes(word)
               ) || (client.industry && content.includes(client.industry.toLowerCase()));
 
               if (isRelevant || hasHighPrioritySeverity(content)) {
-                await createSignal(supabaseClient, {
-                  client_id: client.id,
-                  source: 'CSIS',
-                  category: 'threat-intelligence',
-                  severity: determineSeverity(content),
-                  title: item.title,
-                  description: item.description,
-                  url: item.link,
-                  published_date: item.pubDate
+                const { error } = await supabaseClient.functions.invoke('ingest-signal', {
+                  body: {
+                    text: `${item.title}\n\n${item.description}`,
+                    source_url: item.link || undefined,
+                    client_id: client.id,
+                    location: 'Canada',
+                  },
                 });
-                signalsCreated++;
+                if (!error) signalsCreated++;
               }
             }
           }
@@ -77,19 +75,15 @@ Deno.serve(async (req) => {
         const cyberItems = parseAtomFeed(cyberText);
         
         for (const item of cyberItems.slice(0, 20)) {
-          for (const client of clients) {
-            await createSignal(supabaseClient, {
-              client_id: client.id,
-              source: 'Canadian Cyber Centre',
-              category: 'threat-intelligence',
-              severity: determineCyberSeverity(item.title),
-              title: item.title,
-              description: item.description,
-              url: item.link,
-              published_date: item.pubDate
-            });
-            signalsCreated++;
-          }
+          // One signal per advisory (ingest-signal handles client matching)
+          const { error } = await supabaseClient.functions.invoke('ingest-signal', {
+            body: {
+              text: `${item.title}\n\n${item.description}`,
+              source_url: item.link || undefined,
+              location: 'Canada',
+            },
+          });
+          if (!error) signalsCreated++;
         }
         sources.push('Canadian Cyber Centre');
       }
@@ -114,22 +108,20 @@ Deno.serve(async (req) => {
           
           if (hasSecurityKeyword) {
             for (const client of clients) {
-              const isRelevant = client.name.toLowerCase().split(' ').some((word: string) => 
+              const isRelevant = client.name.toLowerCase().split(' ').some((word: string) =>
                 word.length > 3 && content.includes(word)
               ) || hasHighPrioritySeverity(content);
 
               if (isRelevant) {
-                await createSignal(supabaseClient, {
-                  client_id: client.id,
-                  source: 'Public Safety Canada',
-                  category: 'threat-intelligence',
-                  severity: determineSeverity(content),
-                  title: item.title,
-                  description: item.description,
-                  url: item.link,
-                  published_date: item.pubDate
+                const { error } = await supabaseClient.functions.invoke('ingest-signal', {
+                  body: {
+                    text: `${item.title}\n\n${item.description}`,
+                    source_url: item.link || undefined,
+                    client_id: client.id,
+                    location: 'Canada',
+                  },
                 });
-                signalsCreated++;
+                if (!error) signalsCreated++;
               }
             }
           }
@@ -234,41 +226,3 @@ function hasHighPrioritySeverity(text: string): boolean {
   return determineSeverity(text) === 'critical' || determineSeverity(text) === 'high';
 }
 
-// Create a signal in the database
-async function createSignal(supabaseClient: any, data: {
-  client_id: string;
-  source: string;
-  category: string;
-  severity: string;
-  title: string;
-  description: string;
-  url?: string;
-  published_date?: string;
-}) {
-  try {
-    const { error } = await supabaseClient
-      .from('signals')
-      .insert({
-        client_id: data.client_id,
-        category: data.category,
-        severity: data.severity,
-        status: 'new',
-        normalized_text: `${data.title}\n\n${data.description}`,
-        raw_json: {
-          source: data.source,
-          title: data.title,
-          description: data.description,
-          url: data.url,
-          published_date: data.published_date
-        },
-        confidence: 85,
-        received_at: new Date().toISOString()
-      });
-
-    if (error) {
-      console.error('Error creating signal:', error);
-    }
-  } catch (error) {
-    console.error('Error in createSignal:', error);
-  }
-}

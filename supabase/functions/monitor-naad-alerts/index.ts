@@ -386,6 +386,7 @@ Deno.serve(async (req) => {
             severity: classification.severity,
             location: 'Canada',
             content_hash: contentHash,
+            source_url: alert.link || 'https://alerts.pelmorex.com/',
             raw_json: {
               source: 'naad_emergency_alerts',
               alert_id: alert.id,

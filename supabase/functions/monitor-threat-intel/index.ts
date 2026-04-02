@@ -1,35 +1,4 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
-import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
-
-// Generate content hash for deduplication
-async function generateContentHash(text: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(text.toLowerCase().trim());
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-// Check if signal already exists (by content hash or normalized text)
-async function isDuplicateSignal(supabase: any, contentHash: string, normalizedText: string): Promise<boolean> {
-  const { data: hashMatch } = await supabase
-    .from('signals')
-    .select('id')
-    .eq('content_hash', contentHash)
-    .limit(1);
-  
-  if (hashMatch && hashMatch.length > 0) return true;
-  
-  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data: textMatch } = await supabase
-    .from('signals')
-    .select('id')
-    .eq('normalized_text', normalizedText)
-    .gte('created_at', yesterday)
-    .limit(1);
-  
-  return textMatch && textMatch.length > 0;
-}
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -40,14 +9,7 @@ Deno.serve(async (req) => {
 
     console.log('Starting threat intelligence monitoring...');
 
-    const { data: clients, error: clientsError } = await supabase
-      .from('clients')
-      .select('id, name, industry');
-
-    if (clientsError) throw clientsError;
-
     let signalsCreated = 0;
-    let duplicatesSkipped = 0;
 
     // Monitor CISA KEV Catalog (no API key required)
     try {
@@ -62,58 +24,21 @@ Deno.serve(async (req) => {
         for (const vuln of recentVulns) {
           const severity = vuln.cveID.includes('CRITICAL') ? 'critical' : 'high';
 
-          const normalizedText = `${vuln.cveID}: ${vuln.vulnerabilityName}`;
-          const contentHash = await generateContentHash(normalizedText);
-          
-          if (await isDuplicateSignal(supabase, contentHash, normalizedText)) {
-            console.log(`Skipping duplicate KEV signal: ${vuln.cveID}`);
-            duplicatesSkipped++;
-            continue;
-          }
-
-          for (const client of clients || []) {
-            try {
-              const { error: signalError } = await supabase
-                .from('signals')
-                .insert({
-                  source_key: 'threat-intel-monitor',
-                  event: 'Known Exploited Vulnerability',
-                  text: `CISA KEV: ${vuln.vulnerabilityName} - ${vuln.shortDescription}`,
-                  location: 'Global',
-                  severity: severity,
-                  category: 'vulnerability',
-                  normalized_text: normalizedText,
-                  content_hash: contentHash,
-                  entity_tags: ['cisa', 'kev', 'vulnerability', vuln.cveID],
-                  confidence: 0.95,
-                  raw_json: {
-                    cve_id: vuln.cveID,
-                    vendor: vuln.vendorProject,
-                    product: vuln.product,
-                    vulnerability_name: vuln.vulnerabilityName,
-                    date_added: vuln.dateAdded,
-                    required_action: vuln.requiredAction,
-                    due_date: vuln.dueDate
-                  },
-                  client_id: client.id
-                });
-
-              if (!signalError) {
-                signalsCreated++;
-                console.log(`Created KEV signal for ${client.name}: ${vuln.cveID}`);
-                
-                await correlateSignalEntities({
-                  supabase,
-                  signalText: `${vuln.cveID}: ${vuln.vulnerabilityName}`,
-                  clientId: client.id,
-                  additionalContext: `${vuln.shortDescription}. Vendor: ${vuln.vendorProject}. Product: ${vuln.product}`
-                });
-              }
-              
-              break;
-            } catch (error) {
-              console.error(`Error creating signal for ${client.name}:`, error);
+          // One signal per vuln — ingest-signal handles client matching + AI classification
+          try {
+            const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
+              body: {
+                text: `CISA KEV: ${vuln.vulnerabilityName}\n\n${vuln.shortDescription || ''}\n\nVendor: ${vuln.vendorProject}. Product: ${vuln.product}. Required action: ${vuln.requiredAction || 'Patch immediately'}. Due: ${vuln.dueDate || 'N/A'}.`,
+                source_url: `https://www.cisa.gov/known-exploited-vulnerabilities-catalog`,
+                location: 'Global',
+              },
+            });
+            if (!ingestError) {
+              signalsCreated++;
+              console.log(`Ingested KEV signal: ${vuln.cveID}`);
             }
+          } catch (error) {
+            console.error(`Error ingesting KEV signal:`, error);
           }
         }
       }
@@ -146,47 +71,17 @@ Deno.serve(async (req) => {
           const description = descMatch ? descMatch[1] : '';
           const link = linkMatch ? linkMatch[1] : '';
 
-          const normalizedText = title;
-          const contentHash = await generateContentHash(normalizedText);
-          
-          if (await isDuplicateSignal(supabase, contentHash, normalizedText)) {
-            console.log(`Skipping duplicate CVE signal: ${title}`);
-            duplicatesSkipped++;
-            continue;
-          }
-
-          for (const client of clients || []) {
-            try {
-              const { error: signalError } = await supabase
-                .from('signals')
-                .insert({
-                  source_key: 'threat-intel-monitor',
-                  event: 'Trending CVE',
-                  text: `Trending Vulnerability: ${title} - ${description}`,
-                  location: 'Global',
-                  severity: 'medium',
-                  category: 'vulnerability',
-                  normalized_text: normalizedText,
-                  content_hash: contentHash,
-                  entity_tags: ['cve', 'trending', 'vulnerability'],
-                  confidence: 0.85,
-                  raw_json: {
-                    title,
-                    description,
-                    url: link,
-                    source: 'cvetrend'
-                  },
-                  client_id: client.id
-                });
-
-              if (!signalError) {
-                signalsCreated++;
-              }
-              
-              break;
-            } catch (error) {
-              console.error(`Error creating trending CVE signal:`, error);
-            }
+          try {
+            const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
+              body: {
+                text: `Trending CVE: ${title}\n\n${description}`,
+                source_url: link || undefined,
+                location: 'Global',
+              },
+            });
+            if (!ingestError) signalsCreated++;
+          } catch (error) {
+            console.error(`Error ingesting trending CVE signal:`, error);
           }
         }
       }
@@ -200,13 +95,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`Threat intelligence monitoring complete. Created ${signalsCreated} signals, skipped ${duplicatesSkipped} duplicates.`);
+    console.log(`Threat intelligence monitoring complete. Created ${signalsCreated} signals.`);
 
     return successResponse({
       success: true,
-      clients_scanned: clients?.length || 0,
       signals_created: signalsCreated,
-      duplicates_skipped: duplicatesSkipped,
       source: 'threat-intelligence'
     });
 
