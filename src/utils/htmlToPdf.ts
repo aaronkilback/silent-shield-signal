@@ -8,6 +8,31 @@ const CONTENT_W_MM = A4_WIDTH_MM - MARGIN_MM * 2;
 const CONTENT_H_MM = A4_HEIGHT_MM - MARGIN_MM * 2;
 const RENDER_WIDTH_PX = 794;
 
+// All CSS custom properties used by the app's dark theme.
+// We set these to light values directly on the render container so they
+// override the :root dark values for every descendant element.
+const LIGHT_MODE_VARS: [string, string][] = [
+  ["--background", "0 0% 100%"],
+  ["--foreground", "0 0% 7%"],
+  ["--card", "0 0% 100%"],
+  ["--card-foreground", "0 0% 7%"],
+  ["--popover", "0 0% 100%"],
+  ["--popover-foreground", "0 0% 7%"],
+  ["--primary", "189 95% 40%"],
+  ["--primary-foreground", "0 0% 100%"],
+  ["--secondary", "0 0% 96%"],
+  ["--secondary-foreground", "0 0% 9%"],
+  ["--muted", "0 0% 96%"],
+  ["--muted-foreground", "0 0% 45%"],
+  ["--accent", "0 0% 96%"],
+  ["--accent-foreground", "0 0% 9%"],
+  ["--destructive", "0 84% 60%"],
+  ["--destructive-foreground", "0 0% 100%"],
+  ["--border", "0 0% 89%"],
+  ["--input", "0 0% 89%"],
+  ["--ring", "0 0% 40%"],
+];
+
 /**
  * Convert an image element's src to a base64 data URI to bypass CORS.
  * Hides the image if conversion fails.
@@ -77,7 +102,6 @@ function findSmartBreakPoints(
 ): number[] {
   const containerRect = container.getBoundingClientRect();
 
-  // Collect block elements with their canvas-pixel positions
   const elements = Array.from(
     container.querySelectorAll("h1,h2,h3,h4,h5,h6,p,img,table,tr,ul,ol,li,div,section,article")
   ).map((el) => {
@@ -94,13 +118,10 @@ function findSmartBreakPoints(
   while (pageEnd < canvasHeight) {
     let breakAt = pageEnd;
 
-    // Find the first element that straddles this page boundary
     for (const el of elements) {
       if (el.top < pageEnd && el.bottom > pageEnd) {
         const elementHeight = el.bottom - el.top;
         const lastBreak = breakPoints[breakPoints.length - 1] ?? 0;
-        // Only move the break upward if the element is not taller than half a page
-        // and there's enough space above it from the previous break
         if (elementHeight < stripHeightPx * 0.5 && el.top > lastBreak + 40) {
           breakAt = el.top - 4;
         }
@@ -108,7 +129,6 @@ function findSmartBreakPoints(
       }
     }
 
-    // Safety: always advance by at least 50% of a page to avoid infinite loops
     const lastBreak = breakPoints[breakPoints.length - 1] ?? 0;
     breakAt = Math.max(breakAt, lastBreak + Math.floor(stripHeightPx * 0.5));
 
@@ -120,14 +140,13 @@ function findSmartBreakPoints(
 }
 
 /**
- * Render the report HTML inside an isolated iframe (no parent-page CSS leakage),
- * capture via html2canvas, slice into A4 pages at smart break points,
- * and return a jsPDF instance.
+ * Render report HTML to a multi-page jsPDF.
  *
- * Using an iframe is critical: the app uses Tailwind dark-mode CSS variables
- * (--background: 222 47% 5%) that bleed into any div appended to document.body,
- * making the PDF render black even when the report HTML specifies white backgrounds.
- * An iframe has its own browsing context — the parent page's CSS never applies.
+ * The app uses Tailwind dark-mode CSS variables at :root (--background: 222 47% 5%).
+ * CSS custom properties are inherited — any div appended to document.body inherits
+ * dark values for all descendants. We defeat this by setting all CSS vars to their
+ * light equivalents directly on the render container, overriding :root for the
+ * entire subtree.
  */
 export async function generatePdfFromHtml(
   html: string,
@@ -135,69 +154,82 @@ export async function generatePdfFromHtml(
 ): Promise<jsPDF> {
   const bgColor = options?.backgroundColor ?? "#ffffff";
 
-  const iframe = document.createElement("iframe");
-  iframe.style.cssText = [
+  const container = document.createElement("div");
+  container.style.cssText = [
     "position:fixed",
     "top:0",
     "left:0",
     `width:${RENDER_WIDTH_PX}px`,
-    "height:1px",
+    "height:auto",
+    "max-height:none",
+    "overflow:visible",
     "opacity:0",
     "pointer-events:none",
     "z-index:-9999",
-    "border:none",
-    "overflow:hidden",
+    "transform:none",
+    "direction:ltr",
+    "writing-mode:horizontal-tb",
+    `background:${bgColor}`,
+    "color:#111111",
+    "color-scheme:light",
   ].join(";");
 
-  document.body.appendChild(iframe);
+  // Override every dark-mode CSS variable so descendants use light values
+  for (const [prop, val] of LIGHT_MODE_VARS) {
+    container.style.setProperty(prop, val);
+  }
+
+  // Extract body content from full HTML document
+  const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  container.innerHTML = bodyMatch ? bodyMatch[1] : html;
+
+  // Inject the report's own styles + layout overrides
+  const styleMatches = html.match(/<style[^>]*>([\s\S]*?)<\/style>/gi);
+  const overrideCSS = `
+    .page, .report-container, .bulletin-container, .content, body, html {
+      overflow: visible !important;
+      max-height: none !important;
+      min-height: 0 !important;
+    }
+    * { transform: none !important; }
+    @page { size: auto; margin: 0; }
+  `;
+  const styleEl = document.createElement("style");
+  styleEl.textContent = (styleMatches || [])
+    .map((s) => s.replace(/<\/?style[^>]*>/gi, ""))
+    .join("\n") + "\n" + overrideCSS;
+  container.prepend(styleEl);
+
+  document.body.appendChild(container);
 
   try {
-    const iframeDoc = iframe.contentDocument!;
-    iframeDoc.open();
-    iframeDoc.write(html);
-    iframeDoc.close();
-
-    // Wait for iframe content to fully load
-    await new Promise<void>((resolve) => {
-      if (iframeDoc.readyState === "complete") { resolve(); return; }
-      iframe.onload = () => resolve();
-      setTimeout(resolve, 3000); // fallback
-    });
-    // Extra settle time for fonts and layout
-    await new Promise((r) => setTimeout(r, 700));
-
-    const body = iframeDoc.body;
-    body.style.margin = "0";
-    body.style.padding = "0";
-    body.style.overflow = "visible";
+    // Preload all images as base64
+    const images = Array.from(container.querySelectorAll("img"));
+    await Promise.allSettled(images.map(safeLoadImage));
 
     // Unlock overflow on clipping elements
-    iframeDoc.querySelectorAll("div, section, article, main").forEach((el) => {
+    container.querySelectorAll("div, section, article, main").forEach((el) => {
       const htmlEl = el as HTMLElement;
-      const win = iframeDoc.defaultView;
-      if (!win) return;
-      const computed = win.getComputedStyle(htmlEl);
+      const computed = window.getComputedStyle(htmlEl);
       if (computed.overflow === "hidden" || computed.maxHeight !== "none") {
         htmlEl.style.overflow = "visible";
         htmlEl.style.maxHeight = "none";
       }
     });
 
-    // Preload all images as base64
-    const images = Array.from(iframeDoc.querySelectorAll("img"));
-    await Promise.allSettled(images.map(safeLoadImage));
-
-    // Expand iframe height to full content height for correct measurements
-    const actualHeight = body.scrollHeight;
-    iframe.style.height = `${actualHeight}px`;
-    console.log(`[PDF] iframe content height: ${actualHeight}px`);
-
-    // Let layout re-settle after height change
+    // Let styles settle
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 500)));
     await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 300)));
+
+    container.style.opacity = "1";
+    container.style.visibility = "visible";
+
+    const actualHeight = container.scrollHeight;
+    console.log(`[PDF] Container scrollHeight: ${actualHeight}px`);
 
     const scale = 1.5;
 
-    const fullCanvas = await html2canvas(body, {
+    const fullCanvas = await html2canvas(container, {
       scale,
       useCORS: true,
       allowTaint: false,
@@ -218,8 +250,7 @@ export async function generatePdfFromHtml(
     const pxPerMm = fullCanvas.width / CONTENT_W_MM;
     const stripHeightPx = Math.floor(CONTENT_H_MM * pxPerMm);
 
-    // Find smart break points that don't cut through elements
-    const breakPoints = findSmartBreakPoints(body, fullCanvas.height, stripHeightPx, scale);
+    const breakPoints = findSmartBreakPoints(container, fullCanvas.height, stripHeightPx, scale);
     const allBreaks = [...breakPoints, fullCanvas.height];
 
     console.log(`[PDF] Page breaks at: ${breakPoints.join(", ")} (canvas px)`);
@@ -238,8 +269,6 @@ export async function generatePdfFromHtml(
       const ctx = stripCanvas.getContext("2d");
       if (!ctx) throw new Error("Could not get canvas 2d context");
 
-      // Fill background before drawing — required for correct JPEG output
-      // (JPEG has no alpha channel; unfilled areas become black)
       ctx.fillStyle = bgColor;
       ctx.fillRect(0, 0, stripCanvas.width, thisStripH);
       ctx.drawImage(
@@ -252,7 +281,6 @@ export async function generatePdfFromHtml(
       const stripHeightMM = thisStripH / pxPerMm;
 
       if (pageIdx > 0) pdf.addPage();
-
       pdf.addImage(imgData, "JPEG", MARGIN_MM, MARGIN_MM, CONTENT_W_MM, stripHeightMM);
 
       offsetY = breakPoint;
@@ -262,8 +290,8 @@ export async function generatePdfFromHtml(
     console.log(`[PDF] Generated ${pageIdx} pages`);
     return pdf;
   } finally {
-    if (iframe.parentNode) {
-      iframe.parentNode.removeChild(iframe);
+    if (container.parentNode) {
+      container.parentNode.removeChild(container);
     }
   }
 }
