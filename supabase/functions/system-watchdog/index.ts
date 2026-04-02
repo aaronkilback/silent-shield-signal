@@ -711,15 +711,11 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
 
   let aiHealthStatus: number | null = null;
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    const resp = await fetch(`${supabaseUrl}/functions/v1/system-health-check`, {
-      method: 'POST',
-      headers: { 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({}), signal: controller.signal,
+    // Use supabase.functions.invoke — handles auth internally, avoids JWT issues with raw fetch
+    const { error: healthError } = await supabase.functions.invoke('system-ops', {
+      body: { action: 'health-check', quick: true },
     });
-    clearTimeout(timeout);
-    aiHealthStatus = resp.status;
+    aiHealthStatus = healthError ? 500 : 200;
   } catch { aiHealthStatus = null; }
 
   // Calculate adaptive thresholds based on historical data
@@ -1812,7 +1808,7 @@ Deno.serve(async (req) => {
   try {
     const supabase = createServiceClient();
     const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
-    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Fortress AI <notifications@updates.lovableproject.com>';
+    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Fortress AI <notifications@silentshieldsecurity.com>';
     const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
     if (!RESEND_API_KEY) throw new Error('RESEND_API_KEY not configured');
@@ -2010,7 +2006,7 @@ Deno.serve(async (req) => {
     console.error('[Watchdog] Fatal error:', error);
     try {
       const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
-      const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Fortress AI <notifications@updates.lovableproject.com>';
+      const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Fortress AI <notifications@silentshieldsecurity.com>';
       if (RESEND_API_KEY) {
         const resend = new Resend(RESEND_API_KEY);
         await resend.emails.send({
