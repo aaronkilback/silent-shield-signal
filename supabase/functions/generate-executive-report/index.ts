@@ -101,16 +101,13 @@ Deno.serve(async (req) => {
 
     if (clientError) throw clientError;
 
-    // Fetch signals with full details for traceability (exclude QA test signals)
+    // Fetch signals with full details for traceability
     const { data: signals, error: signalsError } = await supabaseClient
       .from('signals')
       .select('*')
       .eq('client_id', client_id)
       .gte('received_at', periodStart.toISOString())
       .lte('received_at', periodEnd.toISOString())
-      .not('raw_json->>sourceType', 'eq', 'qa_test')
-      .not('raw_json->>source_name', 'eq', 'QA Test')
-      .not('raw_json->>source_name', 'eq', 'QA')
       .order('received_at', { ascending: false });
 
     if (signalsError) throw signalsError;
