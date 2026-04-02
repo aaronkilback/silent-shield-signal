@@ -238,6 +238,19 @@ export async function generatePdfFromHtml(
       windowWidth: RENDER_WIDTH_PX,
       height: actualHeight,
       imageTimeout: 15000,
+      onclone: (clonedDoc) => {
+        // Override dark-mode CSS variables at the root of the CLONED document.
+        // html2canvas renders the clone, not the live DOM — so this is the only
+        // place where overriding :root variables actually takes effect for rendering.
+        const root = clonedDoc.documentElement;
+        root.style.background = "white";
+        root.style.color = "#111111";
+        clonedDoc.body.style.background = "white";
+        clonedDoc.body.style.color = "#111111";
+        for (const [prop, val] of LIGHT_MODE_VARS) {
+          root.style.setProperty(prop, val);
+        }
+      },
     });
 
     console.log(`[PDF] Canvas size: ${fullCanvas.width}x${fullCanvas.height}`);
