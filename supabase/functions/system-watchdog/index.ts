@@ -189,7 +189,9 @@ Respond with ONLY valid JSON (no markdown):
       "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "fix_orphaned_feedback" | "fix_stale_source_timestamps" | "fix_orphaned_comms" | "fix_stalled_autopilot_tasks" | "fix_orphaned_autopilot_tasks" | "run_contradiction_scan" | "run_knowledge_freshness_audit" | "calibrate_analyst_accuracy" | "retry_exhausted_dlq" | "cleanup_exhausted_dlq" | "reset_circuit_breakers" | "none",
       "isRecurring": true/false,
       "learningNote": "What you learned about this issue from history (or 'First occurrence')",
-      "thresholdAdjustment": null | { "metric": "string", "currentValue": number, "suggestedValue": number, "reason": "string" }
+      "thresholdAdjustment": null | { "metric": "string", "currentValue": number, "suggestedValue": number, "reason": "string" },
+      "plainEnglish": "One sentence in plain non-technical language explaining what this means for the operator. Examples: 'No new intelligence signals have come in for 6+ hours — the platform is not monitoring for threats.' / 'The AI assistant is not responding correctly to health checks.' / 'There are N unresolved platform bugs older than 7 days that may be causing silent failures.' / 'A data source has not produced any new intelligence in N hours — you may have blind spots in coverage.'",
+      "action": "One sentence telling the operator what to do next, in plain English. Examples: 'Auto-fix attempted — if this persists tomorrow, check the RSS monitor logs.' / 'Monitor for 24 hours. If users report Aegis not responding, escalate to Claude Code.' / 'Review bug list in Fortress and assign top 3 to Claude Code this week.' / 'Check source configuration in Fortress Sources page.'"
     }
   ],
   "suppressedChecks": ["Normal things you checked and suppressed"],
@@ -265,7 +267,9 @@ Use the effectiveness history to:
       "recommendation": "What remains to be done (or 'No action needed â resolved')",
       "remediationStatus": "fixed" | "partially_fixed" | "failed" | "not_attempted" | "not_applicable" | "chronic",
       "effectivenessScore": 0.0-1.0,
-      "learningNote": "What should be remembered for next run"
+      "learningNote": "What should be remembered for next run",
+      "plainEnglish": "Plain English explanation of what this means for the operator (preserve from original finding)",
+      "action": "Plain English next action for the operator (update if remediation changed the situation)"
     }
   ],
   "suppressedChecks": [],
@@ -388,6 +392,8 @@ interface Finding {
   learningNote?: string;
   effectivenessScore?: number;
   thresholdAdjustment?: { metric: string; currentValue: number; suggestedValue: number; reason: string } | null;
+  plainEnglish?: string;
+  action?: string;
 }
 
 interface AIAnalysis {
@@ -1154,7 +1160,7 @@ async function callAI(systemPrompt: string, userMessage: string): Promise<any> {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${GEMINI_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-2.0-flash',
       messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessage }],
       temperature: 0.1,
     }),
@@ -1695,6 +1701,20 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
         <p style="margin: 0 0 8px; color: #d4d4d4; font-size: 13px; line-height: 1.5;">${f.analysis}</p>
         <p style="margin: 0; color: #93c5fd; font-size: 13px;">â ${f.recommendation}</p>
         ${f.learningNote ? `<p style="margin: 6px 0 0; color: #a78bfa; font-size: 12px; font-style: italic;">ð§  ${f.learningNote}</p>` : ''}
+        ${f.plainEnglish ? `
+          <div style="background: rgba(255,255,255,0.05); border-left: 3px solid ${borderColor}; padding: 10px 14px; margin-top: 10px; border-radius: 0 4px 4px 0;">
+            <p style="margin: 0; font-size: 13px; color: #e0e0e0; line-height: 1.5;">
+              <strong style="color: ${borderColor};">What this means:</strong> ${f.plainEnglish}
+            </p>
+          </div>
+        ` : ''}
+        ${f.action ? `
+          <div style="margin-top: 8px;">
+            <p style="margin: 0; font-size: 12px; color: #aaa;">
+              <strong>Action:</strong> ${f.action}
+            </p>
+          </div>
+        ` : ''}
       </div>`;
   };
 
@@ -1781,16 +1801,47 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
       ` : ''}
     </div>
 
+    ${(() => {
+      const knownBrokenCount = analysis.findings.filter(f => f.severity === 'critical' && f.remediationStatus !== 'fixed').length;
+      const nextReportDate = new Date(Date.now() + 20 * 3600000);
+      const nextReportTime = nextReportDate.toISOString().slice(0, 16).replace('T', ' ');
+      return `
+      <div style="background: #0a0a0a; border-top: 1px solid #222; padding: 18px 28px; margin-top: 20px;">
+        <h3 style="color: #aaa; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin: 0 0 12px;">Platform Confidence</h3>
+        <table style="width: 100%; font-size: 12px; color: #aaa;">
+          <tr>
+            <td>Known broken features: <strong style="color: #ef4444;">${knownBrokenCount}</strong></td>
+            <td>Auto-resolved today: <strong style="color: #4ade80;">${resolved.length}</strong></td>
+            <td>Chronic issues: <strong style="color: #a78bfa;">${chronic.length}</strong></td>
+          </tr>
+          <tr>
+            <td colspan="3" style="padding-top: 8px; color: #666; font-size: 11px;">
+              Next report: ~${nextReportTime} UTC â¢ Watchdog v2 â¢ Detect â Fix â Learn â Evolve
+            </td>
+          </tr>
+        </table>
+      </div>
+    `;
+    })()} 
+
     <div style="padding: 14px 28px; background: #0a0a0a; border-top: 1px solid #222;">
-      <table style="width: 100%; font-size: 11px; color: #555;">
-        <tr>
-          <td>Signals (6h): ${telemetry.signalPipeline.recentSignalCount}</td>
-          <td>Bugs: ${telemetry.bugReports.totalOpen}</td>
-          <td>DB: ${telemetry.database.responseTimeMs}ms</td>
-          <td>Auto-ops: ${telemetry.autonomousOps.recentActions}</td>
-        </tr>
-      </table>
-      <p style="margin: 8px 0 0; font-size: 11px; color: #444;">Fortress Self-Healing & Self-Improving Watchdog â¢ Detect â Fix â Learn â Evolve</p>
+      ${(() => {
+        const healthItems = [
+          { label: 'New signals (24h)', value: telemetry.signalPipeline.recentSignalCount, good: telemetry.signalPipeline.recentSignalCount > 0 },
+          { label: 'Active sources', value: `${(telemetry as any).sources?.activeCount || '?'} of ${(telemetry as any).sources?.totalCount || '?'}`, good: true },
+          { label: 'Open bugs', value: telemetry.bugReports.totalOpen, good: telemetry.bugReports.totalOpen < 5 },
+          { label: 'DB response', value: `${telemetry.database.responseTimeMs}ms`, good: telemetry.database.responseTimeMs < 200 },
+          { label: 'Agents active', value: (telemetry as any).agents?.activeCount || '?', good: true },
+        ];
+        return `<table style="width: 100%; font-size: 11px; border-collapse: collapse;">
+          <tr>${healthItems.map(item => `
+            <td style="padding: 2px 8px 2px 0; color: #555;">
+              <span style="color: ${item.good ? '#4ade80' : '#ef4444'}; margin-right: 4px;">${item.good ? '&#9679;' : '&#9679;'}</span>
+              ${item.label}: <strong style="color: ${item.good ? '#6ee7b7' : '#fca5a5'};">${item.value}</strong>
+            </td>
+          `).join('')}</tr>
+        </table>`;
+      })()} 
     </div>
   </div>
 </body>
@@ -1814,6 +1865,13 @@ Deno.serve(async (req) => {
     if (!RESEND_API_KEY) throw new Error('RESEND_API_KEY not configured');
 
     const runId = crypto.randomUUID();
+
+    // Parse optional request body for force flag
+    let forceEmail = false;
+    try {
+      const body = await req.json().catch(() => ({}));
+      forceEmail = body?.force === true;
+    } catch { /* no body */ }
 
     // Phase 0: Load learning history
     console.log('[Watchdog] ð§  Phase 0: Loading learning history...');
@@ -1952,7 +2010,7 @@ Deno.serve(async (req) => {
       .limit(1);
 
     const alreadyEmailedRecently = recentWatchdogEmails && recentWatchdogEmails.length > 0;
-    const shouldEmail = isCritical || ((analysis.shouldAlert || remediationResults.length > 0) && !alreadyEmailedRecently);
+    const shouldEmail = forceEmail || isCritical || ((analysis.shouldAlert || remediationResults.length > 0) && !alreadyEmailedRecently);
 
     if (shouldEmail) {
       const resend = new Resend(RESEND_API_KEY);
