@@ -14,6 +14,14 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { extractYouTubeTranscript } from "../_shared/youtube-transcript.ts";
 
+// High-value practitioner sources to monitor for recent content
+const PRACTITIONER_SOURCES = [
+  { query: 'Sarah Adams CIA intelligence analyst threat assessment 2026', domain: 'threat_intelligence' },
+  { query: 'Shawn Ryan Show threat intelligence energy infrastructure 2026', domain: 'threat_intelligence' },
+  { query: 'Mike Glover Fieldcraft operational security threat assessment', domain: 'physical_security' },
+  { query: 'forward observer intelligence preparation environment energy sector', domain: 'threat_intelligence' },
+];
+
 // Knowledge hunt angles — each agent runs ALL of these for their specialty
 const KNOWLEDGE_ANGLES = [
   {
@@ -91,18 +99,22 @@ Deno.serve(async (req) => {
       ? KNOWLEDGE_ANGLES.filter(a => angles.includes(a.angle))
       : KNOWLEDGE_ANGLES;
 
-    // Run all agents in parallel — await before returning so work actually completes
-    const results = await Promise.allSettled(agents.map(agent =>
-      runAgentKnowledgeHunt({ agent, anglesToRun, perplexityKey: PERPLEXITY_API_KEY, supabase, force })
-    ));
+    // Run agent hunts + practitioner source hunts in parallel
+    const [agentResults, practitionerResult] = await Promise.allSettled([
+      Promise.allSettled(agents.map(agent =>
+        runAgentKnowledgeHunt({ agent, anglesToRun, perplexityKey: PERPLEXITY_API_KEY, supabase, force })
+      )),
+      runPractitionerSourceHunts({ perplexityKey: PERPLEXITY_API_KEY, supabase, force }),
+    ]);
 
+    const results = agentResults.status === 'fulfilled' ? agentResults.value : [];
     const succeeded = results.filter(r => r.status === 'fulfilled').length;
     const failed = results.filter(r => r.status === 'rejected').length;
 
     const diagnostics = agents.map((a, i) => ({
       call_sign: a.call_sign,
       specialty: a.specialty?.substring(0, 80),
-      angles: results[i].status === 'fulfilled' ? results[i].value : { error: results[i].reason },
+      angles: results[i]?.status === 'fulfilled' ? results[i].value : { error: (results[i] as any)?.reason },
     }));
 
     return successResponse({
@@ -112,6 +124,7 @@ Deno.serve(async (req) => {
       failed,
       angles_per_agent: anglesToRun.length,
       queries_total: agents.length * anglesToRun.length,
+      practitioner_hunts: practitionerResult.status === 'fulfilled' ? practitionerResult.value : { error: String(practitionerResult.reason) },
       diagnostics,
     });
 
@@ -336,6 +349,85 @@ Return ONLY the JSON array.`;
   } catch (_) {
     return [];
   }
+}
+
+async function runPractitionerSourceHunts(params: {
+  perplexityKey: string;
+  supabase: any;
+  force: boolean;
+}): Promise<Record<string, string>> {
+  const { perplexityKey, supabase, force } = params;
+  const results: Record<string, string> = {};
+
+  await Promise.allSettled(PRACTITIONER_SOURCES.map(async ({ query, domain }) => {
+    const shortKey = query.substring(0, 40);
+
+    if (!force) {
+      const { data: existing } = await supabase
+        .from('expert_knowledge')
+        .select('id')
+        .eq('source_type', 'practitioner_monitor')
+        .ilike('citation', `%${query.substring(0, 60)}%`)
+        .gte('created_at', new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString())
+        .limit(1);
+      if (existing?.length) { results[shortKey] = 'skipped:recent'; return; }
+    }
+
+    try {
+      const resp = await fetch('https://api.perplexity.ai/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${perplexityKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'sonar-pro',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are monitoring high-value security intelligence practitioners for recent insights, publications, and analysis. Summarize their most recent and important content. Include specific titles, dates, key arguments, and actionable intelligence. Be concrete and specific.',
+            },
+            { role: 'user', content: query },
+          ],
+          temperature: 0.1,
+          search_recency_filter: 'month',
+        }),
+        signal: AbortSignal.timeout(25000),
+      });
+
+      if (!resp.ok) { results[shortKey] = `perplexity_error:${resp.status}`; return; }
+
+      const data = await resp.json();
+      const content = data.choices?.[0]?.message?.content || '';
+      const citations: string[] = data.citations || [];
+
+      if (content.length < 100) { results[shortKey] = `short:${content.length}`; return; }
+
+      const fullContent = content + (citations.length ? `\n\nSources:\n${citations.join('\n')}` : '');
+
+      const { error } = await supabase.from('expert_knowledge').insert({
+        expert_name: 'practitioner-monitor',
+        source_url: `practitioner-monitor:${query.substring(0, 80)}`,
+        media_type: 'practitioner',
+        domain,
+        subdomain: 'practitioner_content',
+        knowledge_type: 'practitioner',
+        title: query.substring(0, 100),
+        content: fullContent.slice(0, 4000),
+        applicability_tags: ['practitioner_monitor', domain],
+        citation: `Practitioner monitor: ${query.substring(0, 60)}`,
+        confidence_score: 0.78,
+        source_type: 'practitioner_monitor',
+        last_validated_at: new Date().toISOString(),
+      });
+
+      results[shortKey] = error ? `insert_error:${error.message}` : 'ok';
+    } catch (e) {
+      results[shortKey] = `catch:${e instanceof Error ? e.message : String(e)}`;
+    }
+  }));
+
+  return results;
 }
 
 function deriveDomain(specialty: string): string {
