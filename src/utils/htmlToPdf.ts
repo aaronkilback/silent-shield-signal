@@ -128,7 +128,7 @@ export async function generatePdfFromHtml(
   html: string,
   options?: { backgroundColor?: string }
 ): Promise<jsPDF> {
-  const bgColor = options?.backgroundColor ?? "#0a0a0a";
+  const bgColor = options?.backgroundColor ?? "#ffffff";
 
   const container = document.createElement("div");
   container.style.position = "fixed";
