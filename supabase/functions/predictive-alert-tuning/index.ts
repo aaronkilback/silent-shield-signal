@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured");
 
     console.log("[PredictiveAlertTuning] Starting analysis...");
@@ -101,10 +101,10 @@ Rules:
 - Must not match any of the clean signal titles
 - Focus on the MOST IMPACTFUL patterns (top 5-10)`;
 
-    const aiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+    const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${GEMINI_API_KEY}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

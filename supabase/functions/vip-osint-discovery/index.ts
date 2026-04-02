@@ -174,7 +174,7 @@ Deno.serve(async (req) => {
         
         const GOOGLE_API_KEY = Deno.env.get("GOOGLE_SEARCH_API_KEY");
         const GOOGLE_CX = Deno.env.get("GOOGLE_SEARCH_ENGINE_ID");
-        const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+        const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
         const HIBP_API_KEY = Deno.env.get("HIBP_API_KEY");
 
         console.log(`[DEEP-SCAN] ════════════════════════════════════════════════════`);
@@ -468,10 +468,10 @@ Provide a structured security assessment:
 
 Be direct and actionable.`;
 
-            const aiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+            const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
               method: "POST",
               headers: {
-                "Authorization": `Bearer ${GEMINI_API_KEY}`,
+                "Authorization": `Bearer ${OPENAI_API_KEY}`,
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({

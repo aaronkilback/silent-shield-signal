@@ -86,7 +86,7 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
     if (!GEMINI_API_KEY && !OPENAI_API_KEY) {
       throw new Error('No AI API key configured (GEMINI_API_KEY or OPENAI_API_KEY required)');
@@ -360,10 +360,10 @@ Deno.serve(async (req) => {
             }
 
             if (docxRef) {
-              const visionResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+              const visionResponse = await fetch('https://api.openai.com/v1/chat/completions', {
                 method: 'POST',
                 headers: {
-                  'Authorization': `Bearer ${GEMINI_API_KEY}`,
+                  'Authorization': `Bearer ${OPENAI_API_KEY}`,
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
@@ -518,11 +518,11 @@ Deno.serve(async (req) => {
 
           // Use only 1 retry to avoid OOM from multiple in-flight requests
           const extractResp = await fetchWithRetry(
-            'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+            'https://api.openai.com/v1/chat/completions',
             {
               method: 'POST',
               headers: {
-                'Authorization': `Bearer ${GEMINI_API_KEY}`,
+                'Authorization': `Bearer ${OPENAI_API_KEY}`,
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
@@ -647,11 +647,11 @@ INSTRUCTIONS:
           console.log(`Sending image for vision analysis: ${imageSizeMB.toFixed(2)}MB`);
           
           const visionResp = await fetchWithRetry(
-            'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+            'https://api.openai.com/v1/chat/completions',
             {
               method: 'POST',
               headers: {
-                'Authorization': `Bearer ${GEMINI_API_KEY}`,
+                'Authorization': `Bearer ${OPENAI_API_KEY}`,
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
@@ -702,11 +702,11 @@ Return the full extracted text and/or description.`
             // Try Pro model as fallback
             console.log('Trying Gemini Pro fallback for image analysis...');
             const proResp = await fetchWithRetry(
-              'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+              'https://api.openai.com/v1/chat/completions',
               {
                 method: 'POST',
                 headers: {
-                  'Authorization': `Bearer ${GEMINI_API_KEY}`,
+                  'Authorization': `Bearer ${OPENAI_API_KEY}`,
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
@@ -1124,7 +1124,7 @@ Think like a professional intelligence analyst reading an opposition research do
     const callEntityExtractionAI = async (useOpenAIFallback = false): Promise<Response> => {
       const endpoint = (!GEMINI_API_KEY || useOpenAIFallback)
         ? 'https://api.openai.com/v1/chat/completions'
-        : 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+        : 'https://api.openai.com/v1/chat/completions';
       const key = (!GEMINI_API_KEY || useOpenAIFallback) ? OPENAI_API_KEY! : GEMINI_API_KEY!;
       const model = (!GEMINI_API_KEY || useOpenAIFallback) ? 'gpt-4o-mini' : 'gpt-4o-mini';
       console.log(`Calling ${useOpenAIFallback ? 'OpenAI' : 'Gemini'} for entity extraction...`);

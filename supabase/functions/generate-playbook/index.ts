@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
   try {
     const { threat_category, signal_id, incident_id, force_regenerate } = await req.json();
     const supabase = createServiceClient();
-    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
     if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
 
     const dateContext = getCriticalDateContext();
@@ -127,10 +127,10 @@ Deno.serve(async (req) => {
       .slice(0, 5);
 
     // AI synthesis to generate playbook
-    const aiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+    const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${GEMINI_API_KEY}`,
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

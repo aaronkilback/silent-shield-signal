@@ -26,7 +26,7 @@ async function aiRelevanceGate(
   displayLink: string,
   searchQuery: string,
 ): Promise<{ relevant: boolean; location: string | null; reason: string }> {
-  const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+  const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
   if (!GEMINI_API_KEY) {
     // Fallback: if no AI key, use strict regex-only path (existing behavior)
     return { relevant: true, location: null, reason: 'no_ai_key_fallback' };
@@ -60,10 +60,10 @@ Respond in this exact JSON format only:
 {"relevant": true/false, "location": "City, Province" or null, "reason": "one sentence explanation"}`;
 
   try {
-    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${GEMINI_API_KEY}`,
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

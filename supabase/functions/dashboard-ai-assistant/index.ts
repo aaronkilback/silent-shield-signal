@@ -1629,7 +1629,7 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
       const fileSizeMB = fileBytes ? (fileBytes.byteLength / (1024 * 1024)) : inferredSizeMb;
       console.log(`Analyzing visual document: ${doc.filename} (${fileSizeMB.toFixed(1)}MB)`);
 
-      const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+      const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
       if (!GEMINI_API_KEY) {
         return { success: false, error: "GEMINI_API_KEY not configured" };
       }
@@ -1697,10 +1697,10 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
           const base64PDF = base64FromBytes(new Uint8Array(fileBytes));
           console.log(`Sending PDF as base64 data URL for analysis (${fileSizeMB.toFixed(1)}MB)`);
 
-          const visionResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+          const visionResponse = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${GEMINI_API_KEY}`,
+              'Authorization': `Bearer ${OPENAI_API_KEY}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
@@ -1759,10 +1759,10 @@ Be comprehensive - list all road names, milepost markers, facility names, pipeli
             imageUrl = `data:${mimeType};base64,${base64Image}`;
           }
 
-          const visionResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+          const visionResponse = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${GEMINI_API_KEY}`,
+              'Authorization': `Bearer ${OPENAI_API_KEY}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
@@ -6706,7 +6706,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
       const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
       const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-      const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
+      const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
 
       // ═══════════════════════════════════════════════════════════════
       // SECURITY BULLETIN: Custom AI-composed bulletin with images
@@ -6730,10 +6730,10 @@ The signal is now in the database with status 'triaged' and rules have been appl
               const imgPrompt = image_prompt || `A wide cinematic header image for a corporate security intelligence bulletin titled "${bulletin_title}". Dark moody atmosphere, deep navy and charcoal tones with subtle cyan accent lighting. Abstract geometric grid patterns suggesting digital surveillance networks and data analysis. No text, no words, no letters. Photorealistic, ultra high resolution, 16:9 aspect ratio.`;
               console.log("Generating bulletin header image via Gemini Flash Image...");
               
-              const imgResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+              const imgResponse = await fetch("https://api.openai.com/v1/chat/completions", {
                 method: "POST",
                 headers: {
-                  "Authorization": `Bearer ${GEMINI_API_KEY}`,
+                  "Authorization": `Bearer ${OPENAI_API_KEY}`,
                   "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
@@ -8537,7 +8537,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     
@@ -8767,10 +8767,10 @@ Deno.serve(async (req) => {
       console.log("Detected simple acknowledgment message, using fast response path");
       
       // Use lightweight AI call with minimal context for simple ack
-      const ackResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+      const ackResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${GEMINI_API_KEY}`,
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -8892,10 +8892,10 @@ The user's message is just a conversational acknowledgment - respond in kind, do
     );
 
     // First AI call with tools — use fast model for tool routing decision
-    const response = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${GEMINI_API_KEY}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -8963,10 +8963,10 @@ The user's message is just a conversational acknowledgment - respond in kind, do
           },
         ];
 
-        const finalResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+        const finalResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${GEMINI_API_KEY}`,
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -9088,10 +9088,10 @@ RULES:
 CONTEXT:
 ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
 
-            const composeResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+            const composeResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
               method: "POST",
               headers: {
-                Authorization: `Bearer ${GEMINI_API_KEY}`,
+                Authorization: `Bearer ${OPENAI_API_KEY}`,
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
@@ -9179,10 +9179,10 @@ ${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
           },
         ];
 
-        const finalResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+        const finalResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${GEMINI_API_KEY}`,
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -9273,10 +9273,10 @@ RULES:
 CONTEXT:
 ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
 
-              const composeResponse2 = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+              const composeResponse2 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
                 method: "POST",
                 headers: {
-                  Authorization: `Bearer ${GEMINI_API_KEY}`,
+                  Authorization: `Bearer ${OPENAI_API_KEY}`,
                   "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
@@ -9360,10 +9360,10 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
             },
           ];
 
-          const finalResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+          const finalResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${GEMINI_API_KEY}`,
+              Authorization: `Bearer ${OPENAI_API_KEY}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -9405,10 +9405,10 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
           },
         ];
 
-        const finalResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+        const finalResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${GEMINI_API_KEY}`,
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -9469,10 +9469,10 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
           },
         ];
 
-        const finalResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+        const finalResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${GEMINI_API_KEY}`,
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -9550,10 +9550,10 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
       );
 
       // Make second AI call with tool results - now with streaming (with timeout)
-      const finalResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+      const finalResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${GEMINI_API_KEY}`,
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -9581,10 +9581,10 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
     }
 
     // No tools needed, stream the response directly (with timeout)
-    const streamResponse = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+    const streamResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${GEMINI_API_KEY}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

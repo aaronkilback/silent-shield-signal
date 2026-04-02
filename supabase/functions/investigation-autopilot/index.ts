@@ -54,7 +54,7 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const lovableKey = Deno.env.get("GEMINI_API_KEY");
+    const lovableKey = Deno.env.get("OPENAI_API_KEY");
 
     const supabase = createClient(supabaseUrl, serviceKey);
     const { investigation_id, session_id, action, task_id } = (await req.json()) as AutopilotRequest;
@@ -353,7 +353,7 @@ async function taskEntityExtraction(supabase: any, investigation: any, lovableKe
   let aiEntities: any[] = [];
   if (lovableKey && textContent.length > 50) {
     try {
-      const aiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+      const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${lovableKey}`,
@@ -538,7 +538,7 @@ async function taskPatternMatching(supabase: any, investigation: any, lovableKey
       synopsis: (c.synopsis || "").substring(0, 200),
     }));
 
-    const aiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+    const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${lovableKey}`,
@@ -706,7 +706,7 @@ async function taskRiskAssessment(supabase: any, investigation: any, sessionId: 
   }
 
   try {
-    const aiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+    const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${lovableKey}`,
@@ -828,7 +828,7 @@ async function generateOverallSummary(supabase: any, investigation: any, tasks: 
   }
 
   try {
-    const aiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+    const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${lovableKey}`,

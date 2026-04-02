@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
-    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
 
     console.log('[ClusterDetector] Starting proactive threat cluster scan...');
 
@@ -244,10 +244,10 @@ Deno.serve(async (req) => {
           `${i + 1}. [${c.cluster_type.toUpperCase()}] ${c.description} — Risk: ${c.risk_score}/100`
         ).join('\n');
 
-        const response = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${GEMINI_API_KEY}`,
+            'Authorization': `Bearer ${OPENAI_API_KEY}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({

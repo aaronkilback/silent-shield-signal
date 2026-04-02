@@ -7,7 +7,7 @@ Deno.serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const lovableApiKey = Deno.env.get("GEMINI_API_KEY")!;
+    const lovableApiKey = Deno.env.get("OPENAI_API_KEY")!;
     
     if (!lovableApiKey) {
       throw new Error("GEMINI_API_KEY not configured");
@@ -289,7 +289,7 @@ OPERATIONAL BRIEFING FORMAT:
 Include specific technical details, TTPs, and actionable steps. Use security terminology.`;
 
     // Call AI for briefing generation
-    const aiResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+    const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${lovableApiKey}`,
