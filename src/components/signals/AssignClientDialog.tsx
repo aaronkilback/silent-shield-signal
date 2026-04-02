@@ -8,7 +8,6 @@ import { Search, Loader2, Building2 } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { useAuth } from "@/hooks/useAuth";
 
 interface AssignClientDialogProps {
   open: boolean;
@@ -26,7 +25,6 @@ export function AssignClientDialog({
   signal,
   onAssigned,
 }: AssignClientDialogProps) {
-  const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
@@ -58,18 +56,9 @@ export function AssignClientDialog({
     mutationFn: async () => {
       if (!signal || !selectedClientId) throw new Error("Missing required data");
 
-      // Use any type for update with new columns not in types yet
-      const updateData: Record<string, any> = {
-        client_id: selectedClientId,
-        match_confidence: "manual",
-        match_timestamp: new Date().toISOString(),
-        assigned_by_user_id: user?.id,
-        match_notes: notes || null,
-      };
-      
       const { error } = await supabase
-        .from("signal_correlation_groups")
-        .update(updateData as any)
+        .from("signals")
+        .update({ client_id: selectedClientId })
         .eq("id", signal.id);
 
       if (error) throw error;
