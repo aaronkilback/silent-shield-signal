@@ -1366,6 +1366,15 @@ Score this signal's relevance and classify the connection.`
     }
     
     // ===== STANDARD PATH (Non-Critical Signals) =====
+    // Do not auto-create operational incidents from cyber advisory signals.
+    // These are intelligence signals, not PECL operational incidents.
+    const cyberAdvisoryCategories = ['cyber', 'malware', 'data_exfil', 'intrusion', 'phishing', 'ddos', 'ransomware'];
+    const cyberAdvisorySources = ['cisa', 'cccs', 'threat_intel'];
+    const isCyberAdvisory =
+      cyberAdvisoryCategories.includes(signal.category) ||
+      cyberAdvisorySources.includes(signal.raw_json?.sourceType) ||
+      cyberAdvisorySources.includes(signal.raw_json?.source_name?.toLowerCase());
+
     // Apply AI decision engine for rule-based categorization and analysis
     console.log('Invoking AI decision engine for signal categorization...');
     try {
@@ -1375,14 +1384,14 @@ Score this signal's relevance and classify the connection.`
           force_ai: rulesResult.priority === 'p1' || rulesResult.priority === 'p2'
         }
       });
-      
+
       if (aiDecisionResult.error) {
         console.error('AI decision engine error:', aiDecisionResult.error);
       } else {
         console.log('AI decision engine result:', aiDecisionResult.data);
-        
+
         // Check if AI decision recommends incident creation
-        if (aiDecisionResult.data?.decision?.should_create_incident) {
+        if (!isCyberAdvisory && aiDecisionResult.data?.decision?.should_create_incident) {
           const { error: incidentError } = await supabase
             .from('incidents')
             .insert({
@@ -1417,7 +1426,8 @@ Score this signal's relevance and classify the connection.`
     }
     
     // Auto-open incident based on rules (fallback if AI didn't create one)
-    if (rulesResult.shouldOpenIncident) {
+    // Skip cyber advisory signals — not PECL operational incidents
+    if (rulesResult.shouldOpenIncident && !isCyberAdvisory) {
       // Check if incident was already created by AI
       const { data: existingIncident } = await supabase
         .from('incidents')
