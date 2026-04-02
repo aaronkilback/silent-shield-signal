@@ -929,9 +929,7 @@ Score this signal's relevance and classify the connection.`
     }
     
     // Determine status based on relevance
-    const signalStatus = relevanceResult.recommendation === 'low_confidence' 
-      ? 'low_confidence' 
-      : 'new';
+    const signalStatus = 'new'; // low_confidence is not a valid signal_status enum value
     
     // Extract event_date: AI-extracted date takes priority over raw metadata
     let eventDate: string | null = null;
@@ -1029,7 +1027,7 @@ Score this signal's relevance and classify the connection.`
 
     if (insertError) {
       console.error('Insert error:', insertError);
-      throw insertError;
+      throw new Error(`Signal insert failed: ${insertError.message} (code: ${insertError.code}, details: ${insertError.details})`);
     }
 
     console.log(`Signal ingested: ${signal.id}${matchedKeywords.length > 0 ? ` (keywords: ${matchedKeywords.join(', ')})` : ''}`);
