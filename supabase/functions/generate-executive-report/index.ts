@@ -1020,6 +1020,49 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
 
     .page-break { page-break-after: always; }
     @media print { .no-print { display: none; } }
+
+    /* ── PRINT / PDF OVERRIDES ─────────────────────────────────────────────
+       Forces white background for all elements so the PDF is readable
+       regardless of the viewing environment or browser dark-mode settings.
+    ──────────────────────────────────────────────────────────────────────── */
+    @media print {
+      * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+
+      html, body {
+        background: #ffffff !important;
+        color: #111111 !important;
+      }
+
+      body * {
+        background-color: transparent !important;
+        color: #111111 !important;
+        border-color: #cccccc !important;
+      }
+
+      /* Preserve colored elements that should stay dark */
+      .executive-flash, .executive-flash * {
+        background-color: transparent !important;
+        color: #111111 !important;
+      }
+
+      /* Risk level text — keep readable */
+      .risk-high, .risk-elevated, .risk-moderate, .risk-low { color: #111111 !important; }
+
+      /* Source citation blocks */
+      .evidence-block, .evidence-block * {
+        background-color: #f8f8f8 !important;
+        color: #111111 !important;
+      }
+
+      h1, h2, h3, h4, h5, h6 { color: #111111 !important; }
+
+      a { color: #333333 !important; }
+
+      @page { margin: 1.2cm 1.8cm; size: A4; }
+    }
   </style>
 </head>
 <body>
