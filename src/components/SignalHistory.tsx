@@ -96,6 +96,7 @@ interface Signal {
 export const SignalHistory = () => {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedSignalIds, setSelectedSignalIds] = useState<Set<string>>(new Set());
@@ -236,7 +237,7 @@ export const SignalHistory = () => {
 
       const { data, error } = await query;
       if (error) throw error;
-      
+
       // Fetch source names separately if needed
       const dataWithSources = await Promise.all((data || []).map(async (signal: any) => {
         if (signal.source_id) {
@@ -245,14 +246,19 @@ export const SignalHistory = () => {
             .select('name, type')
             .eq('id', signal.source_id)
             .single();
-          
+
           return { ...signal, sources: sourceData };
         }
         return signal;
       }));
-      
+
       setSignals(dataWithSources as any);
+      setError(null);
       await fetchUpdateCounts((dataWithSources || []).map((s: any) => s.id));
+    } catch (err) {
+      console.error('Error loading signals:', err);
+      setSignals([]);
+      setError('Could not load signals — please refresh');
     } finally {
       setLoading(false);
     }
@@ -640,6 +646,12 @@ export const SignalHistory = () => {
         )}
       </CardHeader>
       <CardContent>
+        {error && (
+          <div className="mb-4 flex items-center gap-2 rounded-md bg-destructive/10 border border-destructive/30 px-4 py-2 text-sm text-destructive">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            {error}
+          </div>
+        )}
         {filteredSignals.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <AlertCircle className="w-12 h-12 mx-auto mb-3 opacity-50" />

@@ -1,9 +1,8 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
-import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon, Copy, Check, FileWarning, ExternalLink, Shield, MessageCircle, Heart, Share2, Hash, AtSign, Image } from "lucide-react";
+import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon, Copy, Check, FileWarning, ExternalLink, Shield, MessageCircle, Heart, Share2, Hash, AtSign, Archive, ChevronDown } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SignalUpdatesTimeline } from "@/components/signals/SignalUpdatesTimeline";
 import { FacebookVideoEmbed, isFacebookVideoUrl } from "@/components/signals/FacebookVideoEmbed";
@@ -47,6 +46,12 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
   const [signalStatus, setSignalStatus] = useState<string>(signal?.status || 'new');
   const { startViewing, stopViewing, trackEvent } = useImplicitFeedback();
 
+  // Collapsible section state
+  const [showAI, setShowAI] = useState(false);
+  const [showRelated, setShowRelated] = useState(false);
+  const [showSocial, setShowSocial] = useState(false);
+  const [showTimeline, setShowTimeline] = useState(false);
+
   const handleStatusChange = async (newStatus: string) => {
     if (!signal?.id) return;
     const { error } = await supabase
@@ -74,7 +79,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
       return () => stopViewing(signal.id);
     }
   }, [open, signal?.id, startViewing, stopViewing]);
-  
+
   // Fetch correlation data and linked incident when dialog opens
   useEffect(() => {
     const fetchData = async () => {
@@ -88,7 +93,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
           .select('id, status, title, priority, created_at')
           .eq('signal_id', signal.id)
           .maybeSingle();
-        
+
         if (directIncident) {
           setLinkedIncident(directIncident);
         } else {
@@ -98,7 +103,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
             .select('incident_id, incidents(id, status, title, priority, created_at)')
             .eq('signal_id', signal.id)
             .limit(1);
-          
+
           if (linkedData && linkedData.length > 0) {
             setLinkedIncident(linkedData[0].incidents);
           } else {
@@ -140,6 +145,12 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
 
     fetchData();
   }, [signal?.id, signal?.correlation_group_id, open]);
+
+  // Initialize showAI when aiDecision becomes available
+  useEffect(() => {
+    const aiDecision = signal?.raw_json?.ai_decision;
+    setShowAI(!!aiDecision);
+  }, [signal?.id, signal?.raw_json?.ai_decision]);
 
   if (!signal) return null;
 
@@ -191,7 +202,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
   const copyFullAnalysis = async () => {
     const aiDecision = signal.raw_json?.ai_decision;
     const aiAnalysis = signal.raw_json?.ai_analysis || aiDecision;
-    
+
     let content = `# Strategic Intelligence Analysis\n\n`;
     content += `## Signal Overview\n`;
     content += `**Text:** ${decodedText}\n`;
@@ -199,7 +210,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
     content += `**Category:** ${signal.category}\n`;
     content += `**Status:** ${signal.status}\n`;
     content += `**Date:** ${new Date(signal.created_at).toLocaleString()}\n\n`;
-    
+
     if (aiAnalysis) {
       if (aiAnalysis.strategic_context) {
         content += `## Strategic Context\n${decodeHtmlEntities(aiAnalysis.strategic_context)}\n\n`;
@@ -232,7 +243,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
         }
       }
     }
-    
+
     try {
       await navigator.clipboard.writeText(content);
       setCopied(true);
@@ -269,6 +280,8 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
   const urlAnalysis = signal.raw_json?.analysis; // Analysis from URL scanner
   const isUrlScan = signal.raw_json?.url;
 
+  const sourceUrl = signal.source_url || signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link || '';
+
   const getSeverityColor = (severity: string) => {
     const colors: Record<string, string> = {
       critical: 'destructive',
@@ -279,278 +292,625 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
     return colors[severity] || 'outline';
   };
 
+  const hasSocialDetails = !!(
+    (signal.hashtags && signal.hashtags.length > 0) ||
+    (signal.mentions && signal.mentions.length > 0) ||
+    (signal.engagement_metrics && (
+      signal.engagement_metrics.likes != null ||
+      signal.engagement_metrics.comments != null ||
+      signal.engagement_metrics.shares != null
+    ))
+  );
+
+  const hasRelated = correlatedSignals.length > 0 || correlationData;
+
   return (
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Brain className="w-5 h-5" />
-              Strategic Intelligence Analysis
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              {!aiDecision && (
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={handleRunAIAnalysis}
-                  disabled={isAnalyzing}
-                >
-                  <RefreshCw className={`w-4 h-4 mr-2 ${isAnalyzing ? 'animate-spin' : ''}`} />
-                  {isAnalyzing ? 'Analyzing...' : 'Run AI Analysis'}
-                </Button>
-              )}
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setCreateIncidentOpen(true)}
-              >
-                <FileWarning className="w-4 h-4 mr-2" />
-                Create Incident
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={copyFullAnalysis}
-              >
-                {copied ? (
-                  <Check className="w-4 h-4 mr-2 text-green-500" />
-                ) : (
-                  <Copy className="w-4 h-4 mr-2" />
-                )}
-                {copied ? 'Copied!' : 'Copy Analysis'}
-              </Button>
-              {selectedText ? (
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={handleCreateEntity}
-                >
-                  <UserPlus className="w-4 h-4 mr-2" />
-                  Create Entity: "{selectedText.substring(0, 20)}{selectedText.length > 20 ? '...' : ''}"
-                </Button>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCreateEntityOpen(true)}
-                >
-                  <UserPlus className="w-4 h-4 mr-2" />
-                  Create Entity
-                </Button>
-              )}
-            </div>
-          </DialogTitle>
+      <DialogContent className="flex flex-col p-0 gap-0 max-w-3xl max-h-[90vh]">
+        {/* Hidden accessible title */}
+        <DialogHeader className="sr-only">
+          <DialogTitle>Signal Detail</DialogTitle>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[calc(90vh-100px)] pr-4">
-          <div className="space-y-6" onMouseUp={handleTextSelection}>
-            {/* Signal Overview */}
-            <div>
-              <h3 className="font-semibold mb-2 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4" />
-                Signal Overview
-              </h3>
-              <div className="bg-muted p-4 rounded-lg space-y-3">
-                {/* Title */}
-                {signal.title && (
-                  <h4 className="font-semibold text-lg">{decodeHtmlEntities(signal.title)}</h4>
-                )}
-                
-                {/* Description */}
-                {signal.description && (
-                  <p className="text-sm text-muted-foreground">{decodeHtmlEntities(signal.description)}</p>
-                )}
-                
-                {/* Post Caption */}
-                {signal.post_caption && signal.post_caption !== signal.description && (
-                  <div className="bg-background p-3 rounded border">
-                    <p className="text-sm italic">"{decodeHtmlEntities(signal.post_caption)}"</p>
-                  </div>
-                )}
-                
-                {/* Fallback to normalized text */}
-                {!signal.title && !signal.description && decodedText && (
-                  <p className="font-medium">{decodedText}</p>
-                )}
-                
-                {/* Thumbnail/Media */}
-                {signal.thumbnail_url && (
-                  <div className="flex gap-2 pt-2">
-                    <ImageLightbox 
-                      src={signal.thumbnail_url} 
-                      alt="Signal media" 
-                      className="h-32 w-auto rounded-lg object-contain border bg-muted"
-                    />
-                  </div>
-                )}
-                
-                {/* Engagement Metrics */}
-                {signal.engagement_metrics && (signal.engagement_metrics.likes || signal.engagement_metrics.comments || signal.engagement_metrics.shares) && (
-                  <div className="flex gap-4 text-sm pt-2 border-t border-border">
-                    {signal.engagement_metrics.likes != null && (
-                      <div className="flex items-center gap-1.5 text-pink-600">
-                        <Heart className="w-4 h-4" />
-                        <span>{signal.engagement_metrics.likes.toLocaleString()}</span>
-                      </div>
-                    )}
-                    {signal.engagement_metrics.comments != null && (
-                      <div className="flex items-center gap-1.5 text-blue-600">
-                        <MessageCircle className="w-4 h-4" />
-                        <span>{signal.engagement_metrics.comments.toLocaleString()}</span>
-                      </div>
-                    )}
-                    {signal.engagement_metrics.shares != null && (
-                      <div className="flex items-center gap-1.5 text-green-600">
-                        <Share2 className="w-4 h-4" />
-                        <span>{signal.engagement_metrics.shares.toLocaleString()}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-                
-                {/* Hashtags */}
-                {signal.hashtags && signal.hashtags.length > 0 && (
-                  <div className="pt-2 border-t border-border">
-                    <div className="flex items-center gap-1.5 mb-2 text-sm text-muted-foreground">
-                      <Hash className="w-3.5 h-3.5" />
-                      <span>Hashtags</span>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {signal.hashtags.map((tag: string, idx: number) => (
-                        <Badge key={idx} variant="outline" className="text-xs text-blue-600">
-                          #{tag}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                
-                {/* Mentions */}
-                {signal.mentions && signal.mentions.length > 0 && (
-                  <div className="pt-2 border-t border-border">
-                    <div className="flex items-center gap-1.5 mb-2 text-sm text-muted-foreground">
-                      <AtSign className="w-3.5 h-3.5" />
-                      <span>Mentions</span>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {signal.mentions.map((mention: string, idx: number) => (
-                        <Badge key={idx} variant="secondary" className="text-xs">
-                          @{mention}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
+        {/* Section 1 — Header */}
+        <div className="px-6 pt-5 pb-4 border-b">
+          {/* Row 1: severity + category + status select */}
+          <div className="flex items-center gap-2">
+            <Badge variant={getSeverityColor(signal.severity) as any}>
+              {signal.severity?.toUpperCase()}
+            </Badge>
+            <Badge variant="outline">{signal.category}</Badge>
+            <div className="ml-auto">
+              <Select value={signalStatus} onValueChange={handleStatusChange}>
+                <SelectTrigger className="h-8 w-44 text-xs">
+                  <SelectValue placeholder="Set status…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="new">New</SelectItem>
+                  <SelectItem value="triaged">Triaged</SelectItem>
+                  <SelectItem value="investigating">Investigating</SelectItem>
+                  <SelectItem value="resolved">Resolved</SelectItem>
+                  <SelectItem value="archived">Archived (historical)</SelectItem>
+                  <SelectItem value="false_positive">False Positive</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
 
-                <div className="flex flex-wrap gap-2 mt-2">
-                  <Badge variant={getSeverityColor(signal.severity) as any}>
-                    {signal.severity?.toUpperCase()}
-                  </Badge>
-                  <Badge variant="outline">{signal.category}</Badge>
-                  <Select value={signalStatus} onValueChange={handleStatusChange}>
-                    <SelectTrigger className="h-7 w-[160px] text-xs">
-                      <SelectValue placeholder="Set status…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="new">New</SelectItem>
-                      <SelectItem value="triaged">Triaged</SelectItem>
-                      <SelectItem value="investigating">Investigating</SelectItem>
-                      <SelectItem value="resolved">Resolved</SelectItem>
-                      <SelectItem value="archived">Archived (historical)</SelectItem>
-                      <SelectItem value="false_positive">False Positive</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {signal.confidence != null && (
-                    <Badge variant="outline">
-                      {Math.round(signal.confidence)}% confidence
-                    </Badge>
-                  )}
-                  {signal.relevance_score != null && (
-                    <SignalScoreExplainer signalId={signal.id} score={signal.relevance_score} />
-                  )}
-                  <SignalFeedback 
-                    signalId={signal.id}
-                    onFeedbackChange={() => onSignalUpdated?.()}
-                  />
-                </div>
+          {/* Row 2: signal title */}
+          <h2 className="font-semibold text-base mt-3">
+            {signal.title
+              ? decodeHtmlEntities(signal.title)
+              : signal.description
+                ? decodeHtmlEntities(signal.description).slice(0, 120)
+                : decodedText?.slice(0, 120)}
+          </h2>
 
-                {/* Source Reliability & Information Accuracy */}
-                {(signal.source_reliability || signal.information_accuracy) && (
-                  <div className="flex flex-wrap gap-3 text-sm border-t border-border pt-3 mt-2">
-                    {signal.source_reliability && signal.source_reliability !== 'unknown' && (
-                      <div className="flex items-center gap-1.5">
-                        <Shield className="w-3.5 h-3.5 text-muted-foreground" />
-                        <span className="text-muted-foreground">Reliability:</span>
-                        <Badge variant="outline" className="capitalize">
-                          {signal.source_reliability.replace(/_/g, ' ')}
-                        </Badge>
-                      </div>
-                    )}
-                    {signal.information_accuracy && signal.information_accuracy !== 'cannot_be_judged' && (
-                      <div className="flex items-center gap-1.5">
-                        <Check className="w-3.5 h-3.5 text-muted-foreground" />
-                        <span className="text-muted-foreground">Accuracy:</span>
-                        <Badge variant="outline" className="capitalize">
-                          {signal.information_accuracy.replace(/_/g, ' ')}
-                        </Badge>
-                      </div>
-                    )}
-                  </div>
-                )}
+          {/* Row 3: timestamp + event date + source link */}
+          <div className="text-xs text-muted-foreground flex gap-3 mt-1 flex-wrap items-center">
+            <span className="flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
+            </span>
+            {signal.event_date && (
+              <span className="flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                Event: {new Date(signal.event_date).toLocaleDateString('en-CA')}
+              </span>
+            )}
+            {sourceUrl && (
+              <a
+                href={sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 hover:text-primary"
+              >
+                <ExternalLink className="w-3 h-3" />
+                View source
+              </a>
+            )}
+          </div>
 
-                {/* Original Source Link */}
-                {(signal.source_url || signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link) && (
-                  <div className="flex items-center gap-2 text-sm border-t border-border pt-3 mt-2">
-                    <ExternalLink className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-muted-foreground">Source:</span>
-                    <a
-                      href={signal.source_url || signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline truncate max-w-md"
-                    >
-                      {signal.source_url || signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link}
-                    </a>
-                  </div>
-                )}
-
-                {/* Stale content warning */}
-                {staleContentWarning && (
-                  <div className="flex items-start gap-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mt-2 text-sm">
-                    <Clock className="w-4 h-4 text-yellow-500 mt-0.5 shrink-0" />
-                    <div>
-                      <span className="font-medium text-yellow-600 dark:text-yellow-400">Old content — verify relevance.</span>{" "}
-                      <span className="text-muted-foreground">
-                        This {staleContentWarning.isSocial ? 'social media post' : 'content'} is from{" "}
-                        <span className="font-medium">{staleContentWarning.date}</span>{" "}
-                        ({staleContentWarning.yearsOld}+ year{staleContentWarning.yearsOld !== 1 ? 's' : ''} old).
-                        Confirm the information is still current before acting on it.
-                      </span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Facebook Video/Live Embed */}
-                {(() => {
-                  const fbUrl = signal.source_url || signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link;
-                  return isFacebookVideoUrl(fbUrl) ? (
-                    <div className="border-t border-border pt-3 mt-2">
-                      <FacebookVideoEmbed url={fbUrl} />
-                    </div>
-                  ) : null;
-                })()}
-
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Clock className="w-3 h-3" />
-                  {formatDistanceToNow(new Date(signal.created_at), { addSuffix: true })}
-                </div>
+          {/* Stale content warning */}
+          {staleContentWarning && (
+            <div className="flex items-start gap-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mt-3 text-sm">
+              <Clock className="w-4 h-4 text-yellow-500 mt-0.5 shrink-0" />
+              <div>
+                <span className="font-medium text-yellow-600 dark:text-yellow-400">Old content — verify relevance.</span>{" "}
+                <span className="text-muted-foreground">
+                  This {staleContentWarning.isSocial ? 'social media post' : 'content'} is from{" "}
+                  <span className="font-medium">{staleContentWarning.date}</span>{" "}
+                  ({staleContentWarning.yearsOld}+ year{staleContentWarning.yearsOld !== 1 ? 's' : ''} old).
+                  Confirm the information is still current before acting on it.
+                </span>
               </div>
             </div>
-            
-            {/* Manual Override */}
-            <Separator />
+          )}
+        </div>
+
+        {/* Section 2 — Action bar */}
+        <div className="px-6 py-2 border-b bg-muted/40 flex items-center gap-2 flex-wrap">
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setCreateIncidentOpen(true)}
+          >
+            <FileWarning className="w-4 h-4 mr-1.5" />
+            Create Incident
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={selectedText ? handleCreateEntity : () => setCreateEntityOpen(true)}
+          >
+            <UserPlus className="w-4 h-4 mr-1.5" />
+            {selectedText
+              ? `Create Entity: "${selectedText.slice(0, 15)}..."`
+              : 'Create Entity'}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleStatusChange('archived')}
+          >
+            <Archive className="w-4 h-4 mr-1.5" />
+            Archive
+          </Button>
+          {!aiDecision && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRunAIAnalysis}
+              disabled={isAnalyzing}
+            >
+              <RefreshCw className={`w-4 h-4 mr-1.5 ${isAnalyzing ? 'animate-spin' : ''}`} />
+              {isAnalyzing ? 'Analyzing...' : 'Run AI Analysis'}
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={copyFullAnalysis}
+          >
+            {copied ? (
+              <Check className="w-4 h-4 mr-1.5 text-green-500" />
+            ) : (
+              <Copy className="w-4 h-4 mr-1.5" />
+            )}
+            {copied ? 'Copied!' : 'Copy'}
+          </Button>
+        </div>
+
+        {/* Section 3 — Scrollable body */}
+        <ScrollArea className="flex-1 overflow-hidden">
+          <div className="px-6 py-4 space-y-5" onMouseUp={handleTextSelection}>
+
+            {/* 3a — Signal content */}
+            <div className="space-y-3">
+              {/* Description (when title is also present) */}
+              {signal.description && signal.title && (
+                <p className="text-sm text-muted-foreground">{decodeHtmlEntities(signal.description)}</p>
+              )}
+
+              {/* Post caption */}
+              {signal.post_caption && signal.post_caption !== signal.description && (
+                <blockquote className="bg-muted p-3 rounded border-l-2 border-primary/40 text-sm italic">
+                  "{decodeHtmlEntities(signal.post_caption)}"
+                </blockquote>
+              )}
+
+              {/* Fallback to decoded text */}
+              {!signal.title && !signal.description && decodedText && (
+                <p className="text-sm">{decodedText}</p>
+              )}
+
+              {/* Thumbnail/Media */}
+              {signal.thumbnail_url && (
+                <div className="flex gap-2">
+                  <ImageLightbox
+                    src={signal.thumbnail_url}
+                    alt="Signal media"
+                    className="h-32 w-auto rounded-lg object-contain border bg-muted"
+                  />
+                </div>
+              )}
+
+              {/* Source Reliability & Information Accuracy */}
+              {(signal.source_reliability || signal.information_accuracy) && (
+                <div className="flex flex-wrap gap-3 text-sm">
+                  {signal.source_reliability && signal.source_reliability !== 'unknown' && (
+                    <div className="flex items-center gap-1.5">
+                      <Shield className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-muted-foreground">Reliability:</span>
+                      <Badge variant="outline" className="capitalize">
+                        {signal.source_reliability.replace(/_/g, ' ')}
+                      </Badge>
+                    </div>
+                  )}
+                  {signal.information_accuracy && signal.information_accuracy !== 'cannot_be_judged' && (
+                    <div className="flex items-center gap-1.5">
+                      <Check className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-muted-foreground">Accuracy:</span>
+                      <Badge variant="outline" className="capitalize">
+                        {signal.information_accuracy.replace(/_/g, ' ')}
+                      </Badge>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Facebook Video/Live Embed */}
+              {(() => {
+                const fbUrl = signal.source_url || signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link;
+                return isFacebookVideoUrl(fbUrl) ? <FacebookVideoEmbed url={fbUrl} /> : null;
+              })()}
+            </div>
+
+            {/* 3b — Incident callout */}
+            {(linkedIncident || aiDecision?.should_create_incident) && (
+              <div>
+                {linkedIncident ? (
+                  <div className="bg-green-50 dark:bg-green-950/20 p-4 rounded-lg border border-green-200 dark:border-green-900">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-green-800 dark:text-green-200">
+                          Incident Auto-Created
+                        </p>
+                        <p className="text-xs text-green-600 dark:text-green-400 mt-1">
+                          {linkedIncident.title} ({linkedIncident.status})
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigate(`/incidents?highlight=${linkedIncident.id}`)}
+                      >
+                        View Incident
+                      </Button>
+                    </div>
+                  </div>
+                ) : aiDecision?.should_create_incident ? (
+                  <div className="bg-amber-50 dark:bg-amber-950/20 p-4 rounded-lg border border-amber-200 dark:border-amber-900">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                          AI Recommended Incident Creation
+                        </p>
+                        <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                          No incident was auto-created. You can create one manually.
+                        </p>
+                      </div>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => setCreateIncidentOpen(true)}
+                      >
+                        Create Now
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
+
+            {/* 3c — AI Analysis collapsible */}
+            <div>
+              <button
+                onClick={() => setShowAI(v => !v)}
+                className="flex items-center justify-between w-full text-sm font-semibold py-2 border-b border-border hover:text-primary transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <Brain className="w-4 h-4" />
+                  AI Analysis
+                </span>
+                <ChevronDown className={`w-4 h-4 transition-transform ${showAI ? 'rotate-180' : ''}`} />
+              </button>
+              {showAI && (
+                <div className="pt-3 space-y-3">
+                  {processingMethod === 'ai' && aiAnalysis ? (
+                    <>
+                      {/* Strategic Context */}
+                      {aiAnalysis.strategic_context && (
+                        <div>
+                          <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                            <TrendingUp className="w-4 h-4" />
+                            Strategic Context
+                          </h4>
+                          <div className="bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg border border-blue-200 dark:border-blue-900">
+                            <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(aiAnalysis.strategic_context)}</p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Threat Correlation */}
+                      {aiAnalysis.threat_correlation && (
+                        <div>
+                          <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                            <Network className="w-4 h-4" />
+                            Threat Correlation
+                          </h4>
+                          <div className="bg-purple-50 dark:bg-purple-950/20 p-4 rounded-lg border border-purple-200 dark:border-purple-900">
+                            <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(aiAnalysis.threat_correlation)}</p>
+                            {patternAnalysis?.recent_signals_analyzed > 0 && (
+                              <p className="text-xs text-muted-foreground mt-2">
+                                Analyzed {patternAnalysis.recent_signals_analyzed} recent signals from the last 30 days
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Campaign Assessment */}
+                      {aiAnalysis.campaign_assessment && (
+                        <div>
+                          <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                            <AlertTriangle className="w-4 h-4" />
+                            Campaign Assessment
+                          </h4>
+                          <div className="bg-orange-50 dark:bg-orange-950/20 p-4 rounded-lg border border-orange-200 dark:border-orange-900">
+                            <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(aiAnalysis.campaign_assessment)}</p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Sector Implications */}
+                      {aiAnalysis.sector_implications && (
+                        <div>
+                          <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                            <Building2 className="w-4 h-4" />
+                            Sector Implications
+                          </h4>
+                          <div className="bg-green-50 dark:bg-green-950/20 p-4 rounded-lg border border-green-200 dark:border-green-900">
+                            <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(aiAnalysis.sector_implications)}</p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* AI Decision grid */}
+                      <div className="space-y-3 pt-2">
+                        <h4 className="text-sm font-semibold">AI Decision</h4>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <p className="text-sm text-muted-foreground">Threat Level</p>
+                            <Badge variant={getSeverityColor(aiDecision.threat_level) as any} className="mt-1">
+                              {aiDecision.threat_level?.toUpperCase()}
+                            </Badge>
+                          </div>
+                          <div>
+                            <p className="text-sm text-muted-foreground">Confidence</p>
+                            <p className="font-medium mt-1">{Math.round(aiDecision.confidence * 100)}%</p>
+                          </div>
+                          {aiDecision.incident_priority && (
+                            <div>
+                              <p className="text-sm text-muted-foreground">Priority</p>
+                              <Badge variant="outline" className="mt-1">
+                                {aiDecision.incident_priority.toUpperCase()}
+                              </Badge>
+                            </div>
+                          )}
+                          <div>
+                            <p className="text-sm text-muted-foreground">Incident Recommended</p>
+                            <p className="font-medium mt-1">
+                              {aiDecision.should_create_incident ? '✓ Yes' : '✗ No'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {aiDecision.reasoning && (
+                          <div>
+                            <p className="text-sm text-muted-foreground mb-1">Reasoning</p>
+                            <p className="text-sm bg-muted p-3 rounded-lg">{decodeHtmlEntities(aiDecision.reasoning)}</p>
+                          </div>
+                        )}
+
+                        {aiDecision.containment_actions && aiDecision.containment_actions.length > 0 && (
+                          <div>
+                            <p className="text-sm text-muted-foreground mb-1">Containment Actions</p>
+                            <ul className="text-sm space-y-1 bg-muted p-3 rounded-lg">
+                              {aiDecision.containment_actions.map((action: string, i: number) => (
+                                <li key={i} className="flex items-start gap-2">
+                                  <span className="text-primary">•</span>
+                                  <span>{decodeHtmlEntities(action)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {aiDecision.remediation_steps && aiDecision.remediation_steps.length > 0 && (
+                          <div>
+                            <p className="text-sm text-muted-foreground mb-1">Remediation Steps</p>
+                            <ul className="text-sm space-y-1 bg-muted p-3 rounded-lg">
+                              {aiDecision.remediation_steps.map((step: string, i: number) => (
+                                <li key={i} className="flex items-start gap-2">
+                                  <span className="font-bold">{i + 1}.</span>
+                                  <span>{decodeHtmlEntities(step)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {aiDecision.estimated_impact && (
+                          <div>
+                            <p className="text-sm text-muted-foreground mb-1">Estimated Impact</p>
+                            <p className="text-sm bg-muted p-3 rounded-lg">{decodeHtmlEntities(aiDecision.estimated_impact)}</p>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : isUrlScan && urlAnalysis ? (
+                    <div>
+                      <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                        <Brain className="w-4 h-4" />
+                        Website Intelligence
+                      </h4>
+                      <div className="bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg border border-blue-200 dark:border-blue-900">
+                        <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(urlAnalysis)}</p>
+                      </div>
+                      {signal.raw_json?.url && (
+                        <div className="mt-2 text-xs text-muted-foreground">
+                          Source: <a href={signal.raw_json.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">{signal.raw_json.url}</a>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="bg-muted p-4 rounded-lg text-center">
+                      <p className="text-sm text-muted-foreground">
+                        {processingMethod === 'rule-based'
+                          ? 'This signal was processed using rule-based logic (low priority).'
+                          : 'No AI analysis available yet. Trigger a manual scan to process this signal.'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* 3d — Related Signals collapsible */}
+            {hasRelated && (
+              <div>
+                <button
+                  onClick={() => setShowRelated(v => !v)}
+                  className="flex items-center justify-between w-full text-sm font-semibold py-2 border-b border-border hover:text-primary transition-colors"
+                >
+                  <span className="flex items-center gap-2">
+                    <LinkIcon className="w-4 h-4" />
+                    Related Signals ({correlatedSignals.length})
+                  </span>
+                  <ChevronDown className={`w-4 h-4 transition-transform ${showRelated ? 'rotate-180' : ''}`} />
+                </button>
+                {showRelated && correlationData && (
+                  <div className="pt-3 space-y-3">
+                    <div className="bg-amber-50 dark:bg-amber-950/20 p-4 rounded-lg border border-amber-200 dark:border-amber-900 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                          This signal is correlated with {correlatedSignals.length} other {correlatedSignals.length === 1 ? 'signal' : 'signals'}
+                        </p>
+                        {signal.correlation_confidence && (
+                          <Badge variant="outline" className="bg-white dark:bg-gray-800">
+                            {Math.round(signal.correlation_confidence * 100)}% match
+                          </Badge>
+                        )}
+                      </div>
+
+                      {correlationData.sources_json && correlationData.sources_json.length > 0 && (
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Sources reporting this event:</p>
+                          <div className="flex flex-wrap gap-1">
+                            {correlationData.sources_json.map((source: any, idx: number) => (
+                              <Badge key={idx} variant="secondary" className="text-xs">
+                                {source.name}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {correlatedSignals.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                          <p className="text-xs text-muted-foreground">Related signals:</p>
+                          {correlatedSignals.slice(0, 3).map((relSignal) => (
+                            <div key={relSignal.id} className="bg-white dark:bg-gray-800 p-2 rounded text-xs border border-gray-200 dark:border-gray-700">
+                              <div className="flex items-center gap-2 mb-1">
+                                <Badge variant={getSeverityColor(relSignal.severity) as any} className="text-xs">
+                                  {relSignal.severity}
+                                </Badge>
+                                <span className="text-muted-foreground">
+                                  {formatDistanceToNow(new Date(relSignal.created_at), { addSuffix: true })}
+                                </span>
+                              </div>
+                              <p className="line-clamp-2">{relSignal.normalized_text ? decodeHtmlEntities(relSignal.normalized_text) : relSignal.normalized_text}</p>
+                            </div>
+                          ))}
+                          {correlatedSignals.length > 3 && (
+                            <p className="text-xs text-muted-foreground italic">
+                              +{correlatedSignals.length - 3} more correlated {correlatedSignals.length - 3 === 1 ? 'signal' : 'signals'}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-1">
+                          <span>Avg Confidence:</span>
+                          <span className="font-medium">{Math.round((correlationData.avg_confidence || 0) * 100)}%</span>
+                        </div>
+                        {signal.confidence && (
+                          <div className="flex items-center gap-1">
+                            <span>•</span>
+                            <span>Boosted from {Math.round((signal.confidence / (1 + correlatedSignals.length * 0.1)) * 100)}%</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 3e — Social Details collapsible */}
+            {hasSocialDetails && (
+              <div>
+                <button
+                  onClick={() => setShowSocial(v => !v)}
+                  className="flex items-center justify-between w-full text-sm font-semibold py-2 border-b border-border hover:text-primary transition-colors"
+                >
+                  <span className="flex items-center gap-2">
+                    <MessageCircle className="w-4 h-4" />
+                    Social Details
+                  </span>
+                  <ChevronDown className={`w-4 h-4 transition-transform ${showSocial ? 'rotate-180' : ''}`} />
+                </button>
+                {showSocial && (
+                  <div className="pt-3 space-y-3">
+                    {/* Engagement Metrics */}
+                    {signal.engagement_metrics && (signal.engagement_metrics.likes != null || signal.engagement_metrics.comments != null || signal.engagement_metrics.shares != null) && (
+                      <div className="flex gap-4 text-sm">
+                        {signal.engagement_metrics.likes != null && (
+                          <div className="flex items-center gap-1.5 text-pink-600">
+                            <Heart className="w-4 h-4" />
+                            <span>{signal.engagement_metrics.likes.toLocaleString()}</span>
+                          </div>
+                        )}
+                        {signal.engagement_metrics.comments != null && (
+                          <div className="flex items-center gap-1.5 text-blue-600">
+                            <MessageCircle className="w-4 h-4" />
+                            <span>{signal.engagement_metrics.comments.toLocaleString()}</span>
+                          </div>
+                        )}
+                        {signal.engagement_metrics.shares != null && (
+                          <div className="flex items-center gap-1.5 text-green-600">
+                            <Share2 className="w-4 h-4" />
+                            <span>{signal.engagement_metrics.shares.toLocaleString()}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Hashtags */}
+                    {signal.hashtags && signal.hashtags.length > 0 && (
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-2 text-sm text-muted-foreground">
+                          <Hash className="w-3.5 h-3.5" />
+                          <span>Hashtags</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {signal.hashtags.map((tag: string, idx: number) => (
+                            <Badge key={idx} variant="outline" className="text-xs text-blue-600">
+                              #{tag}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Mentions */}
+                    {signal.mentions && signal.mentions.length > 0 && (
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-2 text-sm text-muted-foreground">
+                          <AtSign className="w-3.5 h-3.5" />
+                          <span>Mentions</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {signal.mentions.map((mention: string, idx: number) => (
+                            <Badge key={idx} variant="secondary" className="text-xs">
+                              @{mention}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Comments */}
+                    {signal.comments && signal.comments.length > 0 && (
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-2 text-sm text-muted-foreground">
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>Comments ({signal.comments.length})</span>
+                        </div>
+                        <div className="space-y-2">
+                          {signal.comments.slice(0, 10).map((comment: any, idx: number) => (
+                            <div key={idx} className="bg-muted/50 p-3 rounded-lg text-sm">
+                              <span className="font-medium text-primary">@{comment.author || comment.authorHandle}</span>
+                              <p className="text-muted-foreground mt-1">{comment.text}</p>
+                            </div>
+                          ))}
+                          {signal.comments.length > 10 && (
+                            <p className="text-xs text-muted-foreground text-center">
+                              +{signal.comments.length - 10} more comments
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 3f — Manual Override (no collapsible) */}
             <SignalManualOverride
               signal={{
                 id: signal.id,
@@ -564,319 +924,25 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
               onUpdated={onSignalUpdated}
             />
 
-            {/* Comments Section */}
-            {signal.comments && signal.comments.length > 0 && (
-              <>
-                <Separator />
-                <div>
-                  <h3 className="font-semibold mb-2 flex items-center gap-2">
-                    <MessageCircle className="w-4 h-4" />
-                    Comments ({signal.comments.length})
-                  </h3>
-                  <div className="space-y-2">
-                    {signal.comments.slice(0, 10).map((comment: any, idx: number) => (
-                      <div key={idx} className="bg-muted/50 p-3 rounded-lg text-sm">
-                        <span className="font-medium text-primary">@{comment.author || comment.authorHandle}</span>
-                        <p className="text-muted-foreground mt-1">{comment.text}</p>
-                      </div>
-                    ))}
-                    {signal.comments.length > 10 && (
-                      <p className="text-xs text-muted-foreground text-center">
-                        +{signal.comments.length - 10} more comments
-                      </p>
-                    )}
-                  </div>
+            {/* 3g — Timeline collapsible */}
+            <div>
+              <button
+                onClick={() => setShowTimeline(v => !v)}
+                className="flex items-center justify-between w-full text-sm font-semibold py-2 border-b border-border hover:text-primary transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <Clock className="w-4 h-4" />
+                  Timeline
+                </span>
+                <ChevronDown className={`w-4 h-4 transition-transform ${showTimeline ? 'rotate-180' : ''}`} />
+              </button>
+              {showTimeline && (
+                <div className="pt-3 space-y-3">
+                  <SignalUpdatesTimeline signalId={signal.id} />
                 </div>
-              </>
-            )}
+              )}
+            </div>
 
-            {/* Signal Correlation */}
-            {signal.correlation_group_id && correlationData && (
-              <>
-                <Separator />
-                <div>
-                  <h3 className="font-semibold mb-2 flex items-center gap-2">
-                    <LinkIcon className="w-4 h-4" />
-                    Signal Correlation
-                  </h3>
-                  <div className="bg-amber-50 dark:bg-amber-950/20 p-4 rounded-lg border border-amber-200 dark:border-amber-900 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                        This signal is correlated with {correlatedSignals.length} other {correlatedSignals.length === 1 ? 'signal' : 'signals'}
-                      </p>
-                      {signal.correlation_confidence && (
-                        <Badge variant="outline" className="bg-white dark:bg-gray-800">
-                          {Math.round(signal.correlation_confidence * 100)}% match
-                        </Badge>
-                      )}
-                    </div>
-                    
-                    {correlationData.sources_json && correlationData.sources_json.length > 0 && (
-                      <div>
-                        <p className="text-xs text-muted-foreground mb-1">Sources reporting this event:</p>
-                        <div className="flex flex-wrap gap-1">
-                          {correlationData.sources_json.map((source: any, idx: number) => (
-                            <Badge key={idx} variant="secondary" className="text-xs">
-                              {source.name}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {correlatedSignals.length > 0 && (
-                      <div className="mt-3 space-y-2">
-                        <p className="text-xs text-muted-foreground">Related signals:</p>
-                        {correlatedSignals.slice(0, 3).map((relSignal) => (
-                          <div key={relSignal.id} className="bg-white dark:bg-gray-800 p-2 rounded text-xs border border-gray-200 dark:border-gray-700">
-                            <div className="flex items-center gap-2 mb-1">
-                              <Badge variant={getSeverityColor(relSignal.severity) as any} className="text-xs">
-                                {relSignal.severity}
-                              </Badge>
-                              <span className="text-muted-foreground">
-                                {formatDistanceToNow(new Date(relSignal.created_at), { addSuffix: true })}
-                              </span>
-                            </div>
-                            <p className="line-clamp-2">{relSignal.normalized_text ? decodeHtmlEntities(relSignal.normalized_text) : relSignal.normalized_text}</p>
-                          </div>
-                        ))}
-                        {correlatedSignals.length > 3 && (
-                          <p className="text-xs text-muted-foreground italic">
-                            +{correlatedSignals.length - 3} more correlated {correlatedSignals.length - 3 === 1 ? 'signal' : 'signals'}
-                          </p>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <div className="flex items-center gap-1">
-                        <span>Avg Confidence:</span>
-                        <span className="font-medium">{Math.round((correlationData.avg_confidence || 0) * 100)}%</span>
-                      </div>
-                      {signal.confidence && (
-                        <div className="flex items-center gap-1">
-                          <span>•</span>
-                          <span>Boosted from {Math.round((signal.confidence / (1 + correlatedSignals.length * 0.1)) * 100)}%</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-
-        {processingMethod === 'ai' && aiAnalysis ? (
-          <>
-            <Separator />
-
-            {/* Strategic Context */}
-            {aiAnalysis.strategic_context && (
-                  <div>
-                    <h3 className="font-semibold mb-2 flex items-center gap-2">
-                      <TrendingUp className="w-4 h-4" />
-                      Strategic Context
-                    </h3>
-                    <div className="bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg border border-blue-200 dark:border-blue-900">
-                      <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(aiAnalysis.strategic_context)}</p>
-                    </div>
-                  </div>
-                )}
-
-            {/* Threat Correlation */}
-            {aiAnalysis.threat_correlation && (
-                  <div>
-                    <h3 className="font-semibold mb-2 flex items-center gap-2">
-                      <Network className="w-4 h-4" />
-                      Threat Correlation
-                    </h3>
-                    <div className="bg-purple-50 dark:bg-purple-950/20 p-4 rounded-lg border border-purple-200 dark:border-purple-900">
-                      <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(aiAnalysis.threat_correlation)}</p>
-                      {patternAnalysis?.recent_signals_analyzed > 0 && (
-                        <p className="text-xs text-muted-foreground mt-2">
-                          Analyzed {patternAnalysis.recent_signals_analyzed} recent signals from the last 30 days
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-            {/* Campaign Assessment */}
-            {aiAnalysis.campaign_assessment && (
-                  <div>
-                    <h3 className="font-semibold mb-2 flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4" />
-                      Campaign Assessment
-                    </h3>
-                    <div className="bg-orange-50 dark:bg-orange-950/20 p-4 rounded-lg border border-orange-200 dark:border-orange-900">
-                      <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(aiAnalysis.campaign_assessment)}</p>
-                    </div>
-                  </div>
-                )}
-
-            {/* Sector Implications */}
-            {aiAnalysis.sector_implications && (
-                  <div>
-                    <h3 className="font-semibold mb-2 flex items-center gap-2">
-                      <Building2 className="w-4 h-4" />
-                      Sector Implications
-                    </h3>
-                    <div className="bg-green-50 dark:bg-green-950/20 p-4 rounded-lg border border-green-200 dark:border-green-900">
-                      <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(aiAnalysis.sector_implications)}</p>
-                    </div>
-                  </div>
-                )}
-
-                <Separator />
-
-                {/* AI Decision Details */}
-                <div>
-                  <h3 className="font-semibold mb-2">AI Decision</h3>
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Threat Level</p>
-                        <Badge variant={getSeverityColor(aiDecision.threat_level) as any} className="mt-1">
-                          {aiDecision.threat_level?.toUpperCase()}
-                        </Badge>
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Confidence</p>
-                        <p className="font-medium mt-1">{Math.round(aiDecision.confidence * 100)}%</p>
-                      </div>
-                      {aiDecision.incident_priority && (
-                        <div>
-                          <p className="text-sm text-muted-foreground">Priority</p>
-                          <Badge variant="outline" className="mt-1">
-                            {aiDecision.incident_priority.toUpperCase()}
-                          </Badge>
-                        </div>
-                      )}
-                      <div>
-                        <p className="text-sm text-muted-foreground">Incident Recommended</p>
-                        <p className="font-medium mt-1">
-                          {aiDecision.should_create_incident ? '✓ Yes' : '✗ No'}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Linked Incident Status */}
-                    {linkedIncident ? (
-                      <div className="bg-green-50 dark:bg-green-950/20 p-4 rounded-lg border border-green-200 dark:border-green-900">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-medium text-green-800 dark:text-green-200">
-                              ✓ Incident Auto-Created
-                            </p>
-                            <p className="text-xs text-green-600 dark:text-green-400 mt-1">
-                              {linkedIncident.title} ({linkedIncident.status})
-                            </p>
-                          </div>
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            onClick={() => navigate(`/incidents?highlight=${linkedIncident.id}`)}
-                          >
-                            View Incident
-                          </Button>
-                        </div>
-                      </div>
-                    ) : aiDecision.should_create_incident ? (
-                      <div className="bg-amber-50 dark:bg-amber-950/20 p-4 rounded-lg border border-amber-200 dark:border-amber-900">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-                              ⚠️ AI Recommended Incident Creation
-                            </p>
-                            <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-                              No incident was auto-created. You can create one manually.
-                            </p>
-                          </div>
-                          <Button 
-                            variant="default" 
-                            size="sm"
-                            onClick={() => setCreateIncidentOpen(true)}
-                          >
-                            Create Now
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {aiDecision.reasoning && (
-                      <div>
-                        <p className="text-sm text-muted-foreground mb-1">Reasoning</p>
-                        <p className="text-sm bg-muted p-3 rounded-lg">{decodeHtmlEntities(aiDecision.reasoning)}</p>
-                      </div>
-                    )}
-
-                    {aiDecision.containment_actions && aiDecision.containment_actions.length > 0 && (
-                      <div>
-                        <p className="text-sm text-muted-foreground mb-1">Containment Actions</p>
-                        <ul className="text-sm space-y-1 bg-muted p-3 rounded-lg">
-                          {aiDecision.containment_actions.map((action: string, i: number) => (
-                            <li key={i} className="flex items-start gap-2">
-                              <span className="text-primary">•</span>
-                              <span>{decodeHtmlEntities(action)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {aiDecision.remediation_steps && aiDecision.remediation_steps.length > 0 && (
-                      <div>
-                        <p className="text-sm text-muted-foreground mb-1">Remediation Steps</p>
-                        <ul className="text-sm space-y-1 bg-muted p-3 rounded-lg">
-                          {aiDecision.remediation_steps.map((step: string, i: number) => (
-                            <li key={i} className="flex items-start gap-2">
-                              <span className="font-bold">{i + 1}.</span>
-                              <span>{decodeHtmlEntities(step)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {aiDecision.estimated_impact && (
-                      <div>
-                        <p className="text-sm text-muted-foreground mb-1">Estimated Impact</p>
-                        <p className="text-sm bg-muted p-3 rounded-lg">{decodeHtmlEntities(aiDecision.estimated_impact)}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </>
-            ) : isUrlScan && urlAnalysis ? (
-              <>
-                <Separator />
-                <div>
-                  <h3 className="font-semibold mb-2 flex items-center gap-2">
-                    <Brain className="w-4 h-4" />
-                    Website Intelligence Analysis
-                  </h3>
-                  <div className="bg-blue-50 dark:bg-blue-950/20 p-4 rounded-lg border border-blue-200 dark:border-blue-900">
-                    <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-gray-100">{decodeHtmlEntities(urlAnalysis)}</p>
-                  </div>
-                  {signal.raw_json?.url && (
-                    <div className="mt-2 text-xs text-muted-foreground">
-                      Source: <a href={signal.raw_json.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">{signal.raw_json.url}</a>
-                    </div>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="bg-muted p-4 rounded-lg text-center">
-                <p className="text-sm text-muted-foreground">
-                  {processingMethod === 'rule-based' 
-                    ? 'This signal was processed using rule-based logic (low priority).'
-                    : 'No AI analysis available yet. Trigger a manual scan to process this signal.'}
-                </p>
-              </div>
-            )}
-
-            {/* Live Updates Timeline */}
-            <Separator />
-            <SignalUpdatesTimeline signalId={signal.id} />
           </div>
         </ScrollArea>
       </DialogContent>

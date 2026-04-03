@@ -943,17 +943,21 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
 
           // Run entity correlation on the document content so new entities (e.g. "Eavor Technologies")
           // get surfaced as suggestions even when discovered via a social/entity scan path.
-          const correlationText = [document.raw_text, document.post_caption, signal.description]
-            .filter(Boolean).join('\n\n');
-          if (correlationText.trim().length > 20) {
-            supabase.functions.invoke('correlate-entities', {
-              body: {
-                text: correlationText,
-                sourceType: 'signal',
-                sourceId: newSignal.id,
-                autoApprove: false,
-              }
-            }).catch(err => console.error('[ProcessDoc] Entity correlation error:', err));
+          try {
+            const correlationText = [document.raw_text, document.post_caption, signal.description]
+              .filter(Boolean).join('\n\n');
+            if (correlationText.trim().length > 20) {
+              supabase.functions.invoke('correlate-entities', {
+                body: {
+                  text: correlationText,
+                  sourceType: 'signal',
+                  sourceId: newSignal.id,
+                  autoApprove: false,
+                }
+              }).catch(err => console.error('[ProcessDoc] Entity correlation error:', err));
+            }
+          } catch (corrErr) {
+            console.error('[ProcessDoc] Entity correlation setup error:', corrErr);
           }
 
           // Watch list check — boost severity if any extracted entities are being watched
