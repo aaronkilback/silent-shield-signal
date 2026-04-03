@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway, callAiGatewayJson } from "../_shared/ai-gateway.ts";
 import { logError } from "../_shared/error-logger.ts";
+import { runEvidenceGate, getReliabilityFirstPrompt, DEFAULT_RELIABILITY_SETTINGS } from "../_shared/reliability-first.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -456,8 +457,12 @@ Provide exactly 3 impact ladders. Be specific and actionable. Use executive lang
     });
     if (impactResult.data) impactLadders = impactResult.data;
 
+    // Build reliability context once — injected into both AI prompts
+    const reliabilityContext = getReliabilityFirstPrompt([]);
+
     // Generate executive summary with tone transformation
     const summaryPrompt = `You are a senior security intelligence analyst with deep specialist knowledge and access to current agent assessments. Apply the expertise below to produce an executive summary that reflects the depth of analysis our specialist agents have conducted.
+${reliabilityContext}
 ${criticalDateContext}
 
 Client Context:
@@ -582,6 +587,7 @@ Be specific and actionable. Max 5 items.`;
 
     // Generate deductions with tone transformation
     const deductionsPrompt = `You are a senior intelligence analyst writing strategic deductions for ${client.name} leadership. You write in the style of a professional government intelligence analyst — precise, direct, and specific. Apply the specialist knowledge and agent assessments below.
+${reliabilityContext}
 ${knowledgeContext}
 ${agentContext}
 
@@ -1398,7 +1404,39 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
       );
     }
 
-    console.log('Enhanced executive report generated successfully');
+    // Run evidence gate on the final HTML to detect fabricated or uncited content
+    let reliabilityScore = 100;
+    let gateIssues: string[] = [];
+    try {
+      const gateSettings = {
+        ...DEFAULT_RELIABILITY_SETTINGS,
+        max_source_age_hours: 168, // 7 days for weekly reports
+        require_min_sources: 3,
+        block_unverified_claims: false, // Log only — don't block report delivery
+      };
+      const evidenceCheck = await runEvidenceGate(supabase, html, [], gateSettings, {
+        signalIds: freshSignals.map((s: any) => s.id),
+      });
+      reliabilityScore = evidenceCheck.reliability_score;
+      gateIssues = evidenceCheck.qa_issues;
+
+      if (reliabilityScore < 70) {
+        console.warn(`[generate-executive-report] Reliability score: ${reliabilityScore}/100 — ${gateIssues.length} issue(s) detected`);
+      }
+
+      // Best-effort log — table may not exist yet
+      await supabase.from('report_quality_log').insert({
+        report_id: report.id,
+        reliability_score: reliabilityScore,
+        issues: gateIssues,
+        passed: evidenceCheck.passed,
+        tested_at: new Date().toISOString(),
+      }).then(() => {}).catch(() => {});
+    } catch (gateErr) {
+      console.warn('[generate-executive-report] Evidence gate check failed (non-blocking):', gateErr instanceof Error ? gateErr.message : gateErr);
+    }
+
+    console.log(`Enhanced executive report generated successfully. Reliability score: ${reliabilityScore}/100`);
 
     return new Response(
       JSON.stringify({
@@ -1413,7 +1451,9 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
           risk_level: overallRiskLevel,
           executive_flash: executiveFlash,
           action_items_count: actionItems.length,
-          categories: Object.keys(signalsByCategory)
+          categories: Object.keys(signalsByCategory),
+          reliability_score: reliabilityScore,
+          reliability_issues: gateIssues.length,
         }
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

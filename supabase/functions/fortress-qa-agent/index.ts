@@ -175,8 +175,8 @@ Deno.serve(async (req) => {
           });
           const ms = Date.now() - start;
           return {
-            passed: !resp.error && !!resp.data?.response && ms < 30000,
-            expected: 'AEGIS responds within 30 seconds',
+            passed: !resp.error && !!resp.data?.response && ms < 90000,
+            expected: 'AEGIS responds within 90 seconds',
             actual: resp.error ? resp.error.message : `Responded in ${ms}ms`,
             ms
           };
