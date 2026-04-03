@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
-import { History, AlertCircle, Trash2, ExternalLink, Clock, Calendar, Archive, ShieldCheck, Globe, AlertTriangle } from "lucide-react";
+import { History, AlertCircle, Trash2, ExternalLink, Clock, Calendar, Archive, ShieldCheck, Globe, AlertTriangle, ShieldOff } from "lucide-react";
 import { formatDistanceToNow, isToday, isThisWeek, isThisMonth, differenceInDays } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
@@ -108,7 +108,14 @@ export const SignalHistory = () => {
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [dateRangeFilter, setDateRangeFilter] = useState<string>('30d');
+  const [showCyberAdvisories, setShowCyberAdvisories] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<string>('recent'); // 'recent' | 'all' | 'historical' | 'international' | 'review'
+
+  const CYBER_ADVISORY_CATEGORIES = new Set(['malware', 'vulnerability', 'intrusion', 'data_exfil']);
+  const isCyberAdvisory = (signal: Signal): boolean => {
+    const cat = signal.rule_category || signal.category || '';
+    return CYBER_ADVISORY_CATEGORIES.has(cat) && (signal.relevance_score ?? 1) < 0.55;
+  };
 
   useEffect(() => {
     // Load signals regardless of client selection - show all if none selected
@@ -447,6 +454,9 @@ export const SignalHistory = () => {
     // Auto-hide zero-relevance signals from all tabs
     if (isAutoHidden(signal)) return false;
 
+    // Hide low-relevance cyber advisories unless toggle is on
+    if (!showCyberAdvisories && isCyberAdvisory(signal)) return false;
+
     if (categoryFilter !== 'all' && signal.rule_category !== categoryFilter && signal.category !== categoryFilter) {
       return false;
     }
@@ -478,8 +488,8 @@ export const SignalHistory = () => {
     historical: filteredSignals.filter(s => categorizeByRecency(s) === 'historical'),
   };
 
-  // Counts for tabs (based on classification, excluding auto-hidden)
-  const visibleSignals = signals.filter(s => !isAutoHidden(s));
+  // Counts for tabs (based on classification, excluding auto-hidden and cyber advisory filter)
+  const visibleSignals = signals.filter(s => !isAutoHidden(s) && (showCyberAdvisories || !isCyberAdvisory(s)));
   const recentCount = visibleSignals.filter(s => classifySignal(s) === 'recent').length;
   const historicalCount = visibleSignals.filter(s => classifySignal(s) === 'historical').length;
   const internationalCount = visibleSignals.filter(s => classifySignal(s) === 'international').length;
@@ -603,6 +613,28 @@ export const SignalHistory = () => {
                 Clear Filters
               </Button>
             )}
+            <Button
+              variant={showCyberAdvisories ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => setShowCyberAdvisories(prev => !prev)}
+              className="flex items-center gap-1.5 ml-auto"
+            >
+              <ShieldOff className="w-3.5 h-3.5" />
+              {showCyberAdvisories ? 'Hide cyber advisories' : 'Show cyber advisories'}
+            </Button>
+          </div>
+        )}
+        {(uniqueCategories.length === 0 && uniquePriorities.length === 0) && (
+          <div className="flex mt-3">
+            <Button
+              variant={showCyberAdvisories ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => setShowCyberAdvisories(prev => !prev)}
+              className="flex items-center gap-1.5 ml-auto"
+            >
+              <ShieldOff className="w-3.5 h-3.5" />
+              {showCyberAdvisories ? 'Hide cyber advisories' : 'Show cyber advisories'}
+            </Button>
           </div>
         )}
       </CardHeader>
