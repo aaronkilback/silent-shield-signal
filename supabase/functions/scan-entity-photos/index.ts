@@ -81,12 +81,23 @@ Deno.serve(async (req) => {
       console.log(`Successfully loaded ${referenceImages.length} reference photos for comparison`);
     }
 
-    // Build search query
+    // Detect public figure from description/role to adjust query and filters
+    const publicFigureKeywords = /model|actress|actor|activist|speaker|politician|celebrity|musician|singer|athlete|journalist|author|executive|director|president|ceo|indigenous|first nations|métis|inuit/i;
+    const descriptionText = `${entity.description || ''} ${entity.attributes?.role || ''} ${entity.attributes?.occupation || ''}`;
+    const isPublicFigure = publicFigureKeywords.test(descriptionText);
+    const roleMatch = descriptionText.match(publicFigureKeywords);
+    const roleLabel = roleMatch ? roleMatch[0] : '';
+
+    // Build primary search query
     let searchQuery = `"${entity.name}"`;
 
     if (entity.type === 'person') {
-      searchQuery += ' professional photo OR headshot OR portrait OR board director OR LinkedIn profile';
-      if (entity.attributes && entity.attributes.company) {
+      if (isPublicFigure && roleLabel) {
+        searchQuery += ` ${roleLabel} OR photo OR headshot OR portrait OR interview`;
+      } else {
+        searchQuery += ' professional photo OR headshot OR portrait OR board director OR LinkedIn profile';
+      }
+      if (entity.attributes?.company) {
         searchQuery += ` "${entity.attributes.company}"`;
       }
     } else if (entity.type === 'organization') {
@@ -98,6 +109,11 @@ Deno.serve(async (req) => {
     }
 
     searchQuery += ' -stock -clipart -illustration';
+
+    // Secondary query for public figures: event/appearance/press photos
+    const secondaryQuery = isPublicFigure
+      ? `"${entity.name}" appearance OR event OR award OR press OR magazine OR photoshoot -stock -clipart`
+      : null;
 
     console.log(`Search query: ${searchQuery}`);
 
@@ -134,7 +150,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Direct image search
+    // Direct image search — primary query
     const imgSearchUrl = new URL('https://www.googleapis.com/customsearch/v1');
     imgSearchUrl.searchParams.set('key', GOOGLE_API_KEY);
     imgSearchUrl.searchParams.set('cx', GOOGLE_CX);
@@ -147,7 +163,7 @@ Deno.serve(async (req) => {
 
     if (imgResponse.ok) {
       const imgData = await imgResponse.json();
-      console.log(`Found ${imgData.items?.length || 0} direct images`);
+      console.log(`Found ${imgData.items?.length || 0} direct images (primary)`);
 
       for (const item of imgData.items || []) {
         if (!seenUrls.has(item.link)) {
@@ -161,19 +177,46 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Secondary image search pass for public figures
+    if (secondaryQuery) {
+      const imgSearch2Url = new URL('https://www.googleapis.com/customsearch/v1');
+      imgSearch2Url.searchParams.set('key', GOOGLE_API_KEY);
+      imgSearch2Url.searchParams.set('cx', GOOGLE_CX);
+      imgSearch2Url.searchParams.set('q', secondaryQuery);
+      imgSearch2Url.searchParams.set('searchType', 'image');
+      imgSearch2Url.searchParams.set('num', '10');
+      imgSearch2Url.searchParams.set('imgType', 'photo');
+
+      const imgResponse2 = await fetch(imgSearch2Url.toString());
+      if (imgResponse2.ok) {
+        const imgData2 = await imgResponse2.json();
+        console.log(`Found ${imgData2.items?.length || 0} direct images (secondary)`);
+        for (const item of imgData2.items || []) {
+          if (!seenUrls.has(item.link)) {
+            seenUrls.add(item.link);
+            imageUrls.push({
+              url: item.link,
+              source: new URL(item.link).hostname,
+              title: item.title || ''
+            });
+          }
+        }
+      }
+    }
+
     console.log(`Total images to process: ${imageUrls.length}`);
 
-    // Blocked domains
-    const blockedDomains = [
-      'facebook.com', 'instagram.com', 'twitter.com',
-      'pinterest.com', 'gettyimages.com', 'shutterstock.com', 'istockphoto.com'
-    ];
+    // Blocked domains — loosen for public figures (Instagram is a primary source)
+    const blockedDomains = isPublicFigure
+      ? ['pinterest.com', 'gettyimages.com', 'shutterstock.com', 'istockphoto.com']
+      : ['facebook.com', 'instagram.com', 'twitter.com', 'pinterest.com', 'gettyimages.com', 'shutterstock.com', 'istockphoto.com'];
 
     let photosAdded = 0;
     const errors: string[] = [];
     const startTime = Date.now();
-    const MAX_PROCESSING_TIME = 28000;
-    const MAX_IMAGES_TO_PROCESS = 15;
+    const MAX_PROCESSING_TIME = 50000;
+    const MAX_IMAGES_TO_PROCESS = isPublicFigure ? 30 : 20;
+    const MAX_PHOTOS_TO_ADD = isPublicFigure ? 15 : 8;
     const MAX_IMAGE_SIZE = 2000000;
 
     // Prioritize news sources
@@ -193,7 +236,7 @@ Deno.serve(async (req) => {
         break;
       }
 
-      if (photosAdded >= 8) {
+      if (photosAdded >= MAX_PHOTOS_TO_ADD) {
         console.log('Found enough photos, stopping');
         break;
       }
@@ -272,7 +315,9 @@ Deno.serve(async (req) => {
             });
           } else {
             verificationPrompt = entity.type === 'person'
-              ? `This image was found searching for "${entity.name}". Is this a professional photo OF this specific person "${entity.name}"? Answer YES only if you can verify identity. Answer NO if uncertain.${feedbackContext}`
+              ? (isPublicFigure
+                  ? `This image was found searching for "${entity.name}"${roleLabel ? ` (${roleLabel})` : ''}. Does this appear to be a photo of a person matching that name/role — i.e. not a stock image, not a random crowd shot, not a completely unrelated person? Answer YES if this looks like it could be the subject. Answer NO only if clearly unrelated.${feedbackContext}`
+                  : `This image was found searching for "${entity.name}". Is this a professional photo OF this specific person "${entity.name}"? Answer YES only if you can verify identity. Answer NO if uncertain.${feedbackContext}`)
               : `Is this a photo/logo of "${entity.name}"? Answer YES or NO.${feedbackContext}`;
 
             aiContent.push(

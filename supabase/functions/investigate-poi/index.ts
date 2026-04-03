@@ -18,11 +18,11 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
 const GOOGLE_CSE_ENDPOINT = 'https://www.googleapis.com/customsearch/v1';
 const HIBP_ENDPOINT = 'https://haveibeenpwned.com/api/v3/breachedaccount';
 const INTER_EMAIL_DELAY_MS = 1500;
-const QUERY_TIMEOUT_MS = 5000;      // per-query fetch timeout
-const PAGE_FETCH_TIMEOUT_MS = 8000; // page content fetch timeout
-const MAX_QUERIES = 20;             // keep well under Supabase's 150s wall-clock limit
-const MAX_PARALLEL = 3;             // concurrent Google CSE requests
-const MAX_PAGE_FETCHES = 15;        // max pages to deep-fetch for full content
+const QUERY_TIMEOUT_MS = 12000;     // per-query fetch timeout
+const PAGE_FETCH_TIMEOUT_MS = 20000; // page content fetch timeout
+const MAX_QUERIES = 30;             // keep well under Supabase's 150s wall-clock limit
+const MAX_PARALLEL = 5;             // concurrent Google CSE requests
+const MAX_PAGE_FETCHES = 30;        // max pages to deep-fetch for full content
 
 // High-value domains worth fetching full content from
 const HIGH_VALUE_DOMAINS = [
@@ -31,6 +31,9 @@ const HIGH_VALUE_DOMAINS = [
   'beenverified.com', 'instantcheckmate.com', 'truthfinder.com',
   'courtlistener.com', 'judyrecords.com', 'unicourt.com',
   'linkedin.com', 'facebook.com', 'twitter.com', 'instagram.com',
+  'wikipedia.org', 'imdb.com', 'wikidata.org',
+  'cbc.ca', 'globalnews.ca', 'nationalpost.com', 'theglobeandmail.com',
+  'cp24.com', 'ctv.ca', 'calgaryherald.com', 'edmontonjournal.com',
 ];
 
 async function sleep(ms: number) {
@@ -113,8 +116,14 @@ function buildQueries(entity: any): string[] {
   const attributes = entity.attributes || {};
   const emails: string[] = attributes.emails || [];
   const handles: string[] = attributes.handles || attributes.usernames || [];
-  const organization: string = attributes.organization || '';
+  const organization: string = attributes.organization || attributes.company || '';
   const location: string = attributes.location || '';
+  const description: string = entity.description || '';
+  const role: string = attributes.role || attributes.occupation || attributes.title || '';
+
+  // Detect public figures from description/role keywords
+  const publicFigureKeywords = /model|actress|actor|activist|speaker|politician|celebrity|musician|singer|athlete|journalist|author|executive|director|president|ceo|indigenous|first nations|métis|inuit/i;
+  const isPublicFigure = publicFigureKeywords.test(description) || publicFigureKeywords.test(role);
 
   const queries: string[] = [];
 
@@ -122,6 +131,21 @@ function buildQueries(entity: any): string[] {
   queries.push(`"${name}"`);
   queries.push(`"${name}" site:linkedin.com OR site:facebook.com OR site:twitter.com OR site:instagram.com OR site:tiktok.com`);
   queries.push(`"${name}" news OR interview OR profile OR biography`);
+
+  // ── Tier 1b: Public figure / knowledge sources ─────────────────────────────
+  if (isPublicFigure) {
+    queries.push(`"${name}" site:wikipedia.org OR site:wikidata.org OR site:imdb.com`);
+    queries.push(`"${name}" site:cbc.ca OR site:globalnews.ca OR site:nationalpost.com OR site:theglobeandmail.com`);
+    queries.push(`"${name}" site:cp24.com OR site:ctv.ca OR site:calgaryherald.com OR site:edmontonjournal.com`);
+    if (role) {
+      queries.push(`"${name}" ${role}`);
+    }
+    // Pull role keywords out of description for targeted queries
+    const descWords = (description + ' ' + role).match(publicFigureKeywords);
+    if (descWords) {
+      queries.push(`"${name}" ${descWords[0]} career OR work OR achievement OR award`);
+    }
+  }
 
   // ── Tier 2: Address & location intelligence ────────────────────────────────
   queries.push(`"${name}" address OR "lives at" OR "located at" OR residence OR "home address"`);
@@ -242,8 +266,9 @@ Deno.serve(async (req) => {
     const investigationId = investigation.id;
 
     // ── Check for required API keys ──────────────────────────────────────────
-    const googleApiKey = Deno.env.get('GOOGLE_CSE_API_KEY') || '';
-    const googleCseId  = Deno.env.get('GOOGLE_CSE_ID') || '';
+    // Support both naming conventions across edge functions
+    const googleApiKey = Deno.env.get('GOOGLE_SEARCH_API_KEY') || Deno.env.get('GOOGLE_CSE_API_KEY') || '';
+    const googleCseId  = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID') || Deno.env.get('GOOGLE_CSE_ID') || '';
     const hibpApiKey   = Deno.env.get('HIBP_API_KEY') || '';
 
     const queries = buildQueries(entity);
@@ -316,7 +341,7 @@ Deno.serve(async (req) => {
         content_text: (fetchedContent.get(r.url) || r.snippet).substring(0, 4000),
         content_type: 'web_search',
         source: hostname(r.url),
-        relevance_score: isHighValue(r.url) ? 75 : 50,
+        relevance_score: isHighValue(r.url) ? 85 : 55,
       }));
 
       // Upsert in batches of 50 (dedup by entity_id + url)
