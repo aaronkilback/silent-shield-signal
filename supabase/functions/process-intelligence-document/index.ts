@@ -703,6 +703,7 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
 
     // Process signals - create one per matched client
     for (const signal of intelligence.signals || []) {
+      try { // ← per-signal isolation: a crash here skips THIS signal, not all remaining ones
       // HARD RELEVANCE GATE: Skip signals the AI scored below 0.3
       if ((signal.relevance_score || 0) < 0.3) {
         console.log(`[RelevanceGate] Skipping low-relevance signal (${signal.relevance_score}): ${signal.title}`);
@@ -735,6 +736,7 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
 
       // Create signal for each matched client
       for (const clientMatch of clientMatches) {
+        try { // ← per-client isolation: a crash here skips THIS client, not remaining clients
         // Check for existing signal with same content hash (within 30 days instead of 7)
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -980,9 +982,17 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
               body: { signalId: newSignal.id }
             });
           }
+        } // closes if (!signalError && newSignal)
+        } catch (clientErr) {
+          console.error(`[ProcessDoc] Failed to create signal for client ${clientMatch.clientName}:`, clientErr);
+          results.errors = (results.errors || 0) + 1;
         }
+      } // closes for (const clientMatch of clientMatches)
+      } catch (signalErr) {
+        console.error(`[ProcessDoc] Failed to process signal "${signal.title?.slice(0, 60)}":`, signalErr);
+        results.errors = (results.errors || 0) + 1;
       }
-    }
+    } // closes for (const signal of intelligence.signals)
 
     // Mark document as processed
     await supabase
