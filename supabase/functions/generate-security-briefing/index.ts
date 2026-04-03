@@ -33,6 +33,7 @@ Deno.serve(async (req) => {
       .select("title, content, category, severity, source_type, created_at, location")
       .or(locationTerms.map(term => `location.ilike.%${term}%`).join(","))
       .gte("created_at", thirtyDaysAgo.toISOString())
+      .neq("status", "archived")
       .order("created_at", { ascending: false })
       .limit(50);
 

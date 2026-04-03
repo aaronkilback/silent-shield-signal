@@ -58,6 +58,7 @@ Deno.serve(async (req) => {
         .eq("client_id", clientId)
         .gte("created_at", cutoff24h)
         .neq("status", "false_positive")
+        .neq("status", "archived")
         .order("created_at", { ascending: false })
         .limit(30),
       supabase

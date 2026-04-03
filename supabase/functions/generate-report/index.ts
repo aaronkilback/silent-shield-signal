@@ -63,6 +63,7 @@ Deno.serve(async (req) => {
       .select('*')
       .gte('received_at', periodStart.toISOString())
       .lte('received_at', periodEnd.toISOString())
+      .neq('status', 'archived')
       .order('received_at', { ascending: false });
 
     if (signalsError) throw signalsError;
