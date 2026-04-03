@@ -601,11 +601,21 @@ MANDATORY TRADECRAFT RULES:
 - State trajectory for each threat thread: ESCALATING / STABLE / DE-ESCALATING with one sentence of evidence
 - Maximum 3 deduction paragraphs — quality and specificity over volume
 - Never use vague language like "may pose risks" — state the specific risk clearly
+- ONLY reference events, names, and facts that appear in the signals provided above — never introduce information from your training data or general knowledge
+- Named individuals: only use names that appear verbatim in the signal text — do not infer, reconstruct, or introduce names from context
 
 Threat signals to analyze:
 ${[...criticalSignals, ...highSignals].slice(0, 10).map((s, i) =>
   `${i + 1}. ${s.category}: ${s.normalized_text}`
 ).join('\n')}
+${(() => {
+  const deductionSignals = [...criticalSignals, ...highSignals].slice(0, 10);
+  const hasStale = deductionSignals.some((s: any) => {
+    const eventDate = s.event_date ? new Date(s.event_date) : null;
+    return eventDate && (Date.now() - eventDate.getTime()) > 365 * 24 * 60 * 60 * 1000;
+  });
+  return hasStale ? '\nWARNING: Some signals above have event dates older than 1 year. Treat these as historical context only — never as current active threats.' : '';
+})()}
 
 For each major threat thread write one deduction paragraph in this format:
 DEDUCTIONS: [2-3 sentences connecting the signals to a specific implication for ${client.name}. Name threat actors in CAPITALS. State whether this thread is ESCALATING, STABLE, or DE-ESCALATING with one piece of evidence. End with one specific recommended action for ${client.name} with an owner role and timeframe.]
@@ -672,9 +682,15 @@ MANDATORY TRADECRAFT RULES:
 - End with a DEDUCTIONS: paragraph that connects this category specifically to ${client.name} operations, reputation, or personnel
 - Include one RECOMMENDED ACTION with a specific owner role and timeframe
 - If no significant activity occurred in this category during the reporting period, state clearly: "No significant ${category} activity detected in the reporting period." Do not pad with generic content.
+- STRICT SOURCE DISCIPLINE: every factual claim must trace to one of the signals listed above — never introduce events, statistics, or context from your training data
+- If a signal references a historical event for context, you may mention it was historical — but do not expand on it with details not in the signal
 
 Signals to analyze:
 ${topSignals.map((s: any, i: number) => `${i + 1}. [${s.severity?.toUpperCase()}] ${s.normalized_text} (Source: ${getHostname(s.source_url)}, ${new Date(s.received_at).toLocaleDateString('en-US', {year: 'numeric', month: 'long', day: 'numeric'})})`).join('\n')}
+${topSignals.some((s: any) => {
+  const eventDate = s.event_date ? new Date(s.event_date) : null;
+  return eventDate && (Date.now() - eventDate.getTime()) > 365 * 24 * 60 * 60 * 1000;
+}) ? '\nWARNING: Some signals above have event dates older than 1 year. Treat these as historical context only — never as current active threats.' : ''}
 
 Write 2-3 paragraphs of narrative followed by a DEDUCTIONS: paragraph. Use executive-appropriate language. Be specific about names, dates, organizations, and implications for ${client.name}.
 
