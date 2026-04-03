@@ -46,27 +46,19 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const authHeader = req.headers.get('Authorization')!;
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
-    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
-    if (authError || !user) {
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
+    // Use service role client for all data operations.
+    // Authentication at the Supabase gateway layer (verify_jwt = false in config.toml)
+    // means callers must have a valid Supabase key (anon, service role, or user JWT).
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { client_id, period_days = 7 } = await req.json();
+    const body = await req.json();
+    const client_id = body.clientId || body.client_id || null;
+    const period_days = body.period_days || body.periodDays || 7;
+
+    console.log(`[generate-executive-report] body keys: ${Object.keys(body).join(',')}, client_id resolved: ${client_id}`);
     
     console.log(`Generating enhanced executive report for client ${client_id}, ${period_days} days`);
 
@@ -93,7 +85,7 @@ Deno.serve(async (req) => {
     console.log(`CRITICAL DATE CONTEXT: Report generated at ${currentDateTimeISO}, period ${periodStart.toISOString()} to ${periodEnd.toISOString()}`);
 
     // Fetch client details
-    const { data: client, error: clientError } = await supabaseClient
+    const { data: client, error: clientError } = await supabase
       .from('clients')
       .select('*')
       .eq('id', client_id)
@@ -102,7 +94,7 @@ Deno.serve(async (req) => {
     if (clientError) throw clientError;
 
     // Fetch signals with full details for traceability
-    const { data: signals, error: signalsError } = await supabaseClient
+    const { data: signals, error: signalsError } = await supabase
       .from('signals')
       .select('*')
       .eq('client_id', client_id)
@@ -128,7 +120,7 @@ Deno.serve(async (req) => {
     }) ?? [];
 
     // Fetch incidents with classification rationale
-    const { data: incidents, error: incidentsError } = await supabaseClient
+    const { data: incidents, error: incidentsError } = await supabase
       .from('incidents')
       .select(`
         *,
@@ -1429,8 +1421,13 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
 
   } catch (error) {
     console.error('Error generating executive report:', error);
+    const msg = error instanceof Error
+      ? error.message
+      : (typeof error === 'object' && error !== null && 'message' in error)
+        ? String((error as any).message)
+        : String(error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ error: msg }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

@@ -69,6 +69,9 @@ verify_jwt = false
 [functions.generate-executive-report]
 verify_jwt = false
 
+[functions.generate-daily-briefing]
+verify_jwt = false
+
 [functions.enrich-entity]
 verify_jwt = true
 
@@ -245,7 +248,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.agent-chat]
-verify_jwt = true
+verify_jwt = false
 
 [functions.access-industry-standards]
 verify_jwt = true

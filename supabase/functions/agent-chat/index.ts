@@ -365,7 +365,20 @@ Deno.serve(async (req) => {
       );
     }
     
-    const { agent_id, message, conversation_history = [], client_id } = body;
+    // Accept both snake_case and camelCase parameter names
+    const agent_id = body.agent_id ?? body.agentId;
+    const client_id = body.client_id ?? body.clientId;
+    // Accept both singular message string and messages array (QA sends messages array)
+    let message: string;
+    if (body.message) {
+      message = body.message;
+    } else if (Array.isArray(body.messages) && body.messages.length > 0) {
+      const lastUserMsg = [...body.messages].reverse().find((m: any) => m.role === 'user');
+      message = lastUserMsg?.content ?? body.messages[body.messages.length - 1]?.content ?? '';
+    } else {
+      message = '';
+    }
+    const conversation_history = body.conversation_history ?? (Array.isArray(body.messages) ? body.messages.slice(0, -1) : []);
 
     // Input validation
     const inputValidation = validateAll(
