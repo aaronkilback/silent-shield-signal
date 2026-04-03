@@ -638,6 +638,36 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
     // This allows QA tests to reliably verify both ingest and filter behaviour.
     const isQaTest = validationResult.data.sourceType === 'qa_test' || rawBody?.sourceType === 'qa_test' || rawBody?.is_test === true || is_test === true;
 
+    // CVE dedup: if the signal text contains a CVE ID, check if we already have a signal
+    // for that CVE today. This prevents the same advisory being filed every 15 minutes.
+    if (!isQaTest) {
+      const cveMatch = signalText.match(/CVE-\d{4}-\d+/gi);
+      const cveIds = cveMatch ? [...new Set(cveMatch.map((c: string) => c.toUpperCase()))] : [];
+      if (cveIds.length > 0) {
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const { data: existingCve } = await supabase
+          .from('signals')
+          .select('id, title')
+          .gte('created_at', todayStart.toISOString())
+          .or(cveIds.map((cve: string) => `title.ilike.%${cve}%,normalized_text.ilike.%${cve}%`).join(','))
+          .limit(1);
+        if (existingCve && existingCve.length > 0) {
+          console.log(`[CVE-dedup] Duplicate CVE advisory blocked: ${cveIds.join(', ')} already filed as signal ${existingCve[0].id}`);
+          return new Response(
+            JSON.stringify({
+              filtered: true,
+              reason: 'duplicate_cve',
+              cve_ids: cveIds,
+              existing_signal_id: existingCve[0].id,
+              message: `CVE advisory already ingested today: ${cveIds.join(', ')}`,
+            }),
+            { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      }
+    }
+
     // Check for duplicates BEFORE insertion
     // - Use normalized_text for near-duplicate detection (more stable than raw text)
     // - Scope to the matched client
@@ -1406,7 +1436,7 @@ Score this signal's relevance and classify the connection.`
         console.log('AI decision engine result:', aiDecisionResult.data);
 
         // Check if AI decision recommends incident creation
-        if (!isCyberAdvisory && aiDecisionResult.data?.decision?.should_create_incident) {
+        if (!isCyberAdvisory && !isQaTest && aiDecisionResult.data?.decision?.should_create_incident) {
           const { error: incidentError } = await supabase
             .from('incidents')
             .insert({
@@ -1441,8 +1471,8 @@ Score this signal's relevance and classify the connection.`
     }
     
     // Auto-open incident based on rules (fallback if AI didn't create one)
-    // Skip cyber advisory signals — not PECL operational incidents
-    if (rulesResult.shouldOpenIncident && !isCyberAdvisory) {
+    // Skip cyber advisory signals and QA test signals — not PECL operational incidents
+    if (rulesResult.shouldOpenIncident && !isCyberAdvisory && !isQaTest) {
       // Check if incident was already created by AI
       const { data: existingIncident } = await supabase
         .from('incidents')
