@@ -22,7 +22,7 @@ import { AssignClientDialog } from "@/components/signals/AssignClientDialog";
 import { SignalDetailSheet } from "@/components/signals/SignalDetailSheet";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Search, CheckCircle, XCircle, UserPlus, Loader2, FileSearch, VolumeX } from "lucide-react";
+import { Search, CheckCircle, XCircle, UserPlus, Loader2, FileSearch, VolumeX, Archive, ExternalLink } from "lucide-react";
 
 interface UnmatchedSignal {
   id: string;
@@ -70,6 +70,33 @@ const Signals = () => {
     }
     setSearchParams(searchParams);
   };
+
+  // Fetch archived (historical) signals
+  const { data: archivedSignals, isLoading: archivedLoading, refetch: refetchArchived } = useQuery({
+    queryKey: ["archived-signals"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('signals')
+        .select('id, title, description, category, severity, status, event_date, created_at, source_url, raw_json, client_id, clients(name)')
+        .eq('status', 'archived')
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!user,
+  });
+
+  const unarchiveMutation = useMutation({
+    mutationFn: async (signalId: string) => {
+      const { error } = await supabase.from('signals').update({ status: 'new' }).eq('id', signalId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["archived-signals"] });
+      toast.success("Signal restored to feed");
+    },
+  });
 
   // Fetch unmatched signals — server-side filtering
   const { data: unmatchedSignals, isLoading: signalsLoading } = useQuery({
@@ -208,8 +235,17 @@ const Signals = () => {
       <DashboardClientSelector />
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="signals">Signal Feed</TabsTrigger>
+          <TabsTrigger value="historical" className="relative">
+            <Archive className="w-3.5 h-3.5 mr-1" />
+            Historical
+            {archivedSignals && archivedSignals.length > 0 && (
+              <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs">
+                {archivedSignals.length}
+              </Badge>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="unmatched" className="relative">
             Unmatched
             {unmatchedSignals && unmatchedSignals.length > 0 && (
@@ -225,6 +261,76 @@ const Signals = () => {
         <TabsContent value="signals" className="space-y-6 min-h-[400px]">
           <ErrorBoundary context="Signal History">
             <SignalHistory />
+          </ErrorBoundary>
+        </TabsContent>
+
+        <TabsContent value="historical" className="space-y-6 min-h-[400px]">
+          <ErrorBoundary context="Historical Signals">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Archive className="w-5 h-5" />
+                  Historical Intelligence
+                </CardTitle>
+                <CardDescription>
+                  Background intel — useful context but not an active threat. Restore to feed if a signal becomes relevant again.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {archivedLoading ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  </div>
+                ) : !archivedSignals || archivedSignals.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Archive className="h-12 w-12 mx-auto mb-4 opacity-30" />
+                    <p>No historical signals yet.</p>
+                    <p className="text-sm mt-1">Mark a signal as "Archived (historical)" from its detail view to store it here.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {archivedSignals.map((signal: any) => (
+                      <div key={signal.id} className="border rounded-lg p-4 bg-muted/20">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <Badge className={getSeverityColor(signal.severity)}>{signal.severity || 'unknown'}</Badge>
+                              {signal.category && <Badge variant="outline">{signal.category}</Badge>}
+                              {(signal as any).clients?.name && (
+                                <Badge variant="secondary" className="text-xs">{(signal as any).clients.name}</Badge>
+                              )}
+                            </div>
+                            <p className="text-sm font-medium">{signal.title || signal.description?.slice(0, 120)}</p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {signal.event_date
+                                ? `Event: ${format(new Date(signal.event_date), 'PP')}`
+                                : `Ingested: ${format(new Date(signal.created_at), 'PP')}`}
+                            </p>
+                          </div>
+                          <div className="flex gap-2 shrink-0">
+                            {(signal.source_url || signal.raw_json?.url) && (
+                              <Button size="sm" variant="ghost" asChild>
+                                <a href={signal.source_url || signal.raw_json?.url} target="_blank" rel="noopener noreferrer">
+                                  <ExternalLink className="h-4 w-4" />
+                                </a>
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => unarchiveMutation.mutate(signal.id)}
+                              disabled={unarchiveMutation.isPending}
+                            >
+                              Restore
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </ErrorBoundary>
         </TabsContent>
 

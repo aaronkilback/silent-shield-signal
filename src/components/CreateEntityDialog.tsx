@@ -74,6 +74,7 @@ export const CreateEntityDialog = ({
   const [enriching, setEnriching] = useState(false);
   const [enrichedContactInfo, setEnrichedContactInfo] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const enrichedForSession = useRef<string | null>(null);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
@@ -105,9 +106,16 @@ export const CreateEntityDialog = ({
     vehicle_license_plate: ''
   });
 
-  // Auto-enrich when dialog opens with a prefilled name
+  // Auto-enrich when dialog opens with a prefilled name.
+  // Use a ref to track which name we've already enriched this session,
+  // avoiding stale-closure issues with formData.name in the dependency array.
   useEffect(() => {
-    if (open && prefilledName && prefilledName !== formData.name) {
+    if (!open) {
+      enrichedForSession.current = null;
+      return;
+    }
+    if (prefilledName && enrichedForSession.current !== prefilledName) {
+      enrichedForSession.current = prefilledName;
       setFormData(prev => ({ ...prev, name: prefilledName }));
       handleEnrich(prefilledName);
     }
@@ -468,13 +476,30 @@ export const CreateEntityDialog = ({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="name">Name *</Label>
-            <Input
-              id="name"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              placeholder="e.g., John Doe, Acme Corp"
-              required
-            />
+            <div className="flex gap-2">
+              <Input
+                id="name"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                placeholder="e.g., John Doe, Acme Corp"
+                required
+                className="flex-1"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={enriching || !formData.name.trim()}
+                onClick={() => {
+                  enrichedForSession.current = null;
+                  handleEnrich(formData.name);
+                }}
+                title="AI lookup"
+              >
+                <Sparkles className="w-4 h-4" />
+                {enriching ? "..." : "Enrich"}
+              </Button>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

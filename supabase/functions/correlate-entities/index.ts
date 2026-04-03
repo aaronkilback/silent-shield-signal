@@ -71,7 +71,7 @@ function isContextualMatch(fullText: string, entityName: string, entityType: str
   return true;
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -106,18 +106,34 @@ serve(async (req) => {
     const matches: EntityMatch[] = [];
     const potentialNewEntities: string[] = [];
 
-    // Blacklist of common false positives
     const blacklist = new Set([
-      // Common titles/words
-      'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
+      // Articles/prepositions
+      'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'up', 'about', 'into', 'through', 'during', 'before', 'after',
       // Days/Months
       'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
-      'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august',
-      'september', 'october', 'november', 'december',
-      // Common names that are also words
+      'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+      // Common false-positive names
       'will', 'may', 'john doe', 'jane doe', 'test user',
-      // Generic terms
-      'unknown', 'anonymous', 'n/a', 'none', 'null', 'undefined'
+      // Generic identity terms
+      'unknown', 'anonymous', 'n/a', 'none', 'null', 'undefined',
+      // Job titles (these get extracted as person names)
+      'chief executive', 'chief officer', 'vice president', 'senior director', 'managing director',
+      'board director', 'executive director', 'operations manager', 'project manager', 'account manager',
+      'general manager', 'deputy minister', 'prime minister', 'foreign minister', 'defense minister',
+      'attorney general', 'solicitor general', 'chief justice', 'associate justice',
+      // Generic org names
+      'federal government', 'provincial government', 'local government', 'city council', 'town council',
+      'the government', 'the department', 'the ministry', 'the agency', 'the organization',
+      'the company', 'the corporation', 'the group', 'the association', 'the institute',
+      'national security', 'public safety', 'law enforcement',
+      // Common English words that appear as proper nouns in news
+      'new report', 'new study', 'breaking news', 'top story', 'latest news',
+      'press release', 'media release', 'official statement',
+      // Single common last names that get over-matched
+      'smith', 'jones', 'brown', 'wilson', 'taylor', 'johnson', 'williams', 'davies', 'evans', 'thomas',
+      // Common first names that appear standalone
+      'john', 'jane', 'james', 'robert', 'michael', 'william', 'david', 'richard', 'joseph', 'thomas',
+      'mary', 'patricia', 'linda', 'barbara', 'elizabeth', 'jennifer', 'maria', 'susan', 'margaret',
     ]);
 
     // Common entity patterns (more restrictive)
@@ -194,9 +210,38 @@ serve(async (req) => {
             }
           }
 
-          // Check if any extracted name matches
+          // Leading-phrase match: for multi-word entities (3+ words), check if the first two
+          // words appear as a phrase in the text. Handles cases like "Petronas Canada" matching
+          // entity "Petronas Canada Calgary office" when only the short form is mentioned.
+          const nameWords = nameLower.split(/\s+/);
+          if (nameWords.length >= 3 && !matchedTerms.includes(name)) {
+            const leadPhrase = nameWords.slice(0, 2).join(' ');
+            // Only attempt if the leading phrase is meaningful (both words ≥ 4 chars)
+            if (nameWords[0].length >= 4 && nameWords[1].length >= 4) {
+              const leadRegex = new RegExp(`\\b${leadPhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+              if (leadRegex.test(text) && isContextualMatch(text, leadPhrase, entity.type)) {
+                matchedTerms.push(leadPhrase);
+                console.log(`Leading-phrase match: "${leadPhrase}" → entity "${name}"`);
+              }
+            }
+          }
+
+          // Check if any extracted name matches.
+          // Require word-boundary alignment to avoid partial-name false positives:
+          // e.g. "Fitzgerald" extracted from text should NOT match entity "Mark Fitzgerald"
+          // unless the extracted name is at least 60% of the entity name AND shares a
+          // complete word sequence (not just a substring like "itzger").
           for (const extracted of extractedNames) {
-            if (extracted.toLowerCase().includes(nameLower) || nameLower.includes(extracted.toLowerCase())) {
+            const extractedLower = extracted.toLowerCase();
+            const entityWords = nameLower.split(/\s+/);
+            const extractedWords = extractedLower.split(/\s+/);
+
+            // All extracted words must appear in the entity name (not just substring)
+            const allExtractedWordsInEntity = extractedWords.every(w => entityWords.includes(w));
+            // All entity words must appear in the extracted text
+            const allEntityWordsInExtracted = entityWords.every(w => extractedWords.includes(w));
+
+            if (allExtractedWordsInEntity || allEntityWordsInExtracted) {
               if (isContextualMatch(text, extracted, entity.type)) {
                 matchedTerms.push(extracted);
                 extractedNames.delete(extracted);

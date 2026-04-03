@@ -137,6 +137,17 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - EXPECTED: Bugs progress through stages. 5+ stale >7 days = backlog
 - REMEDIATION: Can auto-close very old resolved bugs, add watchdog notes
 
+### Entity Health (NEW)
+- Entities are the core intelligence objects: people, organizations, locations tracked by clients
+- Quality scoring: weighted formula (mentions×3, relationships×4, content×2, description+10, photo+5, AEGIS assessment+8, non-default risk+3)
+- Quality filter: UI hides entities with quality_score < 5 by default
+- Watch list: entity_watch_list tracks entities at monitor/alert/critical levels for all agents
+- Auto-archive: weekly cron (auto-archive-stale-entities) soft-deletes quality_score < 5 entities >30 days old with no watch/photos/relationships
+- Duplicate merging: merge-duplicate-entities function (run on-demand) deduplicates using Jaccard trigram similarity + alias matching
+- EXPECTED: Active entity count stable/growing. Zero-quality entities should be low. Watch list entities should have recent scan timestamps. Archive cron should run weekly.
+- TELEMETRY: Total active entities, entities with quality_score=0, watch list entity count, entities missing quality scores, last archive run date
+- REMEDIATION: run_entity_quality_backfill (trigger quality score recalculation for zero-score entities)
+
 ### Signal Contradiction Detection (NEW)
 - Signals sharing entity_tags may present conflicting assessments about the same entity
 - AI analyzes pairs with severity/category mismatches to identify true contradictions
@@ -180,13 +191,13 @@ Respond with ONLY valid JSON (no markdown):
   "severity": "healthy" | "monitoring" | "degraded" | "critical",
   "findings": [
     {
-      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan" | "Communications" | "Investigation Autopilot" | "Signal Contradictions" | "Knowledge Freshness" | "Analyst Calibration" | "Dead Letter Queue" | "Schema Validation",
+      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan" | "Communications" | "Investigation Autopilot" | "Signal Contradictions" | "Knowledge Freshness" | "Analyst Calibration" | "Dead Letter Queue" | "Schema Validation" | "Entity Health",
       "severity": "critical" | "warning" | "info",
       "title": "Short title",
       "analysis": "What you observed and WHY it matters (2-3 sentences). Reference learnings if relevant.",
       "recommendation": "What action to take. If past remediations failed, suggest alternatives.",
       "canAutoRemediate": true/false,
-      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "fix_orphaned_feedback" | "fix_stale_source_timestamps" | "fix_orphaned_comms" | "fix_stalled_autopilot_tasks" | "fix_orphaned_autopilot_tasks" | "run_contradiction_scan" | "run_knowledge_freshness_audit" | "calibrate_analyst_accuracy" | "retry_exhausted_dlq" | "cleanup_exhausted_dlq" | "reset_circuit_breakers" | "none",
+      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "fix_orphaned_feedback" | "fix_stale_source_timestamps" | "fix_orphaned_comms" | "fix_stalled_autopilot_tasks" | "fix_orphaned_autopilot_tasks" | "run_contradiction_scan" | "run_knowledge_freshness_audit" | "calibrate_analyst_accuracy" | "retry_exhausted_dlq" | "cleanup_exhausted_dlq" | "reset_circuit_breakers" | "run_entity_quality_backfill" | "none",
       "isRecurring": true/false,
       "learningNote": "What you learned about this issue from history (or 'First occurrence')",
       "thresholdAdjustment": null | { "metric": "string", "currentValue": number, "suggestedValue": number, "reason": "string" },
@@ -376,6 +387,13 @@ interface TelemetryData {
     pendingOlderThan1h: number;
     recentlyProcessed: number;
     pipelineHealthy: boolean;
+  };
+  entityHealth: {
+    totalActive: number;
+    zeroQualityCount: number;
+    missingQualityCount: number;
+    watchListCount: number;
+    lastArchiveRun: string | null;
   };
 }
 
@@ -883,6 +901,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     schemaErrors: await collectSchemaErrorTelemetry(supabase),
     circuitBreakers: await collectCircuitBreakerTelemetry(supabase),
     selfValidation: await collectSelfValidation(supabase),
+    entityHealth: await collectEntityHealthTelemetry(supabase),
   };
 }
 
@@ -1013,6 +1032,30 @@ async function collectSelfValidation(supabase: any): Promise<TelemetryData['self
   return {
     allProbesHealthy: failedProbes.length === 0,
     failedProbes,
+  };
+}
+
+async function collectEntityHealthTelemetry(supabase: any): Promise<TelemetryData['entityHealth']> {
+  const [
+    totalActiveResult,
+    zeroQualityResult,
+    missingQualityResult,
+    watchListResult,
+    lastArchiveResult,
+  ] = await Promise.all([
+    supabase.from('entities').select('*', { count: 'exact', head: true }).eq('is_active', true),
+    supabase.from('entities').select('*', { count: 'exact', head: true }).eq('is_active', true).eq('quality_score', 0),
+    supabase.from('entities').select('*', { count: 'exact', head: true }).eq('is_active', true).is('quality_score', null),
+    supabase.from('entity_watch_list').select('*', { count: 'exact', head: true }).eq('is_active', true),
+    supabase.from('cron_job_registry').select('last_run_at').eq('job_name', 'auto-archive-stale-entities').limit(1),
+  ]);
+
+  return {
+    totalActive: totalActiveResult.count || 0,
+    zeroQualityCount: zeroQualityResult.count || 0,
+    missingQualityCount: missingQualityResult.count || 0,
+    watchListCount: watchListResult.count || 0,
+    lastArchiveRun: lastArchiveResult.data?.[0]?.last_run_at || null,
   };
 }
 
@@ -1669,6 +1712,42 @@ This correction was triggered because compliance score dropped below threshold. 
             ? `Circuit breaker reset failed: ${updateErr.message}`
             : `Reset ${openBreakers.length} open circuit breakers: ${openBreakers.map((b: any) => `${b.service_name} (${b.failure_count} failures)`).join(', ')}`,
         };
+      }
+
+      case 'run_entity_quality_backfill': {
+        // Backfill quality_score for entities where it is null or 0 using the DB function
+        try {
+          const { data: zeroEntities } = await supabase
+            .from('entities')
+            .select('id')
+            .eq('is_active', true)
+            .or('quality_score.is.null,quality_score.eq.0')
+            .limit(100);
+
+          if (!zeroEntities || zeroEntities.length === 0) {
+            return { action, finding, success: true, details: 'No entities with zero/null quality score found' };
+          }
+
+          let refreshed = 0;
+          let failed = 0;
+          for (const entity of zeroEntities) {
+            try {
+              await supabase.rpc('refresh_entity_quality_score', { p_entity_id: entity.id });
+              refreshed++;
+            } catch {
+              failed++;
+            }
+          }
+
+          return {
+            action, finding, success: refreshed > 0,
+            details: failed === 0
+              ? `Refreshed quality scores for ${refreshed} entities`
+              : `Refreshed ${refreshed}, failed ${failed} of ${zeroEntities.length} entities`,
+          };
+        } catch (err) {
+          return { action, finding, success: false, details: `Entity quality backfill error: ${err instanceof Error ? err.message : err}` };
+        }
       }
 
       default:

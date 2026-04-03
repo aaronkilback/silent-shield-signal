@@ -11,13 +11,15 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus, Brain, Search, Trash2, ThumbsUp, ThumbsDown, Radar, Shield, AlertTriangle, CheckCircle, Loader2 } from "lucide-react";
+import { Pencil, Upload, X, Link as LinkIcon, Image as ImageIcon, Plus, Brain, Search, Trash2, ThumbsUp, ThumbsDown, Radar, Shield, AlertTriangle, CheckCircle, Loader2, FileSearch } from "lucide-react";
+import { AskAegisButton } from "./AskAegisButton";
 import { Progress } from "@/components/ui/progress";
 import { Checkbox } from "@/components/ui/checkbox";
 import { z } from "zod";
 import { CreateRelationshipDialog } from "./CreateRelationshipDialog";
 import { LocationsMap } from "./LocationsMap";
 import { ImageLightboxTrigger } from "@/components/ui/image-lightbox";
+import { POIReportMarkdown } from "./POIReportMarkdown";
 
 interface EntityDetailDialogProps {
   entityId: string | null;
@@ -65,6 +67,10 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     overall_risk: string;
     categories: string[];
   } | null>(null);
+  const [runningInvestigation, setRunningInvestigation] = useState(false);
+  const [synthesizing, setSynthesizing] = useState(false);
+  const [contentSynthesis, setContentSynthesis] = useState<string | null>(null);
+  const [runningAssessment, setRunningAssessment] = useState(false);
 
   const { data: entity, isLoading } = useQuery({
     queryKey: ['entity-detail', entityId],
@@ -79,6 +85,58 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
       return data;
     },
     enabled: !!entityId
+  });
+
+  const { data: entitySignals = [] } = useQuery({
+    queryKey: ['entity-signals', entityId],
+    queryFn: async () => {
+      if (!entityId) return [];
+      const { data, error } = await supabase
+        .from('entity_mentions')
+        .select(`
+          id, confidence, mention_text, created_at,
+          signals!inner(id, title, severity, rule_category, created_at, source_url, raw_json)
+        `)
+        .eq('entity_id', entityId)
+        .not('signal_id', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!entityId,
+  });
+
+  const { data: latestReport } = useQuery({
+    queryKey: ['poi-report', entityId],
+    queryFn: async () => {
+      if (!entityId) return null;
+      const { data } = await supabase
+        .from('poi_reports')
+        .select('id, report_markdown, confidence_score, threat_level, created_at')
+        .eq('entity_id', entityId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data;
+    },
+    enabled: !!entityId,
+  });
+
+  const { data: latestInvestigation } = useQuery({
+    queryKey: ['poi-investigation', entityId],
+    queryFn: async () => {
+      if (!entityId) return null;
+      const { data } = await supabase
+        .from('poi_investigations')
+        .select('id, status, sources_searched, results_found, hibp_checked, created_at')
+        .eq('entity_id', entityId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return data;
+    },
+    enabled: !!entityId,
   });
 
   const { data: photos = [] } = useQuery({
@@ -138,6 +196,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
         .from('entity_content')
         .select('*')
         .eq('entity_id', entityId)
+        .order('relevance_score', { ascending: false, nullsFirst: false })
         .order('published_date', { ascending: false, nullsFirst: false });
       if (error) throw error;
       return data;
@@ -269,6 +328,20 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
       });
     } finally {
       setUploadingPhoto(false);
+    }
+  };
+
+  const handleAssessEntity = async () => {
+    if (!entityId || runningAssessment) return;
+    setRunningAssessment(true);
+    try {
+      await supabase.functions.invoke('assess-entity', { body: { entityId } });
+      queryClient.invalidateQueries({ queryKey: ['entity-detail', entityId] });
+      toast({ title: "Assessment Complete", description: "AEGIS assessment updated" });
+    } catch (error: any) {
+      toast({ title: "Assessment Failed", description: error.message, variant: "destructive" });
+    } finally {
+      setRunningAssessment(false);
     }
   };
 
@@ -533,7 +606,11 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
       clearInterval(progressInterval);
       setDeepScanProgress(100);
 
-      if (error) throw error;
+      if (error) {
+        // Surface the actual error from the function body if available
+        const detail = (data as any)?.error || error.message;
+        throw new Error(detail);
+      }
 
       setDeepScanResults({
         findings_count: data.findings_count || 0,
@@ -565,6 +642,80 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
       });
     } finally {
       setRunningDeepScan(false);
+    }
+  };
+
+  const handleInvestigate = async () => {
+    if (!entityId) return;
+    setRunningInvestigation(true);
+    try {
+      toast({
+        title: "Investigation Started",
+        description: "Running OSINT investigation. This may take 1-2 minutes...",
+      });
+      const { data, error } = await supabase.functions.invoke('investigate-poi', {
+        body: { entity_id: entityId }
+      });
+      if (error || data?.error) {
+        const detail = data?.error || (error as any)?.message || 'Investigation failed';
+        throw new Error(detail);
+      }
+      queryClient.invalidateQueries({ queryKey: ['poi-investigation', entityId] });
+      queryClient.invalidateQueries({ queryKey: ['entity-content', entityId] });
+      toast({
+        title: "Investigation Complete",
+        description: `Found ${data?.results_found || 0} sources. Generating AI report...`,
+      });
+      // Auto-generate the report now that data is collected
+      setSynthesizing(true);
+      const { data: reportData, error: reportError } = await supabase.functions.invoke('generate-poi-report', {
+        body: { entity_id: entityId, investigation_id: data?.investigation_id }
+      });
+      setSynthesizing(false);
+      if (!reportError && reportData?.report_markdown) {
+        queryClient.invalidateQueries({ queryKey: ['poi-report', entityId] });
+        toast({ title: "Report Ready", description: "View the full report in the Report tab.", duration: 8000 });
+      }
+    } catch (error: any) {
+      console.error('Error running investigation:', error);
+      toast({
+        title: "Investigation Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setRunningInvestigation(false);
+    }
+  };
+
+  const handleSynthesize = async () => {
+    if (!entityId || content.length === 0) return;
+    setSynthesizing(true);
+    setContentSynthesis(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-poi-report', {
+        body: { entity_id: entityId }
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Analysis failed');
+      if (data?.report_markdown) {
+        // Extract just the executive summary + positive findings for the content tab blurb
+        const md = data.report_markdown as string;
+        const execMatch = md.match(/## EXECUTIVE SUMMARY\n([\s\S]*?)(?=\n##|$)/);
+        const posMatch = md.match(/## POSITIVE FINDINGS\n([\s\S]*?)(?=\n##|$)/);
+        const excerpt = [
+          execMatch?.[1]?.trim(),
+          posMatch ? `**Key Findings:**\n${posMatch[1]?.trim()}` : null
+        ].filter(Boolean).join('\n\n');
+        setContentSynthesis(excerpt || md.substring(0, 800));
+        queryClient.invalidateQueries({ queryKey: ['poi-report', entityId] });
+        queryClient.invalidateQueries({ queryKey: ['poi-investigation', entityId] });
+        toast({ title: "Analysis complete", description: "Full report available in the Report tab." });
+      }
+    } catch (error: any) {
+      console.error('Synthesis error:', error);
+      toast({ title: "Analysis failed", description: error.message, variant: "destructive" });
+    } finally {
+      setSynthesizing(false);
     }
   };
 
@@ -718,9 +869,52 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
           <div className="flex items-center justify-between">
             <DialogTitle className="text-2xl">{entity.name}</DialogTitle>
             <div className="flex items-center gap-2">
-              <Button 
-                variant="default" 
-                size="sm" 
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleAssessEntity}
+                disabled={runningAssessment}
+              >
+                {runningAssessment ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Assessing...
+                  </>
+                ) : (
+                  <>
+                    <Brain className="w-4 h-4 mr-2" />
+                    {(entity as any).ai_assessed_at ? 'Re-Assess' : 'Assess'}
+                  </>
+                )}
+              </Button>
+              <AskAegisButton
+                context={`Entity: ${entity.name} (${entity.type})`}
+                initialMessage={`Provide a threat assessment for the entity "${entity.name}" (${entity.type}). ${entity.description ? `Description: ${entity.description}` : ''} What are the key risk factors and recommended actions?`}
+                variant="outline"
+                size="sm"
+                label="Ask Aegis"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleInvestigate}
+                disabled={runningInvestigation}
+              >
+                {runningInvestigation ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Investigating...
+                  </>
+                ) : (
+                  <>
+                    <FileSearch className="w-4 h-4 mr-2" />
+                    Investigate
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
                 onClick={handleDeepScan}
                 disabled={runningDeepScan}
                 className="bg-gradient-to-r from-primary to-primary/80"
@@ -804,14 +998,55 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
               </div>
             </Card>
           )}
+
+          {/* AEGIS AI Assessment Banner */}
+          {(entity as any).ai_assessment && (
+            <Card className={`mt-4 p-3 ${
+              (entity as any).ai_assessment.threat_level === 'critical' ? 'border-red-500 bg-red-500/5' :
+              (entity as any).ai_assessment.threat_level === 'high' ? 'border-orange-500 bg-orange-500/5' :
+              (entity as any).ai_assessment.threat_level === 'medium' ? 'border-yellow-500 bg-yellow-500/5' :
+              'border-green-500 bg-green-500/5'
+            }`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2">
+                  <Brain className="w-4 h-4 mt-0.5 text-primary flex-shrink-0" />
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-medium text-muted-foreground">AEGIS Assessment</span>
+                      <Badge variant="outline" className="text-xs">
+                        {(entity as any).ai_assessment.threat_level?.toUpperCase()}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {Math.round(((entity as any).ai_assessment.confidence ?? 0) * 100)}% confidence
+                      </span>
+                    </div>
+                    <p className="text-sm">{(entity as any).ai_assessment.summary}</p>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          )}
         </DialogHeader>
 
         <Tabs defaultValue="details" className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="details">Details</TabsTrigger>
             <TabsTrigger value="photos">Photos</TabsTrigger>
             <TabsTrigger value="content">Content</TabsTrigger>
             <TabsTrigger value="relationships">Relationships</TabsTrigger>
+            <TabsTrigger value="signals">Signals</TabsTrigger>
+            <TabsTrigger value="report">
+              Report
+              {latestReport && (
+                <span className={`ml-1.5 text-xs px-1 rounded ${
+                  latestReport.threat_level === 'critical' || latestReport.threat_level === 'high'
+                    ? 'bg-destructive text-destructive-foreground'
+                    : 'bg-muted text-muted-foreground'
+                }`}>
+                  {latestReport.threat_level}
+                </span>
+              )}
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="details" className="space-y-4 mt-4">
@@ -1368,111 +1603,191 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
           </TabsContent>
 
           <TabsContent value="content" className="space-y-4 mt-4">
-            <div className="flex items-center justify-between">
-              <Label>Articles & Online Mentions</Label>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleContentScan}
-                disabled={scanningContent}
-              >
-                {scanningContent ? (
-                  <>
-                    <span className="animate-spin mr-2">🔄</span>
-                    Scanning...
-                  </>
-                ) : (
-                  <>
-                    <Search className="w-4 h-4 mr-2" />
-                    Web Search
-                  </>
-                )}
-              </Button>
+            <div className="flex items-center gap-2">
+              <Label>Intelligence Sources</Label>
+              {content.length > 0 && (
+                <Badge variant="secondary">{content.length} items</Badge>
+              )}
             </div>
+
+            {/* AI Synthesis panel */}
+            {content.length > 0 && (
+              <Card className={`p-3 border-primary/30 bg-primary/5 ${synthesizing ? 'opacity-70' : ''}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Brain className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium">AI Threat Assessment</span>
+                    </div>
+                    {contentSynthesis ? (
+                      <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-line">
+                        {contentSynthesis.substring(0, 600)}
+                        {contentSynthesis.length > 600 && (
+                          <span className="text-primary cursor-pointer" onClick={() => {/* switch to report tab */}}> → See full report</span>
+                        )}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        {synthesizing ? 'Analyzing all intelligence sources...' : `${content.length} items collected. Click Analyze to generate a threat assessment.`}
+                      </p>
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSynthesize}
+                    disabled={synthesizing}
+                    className="shrink-0"
+                  >
+                    {synthesizing ? (
+                      <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Analyzing...</>
+                    ) : (
+                      <><Brain className="w-3.5 h-3.5 mr-1.5" />{contentSynthesis ? 'Re-analyze' : 'Analyze'}</>
+                    )}
+                  </Button>
+                </div>
+              </Card>
+            )}
 
             {content.length === 0 ? (
               <Card className="p-8 text-center">
                 <Search className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
                 <p className="text-muted-foreground">No content found yet</p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Click "Scan for Content" to search for articles and mentions
+                  Use "Deep Scan" or "Investigate" to collect intelligence
                 </p>
               </Card>
             ) : (
-              <div className="space-y-3">
-                {content.map((item) => (
-                  <Card key={item.id} className="p-4 hover:bg-accent/50 transition-colors">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="capitalize">
-                            {item.content_type.replace('_', ' ')}
-                          </Badge>
-                          {item.relevance_score && (
-                            <Badge variant="secondary">
-                              {item.relevance_score}% relevant
-                            </Badge>
+              <div className="space-y-2">
+                {content.map((item) => {
+                  // excerpt = the actual finding/snippet; content_text = analyst commentary
+                  const primaryText = item.excerpt || item.content_text || '';
+                  const secondaryText = item.content_text && item.content_text !== item.excerpt ? item.content_text : '';
+                  const riskLevel = (item.metadata as any)?.risk_level as string | undefined;
+                  const hasUrl = (item.metadata as any)?.has_url !== false && item.url && !item.url.startsWith('urn:');
+                  const threatKeywords = /\b(threat|arrest|charged|convicted|criminal|violence|attack|protest|vandal|sabotage|weapon|gun|bomb|extremi|terror|stalking|harassment|assault|felony|warrant|detained|suspect|breach|exposed|doxx|leaked|sanction|match)\b/i;
+                  const isThreatRelated = riskLevel === 'critical' || riskLevel === 'high' || threatKeywords.test(primaryText) || threatKeywords.test(item.title || '');
+                  const domain = (() => {
+                    try { return new URL(item.url).hostname.replace(/^www\./, ''); } catch { return item.source || ''; }
+                  })();
+                  const sentimentColor = item.sentiment === 'negative' ? 'text-destructive' : item.sentiment === 'positive' ? 'text-green-500' : '';
+
+                  return (
+                    <Card
+                      key={item.id}
+                      className={`p-3 transition-colors hover:bg-accent/30 ${isThreatRelated ? 'border-orange-500/40 bg-orange-500/5' : ''}`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="flex-1 min-w-0 space-y-1.5">
+                          {/* Title row */}
+                          <div className="flex items-start gap-2 flex-wrap">
+                            {isThreatRelated && (
+                              <AlertTriangle className="w-3.5 h-3.5 text-orange-500 mt-0.5 shrink-0" />
+                            )}
+                            <a
+                              href={item.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="font-medium text-sm hover:underline leading-snug"
+                            >
+                              {item.title || domain || 'Untitled'}
+                            </a>
+                          </div>
+
+                          {/* Primary finding text */}
+                          {primaryText && (
+                            <p className="text-xs leading-relaxed line-clamp-3 text-foreground/80">
+                              {primaryText.substring(0, 300)}
+                            </p>
                           )}
+                          {/* Analyst commentary (secondary) */}
+                          {secondaryText && (
+                            <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2 italic">
+                              {secondaryText.substring(0, 200)}
+                            </p>
+                          )}
+
+                          {/* Meta row */}
+                          <div className="flex items-center flex-wrap gap-2 text-xs text-muted-foreground">
+                            {domain && (
+                              <span className="font-medium text-foreground/70">{domain}</span>
+                            )}
+                            {item.published_date && (
+                              <span>{new Date(item.published_date).toLocaleDateString()}</span>
+                            )}
+                            {item.author && <span>by {item.author}</span>}
+                            {item.content_type && item.content_type !== 'web_search' && (
+                              <Badge variant="outline" className="text-xs py-0 px-1.5 capitalize">
+                                {item.content_type.replace(/_/g, ' ')}
+                              </Badge>
+                            )}
+                            {item.sentiment && (
+                              <span className={`capitalize ${sentimentColor}`}>{item.sentiment}</span>
+                            )}
+                            {item.relevance_score != null && item.relevance_score > 0 && (
+                              <span className={item.relevance_score >= 70 ? 'text-orange-500 font-medium' : ''}>
+                                {item.relevance_score}% relevant
+                              </span>
+                            )}
+                            {riskLevel && (
+                              <Badge
+                                variant={riskLevel === 'critical' || riskLevel === 'high' ? 'destructive' : riskLevel === 'medium' ? 'secondary' : 'outline'}
+                                className="text-xs py-0 px-1.5 capitalize"
+                              >
+                                {riskLevel} risk
+                              </Badge>
+                            )}
+                            {!riskLevel && isThreatRelated && (
+                              <Badge variant="destructive" className="text-xs py-0 px-1.5">threat indicators</Badge>
+                            )}
+                          </div>
                         </div>
-                        <h4 className="font-medium line-clamp-2">
-                          <a 
-                            href={item.url} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="hover:underline"
+
+                        {/* Actions */}
+                        <div className="flex gap-0.5 shrink-0">
+                          <Button
+                            variant={item.feedback_rating === 1 ? "default" : "ghost"}
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={() => handleContentFeedback(item.id, 1)}
+                            title="Mark relevant"
                           >
-                            {item.title || 'Untitled'}
-                          </a>
-                        </h4>
-                        {item.excerpt && (
-                          <p className="text-sm text-muted-foreground line-clamp-2">
-                            {item.excerpt}
-                          </p>
-                        )}
-                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                          {item.source && <span>📰 {item.source}</span>}
-                          {item.published_date && (
-                            <span>
-                              📅 {new Date(item.published_date).toLocaleDateString()}
-                            </span>
+                            <ThumbsUp className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            variant={item.feedback_rating === -1 ? "destructive" : "ghost"}
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={() => handleContentFeedback(item.id, -1)}
+                            title="Mark irrelevant"
+                          >
+                            <ThumbsDown className="w-3.5 h-3.5" />
+                          </Button>
+                          {hasUrl && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => window.open(item.url, '_blank')}
+                              title="Open source"
+                            >
+                              <LinkIcon className="w-3.5 h-3.5" />
+                            </Button>
                           )}
-                          {item.author && <span>✍️ {item.author}</span>}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                            onClick={() => handleDeleteContent(item.id)}
+                            title="Delete"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
                         </div>
                       </div>
-                      <div className="flex gap-1">
-                        <Button
-                          variant={item.feedback_rating === 1 ? "default" : "ghost"}
-                          size="icon"
-                          onClick={() => handleContentFeedback(item.id, 1)}
-                        >
-                          <ThumbsUp className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant={item.feedback_rating === -1 ? "destructive" : "ghost"}
-                          size="icon"
-                          onClick={() => handleContentFeedback(item.id, -1)}
-                        >
-                          <ThumbsDown className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => window.open(item.url, '_blank')}
-                        >
-                          <LinkIcon className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleDeleteContent(item.id)}
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
+                    </Card>
+                  );
+                })}
               </div>
             )}
           </TabsContent>
@@ -1480,34 +1795,14 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
           <TabsContent value="relationships" className="space-y-4 mt-4">
             <div className="flex items-center justify-between gap-2">
               <Label>Related Entities</Label>
-              <div className="flex gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleScanRelationships}
-                  disabled={scanningRelationships}
-                >
-                  {scanningRelationships ? (
-                    <>
-                      <span className="animate-spin mr-2">🔄</span>
-                      Scanning...
-                    </>
-                  ) : (
-                    <>
-                      <Brain className="w-4 h-4 mr-2" />
-                      OSINT Scan
-                    </>
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCreateRelationshipOpen(true)}
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Manually
-                </Button>
-              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCreateRelationshipOpen(true)}
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Add Manually
+              </Button>
             </div>
             
             {relationships.length === 0 ? (
@@ -1567,6 +1862,138 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                   );
                 })}
               </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="signals" className="space-y-4 mt-4">
+            <div className="flex items-center gap-2">
+              <Label>Signals Mentioning This Entity</Label>
+              {entitySignals.length > 0 && (
+                <Badge variant="secondary">{entitySignals.length} signals</Badge>
+              )}
+            </div>
+            {entitySignals.length === 0 ? (
+              <Card className="p-8 text-center">
+                <AlertTriangle className="w-12 h-12 mx-auto text-muted-foreground mb-2" />
+                <p className="text-muted-foreground">No signals correlated with this entity yet</p>
+                <p className="text-xs text-muted-foreground mt-1">Signals are linked automatically when this entity is mentioned in incoming intelligence</p>
+              </Card>
+            ) : (
+              <div className="space-y-2">
+                {entitySignals.map((mention: any) => {
+                  const sig = mention.signals;
+                  if (!sig) return null;
+                  const sourceUrl = sig.source_url || sig.raw_json?.url || sig.raw_json?.link;
+                  return (
+                    <Card key={mention.id} className="p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <Badge variant={
+                              sig.severity === 'critical' ? 'destructive' :
+                              sig.severity === 'high' ? 'destructive' :
+                              sig.severity === 'medium' ? 'secondary' : 'outline'
+                            } className="text-xs">
+                              {sig.severity}
+                            </Badge>
+                            {sig.rule_category && (
+                              <Badge variant="outline" className="text-xs">{sig.rule_category}</Badge>
+                            )}
+                            {mention.mention_text === 'entity_scan' ? (
+                              <Badge variant="outline" className="text-xs text-blue-500 border-blue-400">
+                                found via entity scan
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                {Math.round((mention.confidence || 0) * 100)}% confidence
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm font-medium truncate">{sig.title}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {new Date(sig.created_at).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </p>
+                        </div>
+                        {sourceUrl && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 flex-shrink-0"
+                            onClick={() => window.open(sourceUrl, '_blank')}
+                          >
+                            <LinkIcon className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="report" className="mt-4 space-y-4">
+            {/* Investigation metadata bar */}
+            {latestInvestigation && (
+              <Card className="p-3">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-3 text-muted-foreground">
+                    <FileSearch className="w-4 h-4" />
+                    <span>Last investigated: {new Date(latestInvestigation.created_at).toLocaleDateString()}</span>
+                    <span>{latestInvestigation.sources_searched} sources</span>
+                    <span>{latestInvestigation.results_found} results</span>
+                    {latestInvestigation.hibp_checked && <Badge variant="outline">HIBP checked</Badge>}
+                  </div>
+                  <Badge variant={
+                    latestInvestigation.status === 'completed' ? 'outline' :
+                    latestInvestigation.status === 'running' ? 'secondary' :
+                    'destructive'
+                  }>
+                    {latestInvestigation.status}
+                  </Badge>
+                </div>
+              </Card>
+            )}
+
+            {/* Report content or empty state */}
+            {latestReport ? (
+              <Card className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Brain className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-medium">Intelligence Report</span>
+                    <Badge variant="outline" className="text-xs">
+                      Confidence: {latestReport.confidence_score}%
+                    </Badge>
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    {new Date(latestReport.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+                <div className="max-h-[500px] overflow-y-auto">
+                  <POIReportMarkdown markdown={latestReport.report_markdown} />
+                </div>
+              </Card>
+            ) : (
+              <Card className="p-8 text-center">
+                <FileSearch className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+                <p className="font-medium mb-1">No intelligence report yet</p>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Click "Investigate" to run a comprehensive OSINT investigation and generate a report.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleInvestigate}
+                  disabled={runningInvestigation}
+                >
+                  {runningInvestigation ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Investigating...</>
+                  ) : (
+                    <><FileSearch className="w-4 h-4 mr-2" />Run Investigation</>
+                  )}
+                </Button>
+              </Card>
             )}
           </TabsContent>
         </Tabs>

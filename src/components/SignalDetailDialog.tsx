@@ -4,6 +4,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon, Copy, Check, FileWarning, ExternalLink, Shield, MessageCircle, Heart, Share2, Hash, AtSign, Image } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SignalUpdatesTimeline } from "@/components/signals/SignalUpdatesTimeline";
 import { FacebookVideoEmbed, isFacebookVideoUrl } from "@/components/signals/FacebookVideoEmbed";
 import { formatDistanceToNow } from "date-fns";
@@ -43,7 +44,28 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
   const [correlatedSignals, setCorrelatedSignals] = useState<any[]>([]);
   const [copied, setCopied] = useState(false);
   const [linkedIncident, setLinkedIncident] = useState<any>(null);
+  const [signalStatus, setSignalStatus] = useState<string>(signal?.status || 'new');
   const { startViewing, stopViewing, trackEvent } = useImplicitFeedback();
+
+  const handleStatusChange = async (newStatus: string) => {
+    if (!signal?.id) return;
+    const { error } = await supabase
+      .from('signals')
+      .update({ status: newStatus })
+      .eq('id', signal.id);
+    if (error) {
+      toast.error('Failed to update status');
+    } else {
+      setSignalStatus(newStatus);
+      onSignalUpdated?.();
+      toast.success(`Status set to ${newStatus.replace('_', ' ')}`);
+    }
+  };
+
+  // Sync status when signal changes
+  useEffect(() => {
+    setSignalStatus(signal?.status || 'new');
+  }, [signal?.id, signal?.status]);
 
   // Track implicit view duration
   useEffect(() => {
@@ -221,6 +243,23 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
     }
   };
 
+  // Stale content warning: flag signals whose event_date is older than 365 days
+  const staleContentWarning = (() => {
+    const eventDate = signal.event_date || signal.raw_json?.event_date || signal.raw_json?.published_date || signal.raw_json?.date;
+    if (!eventDate) return null;
+    const parsed = new Date(eventDate);
+    if (isNaN(parsed.getTime())) return null;
+    const ageYears = (Date.now() - parsed.getTime()) / (1000 * 60 * 60 * 24 * 365);
+    if (ageYears < 1) return null;
+    const sourceUrl = signal.source_url || signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link || '';
+    const isSocial = /facebook|instagram|twitter|x\.com|tiktok|linkedin/i.test(sourceUrl);
+    return {
+      date: parsed.toLocaleDateString('en-CA', { year: 'numeric', month: 'long', day: 'numeric' }),
+      yearsOld: Math.floor(ageYears),
+      isSocial,
+    };
+  })();
+
   // AI analysis is stored in ai_decision by the ai-decision-engine
   const aiDecision = signal.raw_json?.ai_decision;
   // For backwards compatibility, also check ai_analysis
@@ -241,6 +280,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[90vh]">
         <DialogHeader>
@@ -409,7 +449,19 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                     {signal.severity?.toUpperCase()}
                   </Badge>
                   <Badge variant="outline">{signal.category}</Badge>
-                  <Badge variant="secondary">{signal.status}</Badge>
+                  <Select value={signalStatus} onValueChange={handleStatusChange}>
+                    <SelectTrigger className="h-7 w-[160px] text-xs">
+                      <SelectValue placeholder="Set status…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="new">New</SelectItem>
+                      <SelectItem value="triaged">Triaged</SelectItem>
+                      <SelectItem value="investigating">Investigating</SelectItem>
+                      <SelectItem value="resolved">Resolved</SelectItem>
+                      <SelectItem value="archived">Archived (historical)</SelectItem>
+                      <SelectItem value="false_positive">False Positive</SelectItem>
+                    </SelectContent>
+                  </Select>
                   {signal.confidence != null && (
                     <Badge variant="outline">
                       {Math.round(signal.confidence)}% confidence
@@ -461,6 +513,22 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                     >
                       {signal.source_url || signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link}
                     </a>
+                  </div>
+                )}
+
+                {/* Stale content warning */}
+                {staleContentWarning && (
+                  <div className="flex items-start gap-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mt-2 text-sm">
+                    <Clock className="w-4 h-4 text-yellow-500 mt-0.5 shrink-0" />
+                    <div>
+                      <span className="font-medium text-yellow-600 dark:text-yellow-400">Old content — verify relevance.</span>{" "}
+                      <span className="text-muted-foreground">
+                        This {staleContentWarning.isSocial ? 'social media post' : 'content'} is from{" "}
+                        <span className="font-medium">{staleContentWarning.date}</span>{" "}
+                        ({staleContentWarning.yearsOld}+ year{staleContentWarning.yearsOld !== 1 ? 's' : ''} old).
+                        Confirm the information is still current before acting on it.
+                      </span>
+                    </div>
                   </div>
                 )}
 
@@ -812,29 +880,30 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
           </div>
         </ScrollArea>
       </DialogContent>
-      <CreateEntityDialog
-        open={createEntityOpen}
-        onOpenChange={(open) => {
-          setCreateEntityOpen(open);
-          if (!open) {
-            setSelectedText("");
-            setSelectionContext("");
-          }
-        }}
-        prefilledName={selectedText}
-        signalId={signal.id}
-        context={selectionContext}
-      />
-      <CreateIncidentFromSignalDialog
-        open={createIncidentOpen}
-        onOpenChange={setCreateIncidentOpen}
-        signal={signal}
-        onIncidentCreated={(incidentId) => {
-          onSignalUpdated?.();
-          onOpenChange(false);
-          navigate(`/incidents?highlight=${incidentId}`);
-        }}
-      />
     </Dialog>
+    <CreateEntityDialog
+      open={createEntityOpen}
+      onOpenChange={(open) => {
+        setCreateEntityOpen(open);
+        if (!open) {
+          setSelectedText("");
+          setSelectionContext("");
+        }
+      }}
+      prefilledName={selectedText}
+      signalId={signal.id}
+      context={selectionContext}
+    />
+    <CreateIncidentFromSignalDialog
+      open={createIncidentOpen}
+      onOpenChange={setCreateIncidentOpen}
+      signal={signal}
+      onIncidentCreated={(incidentId) => {
+        onSignalUpdated?.();
+        onOpenChange(false);
+        navigate(`/incidents?highlight=${incidentId}`);
+      }}
+    />
+    </>
   );
 };

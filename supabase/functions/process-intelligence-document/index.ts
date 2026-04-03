@@ -445,8 +445,10 @@ ${feedbackRejectionContext}
 12. Do NOT create signals for wildlife/health events unless they directly threaten operations in the client's operating area
 13. Give a relevance_score of 0.3 or lower to signals that are tangentially related
 
-KNOWN ENTITIES:
+KNOWN ENTITIES (for reference only):
 ${entityContext}
+
+**CRITICAL ENTITY RULE: Only add an entity to related_entity_names if that person's or organization's name (or a known alias) LITERALLY APPEARS in the source text. Do NOT infer, assume, or guess that a document is "about" an entity just because it was found via a search for them. The text must explicitly contain their name.**
 
 ${learningContext}
 
@@ -887,6 +889,18 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
               signal_id: newSignal.id,
               document_id: documentId
             });
+
+          // If this document came from an entity scan, create an entity_mention
+          // with mention_text='entity_scan' so the signal appears on the entity's
+          // page even when their name isn't explicitly in the content.
+          if (sourceEntityId) {
+            await supabase.from('entity_mentions').insert({
+              entity_id: sourceEntityId,
+              signal_id: newSignal.id,
+              confidence: 0.7,
+              mention_text: 'entity_scan',
+            }).catch(() => {}); // non-fatal if duplicate
+          }
           
           // Copy attachments from document to signal
           const { data: docAttachments } = await supabase
@@ -925,6 +939,21 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
                 });
               }
             }
+          }
+
+          // Run entity correlation on the document content so new entities (e.g. "Eavor Technologies")
+          // get surfaced as suggestions even when discovered via a social/entity scan path.
+          const correlationText = [document.raw_text, document.post_caption, signal.description]
+            .filter(Boolean).join('\n\n');
+          if (correlationText.trim().length > 20) {
+            supabase.functions.invoke('correlate-entities', {
+              body: {
+                text: correlationText,
+                sourceType: 'signal',
+                sourceId: newSignal.id,
+                autoApprove: false,
+              }
+            }).catch(err => console.error('[ProcessDoc] Entity correlation error:', err));
           }
 
           // Watch list check — boost severity if any extracted entities are being watched

@@ -321,21 +321,34 @@ async function executeSearch(
       }
 
       // ═══ HARD TEMPORAL FILTER ═══
-      // Reject URLs or snippets with obvious old dates (pre-2025)
-      const oldYearPattern = /\b(201[0-9]|202[0-3]|2024)\b/;
-      const urlHasOldYear = oldYearPattern.test(url);
-      const snippetDateContext = snippet.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s*(201[0-9]|202[0-4])\b/i);
+      // For campaign/client searches: reject URLs or snippets with obvious old dates (pre-2025).
+      // For entity-specific scans: skip temporal filtering — profile pages, bios, and personal
+      // websites contain permanent intel (contact info, affiliations, linked domains) that
+      // doesn't expire. These are flagged as historical in metadata instead.
+      const isEntityScan = search.sourceType === 'entity';
       const hasWikipedia = url.includes('wikipedia.org');
-      
-      if (hasWikipedia || (urlHasOldYear && !url.includes('2025') && !url.includes('2026'))) {
-        console.log(`[SocialUnified] ✗ Old content filtered: "${title.substring(0, 50)}" (URL date or Wikipedia)`);
+
+      if (hasWikipedia) {
+        console.log(`[SocialUnified] ✗ Wikipedia filtered: "${title.substring(0, 50)}"`);
         rejected++;
         continue;
       }
-      if (snippetDateContext) {
-        console.log(`[SocialUnified] ✗ Old snippet date: "${snippetDateContext[0]}" in "${title.substring(0, 50)}"`);
-        rejected++;
-        continue;
+
+      if (!isEntityScan) {
+        const oldYearPattern = /\b(201[0-9]|202[0-3]|2024)\b/;
+        const urlHasOldYear = oldYearPattern.test(url);
+        const snippetDateContext = snippet.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s*(201[0-9]|202[0-4])\b/i);
+
+        if (urlHasOldYear && !url.includes('2025') && !url.includes('2026')) {
+          console.log(`[SocialUnified] ✗ Old content filtered (campaign scan): "${title.substring(0, 50)}"`);
+          rejected++;
+          continue;
+        }
+        if (snippetDateContext) {
+          console.log(`[SocialUnified] ✗ Old snippet date (campaign scan): "${snippetDateContext[0]}" in "${title.substring(0, 50)}"`);
+          rejected++;
+          continue;
+        }
       }
 
       // ═══ HARD GEOGRAPHIC FILTER ═══
@@ -347,14 +360,16 @@ async function executeSearch(
         continue;
       }
 
-      // Skip generic profile pages (Facebook-specific)
-      if (url.includes('facebook.com') && !isSpecificFacebookUrl(url)) {
-        console.log(`[SocialUnified] Skipping generic FB page: ${url}`);
+      // Skip generic profile pages (Facebook-specific) for campaign scans.
+      // For entity scans: allow profile pages — they contain bio info, linked websites, and
+      // contact details that are valuable permanent intelligence about the entity.
+      if (url.includes('facebook.com') && !isSpecificFacebookUrl(url) && !isEntityScan) {
+        console.log(`[SocialUnified] Skipping generic FB page (campaign scan): ${url}`);
         continue;
       }
 
       // ═══ AI RELEVANCE GATE ═══
-      const aiVerdict = await aiRelevanceGate(title, snippet, url, search.sourceName, search.platform);
+      const aiVerdict = await aiRelevanceGate(title, snippet, url, search.sourceName, search.platform, isEntityScan);
       if (!aiVerdict.relevant) {
         console.log(`[SocialUnified] ✗ AI rejected: "${title.substring(0, 60)}" — ${aiVerdict.reason}`);
         rejected++;
@@ -379,6 +394,13 @@ async function executeSearch(
       const postType = detectPostType(url, content);
       const eventDetails = extractEventDetails(content);
       const platform = detectPlatformFromUrl(url);
+
+      // Detect if this is historical content (for entity scans that bypassed temporal filter)
+      const oldYearMatch = /\b(201[0-9]|202[0-3]|2024)\b/.exec(url + ' ' + snippet);
+      const isHistorical = isEntityScan && !!oldYearMatch;
+
+      // Extract external links from content (URLs to non-social-media sites)
+      const externalLinks = extractExternalLinks(content + ' ' + snippet);
 
       // Determine category
       const lowerContent = content.toLowerCase();
@@ -417,7 +439,9 @@ async function executeSearch(
             event_details: eventDetails,
             detected_keywords: ACTIVISM_KEYWORDS.filter(k => lowerContent.includes(k.toLowerCase())),
             mentioned_accounts: mentions,
-            hashtag_count: hashtags.length
+            hashtag_count: hashtags.length,
+            is_historical: isHistorical,
+            external_links: externalLinks,
           }
         })
         .select()
@@ -439,8 +463,65 @@ async function executeSearch(
           body: { documentId: doc.id }
         });
 
+        // Follow external links found in entity-scan content.
+        // Ingest each non-social external URL as its own document so the intelligence
+        // pipeline processes it (e.g. amberbracken.com found in a Facebook profile).
+        if (isEntityScan && search.entityId && externalLinks.length > 0) {
+          console.log(`[SocialUnified] Found ${externalLinks.length} external link(s) in ${platform} content for ${search.sourceName}: ${externalLinks.join(', ')}`);
+          for (const extUrl of externalLinks.slice(0, 3)) {
+            try {
+              // Check if already ingested
+              const { data: existingDoc } = await supabase
+                .from('ingested_documents')
+                .select('id')
+                .eq('source_url', extUrl)
+                .limit(1);
+
+              if (existingDoc && existingDoc.length > 0) {
+                console.log(`[SocialUnified] External link already ingested: ${extUrl}`);
+                continue;
+              }
+
+              const { data: linkedDoc, error: linkedErr } = await supabase
+                .from('ingested_documents')
+                .insert({
+                  title: `Website linked from ${platform} profile: ${search.sourceName}`,
+                  raw_text: `External website linked from ${platform} profile of ${search.sourceName}. URL: ${extUrl}`,
+                  source_url: extUrl,
+                  author_name: search.sourceName,
+                  metadata: {
+                    source: 'social_profile_link',
+                    source_type: 'web',
+                    entity_id: search.entityId,
+                    source_name: search.sourceName,
+                    linked_from: url,
+                    linked_from_platform: platform,
+                    is_historical: true,
+                  }
+                })
+                .select()
+                .single();
+
+              if (!linkedErr && linkedDoc) {
+                await supabase.from('document_entity_mentions').insert({
+                  document_id: linkedDoc.id,
+                  entity_id: search.entityId,
+                  confidence: 0.9,
+                  mention_text: search.sourceName,
+                });
+                await supabase.functions.invoke('process-intelligence-document', {
+                  body: { documentId: linkedDoc.id }
+                });
+                console.log(`[SocialUnified] ✓ Queued external link for processing: ${extUrl}`);
+              }
+            } catch (linkErr) {
+              console.warn(`[SocialUnified] Link follow failed for ${extUrl}:`, linkErr);
+            }
+          }
+        }
+
         signals++;
-        console.log(`[SocialUnified] ✓ Ingested ${platform} ${postType}: "${title.substring(0, 60)}"`);
+        console.log(`[SocialUnified] ✓ Ingested ${platform} ${postType}: "${title.substring(0, 60)}"${isHistorical ? ' [historical]' : ''}`);
       }
     }
 
@@ -473,18 +554,30 @@ async function aiRelevanceGate(
   snippet: string,
   url: string,
   sourceName: string,
-  platform: string
+  platform: string,
+  isEntityScan: boolean = false
 ): Promise<AiVerdict> {
   const fallback: AiVerdict = { relevant: false, reason: 'AI gate unavailable — defaulting to reject', confidence: 0, category: '', location: '' };
 
-  try {
-    const result = await callAiGatewayJson<AiVerdict>({
-      model: 'google/gpt-4o-mini',
-      functionName: 'monitor-social-unified',
-      messages: [
-        {
-          role: 'system',
-          content: `You are an intelligence analyst filtering social media search results.
+  const systemPrompt = isEntityScan
+    ? `You are an intelligence analyst evaluating social media and web content about a specific monitored person or organization.
+
+MISSION: Determine if this content contains ANY useful intelligence about the subject "${sourceName}". This is a PROFILE SCAN, not a news/event filter.
+
+A result is relevant if it:
+- Is a social media profile, post, bio, or page belonging to or about ${sourceName}
+- Contains contact information, linked websites, affiliations, or associations
+- References locations, activities, employment, relationships, or statements by ${sourceName}
+- Is ANY age — historical posts and old profile content are valuable for building an intelligence picture
+- Mentions the subject's personal website, organization, or other online presence
+
+A result is NOT relevant if it:
+- Is clearly about a completely different person or organization with the same name
+- Is spam, advertisement, or auto-generated content with no actual information
+- Is a totally unrelated topic that incidentally matches a keyword
+
+Return JSON: { "relevant": boolean, "reason": string (1 sentence), "confidence": number (0-1), "category": string, "location": string }`
+    : `You are an intelligence analyst filtering social media search results.
 You must determine if this result is OPERATIONALLY RELEVANT to security monitoring for Canadian energy infrastructure clients (pipelines, LNG facilities, energy companies).
 
 CRITICAL TEMPORAL RULE: Reject any content where the original post or event date is MORE THAN 90 DAYS OLD. Look for date indicators in the snippet, title, or URL (e.g., "2019", "2021", "6 years ago", "posted on December 2019"). Old social media posts resurfacing via search engines are NOT actionable intelligence.
@@ -508,7 +601,16 @@ A result is NOT relevant if it:
 - Is a Wikipedia article, historical reference, or archived content
 - Cannot be dated — if no date is discernible and content appears old, reject it
 
-Return JSON: { "relevant": boolean, "reason": string (1 sentence), "confidence": number (0-1), "category": string, "location": string }`
+Return JSON: { "relevant": boolean, "reason": string (1 sentence), "confidence": number (0-1), "category": string, "location": string }`;
+
+  try {
+    const result = await callAiGatewayJson<AiVerdict>({
+      model: 'google/gpt-4o-mini',
+      functionName: 'monitor-social-unified',
+      messages: [
+        {
+          role: 'system',
+          content: systemPrompt,
         },
         {
           role: 'user',
@@ -567,4 +669,31 @@ function detectPlatformFromUrl(url: string): string {
   if (lower.includes('facebook.com')) return 'Facebook';
   if (lower.includes('instagram.com')) return 'Instagram';
   return 'Social Media';
+}
+
+/**
+ * Extract external URLs from text content that point to non-social-media sites.
+ * Used to follow personal websites, org pages, and other linked intel sources
+ * found in social media profiles and posts.
+ */
+function extractExternalLinks(text: string): string[] {
+  const urlPattern = /https?:\/\/[^\s"'<>]+/g;
+  const socialDomains = [
+    'facebook.com', 'instagram.com', 'twitter.com', 'x.com', 'tiktok.com',
+    'linkedin.com', 'youtube.com', 'youtu.be', 'google.com', 'apple.com',
+    'bit.ly', 'linktr.ee', 't.co',
+  ];
+
+  const found = new Set<string>();
+  let match;
+  while ((match = urlPattern.exec(text)) !== null) {
+    const url = match[0].replace(/[,.)]+$/, ''); // strip trailing punctuation
+    try {
+      const host = new URL(url).hostname.replace(/^www\./, '');
+      if (!socialDomains.some(d => host.endsWith(d))) {
+        found.add(url);
+      }
+    } catch { /* invalid URL */ }
+  }
+  return Array.from(found);
 }
