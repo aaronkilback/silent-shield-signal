@@ -254,14 +254,16 @@ Deno.serve(async (req) => {
 
     console.log(`RSS monitoring completed. Scanned ${totalItems} items, created ${totalSignals} signals`);
 
-    await supabaseClient.from('cron_heartbeat').insert({
-      job_name: 'monitor-rss-sources',
-      started_at: heartbeatAt,
-      completed_at: new Date().toISOString(),
-      status: 'completed',
-      duration_ms: Date.now() - heartbeatMs,
-      result_summary: { signals_created: totalSignals, items_scanned: totalItems },
-    }).catch(() => {});
+    try {
+      await supabaseClient.from('cron_heartbeat').insert({
+        job_name: 'monitor-rss-sources',
+        started_at: heartbeatAt,
+        completed_at: new Date().toISOString(),
+        status: 'completed',
+        duration_ms: Date.now() - heartbeatMs,
+        result_summary: { signals_created: totalSignals, items_scanned: totalItems },
+      });
+    } catch (_) { /* non-fatal */ }
 
     return successResponse({
       success: true,
