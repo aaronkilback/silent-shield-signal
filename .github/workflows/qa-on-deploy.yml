@@ -1,0 +1,18 @@
+name: QA on Deploy
+on:
+  workflow_run:
+    workflows: ["Deploy Edge Functions"]
+    types: [completed]
+
+jobs:
+  trigger-qa:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger QA Agent
+        run: |
+          curl -X POST \
+            https://kpuqukppbmwebiptqmog.supabase.co/functions/v1/fortress-qa-agent \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{}'

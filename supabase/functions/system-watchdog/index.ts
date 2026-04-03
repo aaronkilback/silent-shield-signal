@@ -1694,37 +1694,39 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
   const unresolved = analysis.findings.filter(f => f.severity === 'critical' || f.severity === 'warning');
   const info = analysis.findings.filter(f => f.severity === 'info');
 
-  const renderFinding = (f: Finding, color: string, borderColor: string, bgColor: string) => {
-    const statusBadge = f.remediationStatus === 'fixed' ? '<span style="background: #14532d; color: #4ade80; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">â AUTO-FIXED</span>' :
-      f.remediationStatus === 'partially_fixed' ? '<span style="background: #78350f; color: #fbbf24; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">â¡ PARTIAL FIX</span>' :
-      f.remediationStatus === 'failed' ? '<span style="background: #7f1d1d; color: #fca5a5; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">â FIX FAILED</span>' :
-      f.remediationStatus === 'chronic' ? '<span style="background: #4a1d96; color: #c4b5fd; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">ð CHRONIC</span>' :
+  const renderFinding = (f: Finding, textColor: string, accentColor: string, bgColor: string) => {
+    const statusBadge = f.remediationStatus === 'fixed' ? '<span style="background: #14532d; color: #4ade80; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">&#10003; AUTO-FIXED</span>' :
+      f.remediationStatus === 'partially_fixed' ? '<span style="background: #78350f; color: #fbbf24; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">&#9889; PARTIAL FIX</span>' :
+      f.remediationStatus === 'failed' ? '<span style="background: #7f1d1d; color: #fca5a5; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">&#10007; FIX FAILED</span>' :
+      f.remediationStatus === 'chronic' ? '<span style="background: #4a1d96; color: #c4b5fd; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">&#128257; CHRONIC</span>' :
       '';
 
-    const recurringBadge = f.isRecurring ? '<span style="background: #1e3a5f; color: #93c5fd; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 4px;">â» recurring</span>' : '';
+    const recurringBadge = f.isRecurring ? '<span style="background: #1e3a5f; color: #93c5fd; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 4px;">&#8635; recurring</span>' : '';
 
     return `
-      <div style="background: ${bgColor}; border-left: 3px solid ${borderColor}; padding: 14px 18px; margin-bottom: 10px; border-radius: 4px;">
-        <div style="margin-bottom: 6px;">
-          <strong style="color: ${color}; font-size: 14px;">${f.title}</strong>${statusBadge}${recurringBadge}
-          <span style="color: #666; font-size: 11px; text-transform: uppercase; float: right;">${f.category}</span>
+      <div style="background: ${bgColor}; border: 1px solid ${accentColor}20; border-radius: 6px; padding: 14px 18px; margin-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+          <strong style="color: ${textColor}; font-size: 13px;">${f.title}</strong>${statusBadge}${recurringBadge}
+          <span style="font-size: 11px; color: #666; white-space: nowrap; margin-left: 12px;">${f.severity?.toUpperCase()}</span>
         </div>
-        <p style="margin: 0 0 8px; color: #d4d4d4; font-size: 13px; line-height: 1.5;">${f.analysis}</p>
-        <p style="margin: 0; color: #93c5fd; font-size: 13px;">â ${f.recommendation}</p>
-        ${f.learningNote ? `<p style="margin: 6px 0 0; color: #a78bfa; font-size: 12px; font-style: italic;">ð§  ${f.learningNote}</p>` : ''}
+        ${f.analysis ? `<p style="margin: 0 0 8px; font-size: 12px; color: #aaa; line-height: 1.5;">${f.analysis}</p>` : ''}
         ${f.plainEnglish ? `
-          <div style="background: rgba(255,255,255,0.05); border-left: 3px solid ${borderColor}; padding: 10px 14px; margin-top: 10px; border-radius: 0 4px 4px 0;">
-            <p style="margin: 0; font-size: 13px; color: #e0e0e0; line-height: 1.5;">
-              <strong style="color: ${borderColor};">What this means:</strong> ${f.plainEnglish}
+          <div style="background: rgba(255,255,255,0.04); border-left: 3px solid ${accentColor}; padding: 8px 12px; margin: 8px 0; border-radius: 0 4px 4px 0;">
+            <p style="margin: 0; font-size: 12px; color: #e0e0e0; line-height: 1.5;">
+              <strong style="color: ${accentColor};">What this means:</strong> ${f.plainEnglish}
             </p>
           </div>
         ` : ''}
         ${f.action ? `
-          <div style="margin-top: 8px;">
-            <p style="margin: 0; font-size: 12px; color: #aaa;">
-              <strong>Action:</strong> ${f.action}
-            </p>
-          </div>
+          <p style="margin: 6px 0 0; font-size: 11px; color: #888;">
+            <strong style="color: #aaa;">Action:</strong> ${f.action}
+          </p>
+        ` : ''}
+        ${f.learningNote ? `<p style="margin: 4px 0 0; font-size: 11px; color: #a78bfa; font-style: italic;">&#129504; ${f.learningNote}</p>` : ''}
+        ${(f as any).remediation_result ? `
+          <p style="margin: 4px 0 0; font-size: 11px; color: #4ade80;">
+            &#10003; Auto-fix: ${(f as any).remediation_result}
+          </p>
         ` : ''}
       </div>`;
   };
@@ -1815,53 +1817,57 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
     ${(() => {
       const knownBrokenCount = analysis.findings.filter(f => f.severity === 'critical' && f.remediationStatus !== 'fixed').length;
       const nextReportDate = new Date(Date.now() + 20 * 3600000);
-      const nextReportTime = nextReportDate.toISOString().slice(0, 16).replace('T', ' ');
+      const nextReportUTC = nextReportDate.toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+      const signalCount = telemetry.signalPipeline.recentSignalCount;
+      const bugCount = telemetry.bugReports.totalOpen;
+      const dbMs = telemetry.database.responseTimeMs;
+      const qaPassRate = (telemetry as any).qaPassRate || 'No tests run yet';
       return `
-      <div style="background: #0a0a0a; border-top: 1px solid #222; padding: 18px 28px; margin-top: 20px;">
-        <h3 style="color: #aaa; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin: 0 0 12px;">Platform Confidence</h3>
-        <table style="width: 100%; font-size: 12px; color: #aaa;">
-          <tr>
-            <td>Known broken features: <strong style="color: #ef4444;">${knownBrokenCount}</strong></td>
-            <td>Auto-resolved today: <strong style="color: #4ade80;">${resolved.length}</strong></td>
-            <td>Chronic issues: <strong style="color: #a78bfa;">${chronic.length}</strong></td>
-          </tr>
-          <tr>
-            <td colspan="3" style="padding-top: 8px; color: #666; font-size: 11px;">
-              Next report: ~${nextReportTime} UTC â¢ Watchdog v2 â¢ Detect â Fix â Learn â Evolve
-            </td>
-          </tr>
-        </table>
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 20px; padding: 16px; background: #0a0a0a; border-radius: 4px;">
+        <div style="text-align: center;">
+          <div style="font-size: 24px; font-weight: bold; color: ${signalCount > 0 ? '#4ade80' : '#ef4444'}">${signalCount}</div>
+          <div style="font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px;">Signals (24h)</div>
+        </div>
+        <div style="text-align: center;">
+          <div style="font-size: 24px; font-weight: bold; color: ${bugCount < 5 ? '#4ade80' : bugCount < 10 ? '#f59e0b' : '#ef4444'}">${bugCount}</div>
+          <div style="font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px;">Open Bugs</div>
+        </div>
+        <div style="text-align: center;">
+          <div style="font-size: 24px; font-weight: bold; color: ${dbMs < 100 ? '#4ade80' : dbMs < 300 ? '#f59e0b' : '#ef4444'}">${dbMs}ms</div>
+          <div style="font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px;">DB Response</div>
+        </div>
+        <div style="text-align: center;">
+          <div style="font-size: 24px; font-weight: bold; color: #4ade80">${resolved.length}</div>
+          <div style="font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px;">Auto-Resolved</div>
+        </div>
       </div>
     `;
     })()} 
 
-    <div style="padding: 14px 28px; background: #0a0a0a; border-top: 1px solid #222;">
+    <div style="padding: 12px 28px; background: #080808; border-top: 1px solid #1a1a1a;">
       ${(() => {
-        const healthItems = [
-          { label: 'New signals (24h)', value: telemetry.signalPipeline.recentSignalCount, good: telemetry.signalPipeline.recentSignalCount > 0 },
-          { label: 'Active sources', value: `${(telemetry as any).sources?.activeCount || '?'} of ${(telemetry as any).sources?.totalCount || '?'}`, good: true },
-          { label: 'Open bugs', value: telemetry.bugReports.totalOpen, good: telemetry.bugReports.totalOpen < 5 },
-          { label: 'DB response', value: `${telemetry.database.responseTimeMs}ms`, good: telemetry.database.responseTimeMs < 200 },
-          { label: 'Agents active', value: (telemetry as any).agents?.activeCount || '?', good: true },
-        ];
-        return `<table style="width: 100%; font-size: 11px; border-collapse: collapse;">
-          <tr>${healthItems.map(item => `
-            <td style="padding: 2px 8px 2px 0; color: #555;">
-              <span style="color: ${item.good ? '#4ade80' : '#ef4444'}; margin-right: 4px;">${item.good ? '&#9679;' : '&#9679;'}</span>
-              ${item.label}: <strong style="color: ${item.good ? '#6ee7b7' : '#fca5a5'};">${item.value}</strong>
-            </td>
-          `).join('')}</tr>
-        </table>`;
-      })()} 
+        const knownBrokenCount2 = analysis.findings.filter(f => f.severity === 'critical' && f.remediationStatus !== 'fixed').length;
+        const nextReportDate2 = new Date(Date.now() + 20 * 3600000);
+        const nextReportUTC2 = nextReportDate2.toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+        const qaPassRate2 = (telemetry as any).qaPassRate || 'No tests run yet';
+        return `
+        <p style="margin: 0; font-size: 11px; color: #444; line-height: 2;">
+          Known broken: <strong style="color: #ef4444">${knownBrokenCount2}</strong> &nbsp;&middot;&nbsp;
+          Chronic issues: <strong style="color: #a78bfa">${chronic.length}</strong> &nbsp;&middot;&nbsp;
+          QA tests: <strong style="color: #60a5fa">${qaPassRate2}</strong> &nbsp;&middot;&nbsp;
+          Next report: <strong style="color: #555">${nextReportUTC2}</strong>
+        </p>
+        `;
+      })()}
     </div>
   </div>
 </body>
 </html>`;
 }
 
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 //                        MAIN HANDLER
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -1885,7 +1891,7 @@ Deno.serve(async (req) => {
     } catch { /* no body */ }
 
     // Phase 0: Load learning history
-    console.log('[Watchdog] ð§  Phase 0: Loading learning history...');
+    console.log('[Watchdog] 🧠 Phase 0: Loading learning history...');
     let learningHistory: LearningHistory;
     try {
       learningHistory = await loadLearningHistory(supabase);
@@ -1896,14 +1902,179 @@ Deno.serve(async (req) => {
     }
 
     // Phase 1: Collect telemetry
-    console.log('[Watchdog] ð¡ Phase 1: Collecting telemetry...');
+    console.log('[Watchdog] 📡 Phase 1: Collecting telemetry...');
     const telemetry = await collectTelemetry(supabase, supabaseUrl, anonKey);
     console.log(`[Watchdog] Telemetry: signals6h=${telemetry.signalPipeline.recentSignalCount}, stale=${telemetry.signalPipeline.staleSources.length}, bugs=${telemetry.bugReports.totalOpen}, docs_stuck=${telemetry.documentPipeline.stuckCount}, docs_failed1h=${telemetry.documentPipeline.failedLast1h}, doc_pipeline_healthy=${telemetry.documentPipeline.pipelineHealthy}`);
 
+    // Phase 1.5: Collect QA and user bug telemetry and wire into findings
+    const findings: any[] = [];
+
+    // QA TEST RESULTS
+    const { data: latestQA } = await supabase
+      .from('qa_test_results')
+      .select('test_name, test_suite, passed, severity, is_known_broken, known_broken_reason, error_message, tested_at')
+      .gte('tested_at', new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString())
+      .order('tested_at', { ascending: false });
+
+    const { data: previousQA } = await supabase
+      .from('qa_test_results')
+      .select('test_name, passed')
+      .gte('tested_at', new Date(Date.now() - 49 * 60 * 60 * 1000).toISOString())
+      .lt('tested_at', new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString());
+
+    const previousMap = new Map((previousQA || []).map((t: any) => [t.test_name, t.passed]));
+    const regressions = (latestQA || []).filter((t: any) => !t.passed && !t.is_known_broken && previousMap.get(t.test_name) === true);
+    const newFixes = (latestQA || []).filter((t: any) => t.passed && t.is_known_broken && previousMap.get(t.test_name) === false);
+    const totalTests = latestQA?.length || 0;
+    const passingTests = (latestQA || []).filter((t: any) => t.passed).length;
+    const qaPassRate = totalTests > 0 ? `${passingTests}/${totalTests}` : 'No tests run yet';
+
+    // Attach qaPassRate to telemetry for email
+    (telemetry as any).qaPassRate = qaPassRate;
+
+    if (regressions.length > 0) {
+      findings.push({
+        severity: 'critical',
+        category: 'QA Tests',
+        title: `${regressions.length} regression(s) detected since yesterday`,
+        analysis: `Tests that were passing yesterday are now failing: ${regressions.map((r: any) => r.test_name).join(', ')}`,
+        recommendation: 'Check recent deployments for breaking changes.',
+        plainEnglish: `Features that were working yesterday are now broken: ${regressions.map((r: any) => r.test_name.replace(/_/g, ' ')).join(', ')}`,
+        action: 'Check recent Claude Code deployments. One of them broke something. Fix before client demo on April 8.',
+        canAutoRemediate: false,
+        remediationAction: 'none',
+      });
+    }
+
+    if (newFixes.length > 0) {
+      findings.push({
+        severity: 'info',
+        category: 'QA Tests',
+        title: `${newFixes.length} previously broken feature(s) now passing`,
+        analysis: `Features that were failing are now working: ${newFixes.map((f: any) => f.test_name).join(', ')}`,
+        recommendation: 'No action needed.',
+        plainEnglish: `Good news — these features are now working: ${newFixes.map((f: any) => f.test_name.replace(/_/g, ' ')).join(', ')}`,
+        action: 'No action needed.',
+        canAutoRemediate: false,
+        remediationAction: 'none',
+      });
+    }
+
+    // USER-REPORTED BUGS
+    const { data: userBugs } = await supabase
+      .from('bug_reports')
+      .select('id, title, severity, ai_diagnosis, status, affects_client_facing, page_url, created_at')
+      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .neq('status', 'auto_resolved')
+      .order('created_at', { ascending: false });
+
+    const clientFacingBugs = (userBugs || []).filter((b: any) => b.affects_client_facing);
+    const otherBugs = (userBugs || []).filter((b: any) => !b.affects_client_facing);
+
+    const { data: autoResolvedBugs } = await supabase
+      .from('bug_reports')
+      .select('title, ai_diagnosis')
+      .eq('status', 'auto_resolved')
+      .gte('resolved_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+
+    if (clientFacingBugs.length > 0) {
+      findings.push({
+        severity: 'critical',
+        category: 'Bug Reports',
+        title: `${clientFacingBugs.length} client-facing bug(s) reported by users`,
+        analysis: `Users found problems affecting what clients see: ${clientFacingBugs.map((b: any) => b.title).join('; ')}`,
+        recommendation: 'Open Fortress bug tracker. Assign to Claude Code immediately.',
+        plainEnglish: `Users found problems affecting what clients see: ${clientFacingBugs.map((b: any) => b.title).join('; ')}`,
+        action: 'Open Fortress bug tracker. Assign to Claude Code immediately.',
+        canAutoRemediate: false,
+        remediationAction: 'none',
+      });
+    }
+
+    if (otherBugs.length > 0) {
+      findings.push({
+        severity: 'warning',
+        category: 'Bug Reports',
+        title: `${otherBugs.length} bug(s) reported by users`,
+        analysis: `Users found ${otherBugs.length} issue(s) in the last 24 hours.`,
+        recommendation: 'Review in Fortress bug tracker. Prioritize any marked high or critical.',
+        plainEnglish: `Users found ${otherBugs.length} issue(s) in the last 24 hours.`,
+        action: 'Review in Fortress bug tracker. Prioritize any marked high or critical.',
+        canAutoRemediate: false,
+        remediationAction: 'none',
+      });
+    }
+
+    if (autoResolvedBugs && autoResolvedBugs.length > 0) {
+      findings.push({
+        severity: 'info',
+        category: 'Bug Reports',
+        title: `${autoResolvedBugs.length} user-reported bug(s) auto-resolved`,
+        analysis: `These user-reported issues were automatically fixed: ${autoResolvedBugs.map((b: any) => b.title).join(', ')}`,
+        recommendation: 'No action needed. Platform self-healed.',
+        plainEnglish: `These user-reported issues were automatically fixed: ${autoResolvedBugs.map((b: any) => b.title).join(', ')}`,
+        action: 'No action needed. Platform self-healed.',
+        canAutoRemediate: false,
+        remediationAction: 'none',
+      });
+    }
+
+    // AGENT LEARNING HEALTH
+    const { data: latestBelief } = await supabase
+      .from('agent_beliefs')
+      .select('last_updated_at, agent_call_sign')
+      .order('last_updated_at', { ascending: false })
+      .limit(1);
+
+    const beliefAge = latestBelief?.[0]?.last_updated_at
+      ? (Date.now() - new Date(latestBelief[0].last_updated_at).getTime()) / 3600000
+      : 999;
+
+    if (beliefAge > 48) {
+      findings.push({
+        severity: 'critical',
+        category: 'Agent Learning',
+        title: 'Agent learning pipeline has stalled',
+        analysis: `Agent beliefs have not been updated in ${Math.round(beliefAge)} hours. Agents are operating on stale knowledge.`,
+        recommendation: 'Check thread-weaver, self-improvement, and knowledge-seeker cron jobs. Review for model errors.',
+        plainEnglish: `Agent beliefs have not been updated in ${Math.round(beliefAge)} hours. Agents may be working from stale knowledge.`,
+        action: 'Check that thread-weaver, self-improvement, and knowledge-seeker cron jobs ran last night.',
+        canAutoRemediate: false,
+        remediationAction: 'none',
+      });
+    }
+
+    // RSS MONITOR HEALTH
+    const { data: rssHeartbeat } = await supabase
+      .from('cron_heartbeat')
+      .select('started_at, status')
+      .eq('job_name', 'monitor-rss-sources')
+      .order('started_at', { ascending: false })
+      .limit(1);
+
+    const rssAge = rssHeartbeat?.[0]?.started_at
+      ? (Date.now() - new Date(rssHeartbeat[0].started_at).getTime()) / 60000
+      : 999;
+
+    if (rssAge > 20) {
+      findings.push({
+        severity: 'critical',
+        category: 'Signal Pipeline',
+        title: `RSS monitor last ran ${Math.round(rssAge)} minutes ago`,
+        analysis: `The RSS monitor should run every 15 minutes — it has been ${Math.round(rssAge)} minutes since last run.`,
+        recommendation: 'Check monitor-rss-sources function logs in Supabase.',
+        plainEnglish: `Signal ingestion may have stalled. The RSS monitor should run every 15 minutes — it has been ${Math.round(rssAge)} minutes.`,
+        action: 'Check monitor-rss-sources function logs in Supabase. A recent deployment may have introduced a crash.',
+        canAutoRemediate: true,
+        remediationAction: 'stale_sources_rescan',
+      });
+    }
+
     // Phase 2: AI Analysis WITH learning context
-    console.log('[Watchdog] ð§  Phase 2: AI analysis with learning context...');
+    console.log('[Watchdog] 🧠 Phase 2: AI analysis with learning context...');
     const analysisInput = {
       telemetry,
+      extraFindings: findings,
       learningHistory: {
         recentFindings: learningHistory.recentFindings.slice(0, 20),
         recurringIssues: learningHistory.recurringIssues,
@@ -1917,14 +2088,16 @@ Deno.serve(async (req) => {
     try {
       analysis = await callAI(
         FORTRESS_SYSTEM_KNOWLEDGE,
-        `Analyze this telemetry AND your learning history to make informed decisions. Skip remediations with poor track records. Identify recurring patterns. USE the adaptiveThresholds to calibrate your severity judgments â these auto-adjust with platform growth.\n\n${JSON.stringify(analysisInput, null, 2)}`
+        `Analyze this telemetry AND your learning history to make informed decisions. Skip remediations with poor track records. Identify recurring patterns. USE the adaptiveThresholds to calibrate your severity judgments — these auto-adjust with platform growth. Also incorporate these pre-computed findings:\n\n${JSON.stringify(analysisInput, null, 2)}`
       );
+      // Merge extra findings with AI findings
+      analysis.findings = [...findings, ...(analysis.findings || [])];
     } catch (e) {
       const aiErrMsg = e instanceof Error ? e.message : String(e);
       console.error('[Watchdog] AI analysis failed:', aiErrMsg);
       analysis = {
         shouldAlert: true, overallAssessment: `AI analysis engine failed: ${aiErrMsg.substring(0, 300)}`,
-        severity: 'monitoring', findings: [], suppressedChecks: [], selfImprovementNotes: ['AI analysis failed -- investigate gateway health'],
+        severity: 'monitoring', findings, suppressedChecks: [], selfImprovementNotes: ['AI analysis failed -- investigate gateway health'],
       };
     }
     console.log(`[Watchdog] AI verdict: severity=${analysis.severity}, findings=${analysis.findings.length}, remediable=${analysis.findings.filter(f => f.canAutoRemediate).length}`);
@@ -1934,15 +2107,15 @@ Deno.serve(async (req) => {
     const remediationResults: RemediationResult[] = [];
 
     if (remediableFindings.length > 0) {
-      console.log(`[Watchdog] ð§ Phase 3: Attempting ${remediableFindings.length} remediation(s)...`);
+      console.log(`[Watchdog] 🔧 Phase 3: Attempting ${remediableFindings.length} remediation(s)...`);
       for (const finding of remediableFindings) {
         const result = await executeRemediation(finding, supabase, supabaseUrl, anonKey, learningHistory);
         remediationResults.push(result);
-        console.log(`[Watchdog] ${result.success ? 'â' : 'â'} ${result.action}: ${result.details}`);
+        console.log(`[Watchdog] ${result.success ? '✓' : '✗'} ${result.action}: ${result.details}`);
       }
 
       // Phase 4: Re-verify with AI (include effectiveness context)
-      console.log('[Watchdog] ð§  Phase 4: AI re-verification with effectiveness history...');
+      console.log('[Watchdog] 🧠 Phase 4: AI re-verification with effectiveness history...');
       try {
         const verificationInput = {
           originalAnalysis: analysis,
@@ -1976,11 +2149,11 @@ Deno.serve(async (req) => {
         }
       }
     } else {
-      console.log('[Watchdog] No auto-remediable issues found â skipping remediation phase');
+      console.log('[Watchdog] No auto-remediable issues found — skipping remediation phase');
     }
 
     // Phase 5: Store learnings for future runs
-    console.log('[Watchdog] ð§  Phase 5: Storing learnings...');
+    console.log('[Watchdog] 🧠 Phase 5: Storing learnings...');
     try {
       await storeLearnings(supabase, runId, analysis, remediationResults, learningHistory, telemetry);
     } catch (e) {
@@ -2011,7 +2184,7 @@ Deno.serve(async (req) => {
       } catch { /* logging is best-effort */ }
     }
 
-    // Phase 7: Email â only send if critical, or if it's the scheduled daily run (dedup via 20h window)
+    // Phase 7: Email — only send if critical, or if it's the scheduled daily run (dedup via 20h window)
     const isCritical = analysis.severity === 'critical';
     const dedupCutoff = new Date(Date.now() - 20 * 3600000).toISOString();
     const { data: recentWatchdogEmails } = await supabase
@@ -2032,15 +2205,15 @@ Deno.serve(async (req) => {
 
       let subject: string;
       if (fixedCount > 0 && unresolvedCount === 0 && chronicCount === 0) {
-        subject = `â Fortress Watchdog: ${fixedCount} issue${fixedCount !== 1 ? 's' : ''} auto-resolved â all systems nominal`;
+        subject = `✓ Fortress Watchdog: ${fixedCount} issue${fixedCount !== 1 ? 's' : ''} auto-resolved — all systems nominal`;
       } else if (chronicCount > 0) {
-        subject = `ð Fortress: ${chronicCount} chronic issue${chronicCount !== 1 ? 's' : ''} ${fixedCount > 0 ? `+ ${fixedCount} fixed` : 'â needs strategic intervention'}`;
+        subject = `🔁 Fortress: ${chronicCount} chronic issue${chronicCount !== 1 ? 's' : ''} ${fixedCount > 0 ? `+ ${fixedCount} fixed` : '— needs strategic intervention'}`;
       } else if (fixedCount > 0 && unresolvedCount > 0) {
-        subject = `â ï¸ Fortress: ${fixedCount} fixed, ${unresolvedCount} still need attention`;
+        subject = `⚠️ Fortress: ${fixedCount} fixed, ${unresolvedCount} still need attention`;
       } else if (analysis.severity === 'critical') {
-        subject = `ð´ Fortress Alert: ${analysis.overallAssessment}`;
+        subject = `🔴 Fortress Alert: ${analysis.overallAssessment}`;
       } else {
-        subject = `â ï¸ Fortress Watchdog: ${analysis.overallAssessment}`;
+        subject = `⚠️ Fortress Watchdog: ${analysis.overallAssessment}`;
       }
 
       const { error: emailError } = await resend.emails.send({
@@ -2052,7 +2225,7 @@ Deno.serve(async (req) => {
 
       if (emailError) console.error('[Watchdog] Email failed:', emailError);
       else {
-        console.log(`[Watchdog] ð§ Report sent to ${ALERT_EMAIL}`);
+        console.log(`[Watchdog] 📧 Report sent to ${ALERT_EMAIL}`);
         // Log for dedup tracking
         await supabase.from('autonomous_actions_log').insert({
           action_type: 'watchdog_report', trigger_source: 'system-watchdog',
@@ -2069,7 +2242,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log('[Watchdog] â All systems nominal â no email needed');
+    console.log('[Watchdog] ✓ All systems nominal — no email needed');
     return successResponse({ success: true, severity: analysis.severity, runId, findings: 0, emailSent: false, learningsStored: true, assessment: analysis.overallAssessment });
 
   } catch (error) {
@@ -2081,7 +2254,7 @@ Deno.serve(async (req) => {
         const resend = new Resend(RESEND_API_KEY);
         await resend.emails.send({
           from: fromEmail, to: [ALERT_EMAIL],
-          subject: 'ð´ Fortress Watchdog Agent CRASHED',
+          subject: '🔴 Fortress Watchdog Agent CRASHED',
           html: `<div style="font-family:sans-serif;background:#111;color:#e0e0e0;padding:24px"><h2 style="color:#ef4444">Watchdog Agent Failure</h2><p>The self-healing watchdog failed to complete its audit.</p><pre style="background:#1a1a1a;padding:16px;border-radius:4px;color:#fca5a5">${error instanceof Error ? error.stack || error.message : String(error)}</pre></div>`,
         });
       }

@@ -169,7 +169,7 @@ export const BugReportDialog = ({ open, onOpenChange }: BugReportDialogProps) =>
         return;
       }
 
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('bug_reports')
         .insert({
           user_id: user.id,
@@ -179,9 +179,18 @@ export const BugReportDialog = ({ open, onOpenChange }: BugReportDialogProps) =>
           page_url: window.location.href,
           browser_info: navigator.userAgent,
           screenshots: screenshots.length > 0 ? screenshots : null,
-        });
+        })
+        .select('id')
+        .single();
 
       if (error) throw error;
+
+      // Fire-and-forget AI triage
+      if (data?.id) {
+        supabase.functions.invoke('process-bug-report', {
+          body: { bug_id: data.id, title: title.trim(), description: description.trim(), severity, page_url: window.location.href }
+        }).catch(console.error);
+      }
 
       toast.success("Bug report submitted successfully");
       setTitle("");
