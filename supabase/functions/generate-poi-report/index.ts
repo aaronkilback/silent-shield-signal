@@ -109,12 +109,25 @@ Deno.serve(async (req) => {
       .limit(50);
 
     // ── Load signals mentioning this entity ──────────────────────────────────
+    // Check related_entity_names (array), entity_tags (array), and normalized_text (text)
     const { data: signals } = await supabase
       .from('signals')
       .select('id, title, signal_type, severity, severity_score, source_name, event_date, normalized_text')
-      .contains('related_entity_names', [entity.name])
+      .or(`related_entity_names.cs.{"${entity.name}"},entity_tags.cs.{"${entity.name}"},normalized_text.ilike.%${entity.name}%`)
       .order('event_date', { ascending: false })
       .limit(20);
+
+    // ── Load speculative agent analyses for this entity's signals ────────────
+    let signalAnalyses: any[] = [];
+    if (signals && signals.length > 0) {
+      const { data: analyses } = await supabase
+        .from('signal_agent_analyses')
+        .select('signal_id, agent_call_sign, analysis, confidence_score, trigger_reason, created_at')
+        .in('signal_id', signals.map(s => s.id))
+        .order('created_at', { ascending: false })
+        .limit(15);
+      signalAnalyses = analyses || [];
+    }
 
     // ── Load watch-list status ───────────────────────────────────────────────
     const { data: watchEntries } = await supabase
@@ -223,13 +236,16 @@ Deno.serve(async (req) => {
       `- Watch Level: ${w.watch_level} | Reason: ${w.reason} | Boost: +${w.severity_boost}`
     ).join('\n');
 
+    const entityEmails: string[] = (entity.attributes as any)?.emails || [];
     const hibpText = investigation?.hibp_checked
       ? (investigation.hibp_breaches?.length
           ? `Breaches found:\n${investigation.hibp_breaches.map((b: any) =>
               `  - ${b.Name} (${b.BreachDate}): ${b.DataClasses?.join(', ')}`
             ).join('\n')}`
           : 'No credential breaches found in HaveIBeenPwned database.')
-      : 'Breach check not performed.';
+      : entityEmails.length > 0
+        ? `Breach check not performed despite ${entityEmails.length} known email(s) on file: ${entityEmails.join(', ')}. HIBP_API_KEY may not be configured. Recommend manual breach check at haveibeenpwned.com.`
+        : 'Breach check not performed — no email address on file for this subject. Add email to entity attributes and re-run investigation to enable automated breach checking.';
 
     const investigationMeta = investigation
       ? `Investigation run: ${new Date(investigation.created_at).toLocaleDateString()} | Sources searched: ${investigation.sources_searched} | Results found: ${investigation.results_found} | Queries run: ${investigation.queries_run?.length || 0}`
@@ -240,6 +256,13 @@ Deno.serve(async (req) => {
           `[Agent Finding ${i + 1}] ${f.agent} (${f.specialty}) — Incident: "${f.incident_title}" (Severity: ${f.incident_severity})\n${f.analysis}`
         ).join('\n\n---\n\n')
       : 'No prior agent investigation findings for this subject.';
+
+    const signalAnalysesText = signalAnalyses.length > 0
+      ? signalAnalyses.map((a, i) => {
+          const sig = (signals || []).find(s => s.id === a.signal_id);
+          return `[Signal Analysis ${i + 1}] ${a.agent_call_sign} — Signal: "${sig?.title || a.signal_id}" (${sig?.severity || 'unknown'} severity)\nConfidence: ${a.confidence_score != null ? Math.round(a.confidence_score * 100) + '%' : 'N/A'} | Trigger: ${a.trigger_reason || 'auto'}\n${a.analysis}`;
+        }).join('\n\n---\n\n')
+      : null;
 
     const userPrompt = `
 # INTELLIGENCE REPORT REQUEST
@@ -264,6 +287,7 @@ ${watchText || 'Not currently on watch list.'}
 The following findings were contributed by specialized AI agents during prior incident investigations involving this subject:
 
 ${agentFindingsText}
+${signalAnalysesText ? `\n## SIGNAL PRE-ANALYSIS (${signalAnalyses.length} agent analyses of signals mentioning this subject)\n${signalAnalysesText}` : ''}
 
 ## SIGNAL HISTORY (${(signals || []).length} signals)
 ${signalsText || 'No signals found mentioning this subject.'}

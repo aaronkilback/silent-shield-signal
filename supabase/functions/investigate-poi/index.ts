@@ -194,6 +194,18 @@ function buildQueries(entity: any): string[] {
     queries.push(`"${email}"`);
   }
 
+  // ── Tier 10: Associates & network ─────────────────────────────────────────
+  queries.push(`"${name}" associate OR colleague OR "known associate" OR accomplice OR confederate`);
+  queries.push(`"${name}" brother OR sister OR wife OR husband OR spouse OR partner OR son OR daughter OR parent`);
+  if (organization) {
+    queries.push(`"${name}" "${organization}" colleague OR coworker OR associate OR "works with"`);
+  }
+
+  // ── Tier 11: Contact information ──────────────────────────────────────────
+  queries.push(`"${name}" "phone number" OR "cell phone" OR "mobile number" OR "contact number"`);
+  queries.push(`"${name}" email OR "@gmail.com" OR "@hotmail.com" OR "@yahoo.com" OR "@outlook.com" OR "@proton.me"`);
+  queries.push(`"${name}" contact OR "reach" OR "get in touch" OR "direct message"`);
+
   // Deduplicate
   return [...new Set(queries)];
 }
