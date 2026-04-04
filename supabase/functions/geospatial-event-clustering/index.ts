@@ -153,7 +153,7 @@ Deno.serve(async (req) => {
           }
         }
 
-        if (cluster.length >= 2) {
+        if (cluster.length >= 5) {
           rawClusters.push(cluster);
         }
       }
@@ -254,8 +254,15 @@ Provide a concise analysis in this exact JSON format:
         } catch (aiErr) {
           console.error(`[GeoCluster] AI analysis failed for cluster:`, aiErr);
           // Still save cluster without narrative
+          const typeBreakdown = Object.entries(
+            cluster.reduce((acc: Record<string, number>, s) => {
+              const t = s.rule_category || 'unknown';
+              acc[t] = (acc[t] || 0) + 1;
+              return acc;
+            }, {})
+          ).map(([t, n]) => `${t}(${n})`).join(', ');
           const fallback = {
-            cluster_label: `${cluster.length} signals near ${cluster[0].location}`,
+            cluster_label: `${cluster.length} signals near ${cluster[0].location} — types: ${typeBreakdown}`,
             signal_ids: cluster.map(s => s.id),
             entity_overlap: entities,
             temporal_window_hours: 48,

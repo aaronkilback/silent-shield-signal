@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
     // ═══════════════════════════════════════════════════════════
     
     const cutoff6h = new Date(Date.now() - 6 * 3600000).toISOString();
-    const cutoff2h = new Date(Date.now() - 2 * 3600000).toISOString();
+    const cutoff4h = new Date(Date.now() - 4 * 3600000).toISOString();
 
     const { data: recentSignals, error: sigErr } = await supabase
       .from('signals')
@@ -79,9 +79,9 @@ Deno.serve(async (req) => {
     }
 
     for (const [category, catSignals] of categoryBuckets.entries()) {
-      // Check 2-hour window velocity
-      const recentWindow = catSignals.filter(s => s.created_at >= cutoff2h);
-      if (recentWindow.length >= 3) {
+      // Check 4-hour window velocity
+      const recentWindow = catSignals.filter(s => s.created_at >= cutoff4h);
+      if (recentWindow.length >= 5) {
         const sevBreakdown: Record<string, number> = {};
         recentWindow.forEach(s => {
           const sev = s.severity || 'unknown';
@@ -95,17 +95,19 @@ Deno.serve(async (req) => {
           (recentWindow.length >= 5 ? 20 : 0)
         ));
 
+        const prior2h = catSignals.filter(s => s.created_at < cutoff4h).length;
+        const isEscalating = recentWindow.length > prior2h;
         clusters.push({
           cluster_type: 'category_surge',
           key: category,
           signal_count: recentWindow.length,
           signal_ids: recentWindow.map(s => s.id),
-          window_hours: 2,
+          window_hours: 4,
           severity_breakdown: sevBreakdown,
           first_seen: recentWindow[recentWindow.length - 1].created_at,
           last_seen: recentWindow[0].created_at,
           risk_score: riskScore,
-          description: `${recentWindow.length} "${category}" signals detected in 2-hour window (${highSevCount} high/critical)`,
+          description: `Threat type cluster: ${recentWindow.length} "${category}" signals in 4-hour window (${highSevCount} high/critical). Trajectory: ${isEscalating ? 'ESCALATING — rate increased vs prior period' : 'STABLE — consistent with baseline'}. This surge warrants review for coordinated activity or developing campaign.`,
         });
       }
     }
@@ -126,8 +128,8 @@ Deno.serve(async (req) => {
     }
 
     for (const [location, locSignals] of locationBuckets.entries()) {
-      const recentWindow = locSignals.filter(s => s.created_at >= cutoff2h);
-      if (recentWindow.length >= 3) {
+      const recentWindow = locSignals.filter(s => s.created_at >= cutoff4h);
+      if (recentWindow.length >= 5) {
         const categories = new Set(recentWindow.map(s => s.category || 'unknown'));
         const sevBreakdown: Record<string, number> = {};
         recentWindow.forEach(s => {
@@ -141,17 +143,20 @@ Deno.serve(async (req) => {
           ((sevBreakdown['critical'] || 0) + (sevBreakdown['high'] || 0)) * 15
         ));
 
+        const typeBreakdown = [...categories].join(', ');
+        const priorWindow = locSignals.filter(s => s.created_at < cutoff4h).length;
+        const isEscalating = recentWindow.length > priorWindow;
         clusters.push({
           cluster_type: 'geographic_surge',
           key: location,
           signal_count: recentWindow.length,
           signal_ids: recentWindow.map(s => s.id),
-          window_hours: 2,
+          window_hours: 4,
           severity_breakdown: sevBreakdown,
           first_seen: recentWindow[recentWindow.length - 1].created_at,
           last_seen: recentWindow[0].created_at,
           risk_score: riskScore,
-          description: `${recentWindow.length} signals from "${location}" across ${categories.size} categories in 2h`,
+          description: `Geographic cluster detected: ${recentWindow.length} signals concentrated near ${location} within 4 hours. Signal types: ${typeBreakdown}. Trajectory: ${isEscalating ? 'ESCALATING — count increased from previous period' : 'STABLE — consistent with baseline activity'}. This concentration warrants review for coordinated activity or developing situation.`,
         });
       }
     }
@@ -171,25 +176,28 @@ Deno.serve(async (req) => {
     }
 
     for (const [entity, entSignals] of entityBuckets.entries()) {
-      const recentWindow = entSignals.filter(s => s.created_at >= cutoff2h);
-      if (recentWindow.length >= 3) {
+      const recentWindow = entSignals.filter(s => s.created_at >= cutoff4h);
+      if (recentWindow.length >= 5) {
         const sevBreakdown: Record<string, number> = {};
         recentWindow.forEach(s => {
           const sev = s.severity || 'unknown';
           sevBreakdown[sev] = (sevBreakdown[sev] || 0) + 1;
         });
 
+        const highSevCount = (sevBreakdown['critical'] || 0) + (sevBreakdown['high'] || 0);
+        const priorWindow = entSignals.filter(s => s.created_at < cutoff4h).length;
+        const isEscalating = recentWindow.length > priorWindow;
         clusters.push({
           cluster_type: 'entity_surge',
           key: entity,
           signal_count: recentWindow.length,
           signal_ids: recentWindow.map(s => s.id),
-          window_hours: 2,
+          window_hours: 4,
           severity_breakdown: sevBreakdown,
           first_seen: recentWindow[recentWindow.length - 1].created_at,
           last_seen: recentWindow[0].created_at,
-          risk_score: Math.min(100, recentWindow.length * 15 + ((sevBreakdown['critical'] || 0) + (sevBreakdown['high'] || 0)) * 20),
-          description: `Entity "${entity}" mentioned in ${recentWindow.length} signals within 2h`,
+          risk_score: Math.min(100, recentWindow.length * 15 + highSevCount * 20),
+          description: `Entity surge: "${entity}" mentioned in ${recentWindow.length} signals within 4 hours (${highSevCount} high/critical). Trajectory: ${isEscalating ? 'ESCALATING — mentions accelerating' : 'STABLE — consistent mention rate'}. Elevated entity attention may indicate targeted campaign or emerging incident.`,
         });
       }
     }
@@ -198,9 +206,9 @@ Deno.serve(async (req) => {
     // PHASE 5: Cross-domain pattern detection
     // ═══════════════════════════════════════════════════════════
 
-    // Check if multiple categories are surging simultaneously in same location
+    // Check if multiple categories are surging simultaneously in same location (4h window)
     const crossDomainMap = new Map<string, Set<string>>();
-    for (const sig of signals.filter(s => s.created_at >= cutoff2h)) {
+    for (const sig of signals.filter(s => s.created_at >= cutoff4h)) {
       const loc = (sig.location || '').trim().toLowerCase();
       if (!loc || loc.length < 3) continue;
       if (!crossDomainMap.has(loc)) crossDomainMap.set(loc, new Set());
@@ -211,14 +219,14 @@ Deno.serve(async (req) => {
       if (categories.size >= 3) {
         const locSignals = signals.filter(s => 
           (s.location || '').trim().toLowerCase() === location && 
-          s.created_at >= cutoff2h
+          s.created_at >= cutoff4h
         );
         clusters.push({
           cluster_type: 'cross_domain',
           key: `${location}:${[...categories].join('+')}`,
           signal_count: locSignals.length,
           signal_ids: locSignals.map(s => s.id),
-          window_hours: 2,
+          window_hours: 4,
           severity_breakdown: {},
           first_seen: locSignals[locSignals.length - 1]?.created_at || '',
           last_seen: locSignals[0]?.created_at || '',
@@ -259,7 +267,7 @@ Deno.serve(async (req) => {
               },
               {
                 role: 'user',
-                content: `ACTIVE THREAT CLUSTERS detected in the last 2 hours:\n${clusterSummary}\n\nAssess: What is the most probable emerging threat? What immediate action should the SOC take?`,
+                content: `ACTIVE THREAT CLUSTERS detected in the last 4 hours:\n${clusterSummary}\n\nAssess: What is the most probable emerging threat? What immediate action should the SOC take?`,
               },
             ],
             max_tokens: 400,
