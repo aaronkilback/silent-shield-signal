@@ -182,6 +182,12 @@ Deno.serve(async (req: Request) => {
   try {
     const supabase = createServiceClient();
 
+    await supabase.from('cron_heartbeat').upsert({
+      job_name: 'thread-weaver-2am',
+      started_at: new Date().toISOString(),
+      status: 'running',
+    }, { onConflict: 'job_name' });
+
     const result: WeaverResult = {
       threads_created: 0,
       threads_updated: 0,
@@ -393,6 +399,13 @@ Deno.serve(async (req: Request) => {
 
     console.log('[ThreadWeaver] Run complete:', result);
 
+    await supabase.from('cron_heartbeat').upsert({
+      job_name: 'thread-weaver-2am',
+      completed_at: new Date().toISOString(),
+      status: 'succeeded',
+      result_summary: { threads_created: result.threads_created, threads_updated: result.threads_updated, memories_linked: result.memories_linked, cold_threads: result.cold_threads },
+    }, { onConflict: 'job_name' });
+
     return successResponse({
       success: true,
       ...result,
@@ -402,6 +415,15 @@ Deno.serve(async (req: Request) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[ThreadWeaver] Fatal error:', err);
+    try {
+      const supabase = createServiceClient();
+      await supabase.from('cron_heartbeat').upsert({
+        job_name: 'thread-weaver-2am',
+        completed_at: new Date().toISOString(),
+        status: 'failed',
+        result_summary: { error: message },
+      }, { onConflict: 'job_name' });
+    } catch (_) {}
     return errorResponse(`Thread weaver failed: ${message}`, 500);
   }
 });

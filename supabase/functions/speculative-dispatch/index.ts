@@ -71,6 +71,7 @@ Deno.serve(async (req) => {
             agent_id: agent.id,
             message: userMessage,
             client_id: client_id || null,
+            stream: false,
           },
         });
         const responseData = chatResponse.data as any;

@@ -13,6 +13,12 @@ Deno.serve(async (req) => {
     const report: string[] = [];
     const actions: Array<{ type: string; agent?: string; detail: string }> = [];
 
+    await supabase.from('cron_heartbeat').upsert({
+      job_name: 'self-improvement-nightly',
+      started_at: new Date().toISOString(),
+      status: 'running',
+    }, { onConflict: 'job_name' });
+
     console.log('[self-improvement] Starting improvement cycle...');
 
     // ── 1. Load calibration scores ─────────────────────────────────────────
@@ -257,6 +263,13 @@ Return ONLY the JSON array.`;
       });
     }
 
+    await supabase.from('cron_heartbeat').upsert({
+      job_name: 'self-improvement-nightly',
+      completed_at: new Date().toISOString(),
+      status: 'succeeded',
+      result_summary: { prompts_updated: promptsUpdated, learning_triggered: learningTriggered, underperformers: underperformers.length, dormant_agents: dormantAgents.length },
+    }, { onConflict: 'job_name' });
+
     return successResponse({
       cycle_complete: true,
       dry_run,
@@ -270,6 +283,15 @@ Return ONLY the JSON array.`;
 
   } catch (err) {
     console.error('[self-improvement] Error:', err);
+    try {
+      const supabase = createServiceClient();
+      await supabase.from('cron_heartbeat').upsert({
+        job_name: 'self-improvement-nightly',
+        completed_at: new Date().toISOString(),
+        status: 'failed',
+        result_summary: { error: err instanceof Error ? err.message : String(err) },
+      }, { onConflict: 'job_name' });
+    } catch (_) {}
     return errorResponse(err instanceof Error ? err.message : 'Unknown error', 500);
   }
 });

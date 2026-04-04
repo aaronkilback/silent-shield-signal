@@ -1096,6 +1096,20 @@ Score this signal's relevance and classify the connection.`
       }
     }).catch(err => console.error('[ingest-signal] anomaly scoring:', err));
 
+    // Fire-and-forget speculative agent dispatch for high/critical signals
+    if (classification.severity === 'critical' || classification.severity === 'high') {
+      supabase.functions.invoke('speculative-dispatch', {
+        body: {
+          signal_id: signal.id,
+          signal_text: signal.normalized_text,
+          category: classification.category,
+          severity: classification.severity,
+          client_id: clientId,
+          trigger_reason: 'auto_ingest',
+        }
+      }).catch(err => console.error('[ingest-signal] speculative-dispatch fire-and-forget failed:', err));
+    }
+
     // Now create duplicate detection records if any near-duplicates found
     if (dupCheck?.data?.duplicates && dupCheck.data.duplicates.length > 0) {
       console.log(`Found ${dupCheck.data.duplicates.length} near-duplicate signals`);

@@ -76,6 +76,12 @@ Deno.serve(async (req) => {
 
     if (!PERPLEXITY_API_KEY) return errorResponse('PERPLEXITY_API_KEY not configured', 500);
 
+    await supabase.from('cron_heartbeat').upsert({
+      job_name: 'agent-knowledge-seeker-4am',
+      started_at: new Date().toISOString(),
+      status: 'running',
+    }, { onConflict: 'job_name' });
+
     const body = await req.json().catch(() => ({}));
     const {
       agent_call_sign,   // target a specific agent (optional)
@@ -117,6 +123,13 @@ Deno.serve(async (req) => {
       angles: results[i]?.status === 'fulfilled' ? results[i].value : { error: (results[i] as any)?.reason },
     }));
 
+    await supabase.from('cron_heartbeat').upsert({
+      job_name: 'agent-knowledge-seeker-4am',
+      completed_at: new Date().toISOString(),
+      status: 'succeeded',
+      result_summary: { agents_processed: agents.length, succeeded, failed, queries_total: agents.length * anglesToRun.length },
+    }, { onConflict: 'job_name' });
+
     return successResponse({
       message: 'Agent knowledge hunt complete',
       agents_processed: agents.length,
@@ -130,6 +143,15 @@ Deno.serve(async (req) => {
 
   } catch (err) {
     console.error('[agent-knowledge-seeker] Error:', err);
+    try {
+      const supabase = createServiceClient();
+      await supabase.from('cron_heartbeat').upsert({
+        job_name: 'agent-knowledge-seeker-4am',
+        completed_at: new Date().toISOString(),
+        status: 'failed',
+        result_summary: { error: err instanceof Error ? err.message : String(err) },
+      }, { onConflict: 'job_name' });
+    } catch (_) {}
     return errorResponse(err instanceof Error ? err.message : 'Unknown error', 500);
   }
 });

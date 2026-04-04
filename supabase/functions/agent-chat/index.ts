@@ -1495,6 +1495,15 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
       return result.raw;
     };
 
+    // Non-streaming JSON path for internal callers (e.g. speculative-dispatch)
+    if (body.stream === false) {
+      const raw = await makeAICall(messages, false);
+      const content = raw?.choices?.[0]?.message?.content || '';
+      return new Response(JSON.stringify({ response: content }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const { readable: sseReadable, writable: sseWritable } = new TransformStream<Uint8Array, Uint8Array>();
     const sseWriter = sseWritable.getWriter();
     const sseEnc = new TextEncoder();
