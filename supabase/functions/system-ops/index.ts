@@ -757,6 +757,39 @@ async function handleAggregateImplicitFeedback(): Promise<Response> {
   upserts.push(upsertLearningProfile(supabase, 'implicit_behavioral_metrics', behavioralMetrics));
   await Promise.all(upserts);
 
+  // Inject top engaged patterns as a behavioral calibration belief for AEGIS-CMD
+  try {
+    const { data: profiles } = await supabase
+      .from('learning_profiles')
+      .select('profile_type, features')
+      .in('profile_type', ['implicit_engaged_patterns', 'implicit_dismissed_patterns'])
+      .order('last_updated', { ascending: false });
+
+    const engaged = profiles?.find(p => p.profile_type === 'implicit_engaged_patterns')?.features;
+    const dismissed = profiles?.find(p => p.profile_type === 'implicit_dismissed_patterns')?.features;
+
+    if (engaged) {
+      const { data: aegis } = await supabase
+        .from('ai_agents')
+        .select('id')
+        .eq('call_sign', 'AEGIS-CMD')
+        .single();
+
+      if (aegis) {
+        await supabase.from('agent_beliefs').upsert({
+          agent_call_sign: 'AEGIS-CMD',
+          hypothesis: 'User engagement patterns indicate priority intelligence categories',
+          evidence_summary: `Engaged patterns: ${JSON.stringify(engaged).substring(0, 300)}. Dismissed patterns: ${JSON.stringify(dismissed ?? {}).substring(0, 200)}.`,
+          confidence: 0.75,
+          domain: 'user_calibration',
+          last_updated_at: new Date().toISOString(),
+        }, { onConflict: 'agent_call_sign,hypothesis' });
+      }
+    }
+  } catch (beliefErr) {
+    console.warn('[SystemOps:implicit-feedback] Belief upsert failed (non-blocking):', beliefErr);
+  }
+
   console.log(`[SystemOps:implicit-feedback] Aggregated ${events.length} events → ${signalStats.size} signals`);
   return successResponse({
     processed: events.length,

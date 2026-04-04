@@ -91,7 +91,7 @@ export function SignalDetailSheet({
       });
       if (error) throw error;
       setFeedbackGiven(feedbackType);
-      toast.success('Feedback recorded — thank you');
+      toast.success('Thanks — AEGIS will use this to improve future classifications');
     } catch {
       toast.error('Failed to save feedback');
     } finally {
@@ -203,6 +203,57 @@ export function SignalDetailSheet({
                 <Badge variant="secondary" className="text-xs">
                   Updated · {updateCount}
                 </Badge>
+              )}
+            </div>
+
+            {/* Analyst Feedback — above the fold so analysts see it immediately */}
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+              <p className="text-xs text-muted-foreground mb-2.5">Help AEGIS learn — was this signal correctly classified?</p>
+              {feedbackGiven ? (
+                <p className="text-sm text-muted-foreground flex items-center gap-2">
+                  <Check className="h-4 w-4 text-green-500" />
+                  Feedback recorded
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                      disabled={feedbackLoading}
+                      onClick={() => submitFeedback('relevant')}
+                    >
+                      <ThumbsUp className="h-3.5 w-3.5 mr-1.5" />
+                      Relevant
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                      disabled={feedbackLoading}
+                      onClick={() => submitFeedback('not_relevant')}
+                    >
+                      <ThumbsDown className="h-3.5 w-3.5 mr-1.5" />
+                      Not Relevant
+                    </Button>
+                  </div>
+                  {signal.severity && signal.severity !== 'critical' && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full text-orange-500 border-orange-500/30 hover:bg-orange-500/10"
+                      disabled={feedbackLoading}
+                      onClick={() => {
+                        const upgrades: Record<string, string> = { low: 'medium', medium: 'high', high: 'critical' };
+                        submitFeedback('wrong_severity', upgrades[signal.severity!] || 'high');
+                      }}
+                    >
+                      <ShieldAlert className="h-3.5 w-3.5 mr-1.5" />
+                      Severity too low — escalate
+                    </Button>
+                  )}
+                </div>
               )}
             </div>
 
@@ -540,58 +591,6 @@ export function SignalDetailSheet({
                 </div>
               </>
             )}
-
-            {/* Analyst Feedback */}
-            <Separator />
-            <div>
-              <h4 className="text-sm font-medium mb-3">Signal Quality Feedback</h4>
-              {feedbackGiven ? (
-                <p className="text-sm text-muted-foreground flex items-center gap-2">
-                  <Check className="h-4 w-4 text-green-500" />
-                  Feedback recorded
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="flex-1"
-                      disabled={feedbackLoading}
-                      onClick={() => submitFeedback('relevant')}
-                    >
-                      <ThumbsUp className="h-3.5 w-3.5 mr-1.5" />
-                      Relevant
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="flex-1"
-                      disabled={feedbackLoading}
-                      onClick={() => submitFeedback('not_relevant')}
-                    >
-                      <ThumbsDown className="h-3.5 w-3.5 mr-1.5" />
-                      Not Relevant
-                    </Button>
-                  </div>
-                  {signal.severity && signal.severity !== 'critical' && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="w-full text-orange-500 border-orange-500/30 hover:bg-orange-500/10"
-                      disabled={feedbackLoading}
-                      onClick={() => {
-                        const upgrades: Record<string, string> = { low: 'medium', medium: 'high', high: 'critical' };
-                        submitFeedback('wrong_severity', upgrades[signal.severity!] || 'high');
-                      }}
-                    >
-                      <ShieldAlert className="h-3.5 w-3.5 mr-1.5" />
-                      Severity too low — escalate
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
 
             {/* Signal ID */}
             <Separator />
