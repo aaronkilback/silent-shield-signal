@@ -117,6 +117,7 @@ const Signals = () => {
         .from("signal_correlation_groups")
         .select("*")
         .or('match_confidence.eq.none,match_confidence.is.null')
+        .neq('match_confidence', 'assigned')
         .order("created_at", { ascending: false })
         .limit(100);
 

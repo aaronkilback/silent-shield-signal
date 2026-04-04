@@ -13,7 +13,8 @@ interface AssignClientDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   signal: {
-    id: string;
+    id: string;                 // signal_correlation_groups.id
+    primary_signal_id?: string; // signals.id (the actual row to update)
     normalized_text: string | null;
   } | null;
   onAssigned: () => void;
@@ -56,12 +57,19 @@ export function AssignClientDialog({
     mutationFn: async () => {
       if (!signal || !selectedClientId) throw new Error("Missing required data");
 
-      const { error } = await supabase
+      // Update the actual signal row (primary_signal_id) with the new client
+      const signalId = signal.primary_signal_id || signal.id;
+      const { error: signalError } = await supabase
         .from("signals")
         .update({ client_id: selectedClientId })
-        .eq("id", signal.id);
+        .eq("id", signalId);
+      if (signalError) throw signalError;
 
-      if (error) throw error;
+      // Mark the correlation group as assigned so it leaves the Unmatched tab
+      await supabase
+        .from("signal_correlation_groups")
+        .update({ match_confidence: "assigned" })
+        .eq("id", signal.id);
     },
     onSuccess: () => {
       toast.success("Signal assigned to client successfully");
