@@ -30,9 +30,10 @@ interface Message {
 
 interface AgentInteractionProps {
   agent: AIAgent;
+  initialMessage?: string;
 }
 
-export function AgentInteraction({ agent }: AgentInteractionProps) {
+export function AgentInteraction({ agent, initialMessage }: AgentInteractionProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -265,12 +266,23 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
     }
   }, [agent.id, agent.call_sign, user]);
 
+  const initialMessageSentRef = useRef(false);
+
   useEffect(() => {
     setMessages([]);
     setConversationId(null);
     setInput("");
+    initialMessageSentRef.current = false;
     loadConversation();
   }, [agent.id, loadConversation]);
+
+  // Pre-populate input with initialMessage once the conversation is ready
+  useEffect(() => {
+    if (initialMessage && conversationId && !isLoadingHistory && !initialMessageSentRef.current) {
+      initialMessageSentRef.current = true;
+      setInput(initialMessage);
+    }
+  }, [initialMessage, conversationId, isLoadingHistory]);
 
   // Auto-scroll to bottom when messages change or history loads
   useEffect(() => {
@@ -314,23 +326,75 @@ export function AgentInteraction({ agent }: AgentInteractionProps) {
         .update({ updated_at: new Date().toISOString() })
         .eq("id", conversationId);
 
-      const { data, error } = await supabase.functions.invoke("agent-chat", {
-        body: {
+      // Streaming fetch — text starts appearing as soon as the first token arrives
+      const { data: { session } } = await supabase.auth.getSession();
+      const supabaseUrl = (supabase as any).supabaseUrl ?? import.meta.env.VITE_SUPABASE_URL;
+      const anonKey = (supabase as any).supabaseKey ?? import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      const authHeader = session?.access_token ? `Bearer ${session.access_token}` : `Bearer ${anonKey}`;
+
+      const resp = await fetch(`${supabaseUrl}/functions/v1/agent-chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': authHeader,
+          'apikey': anonKey,
+        },
+        body: JSON.stringify({
           agent_id: agent.id,
           client_id: selectedClientId,
           message: userMessage,
           conversation_history: messages,
-        },
+        }),
       });
 
-      if (error) throw error;
+      if (!resp.ok) throw new Error(`agent-chat ${resp.status}`);
 
-      const assistantMessage = data.response;
+      // Add a placeholder assistant message that will fill in as chunks arrive
+      setMessages((prev) => [...prev, { role: "assistant" as const, content: "" }]);
 
+      const reader = resp.body?.getReader();
+      const decoder = new TextDecoder();
+      let fullResponse = '';
+      let sseBuffer = '';
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split('\n\n');
+          sseBuffer = lines.pop() ?? '';
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const raw = line.slice(6).trim();
+            if (raw === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(raw);
+              if (parsed.type === 'content' && parsed.content) {
+                fullResponse += parsed.content;
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = { role: 'assistant', content: fullResponse };
+                  return updated;
+                });
+              } else if (parsed.type === 'error') {
+                throw new Error(parsed.error || 'Agent error');
+              }
+            } catch (e) {
+              if (e instanceof Error && e.message !== 'Agent error') continue;
+              throw e;
+            }
+          }
+        }
+      }
+
+      const assistantMessage = fullResponse || 'No response received.';
+
+      // Ensure final message is saved (in case last setMessages was batched)
       setMessages((prev) => {
-        const last = prev[prev.length - 1];
-        if (last?.role === 'assistant' && last.content === assistantMessage) return prev;
-        return [...prev, { role: "assistant", content: assistantMessage }];
+        const updated = [...prev];
+        updated[updated.length - 1] = { role: 'assistant', content: assistantMessage };
+        return updated;
       });
 
       await supabase.from("agent_messages").insert({

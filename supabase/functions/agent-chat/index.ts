@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { callAiGateway, callAiGatewayStream } from "../_shared/ai-gateway.ts";
 import { validateString, validateUUID, validateMessages, validateAll } from "../_shared/input-validation.ts";
 import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
 import { buildCOP, formatCOPForPrompt } from "../_shared/common-operating-picture.ts";
@@ -1468,21 +1468,13 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
       { role: 'user', content: message }
     ];
 
-    // ── 45-SECOND OVERALL TIMEOUT ─────────────────────────────────
-    // If context-building already consumed most of the budget, return
-    // a partial response rather than timing out completely.
+    // ── STREAMING RESPONSE SETUP ──────────────────────────────────
+    // Return an SSE stream immediately; all AI work happens in the
+    // background IIFE that writes to the writable end.
     const AGENT_TIMEOUT_MS = 45_000;
     const elapsedMs = Date.now() - requestStart;
-    if (elapsedMs > AGENT_TIMEOUT_MS) {
-      console.warn(`[agent-chat] Context building took ${elapsedMs}ms — exceeded ${AGENT_TIMEOUT_MS}ms budget, returning partial response`);
-      return new Response(JSON.stringify({
-        response: 'I am processing a complex analysis. The full response is taking longer than expected — please try again in a moment.',
-        timeout: true,
-        partial: true,
-      }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    }
 
-    // Call AI Gateway with tools - using retry wrapper for reliability
+    // Keep makeAICall as a non-streaming fallback (used if streaming fails)
     const makeAICall = async (msgs: any[], includeTools: boolean = true) => {
       const result = await callAiGateway({
         model: 'gpt-4o-mini',
@@ -1494,41 +1486,92 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           ...(includeTools ? { tools } : {}),
         },
       });
-
       if (result.error) {
         if (result.error.includes('429')) throw new Error('RATE_LIMIT');
         if (result.error.includes('402')) throw new Error('PAYMENT_REQUIRED');
         if (result.circuitOpen) throw new Error('AI Gateway circuit is open');
         throw new Error(result.error);
       }
-
       return result.raw;
     };
 
-    let data: any;
+    const { readable: sseReadable, writable: sseWritable } = new TransformStream<Uint8Array, Uint8Array>();
+    const sseWriter = sseWritable.getWriter();
+    const sseEnc = new TextEncoder();
+    const sendSSE = async (d: object | string) =>
+      sseWriter.write(sseEnc.encode(`data: ${typeof d === 'string' ? d : JSON.stringify(d)}\n\n`));
+
+    // ── BACKGROUND PIPELINE (fire-and-forget) ────────────────────
+    (async () => {
     try {
-      data = await withRetry(() => makeAICall(messages, true));
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : 'Unknown error';
-      if (errMsg === 'RATE_LIMIT') {
-        return new Response(
-          JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      if (errMsg === 'PAYMENT_REQUIRED') {
-        return new Response(
-          JSON.stringify({ error: 'Payment required. Please add credits to your workspace.' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      throw error;
+
+    if (elapsedMs > AGENT_TIMEOUT_MS) {
+      await sendSSE({ type: 'error', error: 'Context building timeout', timeout: true });
+      await sendSSE('[DONE]');
+      return;
     }
 
-    const choice = data.choices?.[0];
-    
-    // Process tool calls if present
-    const toolCalls = choice?.message?.tool_calls || [];
+    // ── FIRST AI CALL — streaming ─────────────────────────────────
+    const { stream: firstAIStream, error: firstAIErr } = await callAiGatewayStream({
+      model: 'gpt-4o-mini',
+      messages,
+      functionName: 'agent-chat',
+      extraBody: { temperature: RELIABILITY_CONFIG.temperature, tools },
+      timeoutMs: 40_000,
+    });
+
+    if (firstAIErr || !firstAIStream) throw new Error(firstAIErr ?? 'First AI stream unavailable');
+
+    const firstReader = firstAIStream.getReader();
+    const sseDecoder = new TextDecoder();
+    let sseBuf = '';
+    let streamedContent = '';
+    const tcAccum: Record<number, { id: string; name: string; args: string }> = {};
+
+    while (true) {
+      const { done, value } = await firstReader.read();
+      if (done) break;
+      sseBuf += sseDecoder.decode(value, { stream: true });
+      const lines = sseBuf.split('\n');
+      sseBuf = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]') continue;
+        try {
+          const chunk = JSON.parse(raw);
+          const delta = chunk.choices?.[0]?.delta;
+          if (!delta) continue;
+          if (delta.content) {
+            streamedContent += delta.content;
+            await sendSSE({ type: 'content', content: delta.content });
+          }
+          if (delta.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              const i = tc.index ?? 0;
+              if (!tcAccum[i]) tcAccum[i] = { id: '', name: '', args: '' };
+              if (tc.id) tcAccum[i].id = tc.id;
+              if (tc.function?.name) tcAccum[i].name += tc.function.name;
+              if (tc.function?.arguments) tcAccum[i].args += tc.function.arguments;
+            }
+          }
+        } catch { /* skip malformed SSE chunks */ }
+      }
+    }
+
+    // Reconstruct choice/toolCalls from streamed data — same shape the tool loop expects
+    const streamedToolCalls = Object.values(tcAccum).map((tc, idx) => ({
+      index: idx, id: tc.id, type: 'function' as const,
+      function: { name: tc.name, arguments: tc.args },
+    }));
+    const choice = {
+      message: {
+        role: 'assistant' as const,
+        content: streamedContent || null,
+        tool_calls: streamedToolCalls.length > 0 ? streamedToolCalls : undefined,
+      },
+    };
+    const toolCalls = streamedToolCalls;
     const toolResults: { tool: string; result: any }[] = [];
     
     for (const toolCall of toolCalls) {
@@ -3000,54 +3043,48 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
         ...toolResultMessages
       ];
       
-      let validResponse = false;
-      let attemptCount = 0;
-      
-      while (!validResponse && attemptCount < RELIABILITY_CONFIG.maxRetries) {
-        attemptCount++;
-        console.log(`Follow-up API call attempt ${attemptCount}/${RELIABILITY_CONFIG.maxRetries}`);
-        
-        try {
-          const followUpData = await withRetry(() => makeAICall(followUpMessages, false));
-          const candidateResponse = followUpData.choices?.[0]?.message?.content || '';
-          
-          // Validate the response
-          const validation = validateResponse(candidateResponse, { hasBriefingTool });
-          
-          if (validation.valid) {
-            agentResponse = candidateResponse;
-            validResponse = true;
-            console.log('Response passed validation');
-          } else {
-            console.warn('Response failed validation:', validation.issues);
-            
-            // If this is the last attempt, use what we have or fallback
-            if (attemptCount >= RELIABILITY_CONFIG.maxRetries) {
-              if (candidateResponse.length > 20) {
-                agentResponse = candidateResponse;
-                console.log('Using response despite validation failures (final attempt)');
-              } else {
-                // Use fallback response generated from tool results
-                console.log('Using fallback response from tool results');
-                agentResponse = generateFallbackResponse(toolResults);
-              }
-            } else {
-              // Add correction instruction for next attempt
-              followUpMessages.push({
-                role: 'user',
-                content: `Your previous response had issues: ${validation.issues.join('; ')}. Please provide a complete response that: ${validation.suggestions.join('; ')}`
-              });
-            }
-          }
-        } catch (followUpError) {
-          console.error('Follow-up API call failed:', followUpError);
-          
-          if (attemptCount >= RELIABILITY_CONFIG.maxRetries) {
-            // Use fallback response
-            console.log('All follow-up attempts failed, using fallback response');
-            agentResponse = generateFallbackResponse(toolResults);
+      // ── FOLLOW-UP CALL — streaming ─────────────────────────────
+      console.log('Streaming follow-up call after tool execution');
+      const { stream: fuStream, error: fuErr } = await callAiGatewayStream({
+        model: 'gpt-4o-mini',
+        messages: followUpMessages,
+        functionName: 'agent-chat:followup',
+        extraBody: { temperature: RELIABILITY_CONFIG.temperature },
+        timeoutMs: 40_000,
+      });
+
+      if (fuStream) {
+        const fuReader = fuStream.getReader();
+        let fuBuf = '';
+        let fuContent = '';
+        while (true) {
+          const { done, value } = await fuReader.read();
+          if (done) break;
+          fuBuf += sseDecoder.decode(value, { stream: true });
+          const fuLines = fuBuf.split('\n');
+          fuBuf = fuLines.pop() ?? '';
+          for (const fuLine of fuLines) {
+            if (!fuLine.startsWith('data: ')) continue;
+            const fuRaw = fuLine.slice(6).trim();
+            if (fuRaw === '[DONE]') continue;
+            try {
+              const fuChunk = JSON.parse(fuRaw);
+              const fuDelta = fuChunk.choices?.[0]?.delta?.content;
+              if (fuDelta) { fuContent += fuDelta; await sendSSE({ type: 'content', content: fuDelta }); }
+            } catch { /* skip */ }
           }
         }
+        agentResponse = fuContent || generateFallbackResponse(toolResults);
+      } else {
+        // Streaming unavailable — fallback to blocking call
+        console.warn('Follow-up stream failed, falling back to blocking call:', fuErr);
+        try {
+          const fbData = await withRetry(() => makeAICall(followUpMessages, false));
+          agentResponse = fbData.choices?.[0]?.message?.content || generateFallbackResponse(toolResults);
+        } catch {
+          agentResponse = generateFallbackResponse(toolResults);
+        }
+        await sendSSE({ type: 'content', content: agentResponse });
       }
       
       // Append action summary
@@ -3301,26 +3338,34 @@ To include geopolitical or external news context, please ask me to perform an ex
       }
     }
 
-    console.log('Agent response generated successfully', { 
+    console.log('Agent response generated successfully', {
       toolsExecuted: toolResults.length,
-      responseLength: agentResponse.length 
+      responseLength: agentResponse.length
     });
 
-    return new Response(
-      JSON.stringify({ 
-        response: agentResponse,
-        tools_executed: toolResults,
-        reliability: {
-          validated: true,
-          temperature: RELIABILITY_CONFIG.temperature
-        }
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    // Close the SSE stream with metadata
+    await sendSSE({ type: 'done', tools_executed: toolResults, reliability: { validated: true } });
+    await sendSSE('[DONE]');
+
+    } catch (pipelineError) {
+      console.error('[agent-chat] Pipeline error:', pipelineError);
+      try {
+        await sendSSE({ type: 'error', error: pipelineError instanceof Error ? pipelineError.message : String(pipelineError) });
+        await sendSSE('[DONE]');
+      } catch { /* writer may already be closed */ }
+    } finally {
+      try { await sseWriter.close(); } catch { /* already closed */ }
+    }
+    })(); // end background IIFE — NOT awaited
+
+    return new Response(sseReadable, {
+      headers: { ...corsHeaders, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+    });
+
   } catch (error) {
     console.error('Error in agent-chat:', error);
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         error: error instanceof Error ? error.message : 'Unknown error occurred',
         reliability: { fallback: true }
       }),
