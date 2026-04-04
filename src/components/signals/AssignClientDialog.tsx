@@ -59,17 +59,23 @@ export function AssignClientDialog({
 
       // Update the actual signal row (primary_signal_id) with the new client
       const signalId = signal.primary_signal_id || signal.id;
-      const { error: signalError } = await supabase
+      const { data: updatedSignal, error: signalError } = await supabase
         .from("signals")
         .update({ client_id: selectedClientId })
-        .eq("id", signalId);
+        .eq("id", signalId)
+        .select("id")
+        .maybeSingle();
       if (signalError) throw signalError;
+      if (!updatedSignal) console.warn("[Assign] signals update matched 0 rows — signalId:", signalId);
 
       // Mark the correlation group as assigned so it leaves the Unmatched tab
-      await supabase
+      const { data: updatedGroup } = await supabase
         .from("signal_correlation_groups")
         .update({ match_confidence: "assigned" })
-        .eq("id", signal.id);
+        .eq("id", signal.id)
+        .select("id")
+        .maybeSingle();
+      if (!updatedGroup) console.warn("[Assign] correlation_groups update matched 0 rows — groupId:", signal.id);
     },
     onSuccess: () => {
       toast.success("Signal assigned to client successfully");

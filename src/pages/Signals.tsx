@@ -552,6 +552,12 @@ const Signals = () => {
         onOpenChange={setAssignDialogOpen}
         signal={selectedSignal}
         onAssigned={() => {
+          // Optimistically remove from cache immediately — don't wait for re-fetch
+          queryClient.setQueriesData(
+            { queryKey: ["unmatched-signals"] },
+            (old: UnmatchedSignal[] | undefined) =>
+              (old || []).filter(s => s.id !== selectedSignal?.id)
+          );
           queryClient.invalidateQueries({ queryKey: ["unmatched-signals"] });
           setAssignDialogOpen(false);
           setSelectedSignal(null);
