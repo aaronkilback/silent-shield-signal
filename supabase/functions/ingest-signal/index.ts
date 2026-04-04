@@ -391,6 +391,13 @@ TEMPORAL RULES:
 - Historical signals (>90 days old) MUST be severity "low" unless actively resurging
 - Past years (2019-2024) = is_historical true${fewShotBlock}
 
+TITLE AND NORMALIZATION RULES:
+- The normalized_text must be a faithful compression of what the source actually says — not an interpretation
+- Never attribute a role or position to a named individual unless that role is explicitly stated in the source text
+- If the source mentions a person in a different context (their new company, a past role, a passing reference), do not reframe them in any other role
+- If the source is about Company A and merely mentions Person X who previously worked at Company B, the normalized_text is about Company A — not about Person X's role at Company B
+- If uncertain whether a claim appears in the source, omit it from normalized_text entirely
+
 Respond ONLY with valid JSON.`
         },
         { role: 'user', content: signalText }
