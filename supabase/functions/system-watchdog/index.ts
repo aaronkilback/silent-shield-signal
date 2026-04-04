@@ -1199,32 +1199,48 @@ async function callAI(systemPrompt: string, userMessage: string): Promise<any> {
   const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
   if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not configured');
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
-      ],
-      temperature: 0.1,
-      response_format: { type: 'json_object' },
-    }),
-    signal: AbortSignal.timeout(60000),
-  });
+  const MAX_ATTEMPTS = 3;
+  const BACKOFF_MS = 2000;
+  let lastError: Error = new Error('Unknown error');
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`AI call failed (${response.status}): ${errText}`);
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage },
+          ],
+          temperature: 0.1,
+          response_format: { type: 'json_object' },
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`AI call failed (${response.status}): ${errText}`);
+      }
+      const data = await response.json();
+      const content = (data.choices?.[0]?.message?.content || '').trim();
+      if (!content) throw new Error('AI returned empty response');
+      return JSON.parse(content);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < MAX_ATTEMPTS) {
+        console.warn(`[Watchdog] AI synthesis attempt ${attempt}/${MAX_ATTEMPTS} failed: ${lastError.message} — retrying in ${BACKOFF_MS}ms`);
+        await new Promise(resolve => setTimeout(resolve, BACKOFF_MS));
+      }
+    }
   }
-  const data = await response.json();
-  const content = (data.choices?.[0]?.message?.content || '').trim();
-  if (!content) throw new Error('AI returned empty response');
-  return JSON.parse(content);
+
+  throw new Error(`AI synthesis failed after ${MAX_ATTEMPTS} attempts: ${lastError.message}`);
 }
 
 // âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ

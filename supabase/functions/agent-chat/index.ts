@@ -480,18 +480,9 @@ Respond naturally and briefly.`
 
     // Build context based on agent's input sources
     let contextData = '';
+    const requestStart = Date.now();
 
-    // ── COMMON OPERATING PICTURE ──────────────────────────────────────────────
-    // Build the shared network-wide threat picture first.
-    // Every agent gets the same COP so all analysis is grounded in one truth.
-    try {
-      const cop = await buildCOP(supabase);
-      contextData += formatCOPForPrompt(cop) + '\n\n';
-    } catch (copError) {
-      console.warn('[agent-chat] COP build failed (non-fatal):', copError);
-      contextData += '⚠️ COP unavailable this cycle — operating on agent-local data only.\n\n';
-    }
-    // ─────────────────────────────────────────────────────────────────────────
+    // COP is fetched in the parallel block below — placeholder added after results resolve
     
     if (agent.input_sources.includes('signals')) {
       const { data: signals } = await supabase
@@ -528,16 +519,35 @@ Respond naturally and briefly.`
     }
 
     if (agent.input_sources.includes('entities')) {
-      const { data: entities } = await supabase
-        .from('entities')
-        .select('name, type, risk_level, threat_score')
-        .order('threat_score', { ascending: false })
-        .limit(15);
-      
+      const [{ data: entities }, { data: watchedEntities }] = await Promise.all([
+        supabase
+          .from('entities')
+          .select('name, type, risk_level, threat_score, quality_score, description, ai_assessment')
+          .eq('is_active', true)
+          .order('threat_score', { ascending: false, nullsFirst: false })
+          .limit(20),
+        supabase
+          .from('entity_watch_list')
+          .select('entity_name, watch_level, reason')
+          .eq('is_active', true)
+          .order('watch_level', { ascending: false })
+          .limit(10),
+      ]);
+
+      if (watchedEntities?.length) {
+        contextData += `\n\n🔍 ACTIVELY MONITORED ENTITIES (Watch List):\n`;
+        watchedEntities.forEach((w: any) => {
+          contextData += `- [${w.watch_level?.toUpperCase()}] ${w.entity_name}: ${w.reason || 'No reason specified'}\n`;
+        });
+      }
+
       if (entities?.length) {
-        contextData += `\n\nTracked Entities (${entities.length}):\n`;
-        entities.forEach(e => {
-          contextData += `- [${e.type}] ${e.name} - Risk: ${e.risk_level || 'Unknown'}\n`;
+        contextData += `\n\nTop Tracked Entities by Threat Score (${entities.length}):\n`;
+        entities.forEach((e: any) => {
+          const aegisNote = e.ai_assessment?.threat_level ? ` | AEGIS: ${e.ai_assessment.threat_level}` : '';
+          const desc = e.description && !e.description.startsWith('Auto-created') && !e.description.startsWith('Created from')
+            ? ` — ${e.description.substring(0, 80)}` : '';
+          contextData += `- [${e.type}] ${e.name} | Risk: ${e.risk_level || 'unknown'} | Score: ${e.threat_score ?? 'n/a'}${aegisNote}${desc}\n`;
         });
       }
     }
@@ -621,59 +631,85 @@ Respond naturally and briefly.`
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // INTELLIGENCE PICTURE INJECTION
-    // Three layers: beliefs (what agent concludes), cross-domain
-    // connections (how their domain intersects others), and raw
-    // knowledge (the underlying reference material).
+    // PARALLEL CONTEXT BUILDERS — all run simultaneously
+    // COP, beliefs, cross-domain connections, semantic RAG,
+    // world model, threads, trajectories, mesh messages,
+    // and pending command messages — fired in one Promise.allSettled.
     // ═══════════════════════════════════════════════════════════════
+    const agentCallSign = agent.call_sign || '';
+    const openaiKey = Deno.env.get('OPENAI_API_KEY') || '';
+    const latestUserMsg = conversation_history.filter((m: { role: string }) => m.role === 'user').at(-1)?.content || message || '';
+    const semanticQuery = latestUserMsg
+      ? `${latestUserMsg} [Agent specialty: ${agent.specialty}]`
+      : `${agent.specialty} ${agent.persona || ''}`;
+
+    const [
+      copResult,
+      beliefsResult,
+      connectionsResult,
+      knowledgeResult,
+      worldModelResult,
+      threadsResult,
+      trajectoriesResult,
+      meshResult,
+      pendingMsgsResult,
+    ] = await Promise.allSettled([
+      buildCOP(supabase),
+      supabase
+        .from('agent_beliefs')
+        .select('hypothesis, belief_type, confidence, evolution_log')
+        .eq('agent_call_sign', agentCallSign)
+        .eq('is_active', true)
+        .gte('confidence', 0.60)
+        .order('confidence', { ascending: false })
+        .limit(5),
+      supabase
+        .from('knowledge_connections')
+        .select('synthesis_note, agents_involved, relationship_type, connection_strength')
+        .contains('agents_involved', [agentCallSign])
+        .gte('connection_strength', 0.60)
+        .order('connection_strength', { ascending: false })
+        .limit(4),
+      retrieveRelevantKnowledge(supabase, semanticQuery, openaiKey, {
+        callSign: agentCallSign,
+        threshold: 0.65,
+        limit: 6,
+      }),
+      getAgentWorldModel(supabase, agentCallSign, client_id || undefined),
+      getAgentThreads(supabase, agentCallSign, client_id || undefined),
+      getActiveTrajectories(supabase, client_id || undefined, agentCallSign),
+      getAgentMeshMessages(supabase, agentCallSign, 5),
+      supabase
+        .from('agent_pending_messages')
+        .select('id, message, priority, trigger_event, created_at')
+        .eq('agent_id', agent.id)
+        .is('delivered_at', null)
+        .is('dismissed_at', null)
+        .order('created_at', { ascending: false })
+        .limit(5),
+    ]);
+
+    console.log(`[agent-chat] Parallel context built in ${Date.now() - requestStart}ms`);
+
+    // ── COP ───────────────────────────────────────────────────────
+    if (copResult.status === 'fulfilled') {
+      contextData += formatCOPForPrompt(copResult.value) + '\n\n';
+    } else {
+      console.warn('[agent-chat] COP build failed (non-fatal):', copResult.reason);
+      contextData += '⚠️ COP unavailable this cycle — operating on agent-local data only.\n\n';
+    }
+
+    // ── INTELLIGENCE PICTURE (beliefs, connections, RAG) ──────────
     let expertiseBlock = "";
     try {
-      const agentCallSign = agent.call_sign || '';
-      const openaiKey = Deno.env.get('OPENAI_API_KEY') || '';
-
-      // Build semantic query: combine the latest user message with agent specialty for context-aware retrieval
-      const latestUserMsg = messages.filter((m: { role: string }) => m.role === 'user').at(-1)?.content || '';
-      const semanticQuery = latestUserMsg
-        ? `${latestUserMsg} [Agent specialty: ${agent.specialty}]`
-        : `${agent.specialty} ${agent.persona || ''}`;
-
-      // Fetch all three layers in parallel: beliefs, cross-domain connections, and semantic RAG knowledge
-      const [beliefsResult, connectionsResult, ragEntries] = await Promise.allSettled([
-        // Layer 1: Agent's own evolving beliefs
-        supabase
-          .from('agent_beliefs')
-          .select('hypothesis, belief_type, confidence, evolution_log')
-          .eq('agent_call_sign', agentCallSign)
-          .eq('is_active', true)
-          .gte('confidence', 0.60)
-          .order('confidence', { ascending: false })
-          .limit(5),
-
-        // Layer 2: Cross-domain connections involving this agent
-        supabase
-          .from('knowledge_connections')
-          .select('synthesis_note, agents_involved, relationship_type, connection_strength')
-          .contains('agents_involved', [agentCallSign])
-          .gte('connection_strength', 0.60)
-          .order('connection_strength', { ascending: false })
-          .limit(4),
-
-        // Layer 3: Semantic RAG — retrieve knowledge most relevant to this specific query
-        retrieveRelevantKnowledge(supabase, semanticQuery, openaiKey, {
-          callSign: agentCallSign,
-          threshold: 0.65,
-          limit: 6,
-        }),
-      ]);
-
       const beliefs = beliefsResult.status === 'fulfilled' ? (beliefsResult.value.data || []) : [];
       const connections = connectionsResult.status === 'fulfilled' ? (connectionsResult.value.data || []) : [];
-      const knowledge = ragEntries.status === 'fulfilled' ? ragEntries.value : [];
+      const knowledge = knowledgeResult.status === 'fulfilled' ? knowledgeResult.value : [];
 
       const parts: string[] = [];
 
       if (beliefs.length > 0) {
-        const beliefLines = beliefs.map(b => {
+        const beliefLines = beliefs.map((b: any) => {
           const conf = Math.round(b.confidence * 100);
           const trend = b.evolution_log?.length > 1
             ? (b.evolution_log[b.evolution_log.length - 1]?.new_confidence > b.evolution_log[b.evolution_log.length - 2]?.new_confidence ? '↑' : '↓')
@@ -684,15 +720,14 @@ Respond naturally and briefly.`
       }
 
       if (connections.length > 0) {
-        const connLines = connections.map(c =>
+        const connLines = connections.map((c: any) =>
           `▸ [${c.relationship_type.toUpperCase()} | ${c.agents_involved?.join(' ↔ ') || 'cross-domain'}]\n  ${c.synthesis_note}`
         );
         parts.push(`CROSS-DOMAIN INTELLIGENCE (what other specialists' findings mean for your work):\n${connLines.join('\n\n')}`);
       }
 
       if (knowledge.length > 0) {
-        // formatRagContext already handles formatting with similarity scores
-        parts.push(`KNOWLEDGE BASE (semantically matched to this conversation):\n${knowledge.map(e => {
+        parts.push(`KNOWLEDGE BASE (semantically matched to this conversation):\n${knowledge.map((e: any) => {
           const sim = Math.round(e.similarity * 100);
           return `▸ [${e.knowledge_type.toUpperCase()} | ${e.domain} | ${sim}% match] ${e.title}\n${e.content.substring(0, 380)}...\n  Source: ${e.citation || 'Intelligence database'}`;
         }).join('\n\n')}`);
@@ -705,66 +740,25 @@ Respond naturally and briefly.`
       // Non-fatal — proceed without intelligence picture
     }
 
-    // Load undelivered pending messages for this agent (broadcasts, directives, etc.)
-    let pendingMessagesBlock = "";
-    try {
-      const { data: pendingMsgs } = await supabase
-        .from("agent_pending_messages")
-        .select("id, message, priority, trigger_event, created_at")
-        .eq("agent_id", agent.id)
-        .is("delivered_at", null)
-        .is("dismissed_at", null)
-        .order("created_at", { ascending: false })
-        .limit(5);
-      
-      if (pendingMsgs && pendingMsgs.length > 0) {
-        pendingMessagesBlock = `\n\n📨 PENDING MESSAGES FROM COMMAND:\n${pendingMsgs.map(m => `[${m.priority?.toUpperCase() || 'NORMAL'}] ${m.message}`).join('\n')}\nYou have read and internalized these messages. Let them inform your tone and conduct.\n`;
-        
-        // Mark as delivered
-        const msgIds = pendingMsgs.map(m => m.id);
-        await supabase
-          .from("agent_pending_messages")
-          .update({ delivered_at: new Date().toISOString() })
-          .in("id", msgIds);
-      }
-    } catch (e) {
-      // Non-fatal — proceed without pending messages
-    }
-    
-    // ═══════════════════════════════════════════════════════════════
-    // ADVANCED INTELLIGENCE SYSTEMS — run in parallel
-    // World model (predictions), episodic memory (threads),
-    // threat trajectories, and peer mesh messages.
-    // ═══════════════════════════════════════════════════════════════
+    // ── ADVANCED INTELLIGENCE (world model, threads, trajectories, mesh) ──
     let worldModelBlock = "";
     let episodicBlock = "";
     let trajectoryBlock = "";
     let meshBlock = "";
-    try {
-      const agentCallSignAdv = agent.call_sign || '';
-      const clientIdAdv = clientId || undefined;
+    if (worldModelResult.status === 'fulfilled') worldModelBlock = formatWorldModelContext(worldModelResult.value);
+    if (threadsResult.status === 'fulfilled') episodicBlock = formatEpisodicContext(threadsResult.value);
+    if (trajectoriesResult.status === 'fulfilled') trajectoryBlock = formatTrajectoryContext(trajectoriesResult.value);
+    if (meshResult.status === 'fulfilled') meshBlock = formatSourceCredibilityContext(meshResult.value);
 
-      const [worldPredictions, agentThreads, activeTrajectories, meshMessages] = await Promise.allSettled([
-        getAgentWorldModel(supabase, agentCallSignAdv, clientIdAdv),
-        getAgentThreads(supabase, agentCallSignAdv, clientIdAdv),
-        getActiveTrajectories(supabase, clientIdAdv, agentCallSignAdv),
-        getAgentMeshMessages(supabase, agentCallSignAdv, 5),
-      ]);
-
-      if (worldPredictions.status === 'fulfilled') {
-        worldModelBlock = formatWorldModelContext(worldPredictions.value);
-      }
-      if (agentThreads.status === 'fulfilled') {
-        episodicBlock = formatEpisodicContext(agentThreads.value);
-      }
-      if (activeTrajectories.status === 'fulfilled') {
-        trajectoryBlock = formatTrajectoryContext(activeTrajectories.value);
-      }
-      if (meshMessages.status === 'fulfilled') {
-        meshBlock = formatSourceCredibilityContext(meshMessages.value);
-      }
-    } catch (_advErr) {
-      // Non-fatal — proceed without advanced context
+    // ── PENDING MESSAGES ──────────────────────────────────────────
+    let pendingMessagesBlock = "";
+    const pendingMsgs = pendingMsgsResult.status === 'fulfilled' ? (pendingMsgsResult.value.data || []) : [];
+    if (pendingMsgs.length > 0) {
+      pendingMessagesBlock = `\n\n📨 PENDING MESSAGES FROM COMMAND:\n${pendingMsgs.map((m: any) => `[${m.priority?.toUpperCase() || 'NORMAL'}] ${m.message}`).join('\n')}\nYou have read and internalized these messages. Let them inform your tone and conduct.\n`;
+      // Mark as delivered — fire-and-forget, don't block on this
+      const msgIds = pendingMsgs.map((m: any) => m.id);
+      supabase.from('agent_pending_messages').update({ delivered_at: new Date().toISOString() }).in('id', msgIds)
+        .then(() => {}).catch(() => {});
     }
 
     const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}${expertiseBlock}${worldModelBlock}${episodicBlock}${trajectoryBlock}${meshBlock}${behavioralCorrectionBlock}${pendingMessagesBlock}
@@ -1473,6 +1467,20 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
       })),
       { role: 'user', content: message }
     ];
+
+    // ── 45-SECOND OVERALL TIMEOUT ─────────────────────────────────
+    // If context-building already consumed most of the budget, return
+    // a partial response rather than timing out completely.
+    const AGENT_TIMEOUT_MS = 45_000;
+    const elapsedMs = Date.now() - requestStart;
+    if (elapsedMs > AGENT_TIMEOUT_MS) {
+      console.warn(`[agent-chat] Context building took ${elapsedMs}ms — exceeded ${AGENT_TIMEOUT_MS}ms budget, returning partial response`);
+      return new Response(JSON.stringify({
+        response: 'I am processing a complex analysis. The full response is taking longer than expected — please try again in a moment.',
+        timeout: true,
+        partial: true,
+      }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     // Call AI Gateway with tools - using retry wrapper for reliability
     const makeAICall = async (msgs: any[], includeTools: boolean = true) => {
