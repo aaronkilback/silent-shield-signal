@@ -113,7 +113,7 @@ Deno.serve(async (req) => {
       for (const platform of PLATFORMS) {
         const siteFilter = platform.sites[0];
         searchQueue.push({
-          query: `${siteFilter} "${client.name}" (protest OR blockade OR breach OR hack OR activist)`,
+          query: `${siteFilter} "${client.name}" (protest OR blockade OR breach OR sabotage OR activist)`,
           platform: platform.name,
           sourceName: client.name,
           sourceType: 'client',
@@ -413,10 +413,12 @@ async function executeSearch(
         category = 'activism';
       }
 
-      // Ingest document
+      // Ingest document — upsert so concurrent monitoring runs don't race to
+      // insert the same URL. If source_url already exists, do nothing and doc
+      // will be null, skipping the process-intelligence-document call below.
       const { data: doc, error: docError } = await supabase
         .from('ingested_documents')
-        .insert({
+        .upsert({
           title: `${platform} ${postType}: ${search.sourceName}`,
           raw_text: content,
           source_url: url,
@@ -443,7 +445,7 @@ async function executeSearch(
             is_historical: isHistorical,
             external_links: externalLinks,
           }
-        })
+        }, { onConflict: 'source_url', ignoreDuplicates: true })
         .select()
         .single();
 
@@ -605,7 +607,7 @@ Return JSON: { "relevant": boolean, "reason": string (1 sentence), "confidence":
 
   try {
     const result = await callAiGatewayJson<AiVerdict>({
-      model: 'google/gpt-4o-mini',
+      model: 'openai/gpt-4o-mini',
       functionName: 'monitor-social-unified',
       messages: [
         {
