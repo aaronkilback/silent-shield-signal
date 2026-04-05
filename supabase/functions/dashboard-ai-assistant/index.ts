@@ -8540,10 +8540,6 @@ Deno.serve(async (req) => {
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    
-    if (!GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY is not configured");
-    }
 
     const supabaseClient = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
     
@@ -8891,636 +8887,354 @@ The user's message is just a conversational acknowledgment - respond in kind, do
       })
     );
 
-    // First AI call with tools — use fast model for tool routing decision
-    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext),
-          },
-          ...processedMessages,
-        ],
-        tools,
-        tool_choice: "auto",
-      }),
-    }, AI_TIMEOUT_MS);
+    // ── STREAMING RESPONSE SETUP ─────────────────────────────────────────────
+    // Return SSE response immediately; all AI work runs in background IIFE.
+    // Eliminates 8-15s silence before first token — same pattern as agent-chat.
+    const { readable: sseReadable, writable: sseWritable } = new TransformStream<Uint8Array, Uint8Array>();
+    const sseWriter = sseWritable.getWriter();
+    const sseEnc = new TextEncoder();
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Rate limits exceeded, please try again later." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+    const writeRaw = async (bytes: Uint8Array) => { try { await sseWriter.write(bytes); } catch {} };
+    const writeSSEText = async (text: string) => writeRaw(sseEnc.encode(text));
+    const writeDone = () => writeSSEText('data: [DONE]\n\n');
+    const pipeResponseBody = async (body: ReadableStream<Uint8Array>) => {
+      const r = body.getReader();
+      while (true) {
+        const { done, value } = await r.read();
+        if (done) break;
+        await writeRaw(value);
       }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "Payment required, please add funds to your Lovable AI workspace." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
-      throw new Error(`AI gateway error: ${response.status}`);
-    }
+    };
 
-    const firstResult = await response.json();
-    
-    if (!firstResult?.choices?.[0]?.message) {
-      console.error("AI gateway returned unexpected structure:", JSON.stringify(firstResult).substring(0, 500));
-      return new Response(
-        JSON.stringify({ error: "Unexpected AI response format. Please try again." }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-    const firstMessage = firstResult.choices[0].message;
-    
-    // CRITICAL DEBUG: Log whether AI chose to use tools or just respond with text
-    console.log("AI first response - has tool_calls:", !!firstMessage.tool_calls);
-    console.log("AI first response - tool_calls count:", firstMessage.tool_calls?.length || 0);
-    if (firstMessage.content) {
-      console.log("AI responded with text (no tools):", firstMessage.content.substring(0, 200));
-    }
-    // If the model didn't request tools but claimed it performed an action, force the tool call.
-    if (!firstMessage.tool_calls?.length && typeof firstMessage.content === "string") {
-      // Check for forced signal injection
-      const forcedSignal = extractPlannedTestSignalFromText(firstMessage.content);
-      if (forcedSignal) {
-        console.log("FORCING inject_test_signal (model described injection but returned no tool_calls)");
-        const forcedResult = await executeTool("inject_test_signal", forcedSignal, supabaseClient, authenticatedUserId);
-        const forcedToolResults = [
-          {
-            tool_call_id: "forced_inject_test_signal",
-            role: "tool",
-            name: "inject_test_signal",
-            content: truncateToolResult(forcedResult, 25000),
-          },
+    // Helper for forced report content extraction (used by both hallucination + explicit request paths)
+    const extractBulletinImages = (msgs: any[]): string[] => {
+      const images: string[] = [];
+      for (const msg of msgs) {
+        const contentStr = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
+        const imgPatterns = [
+          /!\[[^\]]*\]\(([^)]+\.(?:jpg|jpeg|png|gif|webp)[^)]*)\)/gi,
+          /<img[^>]+src="([^"]+)"/gi,
+          /(https?:\/\/[^\s)"]+(?:ai-chat-attachments|osint-media)[^\s)"]*\.(?:jpg|jpeg|png|gif|webp)[^\s)"]*)/gi,
+          /(https?:\/\/[^\s)"]+(?:ai-chat-attachments)[^\s)"]*)/gi,
         ];
+        for (const pattern of imgPatterns) {
+          let m;
+          while ((m = pattern.exec(contentStr)) !== null) {
+            const url = m[1];
+            if (url && !url.includes('REPORT_URL_REMOVED') && !images.includes(url)) images.push(url);
+          }
+        }
+      }
+      return images;
+    };
 
-        const finalResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+    // Fire-and-forget background pipeline
+    (async () => {
+      try {
+        // ── FIRST AI CALL — streaming ─────────────────────────────────────────
+        const firstResp = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
+          headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
           body: JSON.stringify({
             model: "gpt-4o-mini",
             messages: [
               {
                 role: "system",
-                content: AEGIS_TOOL_SUMMARIZER_PROMPT,
+                content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext),
               },
               ...processedMessages,
-              firstMessage,
-              ...forcedToolResults,
             ],
+            tools,
+            tool_choice: "auto",
             stream: true,
           }),
         }, AI_TIMEOUT_MS);
 
-        if (!finalResponse.ok) {
-          throw new Error("Failed to get final response from AI");
+        if (!firstResp.ok) {
+          if (firstResp.status === 429) {
+            await writeSSEText(`data: {"choices":[{"delta":{"content":"Rate limits exceeded, please try again later."}}]}\n\ndata: [DONE]\n\n`);
+          } else if (firstResp.status === 402) {
+            await writeSSEText(`data: {"choices":[{"delta":{"content":"Payment required, please add funds to your AI workspace."}}]}\n\ndata: [DONE]\n\n`);
+          } else {
+            const errText = await firstResp.text();
+            console.error("AI gateway error:", firstResp.status, errText);
+            await writeSSEText(`data: {"choices":[{"delta":{"content":"AI service error (${firstResp.status}). Please try again."}}]}\n\ndata: [DONE]\n\n`);
+          }
+          return;
         }
 
-        return new Response(finalResponse.body, {
-          headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-        });
-      }
+        // ── PARSE FIRST STREAM — forward content chunks, accumulate tool calls ─
+        const firstReader = firstResp.body!.getReader();
+        const dec = new TextDecoder();
+        let parseBuf = '';
+        let streamedContent = '';
+        const tcAccum: Record<number, { id: string; name: string; args: string }> = {};
 
-      // ═══ EXTRACT USER-UPLOADED IMAGE URLS FOR BULLETIN EMBEDDING ═══
-      // Scan all messages for image attachments to pass as bulletin_images
-      const extractBulletinImages = (msgs: any[]): string[] => {
-        const images: string[] = [];
-        for (const msg of msgs) {
-          const contentStr = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
-          // Match markdown images, HTML img tags, and raw image URLs
-          const imgPatterns = [
-            /!\[[^\]]*\]\(([^)]+\.(?:jpg|jpeg|png|gif|webp)[^)]*)\)/gi,
-            /<img[^>]+src="([^"]+)"/gi,
-            /(https?:\/\/[^\s)"]+(?:ai-chat-attachments|osint-media)[^\s)"]*\.(?:jpg|jpeg|png|gif|webp)[^\s)"]*)/gi,
-            /(https?:\/\/[^\s)"]+(?:ai-chat-attachments)[^\s)"]*)/gi,
-          ];
-          for (const pattern of imgPatterns) {
-            let m;
-            while ((m = pattern.exec(contentStr)) !== null) {
-              const url = m[1];
-              if (url && !url.includes('REPORT_URL_REMOVED') && !images.includes(url)) {
-                images.push(url);
+        while (true) {
+          const { done, value } = await firstReader.read();
+          if (done) break;
+          parseBuf += dec.decode(value, { stream: true });
+          const lines = parseBuf.split('\n');
+          parseBuf = lines.pop() ?? '';
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const raw = line.slice(6).trim();
+            if (raw === '[DONE]') continue;
+            try {
+              const chunk = JSON.parse(raw);
+              const delta = chunk.choices?.[0]?.delta;
+              if (!delta) continue;
+              if (delta.content) {
+                streamedContent += delta.content;
+                await writeSSEText(`${line}\n\n`); // forward in OpenAI SSE format
               }
-            }
+              if (delta.tool_calls) {
+                for (const tc of delta.tool_calls) {
+                  const i = tc.index ?? 0;
+                  if (!tcAccum[i]) tcAccum[i] = { id: '', name: '', args: '' };
+                  if (tc.id) tcAccum[i].id = tc.id;
+                  if (tc.function?.name) tcAccum[i].name += tc.function.name;
+                  if (tc.function?.arguments) tcAccum[i].args += tc.function.arguments;
+                }
+              }
+            } catch { /* skip malformed SSE chunks */ }
           }
         }
-        return images;
-      };
 
-      // ═══ FORCED REPORT GENERATION: Detect hallucinated storage URLs ═══
-      // If the AI output contains a supabase storage URL but didn't call generate_fortress_report,
-      // it hallucinated the URL. Force the actual tool call.
+        // Reconstruct firstMessage from streamed data
+        const streamedToolCalls = Object.values(tcAccum).map((tc, idx) => ({
+          index: idx, id: tc.id, type: 'function' as const,
+          function: { name: tc.name, arguments: tc.args },
+        }));
+        const firstMessage = {
+          role: 'assistant' as const,
+          content: streamedContent || null,
+          tool_calls: streamedToolCalls.length > 0 ? streamedToolCalls : undefined,
+        };
+    
+    // ── POST-STREAM ROUTING ──────────────────────────────────────────────────
+    console.log("AI first response - has tool_calls:", !!firstMessage.tool_calls);
+    console.log("AI first response - tool_calls count:", firstMessage.tool_calls?.length || 0);
+    if (firstMessage.content) {
+      console.log("AI responded with text:", firstMessage.content.substring(0, 200));
+    }
+
+    // ── FORCED EXECUTION SAFETY NETS (text-only responses that should have used tools) ──
+    if (!firstMessage.tool_calls?.length && typeof firstMessage.content === "string") {
+      // 1. Hallucinated storage URL — AI described a report link without calling the tool
       const hasHallucinatedUrl = /supabase\.co\/storage\/v1\/object\/(public|sign)\//.test(firstMessage.content);
       const mentionsReportGeneration = /\b(generat|creat|compil|produc|regenerat|bulletin|report)\b/i.test(firstMessage.content);
-      
       if (hasHallucinatedUrl && mentionsReportGeneration) {
-        console.log("FORCING generate_fortress_report (model hallucinated a storage URL instead of calling the tool)");
-        
-        // Extract bulletin info from the FULL conversation context (not truncated)
-        // Use original `messages` array to find substantive content that may have been truncated
+        console.log("FORCING generate_fortress_report (model hallucinated a storage URL)");
         const allUserMessages = messages.filter((m: any) => m.role === "user");
         const allAssistantMessages = messages.filter((m: any) => m.role === "assistant");
-        
-        // Try to extract bulletin title from the AI's response or conversation
         let bulletinTitle = "Security Bulletin";
-        const titleMatch = firstMessage.content.match(/[""\u201c\u201d]([^""\u201c\u201d]{10,100})[""\u201c\u201d]/) || 
-                          firstMessage.content.match(/\*\*[""\u201c\u201d]?([^*""\u201c\u201d\n]{10,100})[""\u201c\u201d]?\*\*/);
+        const titleMatch = firstMessage.content.match(/["\u201c\u201d]([^"\u201c\u201d]{10,100})["\u201c\u201d]/) ||
+                          firstMessage.content.match(/\*\*["\u201c\u201d]?([^*"\u201c\u201d\n]{10,100})["\u201c\u201d]?\*\*/);
         if (titleMatch) bulletinTitle = titleMatch[1].replace(/^(View|Download|Regenerat\w+)\s+(the\s+)?(Latest|Newest|Most Recent|New|Updated)\s+/i, '');
-        
-        // ═══ IMPROVED CONTENT EXTRACTION ═══
-        // Filter out meta-conversation (about report generation, tool errors, etc.)
         const substantiveContent: string[] = [];
-        
-        // 1. Search ALL user messages for substantive content (longest first)
         const sortedUserMsgs = allUserMessages
           .map((m: any) => typeof m.content === 'string' ? m.content : '')
           .filter((c: string) => c.length > 30 && !isMetaConversation(c))
           .sort((a: string, b: string) => b.length - a.length);
-        
-        for (const content of sortedUserMsgs) {
-          substantiveContent.push(content);
-        }
-        
-        // 2. Search assistant messages for tool-result summaries (they contain analyzed data)
+        for (const c of sortedUserMsgs) substantiveContent.push(c);
         for (const msg of allAssistantMessages) {
-          const content = typeof msg.content === 'string' ? msg.content : '';
-          if (isMetaConversation(content)) continue;
-          const cleaned = content
-            .replace(/https?:\/\/\S+/g, '')
-            .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-            .replace(/\*\*/g, '')
-            .replace(/\(previous report link expired[^)]*\)/g, '')
-            .replace(/\[REPORT_URL_REMOVED\]/g, '')
-            .trim();
-          if (cleaned.length > 200) {
-            substantiveContent.push(cleaned.substring(0, 3000));
-          }
+          const c = typeof msg.content === 'string' ? msg.content : '';
+          if (isMetaConversation(c)) continue;
+          const cleaned = c.replace(/https?:\/\/\S+/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\*\*/g, '').trim();
+          if (cleaned.length > 200) substantiveContent.push(cleaned.substring(0, 3000));
         }
-        
-        // 3. Build bulletin HTML using AI to extract structured data, then apply deterministic template
         let bulletinHtml = "";
-        
         if (substantiveContent.length > 0) {
           try {
-            const extractionPrompt = `Extract structured intelligence from this conversation context. Return ONLY valid JSON (no markdown, no code fences).
-
-Format:
-{"executive_summary":"1-2 sentence overview","sections":[{"title":"Section Title","content":"paragraph text","bullets":["point 1","point 2"]}],"key_entities":["entity names mentioned"],"dates_mentioned":["any dates"],"locations":["any locations"]}
-
-RULES:
-- ONLY extract facts explicitly present in the context
-- NEVER invent details, dates, locations, or threat actors
-- If a field has no data, use empty string or empty array
-- Keep content factual and concise
-
-CONTEXT:
-${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
-
-            const composeResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+            const extractionPrompt = `Extract structured intelligence from this conversation context. Return ONLY valid JSON (no markdown, no code fences).\n\nFormat:\n{"executive_summary":"1-2 sentence overview","sections":[{"title":"Section Title","content":"paragraph text","bullets":["point 1","point 2"]}],"key_entities":["entity names mentioned"],"dates_mentioned":["any dates"],"locations":["any locations"]}\n\nRULES:\n- ONLY extract facts explicitly present in the context\n- NEVER invent details, dates, locations, or threat actors\n- If a field has no data, use empty string or empty array\n\nCONTEXT:\n${substantiveContent.join('\n\n---\n\n').substring(0, 8000)}`;
+            const composeResp = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
               method: "POST",
-              headers: {
-                Authorization: `Bearer ${OPENAI_API_KEY}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                model: "gpt-4o-mini",
-                messages: [{ role: "user", content: extractionPrompt }],
-                stream: false,
-              }),
+              headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "user", content: extractionPrompt }], stream: false }),
             }, 15000);
-
-            if (composeResponse.ok) {
-              const composeData = await composeResponse.json();
-              const rawJson = (composeData.choices?.[0]?.message?.content || "")
-                .replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
-              
+            if (composeResp.ok) {
+              const composeData = await composeResp.json();
+              const rawJson = (composeData.choices?.[0]?.message?.content || "").replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
               try {
                 const extracted = JSON.parse(rawJson);
-                // Build deterministic HTML from structured data
                 const parts: string[] = [];
-                
-                if (extracted.executive_summary) {
-                  parts.push(`<h2>Executive Summary</h2><p>${escapeHtml(extracted.executive_summary)}</p>`);
+                if (extracted.executive_summary) parts.push(`<h2>Executive Summary</h2><p>${escapeHtml(extracted.executive_summary)}</p>`);
+                if (extracted.sections?.length) for (const section of extracted.sections) {
+                  if (!section.title || (!section.content && !section.bullets?.length)) continue;
+                  parts.push(`<h2>${escapeHtml(section.title)}</h2>`);
+                  if (section.content) parts.push(`<p>${escapeHtml(section.content)}</p>`);
+                  if (section.bullets?.length) parts.push(`<ul>${section.bullets.map((b: string) => `<li>${escapeHtml(b)}</li>`).join('')}</ul>`);
                 }
-                
-                if (extracted.sections && Array.isArray(extracted.sections)) {
-                  for (const section of extracted.sections) {
-                    if (!section.title || (!section.content && (!section.bullets || section.bullets.length === 0))) continue;
-                    parts.push(`<h2>${escapeHtml(section.title)}</h2>`);
-                    if (section.content) parts.push(`<p>${escapeHtml(section.content)}</p>`);
-                    if (section.bullets && section.bullets.length > 0) {
-                      parts.push(`<ul>${section.bullets.map((b: string) => `<li>${escapeHtml(b)}</li>`).join('')}</ul>`);
-                    }
-                  }
-                }
-                
-                if (extracted.key_entities?.length > 0) {
-                  parts.push(`<h2>Key Entities</h2><ul>${extracted.key_entities.map((e: string) => `<li>${escapeHtml(e)}</li>`).join('')}</ul>`);
-                }
-                
-                if (extracted.locations?.length > 0 || extracted.dates_mentioned?.length > 0) {
-                  parts.push(`<h2>Reference Data</h2>`);
-                  if (extracted.locations?.length > 0) parts.push(`<p><strong>Locations:</strong> ${extracted.locations.map(escapeHtml).join(', ')}</p>`);
-                  if (extracted.dates_mentioned?.length > 0) parts.push(`<p><strong>Dates:</strong> ${extracted.dates_mentioned.map(escapeHtml).join(', ')}</p>`);
-                }
-                
+                if (extracted.key_entities?.length) parts.push(`<h2>Key Entities</h2><ul>${extracted.key_entities.map((e: string) => `<li>${escapeHtml(e)}</li>`).join('')}</ul>`);
                 bulletinHtml = parts.join('\n');
-                console.log(`Built bulletin HTML from structured extraction: ${bulletinHtml.length} chars, ${parts.length} sections`);
-              } catch (jsonErr) {
-                console.error("JSON parse failed, falling back to raw content:", jsonErr);
-              }
+              } catch { /* fallback */ }
             }
-          } catch (composeErr) {
-            console.error("AI extraction failed, using raw content fallback:", composeErr);
-          }
-          
+          } catch { /* fallback */ }
           if (!bulletinHtml || bulletinHtml.length < 100) {
-            // Deterministic fallback: format raw content as clean HTML
             bulletinHtml = `<h2>Intelligence Summary</h2><p>${escapeHtml(substantiveContent[0]).replace(/\n/g, '</p><p>').substring(0, 5000)}</p>`;
           }
         } else {
-          bulletinHtml = `<h2>Security Bulletin</h2><p>No substantive content found in conversation history. Please provide specific intelligence content for a detailed bulletin.</p>`;
+          bulletinHtml = `<h2>Security Bulletin</h2><p>No substantive content found in conversation history.</p>`;
         }
-        
-        // Extract user-uploaded images for embedding
         const bulletinImages = extractBulletinImages(messages);
-        if (bulletinImages.length > 0) {
-          console.log(`Found ${bulletinImages.length} user-uploaded images for bulletin embedding`);
-        }
-        
-        const forcedReportArgs: Record<string, any> = {
-          report_type: "security_bulletin",
-          bulletin_title: bulletinTitle,
-          bulletin_html: bulletinHtml,
-          bulletin_classification: "INTERNAL USE ONLY",
-          generate_header_image: true,
+        const forcedResult = await executeTool("generate_fortress_report", {
+          report_type: "security_bulletin", bulletin_title: bulletinTitle, bulletin_html: bulletinHtml,
+          bulletin_classification: "INTERNAL USE ONLY", generate_header_image: true,
           ...(bulletinImages.length > 0 ? { bulletin_images: bulletinImages } : {}),
-        };
-        
-        const forcedResult = await executeTool("generate_fortress_report", forcedReportArgs, supabaseClient, authenticatedUserId);
-        const forcedToolResults = [
-          {
-            tool_call_id: "forced_generate_fortress_report",
-            role: "tool",
-            name: "generate_fortress_report",
-            content: truncateToolResult(forcedResult, 25000),
-          },
-        ];
-
-        const finalResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+        }, supabaseClient, authenticatedUserId);
+        const forcedToolResults1 = [{ tool_call_id: "forced_generate_fortress_report", role: "tool", name: "generate_fortress_report", content: truncateToolResult(forcedResult, 25000) }];
+        const finalResp1 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            messages: [
-              {
-                role: "system",
-                content: AEGIS_REPORT_PRESENTER_PROMPT,
-              },
-              ...processedMessages,
-              firstMessage,
-              ...forcedToolResults,
-            ],
-            stream: true,
-          }),
+          headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_REPORT_PRESENTER_PROMPT }, ...processedMessages, firstMessage, ...forcedToolResults1], stream: true }),
         }, AI_TIMEOUT_MS);
-
-        if (!finalResponse.ok) {
-          throw new Error("Failed to get final response from AI after forced report generation");
-        }
-
-        return new Response(finalResponse.body, {
-          headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-        });
+        if (finalResp1.ok) await pipeResponseBody(finalResp1.body!);
+        return;
       }
 
-      // ═══ FORCED REPORT GENERATION: User asked for report but AI didn't call tool ═══
-      // Detect when user explicitly requests a report/bulletin but AI responds with text/questions
+      // 2. Forced signal injection
+      const forcedSignal = extractPlannedTestSignalFromText(firstMessage.content);
+      if (forcedSignal) {
+        console.log("FORCING inject_test_signal (model described injection but returned no tool_calls)");
+        const forcedResult2 = await executeTool("inject_test_signal", forcedSignal, supabaseClient, authenticatedUserId);
+        const forcedToolResults2 = [{ tool_call_id: "forced_inject_test_signal", role: "tool", name: "inject_test_signal", content: truncateToolResult(forcedResult2, 25000) }];
+        const finalResp2 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_TOOL_SUMMARIZER_PROMPT }, ...processedMessages, firstMessage, ...forcedToolResults2], stream: true }),
+        }, AI_TIMEOUT_MS);
+        if (finalResp2.ok) await pipeResponseBody(finalResp2.body!);
+        return;
+      }
+
+      // 3. User explicitly requested a report but AI responded with text
       {
-        const lastUserMsg = limitedMessages.filter((m: any) => m.role === "user").pop();
-        const lastUserText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
-        const userWantsReport = /\b(generate|create|make|build|produce|write|draft|compile|regenerate|try again|redo)\b.*\b(report|bulletin|briefing|document|summary|sitrep)\b/i.test(lastUserText) ||
-          /\b(report|bulletin|briefing|sitrep)\b.*\b(generate|create|make|build|produce|write|draft|compile|regenerate)\b/i.test(lastUserText) ||
-          /\b(try again|redo|regenerate)\b/i.test(lastUserText) && /\b(report|bulletin|briefing)\b/i.test(lastUserText);
-        
+        const lastUserMsg3 = limitedMessages.filter((m: any) => m.role === "user").pop();
+        const lastUserText3 = typeof lastUserMsg3?.content === "string" ? lastUserMsg3.content : "";
+        const userWantsReport =
+          /\b(generate|create|make|build|produce|write|draft|compile|regenerate|try again|redo)\b.*\b(report|bulletin|briefing|document|summary|sitrep)\b/i.test(lastUserText3) ||
+          /\b(report|bulletin|briefing|sitrep)\b.*\b(generate|create|make|build|produce|write|draft|compile|regenerate)\b/i.test(lastUserText3) ||
+          (/\b(try again|redo|regenerate)\b/i.test(lastUserText3) && /\b(report|bulletin|briefing)\b/i.test(lastUserText3));
         if (userWantsReport) {
-          console.log("FORCING generate_fortress_report (user explicitly requested report but AI responded with text instead of calling tool)");
-          
-          // Determine report type from user message
-          let reportType = "security_bulletin";
-          if (/\b(executive|client)\b/i.test(lastUserText)) reportType = "executive";
-          else if (/\b(risk|snapshot)\b/i.test(lastUserText)) reportType = "risk_snapshot";
-          else if (/\b(travel|security briefing|city|country)\b/i.test(lastUserText)) reportType = "security_briefing";
-          
-          // Extract title from user message or conversation
-          let bulletinTitle = "Security Bulletin";
-          const titleMatch = lastUserText.match(/[""]([^""]{5,100})[""]/) ||
-            lastUserText.match(/(?:titled?|called?|named?|about)\s+[""]?([^"".\n]{5,100})[""]?/i);
-          if (titleMatch) bulletinTitle = titleMatch[1].trim();
-          
-           // ═══ IMPROVED CONTENT EXTRACTION (same logic as hallucination safety net) ═══
-          const substantiveContent2: string[] = [];
-          
-          // Search ALL messages from FULL history (not truncated), filtering meta-conversation
-          const allMsgs = messages
+          console.log("FORCING generate_fortress_report (user explicitly requested report but AI responded with text)");
+          let reportType3 = "security_bulletin";
+          if (/\b(executive|client)\b/i.test(lastUserText3)) reportType3 = "executive";
+          else if (/\b(risk|snapshot)\b/i.test(lastUserText3)) reportType3 = "risk_snapshot";
+          else if (/\b(travel|security briefing|city|country)\b/i.test(lastUserText3)) reportType3 = "security_briefing";
+          let bulletinTitle3 = "Security Bulletin";
+          const titleMatch3 = lastUserText3.match(/["\u201c\u201d]([^"\u201c\u201d]{5,100})["\u201c\u201d]/) ||
+            lastUserText3.match(/(?:titled?|called?|named?|about)\s+["\u201c\u201d]?([^"\u201c\u201d.\n]{5,100})["\u201c\u201d]?/i);
+          if (titleMatch3) bulletinTitle3 = titleMatch3[1].trim();
+          const allMsgs3 = messages
             .map((m: any) => ({ role: m.role, text: typeof m.content === 'string' ? m.content : '' }))
             .filter((m: any) => m.text.length > 30 && !isMetaConversation(m.text));
-          
-          for (const m of allMsgs) {
+          const substantiveContent3: string[] = [];
+          for (const m of allMsgs3) {
             if (m.role === 'user') {
-              substantiveContent2.push(m.text);
+              substantiveContent3.push(m.text);
             } else if (m.role === 'assistant') {
-              const cleaned = m.text
-                .replace(/https?:\/\/\S+/g, '')
-                .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-                .replace(/\*\*/g, '')
-                .replace(/\(previous report link expired[^)]*\)/g, '')
-                .replace(/\[REPORT_URL_REMOVED\]/g, '')
-                .trim();
-              if (cleaned.length > 200) substantiveContent2.push(cleaned.substring(0, 3000));
+              const cleaned = m.text.replace(/https?:\/\/\S+/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\*\*/g, '').trim();
+              if (cleaned.length > 200) substantiveContent3.push(cleaned.substring(0, 3000));
             }
           }
-          
-          // Use AI to extract structured data, then build deterministic HTML
-          let bulletinContent = "";
-          if (substantiveContent2.length > 0) {
+          let bulletinHtml3 = "";
+          if (substantiveContent3.length > 0) {
             try {
-              const extractionPrompt2 = `Extract structured intelligence from this conversation context. Return ONLY valid JSON (no markdown, no code fences).
-
-Format:
-{"executive_summary":"1-2 sentence overview","sections":[{"title":"Section Title","content":"paragraph text","bullets":["point 1","point 2"]}],"key_entities":["entity names mentioned"],"dates_mentioned":["any dates"],"locations":["any locations"]}
-
-RULES:
-- ONLY extract facts explicitly present in the context
-- NEVER invent details, dates, locations, or threat actors
-- If a field has no data, use empty string or empty array
-
-CONTEXT:
-${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
-
-              const composeResponse2 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+              const extractionPrompt3 = `Extract structured intelligence from this conversation context. Return ONLY valid JSON.\n\nFormat:\n{"executive_summary":"1-2 sentence overview","sections":[{"title":"Section Title","content":"paragraph text","bullets":["point 1","point 2"]}],"key_entities":["entity names mentioned"],"dates_mentioned":["any dates"],"locations":["any locations"]}\n\nRULES:\n- ONLY extract facts explicitly present in the context\n- NEVER invent details\n\nCONTEXT:\n${substantiveContent3.join('\n\n---\n\n').substring(0, 8000)}`;
+              const composeResp3 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
                 method: "POST",
-                headers: {
-                  Authorization: `Bearer ${OPENAI_API_KEY}`,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  model: "gpt-4o-mini",
-                  messages: [{ role: "user", content: extractionPrompt2 }],
-                  stream: false,
-                }),
+                headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "user", content: extractionPrompt3 }], stream: false }),
               }, 15000);
-
-              if (composeResponse2.ok) {
-                const composeData2 = await composeResponse2.json();
-                const rawJson2 = (composeData2.choices?.[0]?.message?.content || "")
-                  .replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
-                
+              if (composeResp3.ok) {
+                const composeData3 = await composeResp3.json();
+                const rawJson3 = (composeData3.choices?.[0]?.message?.content || "").replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
                 try {
-                  const extracted = JSON.parse(rawJson2);
-                  const parts: string[] = [];
-                  
-                  if (extracted.executive_summary) {
-                    parts.push(`<h2>Executive Summary</h2><p>${escapeHtml(extracted.executive_summary)}</p>`);
+                  const extracted3 = JSON.parse(rawJson3);
+                  const parts3: string[] = [];
+                  if (extracted3.executive_summary) parts3.push(`<h2>Executive Summary</h2><p>${escapeHtml(extracted3.executive_summary)}</p>`);
+                  if (extracted3.sections?.length) for (const section of extracted3.sections) {
+                    if (!section.title || (!section.content && !section.bullets?.length)) continue;
+                    parts3.push(`<h2>${escapeHtml(section.title)}</h2>`);
+                    if (section.content) parts3.push(`<p>${escapeHtml(section.content)}</p>`);
+                    if (section.bullets?.length) parts3.push(`<ul>${section.bullets.map((b: string) => `<li>${escapeHtml(b)}</li>`).join('')}</ul>`);
                   }
-                  if (extracted.sections && Array.isArray(extracted.sections)) {
-                    for (const section of extracted.sections) {
-                      if (!section.title || (!section.content && (!section.bullets || section.bullets.length === 0))) continue;
-                      parts.push(`<h2>${escapeHtml(section.title)}</h2>`);
-                      if (section.content) parts.push(`<p>${escapeHtml(section.content)}</p>`);
-                      if (section.bullets?.length > 0) {
-                        parts.push(`<ul>${section.bullets.map((b: string) => `<li>${escapeHtml(b)}</li>`).join('')}</ul>`);
-                      }
-                    }
-                  }
-                  if (extracted.key_entities?.length > 0) {
-                    parts.push(`<h2>Key Entities</h2><ul>${extracted.key_entities.map((e: string) => `<li>${escapeHtml(e)}</li>`).join('')}</ul>`);
-                  }
-                  
-                  bulletinContent = parts.join('\n');
-                  console.log(`Built bulletin HTML from structured extraction (path 2): ${bulletinContent.length} chars`);
-                } catch (jsonErr) {
-                  console.error("JSON parse failed (path 2):", jsonErr);
-                }
+                  if (extracted3.key_entities?.length) parts3.push(`<h2>Key Entities</h2><ul>${extracted3.key_entities.map((e: string) => `<li>${escapeHtml(e)}</li>`).join('')}</ul>`);
+                  bulletinHtml3 = parts3.join('\n');
+                } catch { /* fallback */ }
               }
-            } catch (composeErr2) {
-              console.error("AI extraction (path 2) failed:", composeErr2);
-            }
-            
-            if (!bulletinContent || bulletinContent.length < 100) {
-              bulletinContent = `<h2>Intelligence Summary</h2><p>${escapeHtml(substantiveContent2[0]).replace(/\n/g, '</p><p>').substring(0, 5000)}</p>`;
+            } catch { /* fallback */ }
+            if (!bulletinHtml3 || bulletinHtml3.length < 100) {
+              bulletinHtml3 = `<h2>Intelligence Summary</h2><p>${escapeHtml(substantiveContent3[0]).replace(/\n/g, '</p><p>').substring(0, 5000)}</p>`;
             }
           } else {
-            bulletinContent = `<h2>Security Bulletin</h2><p>No substantive content found in conversation history. Please provide specific intelligence for a detailed bulletin.</p>`;
+            bulletinHtml3 = `<h2>Security Bulletin</h2><p>No substantive content found in conversation history.</p>`;
           }
-          
-          // Extract user-uploaded images for embedding
-          const bulletinImages2 = extractBulletinImages(messages);
-          if (bulletinImages2.length > 0) {
-            console.log(`Found ${bulletinImages2.length} user-uploaded images for bulletin embedding (path 2)`);
-          }
-          
-          const forcedReportArgs: Record<string, any> = {
-            report_type: reportType,
-            bulletin_title: bulletinTitle,
-            bulletin_html: bulletinContent,
-            bulletin_classification: "INTERNAL USE ONLY",
-            generate_header_image: true,
-            ...(bulletinImages2.length > 0 ? { bulletin_images: bulletinImages2 } : {}),
-          };
-          
-          // For executive reports, try to resolve client
-          if (reportType === "executive") {
-            const clientMatch = lastUserText.match(/(?:for|about|on)\s+[""]?([A-Z][a-zA-Z\s]{2,30})[""]?/i);
-            if (clientMatch) forcedReportArgs.client_name = clientMatch[1].trim();
-          }
-          
-          const forcedResult = await executeTool("generate_fortress_report", forcedReportArgs, supabaseClient, authenticatedUserId);
-          const forcedToolResults = [
-            {
-              tool_call_id: "forced_generate_fortress_report_v2",
-              role: "tool",
-              name: "generate_fortress_report",
-              content: truncateToolResult(forcedResult, 25000),
-            },
-          ];
-
-          const finalResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+          const bulletinImages3 = extractBulletinImages(messages);
+          const forcedResult3 = await executeTool("generate_fortress_report", {
+            report_type: reportType3, bulletin_title: bulletinTitle3, bulletin_html: bulletinHtml3,
+            bulletin_classification: "INTERNAL USE ONLY", generate_header_image: true,
+            ...(bulletinImages3.length > 0 ? { bulletin_images: bulletinImages3 } : {}),
+          }, supabaseClient, authenticatedUserId);
+          const forcedToolResults3 = [{ tool_call_id: "forced_generate_report", role: "tool", name: "generate_fortress_report", content: truncateToolResult(forcedResult3, 25000) }];
+          const finalResp3 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
             method: "POST",
-            headers: {
-              Authorization: `Bearer ${OPENAI_API_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: "gpt-4o-mini",
-              messages: [
-                {
-                  role: "system",
-                    content: AEGIS_REPORT_PRESENTER_PROMPT,
-                },
-                ...processedMessages,
-                firstMessage,
-                ...forcedToolResults,
-              ],
-              stream: true,
-            }),
+            headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_REPORT_PRESENTER_PROMPT }, ...processedMessages, firstMessage, ...forcedToolResults3], stream: true }),
           }, AI_TIMEOUT_MS);
-
-          if (!finalResponse.ok) {
-            throw new Error("Failed to get final response from AI after forced report generation");
-          }
-
-          return new Response(finalResponse.body, {
-            headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-          });
+          if (finalResp3.ok) await pipeResponseBody(finalResp3.body!);
+          return;
         }
       }
 
-      // Check for forced agent creation
+      // 4. Forced agent creation
       const forcedAgent = extractPlannedAgentFromText(firstMessage.content);
       if (forcedAgent) {
-        console.log("FORCING create_agent (model described agent creation but returned no tool_calls)", forcedAgent);
-        const forcedResult = await executeTool("create_agent", forcedAgent, supabaseClient, authenticatedUserId);
-        const forcedToolResults = [
-          {
-            tool_call_id: "forced_create_agent",
-            role: "tool",
-            name: "create_agent",
-            content: truncateToolResult(forcedResult, 25000),
-          },
-        ];
-
-        const finalResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+        console.log("FORCING create_agent (model described agent creation but returned no tool_calls)");
+        const forcedResult4 = await executeTool("create_agent", forcedAgent, supabaseClient, authenticatedUserId);
+        const forcedToolResults4 = [{ tool_call_id: "forced_create_agent", role: "tool", name: "create_agent", content: truncateToolResult(forcedResult4, 25000) }];
+        const finalResp4 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            messages: [
-              {
-                role: "system",
-                content: AEGIS_AGENT_CREATION_PROMPT,
-              },
-              ...processedMessages,
-              firstMessage,
-              ...forcedToolResults,
-            ],
-            stream: true,
-          }),
+          headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_AGENT_CREATION_PROMPT }, ...processedMessages, firstMessage, ...forcedToolResults4], stream: true }),
         }, AI_TIMEOUT_MS);
-
-        if (!finalResponse.ok) {
-          throw new Error("Failed to get final response from AI");
-        }
-
-        return new Response(finalResponse.body, {
-          headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-        });
+        if (finalResp4.ok) await pipeResponseBody(finalResp4.body!);
+        return;
       }
 
-      // Check for forced query_fortress_data execution
+      // 5. Forced query_fortress_data
       let forcedQuery = extractPlannedFortressQueryFromText(firstMessage.content);
-
-      // Reliability: if user explicitly asked for travel itineraries and the model didn't call tools,
-      // force a travel query so we can return real itinerary records instead of a generic failure/refusal.
       if (!forcedQuery) {
-        const lastUserMessage = limitedMessages.filter((m: any) => m.role === "user").pop();
-        const lastUserText =
-          typeof lastUserMessage?.content === "string" ? lastUserMessage.content : "";
-
-        const wantsItineraries = /\bitinerar(y|ies)\b/i.test(lastUserText);
-        if (wantsItineraries) {
-          forcedQuery = {
-            query_type: "travel",
-            output_format: "detailed",
-            filters: { limit: 50 },
-            reason_for_access: "User requested access to travel itineraries.",
-          };
-          console.log("FORCING query_fortress_data (itinerary access request)", { lastUserText });
+        const lastUserMsg5 = limitedMessages.filter((m: any) => m.role === "user").pop();
+        const lastUserText5 = typeof lastUserMsg5?.content === "string" ? lastUserMsg5.content : "";
+        if (/\bitinerar(y|ies)\b/i.test(lastUserText5)) {
+          forcedQuery = { query_type: "travel", output_format: "detailed", filters: { limit: 50 }, reason_for_access: "User requested access to travel itineraries." };
+          console.log("FORCING query_fortress_data (itinerary access request)");
         }
       }
-
       if (forcedQuery) {
-        console.log("FORCING query_fortress_data (model described query but returned no tool_calls)", forcedQuery);
-        const forcedResult = await executeTool("query_fortress_data", forcedQuery, supabaseClient, authenticatedUserId);
-        const forcedToolResults = [
-          {
-            tool_call_id: "forced_query_fortress_data",
-            role: "tool",
-            name: "query_fortress_data",
-            content: truncateToolResult(forcedResult, 30000),
-          },
-        ];
-
-        const finalResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+        console.log("FORCING query_fortress_data (model described query but returned no tool_calls)");
+        const forcedResult5 = await executeTool("query_fortress_data", forcedQuery, supabaseClient, authenticatedUserId);
+        const forcedToolResults5 = [{ tool_call_id: "forced_query_fortress_data", role: "tool", name: "query_fortress_data", content: truncateToolResult(forcedResult5, 30000) }];
+        const finalResp5 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            messages: [
-              {
-                role: "system",
-                content: AEGIS_DATA_PRESENTER_PROMPT,
-              },
-              ...processedMessages,
-              firstMessage,
-              ...forcedToolResults,
-            ],
-            stream: true,
-          }),
+          headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_DATA_PRESENTER_PROMPT }, ...processedMessages, firstMessage, ...forcedToolResults5], stream: true }),
         }, AI_TIMEOUT_MS);
-
-        if (!finalResponse.ok) {
-          const errorText = await finalResponse.text();
-          console.error("Final AI response failed:", finalResponse.status, errorText);
-          
-          if (finalResponse.status === 429) {
-            return new Response(JSON.stringify({ error: "Rate limit exceeded. Please wait a moment before trying again." }), {
-              status: 429,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
-          }
-          if (finalResponse.status === 402) {
-            return new Response(JSON.stringify({ error: "AI service credits exhausted. Please contact support." }), {
-              status: 402,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
-          }
-          
-          throw new Error(`Failed to get final response from AI: ${finalResponse.status} - ${errorText.substring(0, 200)}`);
-        }
-
-        return new Response(finalResponse.body, {
-          headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-        });
+        if (finalResp5.ok) await pipeResponseBody(finalResp5.body!);
+        return;
       }
+
+      // No forced execution matched — content already streamed from first call
+      await writeDone();
+      return;
     }
 
-    // Check if AI wants to use tools
+    // ── TOOL EXECUTION PATH ───────────────────────────────────────────────────
     if (firstMessage.tool_calls && firstMessage.tool_calls.length > 0) {
       console.log("AI requested tool calls:", JSON.stringify(firstMessage.tool_calls.map((t: any) => t.function.name)));
 
-      // Execute all tool calls
       const toolResults = await Promise.all(
         firstMessage.tool_calls.map(async (toolCall: any) => {
           try {
@@ -9539,68 +9253,51 @@ ${substantiveContent2.join('\n\n---\n\n').substring(0, 8000)}`;
               tool_call_id: toolCall.id,
               role: "tool",
               name: toolCall.function.name,
-              content: JSON.stringify({ 
-                success: false,
-                error: errorMessage,
-                error_details: error instanceof Error ? error.stack : String(error)
-              }),
+              content: JSON.stringify({ success: false, error: errorMessage, error_details: error instanceof Error ? error.stack : String(error) }),
             };
           }
         })
       );
 
-      // Make second AI call with tool results - now with streaming (with timeout)
-      const finalResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+      const finalResp = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
+        headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "system",
-              content: AEGIS_TOOL_SUMMARIZER_PROMPT,
-            },
-            ...processedMessages,
-            firstMessage,
-            ...toolResults,
-          ],
+          messages: [{ role: "system", content: AEGIS_TOOL_SUMMARIZER_PROMPT }, ...processedMessages, firstMessage, ...toolResults],
           stream: true,
         }),
       }, AI_TIMEOUT_MS);
 
-      if (!finalResponse.ok) {
-        throw new Error("Failed to get final response from AI");
+      if (!finalResp.ok) {
+        const errStatus = finalResp.status;
+        if (errStatus === 429) await writeSSEText(`data: {"choices":[{"delta":{"content":"Rate limit exceeded. Please wait a moment before trying again."}}]}\n\n`);
+        else if (errStatus === 402) await writeSSEText(`data: {"choices":[{"delta":{"content":"AI service credits exhausted. Please contact support."}}]}\n\n`);
+        else console.error("Follow-up AI call failed:", errStatus);
+        await writeDone();
+      } else {
+        await pipeResponseBody(finalResp.body!);
       }
-
-      return new Response(finalResponse.body, {
-        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
-      });
+      return;
     }
 
-    // No tools needed, stream the response directly (with timeout)
-    const streamResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: AEGIS_TOOL_SUMMARIZER_PROMPT,
-          },
-          ...processedMessages,
-        ],
-        stream: true,
-      }),
-    }, AI_TIMEOUT_MS);
+    // Fallback: content already streamed (shouldn't normally reach here)
+    await writeDone();
 
-    return new Response(streamResponse.body, {
+      } catch (bgErr) {
+        console.error("[dashboard-ai-assistant] Background pipeline error:", bgErr);
+        await logError(bgErr, { functionName: 'dashboard-ai-assistant', severity: 'error' });
+        const errMsg = bgErr instanceof Error ? bgErr.message : 'Unknown error';
+        try {
+          const safeMsg = errMsg.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+          await writeSSEText(`data: {"choices":[{"delta":{"content":"\\n\\n[Error: ${safeMsg}]"}}]}\n\ndata: [DONE]\n\n`);
+        } catch {}
+      } finally {
+        try { await sseWriter.close(); } catch {}
+      }
+    })();
+
+    return new Response(sseReadable, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
   } catch (error) {
