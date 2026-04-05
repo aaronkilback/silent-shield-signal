@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Activity } from "lucide-react";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 const getThreatColor = (level: string) => {
   switch (level?.toLowerCase()) {
@@ -14,6 +15,8 @@ const getThreatColor = (level: string) => {
 };
 
 export function ThreatStatusBar() {
+  const { selectedClientId } = useClientSelection();
+
   const { data: snapshot } = useQuery({
     queryKey: ["status-bar-threat"],
     queryFn: async () => {
@@ -29,12 +32,19 @@ export function ThreatStatusBar() {
   });
 
   const { data: openIncidents } = useQuery({
-    queryKey: ["status-bar-incidents"],
+    queryKey: ["status-bar-incidents", selectedClientId],
     queryFn: async () => {
-      const { count } = await supabase
+      let query = supabase
         .from("incidents")
         .select("*", { count: "exact", head: true })
-        .neq("status", "resolved");
+        .eq("status", "open")
+        .is("deleted_at", null);
+
+      if (selectedClientId) {
+        query = query.eq("client_id", selectedClientId);
+      }
+
+      const { count } = await query;
       return count ?? 0;
     },
     refetchInterval: 60000,
