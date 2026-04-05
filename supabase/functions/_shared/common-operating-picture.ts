@@ -21,6 +21,7 @@ export interface COPSnapshot {
   critical_signals: { id: string; title: string; severity: string; category: string; created_at: string }[];
   high_probability_escalations: { signal_id: string; probability: number; predicted_severity: string }[];
   top_entities: { name: string; type: string; risk_level: string; threat_score: number }[];
+  watched_entities: { name: string; type: string; watch_level: string; reason: string }[];
   active_agents: { call_sign: string; codename: string; specialty: string }[];
   broadcast_messages: { message: string; priority: string; created_at: string }[];
   summary: string;
@@ -41,6 +42,7 @@ export async function buildCOP(supabase: SupabaseClient): Promise<COPSnapshot> {
     { data: criticalSignals },
     { data: escalations },
     { data: topEntities },
+    { data: watchedEntities },
     { data: activeAgents },
     { data: riskScans },
     { data: broadcasts },
@@ -73,6 +75,13 @@ export async function buildCOP(supabase: SupabaseClient): Promise<COPSnapshot> {
       .not('threat_score', 'is', null)
       .order('threat_score', { ascending: false })
       .limit(5),
+    supabase
+      .from('entity_watch_list')
+      .select('entity_name, watch_level, reason, entity:entities(name, type, risk_level)')
+      .eq('is_active', true)
+      .in('watch_level', ['alert', 'critical'])
+      .order('watch_level', { ascending: false })
+      .limit(10),
     supabase
       .from('ai_agents')
       .select('call_sign, codename, specialty')
@@ -145,6 +154,12 @@ export async function buildCOP(supabase: SupabaseClient): Promise<COPSnapshot> {
       risk_level: e.risk_level || 'unknown',
       threat_score: e.threat_score,
     })),
+    watched_entities: (watchedEntities || []).map((w: any) => ({
+      name: w.entity_name,
+      type: w.entity?.type || 'unknown',
+      watch_level: w.watch_level,
+      reason: w.reason || '',
+    })),
     active_agents: (activeAgents || []).map(a => ({
       call_sign: a.call_sign,
       codename: a.codename,
@@ -199,6 +214,14 @@ export function formatCOPForPrompt(cop: COPSnapshot): string {
     lines.push('TOP THREAT ENTITIES:');
     cop.top_entities.forEach(e =>
       lines.push(`  [${e.type}] ${e.name} — Risk: ${e.risk_level} (score: ${e.threat_score})`)
+    );
+    lines.push('');
+  }
+
+  if (cop.watched_entities.length > 0) {
+    lines.push('## WATCHED ENTITIES (Active Monitoring)');
+    cop.watched_entities.forEach(w =>
+      lines.push(`  [${w.watch_level.toUpperCase()}] ${w.name} (${w.type})${w.reason ? ` — ${w.reason}` : ''}`)
     );
     lines.push('');
   }

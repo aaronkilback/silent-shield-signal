@@ -213,7 +213,7 @@ Deno.serve(async (req) => {
 
     // Call AI to synthesize scenario impact
     let aiAnalysis = null;
-    if (GEMINI_API_KEY) {
+    if (OPENAI_API_KEY) {
       const prompt = `You are a corporate security intelligence analyst. Analyze this what-if scenario for a VIP principal:
 
 PRINCIPAL PROFILE:

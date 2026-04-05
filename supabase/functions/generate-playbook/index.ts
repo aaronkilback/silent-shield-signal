@@ -17,7 +17,7 @@ Deno.serve(async (req) => {
     const { threat_category, signal_id, incident_id, force_regenerate } = await req.json();
     const supabase = createServiceClient();
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-    if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
+    if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not configured');
 
     const dateContext = getCriticalDateContext();
     console.log(`[PlaybookGen] Generating playbook for category: ${threat_category || 'auto-detect'}`);

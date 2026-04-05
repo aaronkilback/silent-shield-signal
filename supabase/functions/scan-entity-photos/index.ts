@@ -206,10 +206,19 @@ Deno.serve(async (req) => {
 
     console.log(`Total images to process: ${imageUrls.length}`);
 
-    // Blocked domains — loosen for public figures (Instagram is a primary source)
-    const blockedDomains = isPublicFigure
-      ? ['pinterest.com', 'gettyimages.com', 'shutterstock.com', 'istockphoto.com']
-      : ['facebook.com', 'instagram.com', 'twitter.com', 'pinterest.com', 'gettyimages.com', 'shutterstock.com', 'istockphoto.com'];
+    // Block unfetchable crawler URLs (lookaside = social media auth-walled crawler endpoints)
+    // and stock photo sites. Do NOT block whole social domains — direct CDN URLs are fetchable.
+    const blockedPatterns = [
+      'lookaside.fbsbx.com',       // Facebook crawler-only, requires auth
+      'lookaside.instagram.com',    // Instagram crawler-only, requires auth
+      'lookaside.fbcdn.net',        // Facebook CDN crawler variant
+      'scontent.cdninstagram.com/v', // Instagram auth-walled variant
+      'pinterest.com',
+      'gettyimages.com',
+      'shutterstock.com',
+      'istockphoto.com',
+      'alamy.com',
+    ];
 
     let photosAdded = 0;
     const errors: string[] = [];
@@ -243,7 +252,7 @@ Deno.serve(async (req) => {
 
       try {
         const imageUrl = new URL(item.url);
-        const isBlocked = blockedDomains.some(d => imageUrl.hostname.includes(d));
+        const isBlocked = blockedPatterns.some(p => item.url.includes(p));
 
         if (isBlocked) {
           console.log(`Skipped blocked domain: ${imageUrl.hostname}`);
@@ -270,8 +279,16 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // AI verification
-        if (GEMINI_API_KEY) {
+        // For public figures with no reference photos, skip AI verification —
+        // the search query already scoped to the person's name, and AI models
+        // refuse to identify individuals from photos without reference images.
+        if (isPublicFigure && referenceImages.length === 0) {
+          console.log(`Public figure, no references — accepting image from ${item.source}`);
+          // fall through to save
+        }
+
+        // AI verification (only when we have references, or for private individuals)
+        if (GEMINI_API_KEY && (!isPublicFigure || referenceImages.length > 0)) {
           const base64Image = btoa(
             new Uint8Array(imageBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
           );

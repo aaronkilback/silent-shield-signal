@@ -9,9 +9,7 @@ Deno.serve(async (req) => {
     console.log('Analyzing image:', image_url);
 
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-    if (!GEMINI_API_KEY) {
-      throw new Error('GEMINI_API_KEY not configured');
-    }
+    
 
     // Build context-aware prompt
     let analysisPrompt = `Analyze this image for security intelligence purposes. Identify:

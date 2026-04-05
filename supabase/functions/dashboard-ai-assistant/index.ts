@@ -1630,8 +1630,7 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
       console.log(`Analyzing visual document: ${doc.filename} (${fileSizeMB.toFixed(1)}MB)`);
 
       const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-      if (!GEMINI_API_KEY) {
-        return { success: false, error: "GEMINI_API_KEY not configured" };
+      ;
       }
 
       // Determine analysis prompt based on focus
@@ -6725,7 +6724,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
           // Generate header image using Gemini Flash Image model
           let headerImageUrl = "";
-          if (generate_header_image !== false && GEMINI_API_KEY) {
+          if (generate_header_image !== false ) {
             try {
               const imgPrompt = image_prompt || `A wide cinematic header image for a corporate security intelligence bulletin titled "${bulletin_title}". Dark moody atmosphere, deep navy and charcoal tones with subtle cyan accent lighting. Abstract geometric grid patterns suggesting digital surveillance networks and data analysis. No text, no words, no letters. Photorealistic, ultra high resolution, 16:9 aspect ratio.`;
               console.log("Generating bulletin header image via Gemini Flash Image...");

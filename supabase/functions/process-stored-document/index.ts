@@ -87,9 +87,8 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-    if (!GEMINI_API_KEY && !OPENAI_API_KEY) {
-      throw new Error('No AI API key configured (GEMINI_API_KEY or OPENAI_API_KEY required)');
+    if (!OPENAI_API_KEY) {
+      throw new Error('OPENAI_API_KEY is not configured');
     }
 
     // Get feedback-based learning context
@@ -848,7 +847,7 @@ Return the full extracted text and/or description.`
 
     // Build the entity extraction request body (shared between Gemini and OpenAI)
     const entityExtractionBody = {
-      model: GEMINI_API_KEY ? 'gpt-4o-mini' : 'gpt-4o-mini',
+      model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
@@ -1120,28 +1119,17 @@ Think like a professional intelligence analyst reading an opposition research do
         tool_choice: { type: "function", function: { name: "extract_entities_and_relationships" } }
     };
 
-    // Try Gemini first, fall back to OpenAI if rate limited
-    const callEntityExtractionAI = async (useOpenAIFallback = false): Promise<Response> => {
-      const endpoint = (!GEMINI_API_KEY || useOpenAIFallback)
-        ? 'https://api.openai.com/v1/chat/completions'
-        : 'https://api.openai.com/v1/chat/completions';
-      const key = (!GEMINI_API_KEY || useOpenAIFallback) ? OPENAI_API_KEY! : GEMINI_API_KEY!;
-      const model = (!GEMINI_API_KEY || useOpenAIFallback) ? 'gpt-4o-mini' : 'gpt-4o-mini';
-      console.log(`Calling ${useOpenAIFallback ? 'OpenAI' : 'Gemini'} for entity extraction...`);
-      return fetchWithRetry(endpoint, {
+    // Entity extraction via OpenAI
+    const callEntityExtractionAI = async (): Promise<Response> => {
+      console.log('Calling OpenAI for entity extraction...');
+      return fetchWithRetry('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...entityExtractionBody, model }),
-      }, 3, `Entity Extraction (${useOpenAIFallback ? 'OpenAI' : 'Gemini'})`);
+        headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...entityExtractionBody, model: 'gpt-4o-mini' }),
+      }, 3, 'Entity Extraction');
     };
 
     let aiResponse = await callEntityExtractionAI();
-
-    // Fall back to OpenAI if Gemini is rate limited
-    if (!aiResponse.ok && aiResponse.status === 429 && GEMINI_API_KEY && OPENAI_API_KEY) {
-      console.log('Gemini rate limited, falling back to OpenAI gpt-4o-mini...');
-      aiResponse = await callEntityExtractionAI(true);
-    }
 
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();

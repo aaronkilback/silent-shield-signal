@@ -10,7 +10,7 @@ Deno.serve(async (req) => {
     const lovableApiKey = Deno.env.get("OPENAI_API_KEY")!;
     
     if (!lovableApiKey) {
-      throw new Error("GEMINI_API_KEY not configured");
+      throw new Error("OPENAI_API_KEY not configured");
     }
     
     const supabase = createServiceClient();

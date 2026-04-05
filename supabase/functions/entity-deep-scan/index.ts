@@ -93,6 +93,7 @@ Deno.serve(async (req) => {
     const HIBP_API_KEY = Deno.env.get('HIBP_API_KEY');
     const PERPLEXITY_API_KEY = Deno.env.get('PERPLEXITY_API_KEY');
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
 
     // Get entity attributes for additional context
     const attributes = (entity.attributes as Record<string, unknown>) || {};

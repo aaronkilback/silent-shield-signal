@@ -285,7 +285,7 @@ Deno.serve(async (req) => {
     let aiAssessment: string | null = null;
     const highRiskClusters = clusters.filter(c => c.risk_score >= 60);
 
-    if (GEMINI_API_KEY && highRiskClusters.length > 0) {
+    if (highRiskClusters.length > 0) {
       try {
         const clusterSummary = highRiskClusters.slice(0, 5).map((c, i) => 
           `${i + 1}. [${c.cluster_type.toUpperCase()}] ${c.description} — Risk: ${c.risk_score}/100`

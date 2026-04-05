@@ -281,7 +281,7 @@ Deno.serve(async (req) => {
           .slice(0, 60)
           .map((s) => ({ id: s.id, text: (s.normalized_text || '').toString() }));
 
-        if (GEMINI_API_KEY && candidates.length > 0) {
+        if (candidates.length > 0) {
           try {
             const resp = await fetch('https://api.openai.com/v1/chat/completions', {
               method: 'POST',

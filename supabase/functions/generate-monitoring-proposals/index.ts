@@ -112,9 +112,7 @@ Deno.serve(async (req) => {
 
     // 4. Use AI to analyze gaps and generate proposals
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-    if (!GEMINI_API_KEY) {
-      return errorResponse('GEMINI_API_KEY not configured', 500);
-    }
+    
 
     let totalProposals = 0;
     let rejectedProposals = 0;

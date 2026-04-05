@@ -182,7 +182,7 @@ Deno.serve(async (req) => {
         console.log(`[DEEP-SCAN] Name parts: first="${firstName}" last="${lastName}"`);
         console.log(`[DEEP-SCAN] Industry: ${industry || "not specified"}`);
         console.log(`[DEEP-SCAN] Google API: ${!!GOOGLE_API_KEY && !!GOOGLE_CX ? "configured" : "NOT configured"}`);
-        console.log(`[DEEP-SCAN] Lovable AI: ${!!GEMINI_API_KEY ? "configured" : "NOT configured"}`);
+        console.log(`[DEEP-SCAN] Lovable AI: ${!!OPENAI_API_KEY ? "configured" : "NOT configured"}`);
         console.log(`[DEEP-SCAN] ════════════════════════════════════════════════════`);
 
         const discoveries: Discovery[] = [];
@@ -449,7 +449,7 @@ Return as JSON array: [{ title, description, risk_level, source }]`;
         send({ type: "progress", data: { percent: 75 } });
 
         let aiAnalysis = null;
-        if (GEMINI_API_KEY && discoveries.length > 0) {
+        if (discoveries.length > 0) {
           try {
             const analysisPrompt = `You are a corporate security intelligence analyst conducting a VIP deep scan. Analyze these OSINT discoveries for ${fullName}:
 

@@ -294,9 +294,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-    if (!GEMINI_API_KEY) {
-      throw new Error('GEMINI_API_KEY not configured');
-    }
+    
 
     let content = textContent;
     let document: any = null;
@@ -376,7 +374,7 @@ Deno.serve(async (req) => {
               console.log('PDF is scanned/image-based. Attempting OCR with Gemini Vision...');
               
               try {
-                content = await extractTextWithOCR(fileData, GEMINI_API_KEY);
+                content = await extractTextWithOCR(fileData, OPENAI_API_KEY);
                 console.log(`OCR successfully extracted ${content.length} characters`);
                 
                 // Update metadata to indicate OCR was used
@@ -428,7 +426,7 @@ Deno.serve(async (req) => {
           // Word document extraction
           console.log('Extracting text from Word document using AI...');
           try {
-            content = await extractTextFromWord(fileData, GEMINI_API_KEY, doc.filename);
+            content = await extractTextFromWord(fileData, OPENAI_API_KEY, doc.filename);
             console.log(`Extracted ${content.length} characters from Word document`);
             
             // Update metadata to indicate AI extraction was used
