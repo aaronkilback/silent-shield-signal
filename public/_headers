@@ -1,0 +1,13 @@
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+
+# Never cache index.html at the CDN edge — always serve the latest deployment
+/
+  Cache-Control: no-store
+/index.html
+  Cache-Control: no-store
+
+# JS/CSS assets are content-addressed (hashed filenames) — cache forever
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
