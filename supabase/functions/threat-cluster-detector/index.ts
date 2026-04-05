@@ -36,6 +36,34 @@ interface ClusterAlert {
   description: string;
 }
 
+// Categories that belong together — only signals within the same affinity group
+// should form geographic clusters, and cross-domain only fires across different groups.
+const CATEGORY_AFFINITY: Record<string, string> = {
+  protest:         'civil_unrest',
+  civil_emergency: 'civil_unrest',
+  social_sentiment:'civil_unrest',
+  violence:        'civil_unrest',
+  active_threat:   'physical_threat',
+  physical:        'physical_threat',
+  amber_alert:     'physical_threat',
+  insider_threat:  'insider',
+  surveillance:    'insider',
+  cybersecurity:   'cyber',
+  malware:         'cyber',
+  operational:     'operational',
+  regulatory:      'operational',
+  compliance:      'operational',
+  advisory:        'operational',
+  system_alert:    'operational',
+  environmental:   'environmental',
+  health_concern:  'environmental',
+  other:           'other',
+};
+
+function affinityGroup(category: string | null): string {
+  return CATEGORY_AFFINITY[category || ''] || 'other';
+}
+
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
@@ -116,18 +144,21 @@ Deno.serve(async (req) => {
     // PHASE 3: Geographic velocity detection
     // ═══════════════════════════════════════════════════════════
 
+    // Bucket by location + affinity group so unlike categories (protest vs theft) don't merge
     const locationBuckets = new Map<string, SignalRecord[]>();
     for (const sig of signals) {
       const loc = (sig.location || '').trim().toLowerCase();
       if (!loc || loc === 'unknown' || loc.length < 3) continue;
-      // Normalize: use city-level only (skip province-level)
       const skipPatterns = ['b.c.', 'bc', 'ontario', 'alberta', 'quebec', 'canada', 'usa', 'united states'];
       if (skipPatterns.includes(loc)) continue;
-      if (!locationBuckets.has(loc)) locationBuckets.set(loc, []);
-      locationBuckets.get(loc)!.push(sig);
+      const group = affinityGroup(sig.category);
+      const key = `${loc}::${group}`;
+      if (!locationBuckets.has(key)) locationBuckets.set(key, []);
+      locationBuckets.get(key)!.push(sig);
     }
 
-    for (const [location, locSignals] of locationBuckets.entries()) {
+    for (const [bucketKey, locSignals] of locationBuckets.entries()) {
+      const [location, group] = bucketKey.split('::');
       const recentWindow = locSignals.filter(s => s.created_at >= cutoff4h);
       if (recentWindow.length >= 5) {
         const categories = new Set(recentWindow.map(s => s.category || 'unknown'));
@@ -139,7 +170,7 @@ Deno.serve(async (req) => {
 
         const riskScore = Math.min(100, Math.round(
           recentWindow.length * 10 +
-          categories.size * 15 + // Multi-category = higher risk
+          categories.size * 15 +
           ((sevBreakdown['critical'] || 0) + (sevBreakdown['high'] || 0)) * 15
         ));
 
@@ -148,7 +179,7 @@ Deno.serve(async (req) => {
         const isEscalating = recentWindow.length > priorWindow;
         clusters.push({
           cluster_type: 'geographic_surge',
-          key: location,
+          key: `${location}:${group}`,
           signal_count: recentWindow.length,
           signal_ids: recentWindow.map(s => s.id),
           window_hours: 4,
@@ -156,7 +187,7 @@ Deno.serve(async (req) => {
           first_seen: recentWindow[recentWindow.length - 1].created_at,
           last_seen: recentWindow[0].created_at,
           risk_score: riskScore,
-          description: `Geographic cluster detected: ${recentWindow.length} signals concentrated near ${location} within 4 hours. Signal types: ${typeBreakdown}. Trajectory: ${isEscalating ? 'ESCALATING — count increased from previous period' : 'STABLE — consistent with baseline activity'}. This concentration warrants review for coordinated activity or developing situation.`,
+          description: `Geographic cluster detected: ${recentWindow.length} ${group} signals concentrated near ${location} within 4 hours. Signal types: ${typeBreakdown}. Trajectory: ${isEscalating ? 'ESCALATING — count increased from previous period' : 'STABLE — consistent with baseline activity'}. This concentration warrants review for coordinated activity or developing situation.`,
         });
       }
     }
@@ -206,32 +237,40 @@ Deno.serve(async (req) => {
     // PHASE 5: Cross-domain pattern detection
     // ═══════════════════════════════════════════════════════════
 
-    // Check if multiple categories are surging simultaneously in same location (4h window)
-    const crossDomainMap = new Map<string, Set<string>>();
+    // Cross-domain fires only when signals span 3+ DISTINCT affinity groups in same location.
+    // protest + civil_emergency = same group (civil_unrest) — NOT cross-domain.
+    // civil_unrest + cyber + operational in one place = genuinely cross-domain.
+    const crossDomainMap = new Map<string, Set<string>>(); // loc → Set<affinityGroup>
+    const crossDomainCats = new Map<string, Set<string>>(); // loc → Set<category>
     for (const sig of signals.filter(s => s.created_at >= cutoff4h)) {
       const loc = (sig.location || '').trim().toLowerCase();
       if (!loc || loc.length < 3) continue;
-      if (!crossDomainMap.has(loc)) crossDomainMap.set(loc, new Set());
-      crossDomainMap.get(loc)!.add(sig.category || 'unknown');
+      if (!crossDomainMap.has(loc)) {
+        crossDomainMap.set(loc, new Set());
+        crossDomainCats.set(loc, new Set());
+      }
+      crossDomainMap.get(loc)!.add(affinityGroup(sig.category));
+      crossDomainCats.get(loc)!.add(sig.category || 'unknown');
     }
 
-    for (const [location, categories] of crossDomainMap.entries()) {
-      if (categories.size >= 3) {
-        const locSignals = signals.filter(s => 
-          (s.location || '').trim().toLowerCase() === location && 
+    for (const [location, affinityGroups] of crossDomainMap.entries()) {
+      if (affinityGroups.size >= 3) {
+        const locSignals = signals.filter(s =>
+          (s.location || '').trim().toLowerCase() === location &&
           s.created_at >= cutoff4h
         );
+        const cats = [...(crossDomainCats.get(location) || [])];
         clusters.push({
           cluster_type: 'cross_domain',
-          key: `${location}:${[...categories].join('+')}`,
+          key: `${location}:${[...affinityGroups].join('+')}`,
           signal_count: locSignals.length,
           signal_ids: locSignals.map(s => s.id),
           window_hours: 4,
           severity_breakdown: {},
           first_seen: locSignals[locSignals.length - 1]?.created_at || '',
           last_seen: locSignals[0]?.created_at || '',
-          risk_score: Math.min(100, categories.size * 20 + locSignals.length * 8),
-          description: `Cross-domain convergence in "${location}": ${[...categories].join(', ')} (${locSignals.length} signals)`,
+          risk_score: Math.min(100, affinityGroups.size * 20 + locSignals.length * 8),
+          description: `Cross-domain convergence in "${location}": ${cats.join(', ')} spanning ${affinityGroups.size} distinct threat domains (${locSignals.length} signals)`,
         });
       }
     }
