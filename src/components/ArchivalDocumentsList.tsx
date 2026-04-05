@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Archive, Download, FileText, RefreshCw, Brain } from "lucide-react";
+import { Archive, Download, FileText, RefreshCw, Brain, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -14,6 +14,8 @@ export const ArchivalDocumentsList = () => {
   const queryClient = useQueryClient();
   const [reprocessing, setReprocessing] = useState<string | null>(null);
   const [processingIntel, setProcessingIntel] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [bulkReprocessing, setBulkReprocessing] = useState(false);
 
   const { data: documents, isLoading } = useQuery({
     queryKey: ['archival-documents'],
@@ -28,6 +30,61 @@ export const ArchivalDocumentsList = () => {
       return data;
     }
   });
+
+  const handleDelete = async (doc: { id: string; filename: string; storage_path: string; metadata: any }) => {
+    if (!window.confirm(`Delete "${doc.filename}"? This cannot be undone.`)) return;
+
+    setDeleting(doc.id);
+    try {
+      // Try to delete from storage (check metadata for bucket, fall back to both)
+      const bucket = doc.metadata?.storage_bucket || 'archival-documents';
+      const bucketsToTry = Array.from(new Set([bucket, 'ai-chat-attachments', 'archival-documents']));
+      for (const b of bucketsToTry) {
+        await supabase.storage.from(b).remove([doc.storage_path]);
+      }
+
+      // Delete DB record
+      const { error } = await supabase
+        .from('archival_documents')
+        .delete()
+        .eq('id', doc.id);
+
+      if (error) throw error;
+
+      toast.success(`Deleted ${doc.filename}`);
+      queryClient.invalidateQueries({ queryKey: ['archival-documents'] });
+    } catch (err: any) {
+      console.error('Delete error:', err);
+      toast.error(`Failed to delete: ${err.message}`);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const needsReprocessing = (doc: any) =>
+    !doc.metadata?.text_extracted ||
+    doc.content_text?.startsWith('Processing document:') ||
+    doc.content_text?.startsWith('[Processing failed') ||
+    !doc.content_text;
+
+  const handleBulkReprocess = async () => {
+    const stale = (documents || []).filter(needsReprocessing);
+    if (stale.length === 0) { toast.info('All documents are already processed.'); return; }
+    setBulkReprocessing(true);
+    toast.info(`Reprocessing ${stale.length} document(s)...`);
+    let done = 0;
+    for (const doc of stale) {
+      try {
+        await supabase.functions.invoke('process-stored-document', { body: { documentId: doc.id } });
+        done++;
+      } catch { /* non-fatal */ }
+    }
+    toast.success(`Queued ${done} of ${stale.length} documents for reprocessing`);
+    setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: ['archival-documents'] });
+      setBulkReprocessing(false);
+    }, 3000);
+  };
 
   const handleDownload = async (storagePath: string, filename: string) => {
     const { data, error } = await supabase
@@ -150,9 +207,23 @@ export const ArchivalDocumentsList = () => {
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center gap-2">
-          <Archive className="w-5 h-5 text-primary" />
-          <CardTitle>Archival Documents</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Archive className="w-5 h-5 text-primary" />
+            <CardTitle>Archival Documents</CardTitle>
+          </div>
+          {documents && documents.filter(needsReprocessing).length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleBulkReprocess}
+              disabled={bulkReprocessing}
+              className="text-amber-600 border-amber-300 hover:bg-amber-50"
+            >
+              <RefreshCw className={`w-3 h-3 mr-1 ${bulkReprocessing ? 'animate-spin' : ''}`} />
+              Reprocess {documents.filter(needsReprocessing).length} stale
+            </Button>
+          )}
         </div>
         <CardDescription>
           Historical documents stored for contextual reference
@@ -207,7 +278,11 @@ export const ArchivalDocumentsList = () => {
                       <div className="flex items-center gap-4 text-xs text-muted-foreground">
                         <span>{(doc.file_size / 1024).toFixed(1)} KB</span>
                         <span>{format(new Date(doc.upload_date), 'MMM d, yyyy')}</span>
-                        {doc.metadata && typeof doc.metadata === 'object' && 'entities_processed' in doc.metadata && doc.metadata.entities_processed && (
+                        {needsReprocessing(doc) ? (
+                          <Badge variant="outline" className="text-xs border-amber-400 text-amber-600">
+                            Needs reprocessing
+                          </Badge>
+                        ) : (
                           <Badge variant="outline" className="text-xs">
                             Processed
                           </Badge>
@@ -240,6 +315,16 @@ export const ArchivalDocumentsList = () => {
                         onClick={() => handleDownload(doc.storage_path, doc.filename)}
                       >
                         <Download className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDelete(doc)}
+                        disabled={deleting === doc.id}
+                        title="Delete document"
+                        className="text-destructive hover:text-destructive"
+                      >
+                        <Trash2 className={`w-4 h-4 ${deleting === doc.id ? 'animate-spin' : ''}`} />
                       </Button>
                     </div>
                   </div>

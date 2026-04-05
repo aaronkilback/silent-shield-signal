@@ -1,5 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
+// NOTE: pdfjs-dist is loaded dynamically inside the PDF extraction block to avoid
+// crashing the entire function on cold start if the CDN import is slow or fails.
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -51,36 +53,9 @@ async function fetchWithRetry(
   throw lastError || new Error(`${context} failed after ${maxRetries} attempts`);
 }
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
-
-  try {
-    const body = await req.json();
-    
-    // Health check endpoint for pipeline tests
-    if (body.health_check) {
-      return new Response(
-        JSON.stringify({ 
-          status: 'healthy', 
-          function: 'process-stored-document',
-          timestamp: new Date().toISOString() 
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-    
-    const { documentId } = body;
-    
-    if (!documentId) {
-      return new Response(
-        JSON.stringify({ error: 'Missing documentId' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    console.log(`Processing document: ${documentId}`);
+// All heavy processing lives in this function, called via EdgeRuntime.waitUntil
+// so the HTTP response is sent immediately (< 1s) regardless of how long processing takes.
+async function processDocumentBackground(documentId: string) {
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -92,7 +67,7 @@ Deno.serve(async (req) => {
     }
 
     // Get feedback-based learning context
-    let learningContext: any = { adjustedThreshold: 0.3, avoidKeywords: [], guidance: '' };
+    let learningContext: any = { adjustedThreshold: 0.7, avoidKeywords: [], guidance: '' };
     try {
       const { data: learningData } = await supabase.functions.invoke('adaptive-confidence-adjuster');
       if (learningData) {
@@ -129,7 +104,6 @@ Deno.serve(async (req) => {
       await supabase
         .from('archival_documents')
         .update({
-          processing_status: 'completed',
           content_text: document.content_text && document.content_text.length > 100
             ? document.content_text
             : `[Large document: ${document.filename} (${fileSizeMB.toFixed(1)}MB). This file exceeds the ${MAX_SAFE_SIZE_MB}MB processing limit for in-memory analysis. The file is stored and accessible but text extraction was skipped to prevent system resource exhaustion. For full content analysis, please split into smaller files or use external document processing services.]`,
@@ -212,7 +186,6 @@ Deno.serve(async (req) => {
       await supabase
         .from('archival_documents')
         .update({
-          processing_status: 'failed',
           content_text:
             document.content_text ??
             `[Document processing failed: could not download the file from storage. path=${document.storage_path}]`,
@@ -492,83 +465,147 @@ Deno.serve(async (req) => {
     } else if (document.file_type === 'application/pdf') {
       console.log('Extracting text from PDF...');
 
-      // Primary: AI vision via base64 data URL
-      // pdfjs-dist does not work in Deno; signed URLs rejected by gateway for PDFs
-      // Gateway requires data:application/pdf;base64,... format
+      // Primary: pdf.js with disableWorker=true — same approach used by fortress-document-converter.
+      // Works for text-based PDFs (embedded text layer). For scanned/image-only PDFs,
+      // falls back to OpenAI Vision OCR on the first page rendered as an image.
       try {
         const fileSizeMB = document.file_size / (1024 * 1024);
-        // Real-world testing: 5MB PDF OOMs. Blob download already uses ~N MB,
-        // then arrayBuffer + base64 + JSON.stringify adds ~3.7x N more.
-        // Safe threshold: 3MB raw → ~14MB total memory footprint
-        const MAX_PDF_MB = 3;
+        const MAX_PDF_MB = 8;
 
         if (fileSizeMB > MAX_PDF_MB) {
           console.log(`PDF too large for edge function processing (${fileSizeMB.toFixed(1)}MB > ${MAX_PDF_MB}MB limit)`);
           textContent = `[PDF document: ${document.filename} (${fileSizeMB.toFixed(1)}MB). Exceeds processing limit. Content stored for manual review.]`;
         } else {
-          console.log(`Processing PDF (${fileSizeMB.toFixed(1)}MB) via AI extraction...`);
-          
-          // Step 1: Convert blob → base64 string, then release intermediate buffers
-          const ab = await fileData.arrayBuffer();
-          const pdfBase64 = encodeBase64(new Uint8Array(ab));
-          // ab and Uint8Array can now be GC'd (we only need pdfBase64)
-          
-          console.log(`Sending ${(pdfBase64.length / (1024 * 1024)).toFixed(2)}MB base64 to AI...`);
+          console.log(`Processing PDF (${fileSizeMB.toFixed(1)}MB) via pdf.js...`);
+          const pdfBytes = await fileData.arrayBuffer();
+          const uint8 = new Uint8Array(pdfBytes);
 
-          // Use only 1 retry to avoid OOM from multiple in-flight requests
-          const extractResp = await fetchWithRetry(
-            'https://api.openai.com/v1/chat/completions',
-            {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${OPENAI_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                model: 'gpt-4o-mini',
-                messages: [{
-                  role: 'user',
-                  content: [
-                    {
-                      type: 'text',
-                      text: `Extract ALL readable text from this PDF document "${document.filename}".
+          // Dynamic import — keeps it out of the module init critical path
+          const pdfjsLib = await import('https://esm.sh/pdfjs-dist@4.10.38/legacy/build/pdf.mjs');
+          await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs');
+          try { (pdfjsLib as any).GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs'; } catch (_e) { /* non-fatal */ }
 
-INSTRUCTIONS:
-1. Extract complete text content — do NOT summarize.
-2. Preserve structure: headings, paragraphs, tables (use | for columns), bullet points.
-3. If pages are scanned images, perform OCR.
-4. Mark unclear text with [?].
-5. Return ONLY the extracted text, no commentary.`
-                    },
-                    {
-                      type: 'image_url',
-                      image_url: { url: `data:application/pdf;base64,${pdfBase64}` }
-                    }
-                  ]
-                }],
-                max_tokens: 16000
-              }),
-            },
-            1, // Single attempt — retries double memory usage
-            'PDF AI extraction'
-          );
+          const pdf = await (pdfjsLib as any).getDocument({ data: uint8, disableWorker: true }).promise;
+          const totalPages = Number(pdf?.numPages || 0);
+          const maxPages = Math.min(totalPages, 150); // cap to avoid timeout
 
-          if (extractResp.ok) {
-            const extractData = await extractResp.json();
-            const extracted = extractData.choices?.[0]?.message?.content?.trim();
-            if (extracted && extracted.length > 50) {
-              textContent = extracted.slice(0, 200000);
-              console.log(`AI PDF extraction successful: ${textContent.length} characters`);
-            } else {
-              console.warn('AI PDF extraction returned minimal content');
-            }
+          const pageTexts: string[] = [];
+          for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+            const page = await pdf.getPage(pageNum);
+            const pageContent = await page.getTextContent();
+            const pageText = (pageContent?.items ?? [])
+              .map((it: any) => (typeof it?.str === 'string' ? it.str : ''))
+              .filter((s: string) => s.trim().length > 0)
+              .join(' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+            if (pageText) pageTexts.push(pageText);
+          }
+
+          const extracted = pageTexts.join('\n');
+          if (extracted.trim().length >= 50) {
+            textContent = extracted.slice(0, 200000);
+            console.log(`pdf.js extracted ${textContent.length} chars from ${maxPages}/${totalPages} pages`);
           } else {
-            const errText = await extractResp.text();
-            console.error(`AI PDF extraction error ${extractResp.status}: ${errText.substring(0, 300)}`);
+            console.log(`pdf.js found no text layer (${extracted.length} chars) — PDF may be scanned/image-only`);
           }
         }
-      } catch (primaryError) {
-        console.error('Primary PDF extraction failed:', primaryError);
+      } catch (pdfJsError) {
+        console.error('pdf.js extraction error:', pdfJsError instanceof Error ? pdfJsError.message : pdfJsError);
+      }
+
+      // Fallback for scanned/image-only PDFs: use OpenAI Vision on the first few pages
+      // by uploading to Files API and using the Responses API with gpt-4o
+      if (!textContent || textContent.length < 100) {
+        const fileSizeMB = document.file_size / (1024 * 1024);
+        if (fileSizeMB <= 8) {
+          try {
+            console.log('PDF has no text layer — attempting AI OCR via Files API + Responses API...');
+            const pdfBytes2 = await fileData.arrayBuffer();
+            const pdfBlob = new Blob([pdfBytes2], { type: 'application/pdf' });
+            const formData = new FormData();
+            formData.append('file', pdfBlob, document.filename || 'document.pdf');
+            formData.append('purpose', 'user_data');
+
+            const uploadResp = await fetch('https://api.openai.com/v1/files', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+              body: formData,
+            });
+
+            if (uploadResp.ok) {
+              const uploadData = await uploadResp.json();
+              const fileId = uploadData.id;
+              console.log(`Uploaded scanned PDF: ${fileId}, polling for ready state...`);
+
+              // Wait for file to be processed (usually 2-5 seconds)
+              let fileReady = false;
+              for (let poll = 0; poll < 8; poll++) {
+                await new Promise(r => setTimeout(r, 2000));
+                const statusResp = await fetch(`https://api.openai.com/v1/files/${fileId}`, {
+                  headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+                });
+                if (statusResp.ok) {
+                  const s = await statusResp.json();
+                  if (s.status === 'processed') { fileReady = true; break; }
+                  if (s.status === 'error') break;
+                }
+              }
+
+              if (fileReady) {
+                const ocrResp = await fetchWithRetry('https://api.openai.com/v1/responses', {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    model: 'gpt-4o',
+                    input: [{
+                      role: 'user',
+                      content: [
+                        {
+                          type: 'input_text',
+                          text: `Extract ALL readable text from this scanned PDF document "${document.filename}". Preserve structure. Return ONLY the extracted text.`,
+                        },
+                        { type: 'input_file', file_id: fileId },
+                      ],
+                    }],
+                    max_output_tokens: 16000,
+                  }),
+                }, 1, 'PDF OCR Responses API');
+
+                // Clean up file
+                fetch(`https://api.openai.com/v1/files/${fileId}`, {
+                  method: 'DELETE', headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+                }).catch(() => {});
+
+                if (ocrResp.ok) {
+                  const ocrData = await ocrResp.json();
+                  const outputMessage = ocrData.output?.find((o: any) => o.type === 'message');
+                  const ocrText = outputMessage?.content?.find((c: any) => c.type === 'output_text')?.text?.trim();
+                  if (ocrText && ocrText.length > 50 && !ocrText.includes("I'm unable to")) {
+                    textContent = ocrText.slice(0, 200000);
+                    console.log(`PDF OCR via Responses API successful: ${textContent.length} chars`);
+                  } else {
+                    console.warn('PDF OCR via Responses API returned no useful content');
+                  }
+                } else {
+                  console.error(`PDF OCR Responses API error ${ocrResp.status}`);
+                }
+              } else {
+                console.warn('PDF not processed in time for OCR');
+                fetch(`https://api.openai.com/v1/files/${fileId}`, {
+                  method: 'DELETE', headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+                }).catch(() => {});
+              }
+            } else {
+              console.warn(`PDF Files API upload failed: ${uploadResp.status}`);
+            }
+          } catch (ocrError) {
+            console.error('PDF AI OCR fallback failed:', ocrError instanceof Error ? ocrError.message : ocrError);
+          }
+        }
       }
 
       // Fallback: lightweight heuristic for small text-based PDFs (1MB cap)
@@ -853,7 +890,7 @@ Return the full extracted text and/or description.`
             role: 'system',
             content: `You are an elite intelligence analyst conducting comprehensive entity extraction and strategic analysis. Your mission is to extract EVERY relevant intelligence element with full context, relationships, and strategic significance.
 
-🎯 CONFIDENCE THRESHOLD: ${adjustedThreshold.toFixed(2)} (but err on the side of inclusion)
+🎯 CONFIDENCE THRESHOLD: ${adjustedThreshold.toFixed(2)} — only include entities with strong, explicit evidence. Err on the side of precision, not inclusion. When uncertain, omit.
 
 KNOWN ENTITIES IN DATABASE (check for matches):
 ${entityContext}
@@ -1133,22 +1170,17 @@ Think like a professional intelligence analyst reading an opposition research do
 
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
-      console.error('AI API error:', aiResponse.status, errorText);
-
-      if (aiResponse.status === 429) {
-        throw new Error('Rate limit exceeded - please try again later');
-      }
-      if (aiResponse.status === 402) {
-        throw new Error('AI credits exhausted - please add credits to continue');
-      }
-
-      throw new Error(`AI API error: ${aiResponse.status}`);
+      console.error('Entity extraction AI error:', aiResponse.status, errorText.substring(0, 300));
+      // Non-fatal: document text is already extracted; entity extraction failure
+      // should not fail the whole function and cause the frontend to show an error.
+      console.warn('Skipping entity extraction due to AI error — document text will still be stored');
+      // Jump past entity processing; entitySuggestions remains []
     }
 
-    const aiData = await aiResponse.json();
-    console.log('AI response received');
+    const aiData = aiResponse.ok ? await aiResponse.json() : null;
+    if (aiData) console.log('AI response received');
 
-    const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
+    const toolCall = aiData?.choices?.[0]?.message?.tool_calls?.[0];
     if (!toolCall) {
       console.log('No tool call in AI response');
     } else {
@@ -1204,7 +1236,15 @@ Think like a professional intelligence analyst reading an opposition research do
           console.log(`Filtering out number-only: ${entity.name}`);
           return false;
         }
-        
+
+        // Locations and infrastructure are rarely useful as monitored entities —
+        // only keep them if confidence is very high
+        const lowValueTypes = ['location', 'infrastructure', 'facility', 'address'];
+        if (lowValueTypes.includes((entity.type || '').toLowerCase()) && entity.confidence < 0.85) {
+          console.log(`Filtering out low-value type ${entity.type}: ${entity.name}`);
+          return false;
+        }
+
         return true;
       });
       
@@ -1306,7 +1346,6 @@ Think like a professional intelligence analyst reading an opposition research do
     await supabase
       .from('archival_documents')
       .update({
-        processing_status: 'completed',
         content_text: textContent, // Store the extracted text for AI analysis
         entity_mentions: entityNames,
         metadata: {
@@ -1320,6 +1359,163 @@ Think like a professional intelligence analyst reading an opposition research do
       .eq('id', documentId);
 
     console.log(`Successfully processed document: ${document.filename}`);
+
+    // ═══ BACKGROUND ENRICHMENT ═══
+    // Knowledge bank, monitoring proposals, signal generation, and agent dissemination
+    // are fire-and-forget — they run AFTER we return the 200 OK so the user isn't
+    // waiting for 3 sequential AI calls.
+    const backgroundEnrichment = async () => {
+
+    // ═══ KNOWLEDGE BANK: Extract key findings into expert_knowledge ═══
+    if (textContent && textContent.length > 200) {
+      try {
+        console.log('Generating knowledge bank entries from document...');
+
+        const kbResp = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${OPENAI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content: 'You are a security intelligence analyst. Extract 3-5 key findings from a document for a corporate security knowledge base. Return ONLY a valid JSON array, no markdown.',
+              },
+              {
+                role: 'user',
+                content: `Extract 3-5 key intelligence findings from this document.
+
+DOCUMENT: "${document.filename}"
+CONTENT:
+${textContent.substring(0, 8000)}
+
+Return a JSON array. Each object:
+{
+  "title": "Concise finding title (under 120 chars)",
+  "content": "Detailed finding with context (200-500 chars)",
+  "domain": "one of: physical_security|cyber|executive_protection|crisis_management|threat_intelligence|geopolitical|financial_crime|compliance|general",
+  "subdomain": "specific subtopic",
+  "tags": ["tag1", "tag2"]
+}
+
+Only extract genuinely valuable intelligence insights. Skip boilerplate and generic filler.`,
+              },
+            ],
+            max_tokens: 2000,
+            temperature: 0.3,
+          }),
+        });
+
+        if (kbResp.ok) {
+          const kbData = await kbResp.json();
+          let kbContent = kbData.choices?.[0]?.message?.content || '[]';
+          kbContent = kbContent.replace(/```(?:json)?\s*/g, '').replace(/```\s*/g, '').trim();
+
+          let kbEntries: any[] = [];
+          try { kbEntries = JSON.parse(kbContent); } catch { /* skip */ }
+
+          if (Array.isArray(kbEntries) && kbEntries.length > 0) {
+            const kbInserts = kbEntries.slice(0, 5).map((entry: any) => ({
+              domain: entry.domain || 'threat_intelligence',
+              subdomain: entry.subdomain || 'document_upload',
+              knowledge_type: 'document_derived',
+              title: (entry.title || `Finding from ${document.filename}`).substring(0, 200),
+              content: entry.content || '',
+              applicability_tags: entry.tags || [],
+              citation: `Extracted from uploaded document: ${document.filename} (${new Date().toISOString().split('T')[0]})`,
+              confidence_score: 0.75,
+            }));
+
+            const { error: kbErr } = await supabase.from('expert_knowledge').insert(kbInserts);
+            if (kbErr) {
+              console.error('Knowledge bank insert error:', kbErr.message);
+            } else {
+              console.log(`Generated ${kbInserts.length} knowledge bank entries`);
+            }
+          }
+        }
+      } catch (kbError) {
+        console.error('Knowledge bank generation error (non-fatal):', kbError);
+      }
+    }
+
+    // ═══ SCAN SOURCE DISCOVERY: Extract domains/URLs as monitoring proposals ═══
+    if (textContent && textContent.length > 200 && document.client_id) {
+      try {
+        const urlMatches = textContent.match(/https?:\/\/[^\s<>"{}|\\^`\[\]]+/g) || [];
+        const domainMatches = textContent.match(/\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|org|net|gov|edu|io|co|info|news|mil|int)\b/gi) || [];
+
+        const uniqueDomains = [...new Set([
+          ...urlMatches.map((u: string) => { try { return new URL(u).hostname; } catch { return null; } }).filter(Boolean),
+          ...domainMatches,
+        ])].filter((d: any) =>
+          d && d.length > 5 &&
+          !['supabase.co', 'openai.com', 'anthropic.com', 'googleapis.com', 'microsoft.com', 'w3.org'].some(skip => d.includes(skip))
+        ) as string[];
+
+        if (uniqueDomains.length > 0) {
+          const sourceProposals = uniqueDomains.slice(0, 5).map((domain: string) => ({
+            client_id: document.client_id,
+            proposal_type: 'add_keyword',
+            proposed_value: domain,
+            proposed_by_agent: 'PROCESS-DOCUMENT',
+            reasoning: `Domain extracted from uploaded document: ${document.filename}. May be a relevant source for ongoing monitoring.`,
+            confidence: 0.6,
+            source_evidence: {
+              document_id: documentId,
+              filename: document.filename,
+              extracted_at: new Date().toISOString(),
+            },
+          }));
+
+          const { error: propErr } = await supabase.from('monitoring_proposals').insert(sourceProposals);
+          if (propErr) {
+            console.error('Monitoring proposals insert error:', propErr.message);
+          } else {
+            console.log(`Generated ${sourceProposals.length} monitoring proposals from document sources`);
+          }
+        }
+      } catch (sourceError) {
+        console.error('Scan source discovery error (non-fatal):', sourceError);
+      }
+    }
+
+    // ═══ SIGNAL GENERATION: Create signal if content is threat-relevant ═══
+    if (textContent && textContent.length > 200 && document.client_id) {
+      try {
+        const threatPattern = /\b(?:threat|attack|breach|compromise|hostile|adversary|terror|extremi|weapon|assassin|kidnap|surveil|stalk|bomb|shooting|violence|intrusion|hack|malware|ransom|phish|fraud|launder|sanction|exploit|arson|poison|abduct)\b/i;
+
+        if (threatPattern.test(textContent)) {
+          console.log('Threat-relevant content detected — generating signal from document...');
+
+          const signalText = `DOCUMENT INTELLIGENCE: "${document.filename}" uploaded. Key content: ${textContent.substring(0, 2000)}`;
+
+          const { error: sigErr } = await supabase.functions.invoke('ingest-signal', {
+            body: {
+              text: signalText,
+              client_id: document.client_id,
+              sourceType: 'document_upload',
+              sourceData: {
+                document_id: documentId,
+                filename: document.filename,
+                file_type: document.file_type,
+              },
+            },
+          });
+
+          if (sigErr) {
+            console.error('Signal generation error:', sigErr);
+          } else {
+            console.log('Signal generated from threat-relevant document content');
+          }
+        }
+      } catch (signalError) {
+        console.error('Signal generation error (non-fatal):', signalError);
+      }
+    }
 
     // ═══ DISSEMINATION: Share key findings with specialist agents ═══
     let disseminatedTo: string[] = [];
@@ -1416,25 +1612,53 @@ Think like a professional intelligence analyst reading an opposition research do
       }
     }
 
+    }; // end backgroundEnrichment
+
+    // Already inside EdgeRuntime.waitUntil — just await directly so the runtime
+    // stays alive until ALL enrichment (knowledge bank, signals, dissemination) finishes.
+    await backgroundEnrichment();
+
+    console.log(`[process-stored-document] Background processing completed for: ${documentId}`);
+}
+
+// Minimal HTTP handler — returns 200 immediately, all work runs in background
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  try {
+    const body = await req.json();
+    if (body.health_check) {
+      return new Response(
+        JSON.stringify({ status: 'healthy', timestamp: new Date().toISOString() }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    const { documentId } = body;
+    if (!documentId) {
+      return new Response(
+        JSON.stringify({ error: 'Missing documentId' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    console.log(`[process-stored-document] Queuing background processing for: ${documentId}`);
+    try {
+      (EdgeRuntime as any).waitUntil(
+        processDocumentBackground(documentId).catch(e =>
+          console.error('[process-stored-document] Background error:', e)
+        )
+      );
+    } catch (_e) {
+      processDocumentBackground(documentId).catch(e =>
+        console.error('[process-stored-document] Background error (fallback):', e)
+      );
+    }
     return new Response(
-      JSON.stringify({ 
-        success: true,
-        documentId,
-        entitiesFound: entitySuggestions.length,
-        disseminatedTo,
-      }),
+      JSON.stringify({ success: true, documentId, processing: 'background' }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
-    console.error('Error in process-stored-document function:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Error details:', errorMessage);
-    
+    console.error('[process-stored-document] Handler error:', error);
     return new Response(
-      JSON.stringify({ 
-        error: errorMessage,
-        details: error instanceof Error ? error.stack : undefined
-      }),
+      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
