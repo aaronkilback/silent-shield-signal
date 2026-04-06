@@ -34,7 +34,9 @@ export const PredictiveInsightsPanel = ({ predictions, topAlerts, isLoading }: P
             <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-sm font-medium">Escalation Probability</span>
-                <Badge variant="destructive">{predictions.escalation_probability}%</Badge>
+                <Badge variant="destructive">
+                  {predictions.escalation_probability != null ? `${predictions.escalation_probability}%` : "Calculating..."}
+                </Badge>
               </div>
               <p className="text-xs text-muted-foreground">
                 Timeframe: {predictions.predicted_timeframe}

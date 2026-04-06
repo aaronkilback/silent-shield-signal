@@ -1,3 +1,4 @@
+// build: 2026-03-16
 import { lazy, Suspense, useState } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -57,6 +58,10 @@ const NeuralConstellation = lazy(() => import("./pages/NeuralConstellation"));
 const KnowledgeBank = lazy(() => import("./pages/KnowledgeBank"));
 const SecurityAdvisor = lazy(() => import("./pages/SecurityAdvisor"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const Agents = lazy(() => import("./pages/Agents"));
+const Intelligence = lazy(() => import("./pages/Intelligence"));
+const ThreatIntel = lazy(() => import("./pages/ThreatIntel"));
+const Operations = lazy(() => import("./pages/Operations"));
 
 const PageLoader = () => (
   <div className="min-h-screen bg-background flex items-center justify-center">
@@ -131,6 +136,10 @@ const App = () => {
                       <Route path="/vip-deep-scan" element={<ProtectedRoute><VIPDeepScan /></ProtectedRoute>} />
                       <Route path="/consortia" element={<ProtectedRoute><Consortia /></ProtectedRoute>} />
                       <Route path="/intelligence-hub" element={<ProtectedRoute><IntelligenceHub /></ProtectedRoute>} />
+                      <Route path="/agents" element={<ProtectedRoute><Agents /></ProtectedRoute>} />
+                      <Route path="/intelligence" element={<ProtectedRoute><Intelligence /></ProtectedRoute>} />
+                      <Route path="/threat-intel" element={<ProtectedRoute><ThreatIntel /></ProtectedRoute>} />
+                      <Route path="/operations" element={<ProtectedRoute><Operations /></ProtectedRoute>} />
                       <Route path="/neural-constellation" element={<ProtectedRoute><NeuralConstellation /></ProtectedRoute>} />
                       <Route path="/knowledge-bank" element={<ProtectedRoute><KnowledgeBank /></ProtectedRoute>} />
                       <Route path="/briefing-feedback" element={<ProtectedRoute><BriefingFeedback /></ProtectedRoute>} />

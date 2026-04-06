@@ -132,7 +132,7 @@ Deno.serve(async (req) => {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${supabaseKey}`,
           },
-          body: JSON.stringify({ documentId: document.id })
+          body: JSON.stringify({ documentId: document.id, sync: true })
         });
 
         if (!response.ok) {

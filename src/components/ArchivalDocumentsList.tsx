@@ -61,29 +61,36 @@ export const ArchivalDocumentsList = () => {
     }
   };
 
-  const needsReprocessing = (doc: any) =>
-    !doc.metadata?.text_extracted ||
-    doc.content_text?.startsWith('Processing document:') ||
-    doc.content_text?.startsWith('[Processing failed') ||
-    !doc.content_text;
+  const needsReprocessing = (doc: any) => {
+    if (doc.metadata?.skipped_reason === 'file_too_large') return false;
+    if (doc.metadata?.file_missing) return false;
+    return (
+      !doc.metadata?.text_extracted ||
+      doc.content_text?.startsWith('Processing document:') ||
+      doc.content_text?.startsWith('[Processing failed') ||
+      !doc.content_text
+    );
+  };
 
   const handleBulkReprocess = async () => {
     const stale = (documents || []).filter(needsReprocessing);
     if (stale.length === 0) { toast.info('All documents are already processed.'); return; }
     setBulkReprocessing(true);
-    toast.info(`Reprocessing ${stale.length} document(s)...`);
     let done = 0;
     for (const doc of stale) {
+      toast.info(`Processing ${doc.filename}... (${done + 1}/${stale.length})`);
       try {
-        await supabase.functions.invoke('process-stored-document', { body: { documentId: doc.id } });
+        // sync:true waits for processing to fully complete before moving on
+        await supabase.functions.invoke('process-stored-document', {
+          body: { documentId: doc.id, sync: true }
+        });
         done++;
       } catch { /* non-fatal */ }
     }
-    toast.success(`Queued ${done} of ${stale.length} documents for reprocessing`);
-    setTimeout(() => {
-      queryClient.invalidateQueries({ queryKey: ['archival-documents'] });
-      setBulkReprocessing(false);
-    }, 3000);
+    toast.success(`Processed ${done} of ${stale.length} documents`);
+    queryClient.invalidateQueries({ queryKey: ['archival-documents'] });
+    queryClient.invalidateQueries({ queryKey: ['pending-entity-suggestions-count'] });
+    setBulkReprocessing(false);
   };
 
   const handleDownload = async (storagePath: string, filename: string) => {
@@ -115,7 +122,7 @@ export const ArchivalDocumentsList = () => {
 
     try {
       const { data, error } = await supabase.functions.invoke('process-stored-document', {
-        body: { documentId }
+        body: { documentId, sync: true }
       });
 
       if (error) throw error;
@@ -278,7 +285,15 @@ export const ArchivalDocumentsList = () => {
                       <div className="flex items-center gap-4 text-xs text-muted-foreground">
                         <span>{(doc.file_size / 1024).toFixed(1)} KB</span>
                         <span>{format(new Date(doc.upload_date), 'MMM d, yyyy')}</span>
-                        {needsReprocessing(doc) ? (
+                        {doc.metadata?.file_missing ? (
+                          <Badge variant="outline" className="text-xs border-red-400 text-red-600">
+                            File missing
+                          </Badge>
+                        ) : doc.metadata?.skipped_reason === 'file_too_large' ? (
+                          <Badge variant="outline" className="text-xs border-slate-400 text-slate-500">
+                            Too large
+                          </Badge>
+                        ) : needsReprocessing(doc) ? (
                           <Badge variant="outline" className="text-xs border-amber-400 text-amber-600">
                             Needs reprocessing
                           </Badge>

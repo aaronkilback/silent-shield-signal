@@ -420,6 +420,7 @@ function AegisCommandHub({ agent, onClick, activityScore = 0, onHover, onUnhover
               <div className="text-sm font-bold text-amber-400 tracking-widest">AEGIS-CMD</div>
             </div>
             <div className="text-[11px] text-muted-foreground mt-0.5">Primary Command AI • Orchestrator</div>
+            <div className="text-[9px] text-amber-400/60 tracking-wider mt-0.5">COMMAND NODE — amber = orchestrator hub</div>
             <div className="text-[10px] text-amber-400/70 mt-1.5 border-t border-amber-500/20 pt-1.5">
               All agent communications route through AEGIS
             </div>

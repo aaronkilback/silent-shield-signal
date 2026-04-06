@@ -110,6 +110,7 @@ async function processDocumentBackground(documentId: string) {
           metadata: {
             ...(document.metadata ?? {}),
             entities_processed: true,
+            text_extracted: true,
             skipped_reason: 'file_too_large',
             file_size_mb: fileSizeMB.toFixed(1),
             max_safe_size_mb: MAX_SAFE_SIZE_MB,
@@ -192,6 +193,8 @@ async function processDocumentBackground(documentId: string) {
           metadata: {
             ...(document.metadata ?? {}),
             entities_processed: false,
+            text_extracted: false,
+            file_missing: true,
             processing_error: `Failed to download from storage. Tried buckets: ${candidateBuckets.join(', ')}`,
             bucket_errors: bucketErrors,
             processed_at: new Date().toISOString(),
@@ -804,17 +807,16 @@ Return the full extracted text and/or description.`
     console.log(`Loaded ${existingEntities?.length || 0} existing entities for matching`);
 
     // Fetch learning context from adaptive adjuster
-    let adjustedThreshold = 0.4; // Lower threshold for intelligence reports (not too conservative)
+    let adjustedThreshold = 0.7;
     let learningGuidance = '';
     let falsePositiveNames: Array<{ name: string; count: number }> = [];
     let falsePositiveTypes: Array<{ type: string; count: number }> = [];
     let falsePositivePhrases: Array<{ phrase: string; count: number }> = [];
-    
+
     try {
       const { data: adjusterData } = await supabase.functions.invoke('adaptive-confidence-adjuster');
       if (adjusterData?.success) {
-        // Use the adaptive threshold but cap it at 0.5 to not be too restrictive for intel reports
-        adjustedThreshold = Math.min(0.5, adjusterData.recommendations.recommended_threshold);
+        adjustedThreshold = Math.max(0.7, adjusterData.recommendations.recommended_threshold ?? 0.7);
         learningGuidance = adjusterData.recommendations.learning_guidance || '';
         falsePositiveNames = adjusterData.recommendations.false_positive_patterns?.top_names || [];
         falsePositiveTypes = adjusterData.recommendations.false_positive_patterns?.top_types || [];
@@ -822,7 +824,7 @@ Return the full extracted text and/or description.`
         console.log(`Using adjusted threshold: ${adjustedThreshold} with ${falsePositiveNames.length} known FP patterns`);
       }
     } catch (e) {
-      console.warn('Could not fetch adaptive threshold, using default 0.4:', e);
+      console.warn('Could not fetch adaptive threshold, using default 0.7:', e);
     }
 
     // Get false positive examples to teach AI what NOT to extract
@@ -1031,7 +1033,7 @@ MAP ENTITY TYPES TO USE:
 FOR EACH ENTITY EXTRACTED:
 1. **Name**: Use full, formal name with identifiers
 2. **Type**: Most specific applicable type (infrastructure for physical assets)
-3. **Confidence**: Be realistic but inclusive (>= ${adjustedThreshold.toFixed(2)})
+3. **Confidence**: Be precise — only score >= ${adjustedThreshold.toFixed(2)} for entities with clear, explicit evidence
 4. **Context**: Rich, descriptive context explaining:
    - What they're doing in this document
    - Their position/stance
@@ -1048,7 +1050,7 @@ FOR RELATIONSHIPS:
 - For infrastructure: note physical connections and dependencies
 
 STRATEGIC EXTRACTION RULES:
-✅ **Be Comprehensive**: Extract EVERYTHING that provides intelligence value
+✅ **Be Selective**: Extract only entities with clear, named, specific identity
 ✅ **Capture Context**: Don't just extract names, extract their significance
 ✅ **Full Credentials**: Always include titles, degrees, organizational affiliations
 ✅ **Network Mapping**: Identify all connections and relationships
@@ -1068,11 +1070,11 @@ INTELLIGENCE PRIORITY:
 🟡 MEDIUM: Academic research, community concerns, regulatory engagement, secondary infrastructure
 🟢 LOW: Neutral references, background context
 
-When uncertain → EXTRACT (intelligence value > precision in this context)`
+When uncertain → OMIT`
           },
           {
             role: 'user',
-            content: `Conduct a comprehensive intelligence analysis of this document. Extract EVERY entity, relationship, claim, and strategic element.
+            content: `Analyze this document and extract only high-confidence, specifically named entities.
 
 DOCUMENT CONTENT:
 ${sampleText}
@@ -1094,7 +1096,7 @@ ANALYSIS DEPTH:
 - Map every relationship between entities
 - Note every event with timing and significance
 
-CONFIDENCE GUIDELINE: Aim for ${adjustedThreshold.toFixed(2)}+ but be inclusive. Better to capture intelligence than miss it.
+CONFIDENCE GUIDELINE: Only include entities at ${adjustedThreshold.toFixed(2)}+ confidence. When uncertain, omit.
 
 Think like a professional intelligence analyst reading an opposition research document. What would you want to know?`
           }
@@ -1250,12 +1252,11 @@ Think like a professional intelligence analyst reading an opposition research do
       
       console.log(`After filtering: ${filteredEntities.length} entities (removed ${entities.length - filteredEntities.length})`);
 
-      // Check for existing suggestions to avoid duplicates
+      // Check for existing suggestions to avoid duplicates (across all sources and statuses)
       const { data: existingSuggestions } = await supabase
         .from('entity_suggestions')
         .select('suggested_name, suggested_type')
-        .eq('source_type', 'archival_document')
-        .in('status', ['pending', 'approved']);
+        .in('status', ['pending', 'approved', 'rejected']);
       
       const existingSet = new Set(
         (existingSuggestions || []).map(s => `${s.suggested_name.toLowerCase()}:${s.suggested_type}`)
@@ -1365,6 +1366,13 @@ Think like a professional intelligence analyst reading an opposition research do
     // are fire-and-forget — they run AFTER we return the 200 OK so the user isn't
     // waiting for 3 sequential AI calls.
     const backgroundEnrichment = async () => {
+
+    // Skip enrichment if already completed — prevents duplicate KB entries, signals,
+    // and monitoring proposals when a document is reprocessed for entity extraction.
+    if (document.metadata?.enrichment_completed) {
+      console.log('Skipping background enrichment — already completed for this document');
+      return;
+    }
 
     // ═══ KNOWLEDGE BANK: Extract key findings into expert_knowledge ═══
     if (textContent && textContent.length > 200) {
@@ -1612,6 +1620,19 @@ Only extract genuinely valuable intelligence insights. Skip boilerplate and gene
       }
     }
 
+    // Mark enrichment as complete so reprocessing skips this block.
+    // Fetch fresh metadata first to avoid overwriting flags set during entity extraction.
+    // Always preserve text_extracted and entities_processed even if the fetch fails.
+    const { data: freshDoc } = await supabase.from('archival_documents').select('metadata').eq('id', documentId).single();
+    await supabase.from('archival_documents').update({
+      metadata: {
+        ...(freshDoc?.metadata ?? {}),
+        text_extracted: true,
+        entities_processed: true,
+        enrichment_completed: true,
+      }
+    }).eq('id', documentId);
+
     }; // end backgroundEnrichment
 
     // Already inside EdgeRuntime.waitUntil — just await directly so the runtime
@@ -1632,13 +1653,47 @@ Deno.serve(async (req) => {
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-    const { documentId } = body;
+    const { documentId, sync } = body;
     if (!documentId) {
       return new Response(
         JSON.stringify({ error: 'Missing documentId' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    // sync:true runs processing synchronously and returns the result — for diagnostics only
+    if (sync) {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      try {
+        await processDocumentBackground(documentId);
+        const { data: doc } = await supabase
+          .from('archival_documents')
+          .select('filename, content_text, metadata, entity_mentions')
+          .eq('id', documentId)
+          .single();
+        return new Response(
+          JSON.stringify({
+            success: true,
+            doc: {
+              filename: doc?.filename,
+              content_text_preview: (doc?.content_text || '').substring(0, 200),
+              content_text_length: (doc?.content_text || '').length,
+              metadata: doc?.metadata,
+              entity_mention_count: doc?.entity_mentions?.length ?? 0,
+            }
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      } catch (err: any) {
+        return new Response(
+          JSON.stringify({ success: false, error: err.message, stack: err.stack }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
     console.log(`[process-stored-document] Queuing background processing for: ${documentId}`);
     try {
       (EdgeRuntime as any).waitUntil(

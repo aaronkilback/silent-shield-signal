@@ -41,6 +41,7 @@ export default function Entities() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [showAutoCreated, setShowAutoCreated] = useState(false);
+  const [hideLowQuality, setHideLowQuality] = useState(true);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [bulletinDialogOpen, setBulletinDialogOpen] = useState(false);
@@ -56,7 +57,7 @@ export default function Entities() {
 
   // Filter entities by the selected client
   const { data: entities = [], refetch } = useQuery({
-    queryKey: ['entities', searchTerm, selectedType, selectedClientId, showAutoCreated],
+    queryKey: ['entities', searchTerm, selectedType, selectedClientId, showAutoCreated, hideLowQuality],
     enabled: !!user && isContextReady,
     queryFn: async () => {
       let query = supabase
@@ -80,6 +81,10 @@ export default function Entities() {
 
       if (showAutoCreated) {
         query = query.ilike('description', 'Auto-created from%');
+      }
+
+      if (hideLowQuality) {
+        query = query.gte('quality_score', 5);
       }
 
       const { data, error } = await query;
@@ -378,6 +383,14 @@ export default function Entities() {
                 onClick={() => { setShowAutoCreated(!showAutoCreated); setSelectedType(null); }}
               >
                 Auto-Created (Unapproved)
+              </Button>
+              <Button
+                variant={hideLowQuality ? "default" : "outline"}
+                size="sm"
+                onClick={() => setHideLowQuality(!hideLowQuality)}
+                title="Hide entities with no signals, relationships, or content"
+              >
+                Quality Filter
               </Button>
             </div>
             <div className="flex gap-1">

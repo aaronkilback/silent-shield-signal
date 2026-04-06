@@ -6,9 +6,10 @@ import { AgentRoster } from "@/components/agents/AgentRoster";
 import { AgentPanel } from "@/components/agents/AgentPanel";
 import { AgentInteraction } from "@/components/agents/AgentInteraction";
 import { AgentAdminDialog } from "@/components/agents/AgentAdminDialog";
+import { AgentTaskForce } from "@/components/agents/AgentTaskForce";
 import { AnticipationIndex } from "@/components/fortress";
 import { useUserRole } from "@/hooks/useUserRole";
-import { Shield } from "lucide-react";
+import { Shield, Users } from "lucide-react";
 
 interface AIAgent {
   id: string;
@@ -30,7 +31,11 @@ interface AIAgent {
 
 export default function CommandCenter() {
   const [selectedAgent, setSelectedAgent] = useState<AIAgent | null>(null);
-  const handleSelectAgent = (agent: AIAgent) => setSelectedAgent(agent);
+  const [mode, setMode] = useState<"single" | "task_force">("single");
+  const handleSelectAgent = (agent: AIAgent) => {
+    setSelectedAgent(agent);
+    setMode("single");
+  };
   const [editingAgent, setEditingAgent] = useState<AIAgent | null>(null);
   const [isAdminDialogOpen, setIsAdminDialogOpen] = useState(false);
   const { isAdmin, isSuperAdmin } = useUserRole();
@@ -118,8 +123,36 @@ export default function CommandCenter() {
           canManage={isAdmin || isSuperAdmin}
         />
 
+        {/* Mode Toggle */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => setMode("single")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border ${
+              mode === "single"
+                ? "bg-primary/10 border-primary text-primary"
+                : "border-border text-muted-foreground hover:bg-accent/50"
+            }`}
+          >
+            <Shield className="h-4 w-4" />
+            Single Agent
+          </button>
+          <button
+            onClick={() => setMode("task_force")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border ${
+              mode === "task_force"
+                ? "bg-amber-500/10 border-amber-500 text-amber-500"
+                : "border-border text-muted-foreground hover:bg-accent/50"
+            }`}
+          >
+            <Users className="h-4 w-4" />
+            Task Force Debate
+          </button>
+        </div>
+
         {/* Main Content Grid */}
-        {selectedAgent ? (
+        {mode === "task_force" ? (
+          <AgentTaskForce agents={agents || []} />
+        ) : selectedAgent ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Agent Panel */}
             <div className="lg:col-span-1">
@@ -141,7 +174,7 @@ export default function CommandCenter() {
             <div className="text-center text-muted-foreground">
               <Shield className="h-12 w-12 mx-auto mb-3 opacity-50" />
               <p className="font-medium">Select an agent to begin</p>
-              <p className="text-sm">Choose from the roster above</p>
+              <p className="text-sm">Choose from the roster above, or switch to Task Force mode</p>
             </div>
           </div>
         )}

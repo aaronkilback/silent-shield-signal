@@ -46,7 +46,7 @@ export function FortressNodeDetail({ agent, onClose, activityMetrics = [], scanP
   const agentScans = scanPulses.filter((s) => s.agentCallSign === agent.callSign);
   const activityScore = metrics?.activityScore ?? 0;
 
-  // Derive connected loops (in a real system this would map agent → loops; for now show all)
+  // Loops are system-wide Fortress health metrics, not per-agent
   const loops = fortressHealth?.loops ?? [];
   const closedLoops = loops.filter((l) => l.status === "closed").length;
 
@@ -121,13 +121,13 @@ export function FortressNodeDetail({ agent, onClose, activityMetrics = [], scanP
           </div>
         </div>
 
-        {/* Connected Loops */}
+        {/* Fortress Health Loops — system-wide, not per-agent */}
         <div className="px-3 py-2 flex-1 overflow-y-auto min-h-0">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-[9px] text-muted-foreground uppercase tracking-widest font-semibold">Connected Loops</div>
-            <div className="flex items-center gap-1">
-              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-              <span className="text-[10px] font-mono font-bold text-emerald-400">{closedLoops}/{loops.length}</span>
+          <div className="mb-2">
+            <div className="text-[9px] text-muted-foreground uppercase tracking-widest font-semibold">Fortress Health Loops</div>
+            <div className="flex items-center gap-1 mt-0.5">
+              <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
+              <span className="text-[9px] text-muted-foreground">system-wide • <span className="font-mono font-bold text-emerald-400">{closedLoops}/{loops.length}</span> closed</span>
             </div>
           </div>
 

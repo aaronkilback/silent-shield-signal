@@ -38,7 +38,7 @@ Deno.serve(async (req) => {
           const start = Date.now();
           const resp = await supabase.functions.invoke('ingest-signal', {
             body: {
-              text: 'Coastal GasLink pipeline section near Fort St. John shut down following suspected sabotage attempt by unknown actors',
+              text: `Coastal GasLink pipeline section near Fort St. John shut down following suspected sabotage attempt by unknown actors [qa-${Date.now()}]`,
               sourceType: 'qa_test',
               sourceData: { source_name: 'QA Test', url: `https://qa.test/relevant-${Date.now()}` },
               clientId: PETRONAS_CLIENT_ID
@@ -58,21 +58,41 @@ Deno.serve(async (req) => {
         isKnownBroken: false,
         run: async () => {
           const start = Date.now();
-          const { count: before } = await supabase.from('filtered_signals').select('*', { count: 'exact', head: true });
+          const startIso = new Date(start).toISOString();
           await supabase.functions.invoke('ingest-signal', {
             body: {
-              text: 'Fort St John minor hockey league announces tryouts for the upcoming season',
+              text: `Fort St John minor hockey league announces tryouts for the upcoming season`,
               sourceType: 'qa_test',
-              sourceData: { source_name: 'QA Test', url: `https://qa.test/irrelevant-${Date.now()}` },
+              sourceData: { source_name: 'QA Test', url: `https://qa.test/irrelevant-${start}` },
               clientId: PETRONAS_CLIENT_ID
             }
           });
-          await new Promise(r => setTimeout(r, 3000));
-          const { count: after } = await supabase.from('filtered_signals').select('*', { count: 'exact', head: true });
+          let filteredCount = 0;
+          let passedCount = 0;
+          for (let i = 0; i < 5; i++) {
+            await new Promise(r => setTimeout(r, 3000));
+            const [fRes, pRes] = await Promise.all([
+              supabase.from('filtered_signals').select('*', { count: 'exact', head: true })
+                .ilike('raw_text', '%hockey league%')
+                .gte('filtered_at', startIso),
+              supabase.from('signals').select('*', { count: 'exact', head: true })
+                .ilike('normalized_text', '%hockey league%')
+                .gte('created_at', startIso),
+            ]);
+            filteredCount = fRes.count || 0;
+            passedCount = pRes.count || 0;
+            if (filteredCount > 0 || passedCount > 0) break;
+          }
+          const caught = filteredCount > 0;
+          const leaked = passedCount > 0;
           return {
-            passed: (after || 0) > (before || 0),
+            passed: caught && !leaked,
             expected: 'Signal caught by PECL relevance gate',
-            actual: (after || 0) > (before || 0) ? 'Correctly filtered' : 'WARNING: irrelevant signal passed through gate',
+            actual: leaked
+              ? `FAIL: irrelevant signal leaked into signals table`
+              : caught
+                ? 'Correctly filtered into filtered_signals'
+                : 'FAIL: signal not found in filtered_signals (may have timed out or been dropped)',
             ms: Date.now() - start
           };
         }
@@ -171,7 +191,7 @@ Deno.serve(async (req) => {
           const { data: aegis } = await supabase.from('ai_agents').select('id').eq('call_sign', 'AEGIS-CMD').single();
           if (!aegis) return { passed: false, expected: 'AEGIS exists', actual: 'AEGIS-CMD not found', ms: Date.now() - start };
           const resp = await supabase.functions.invoke('agent-chat', {
-            body: { agentId: aegis.id, messages: [{ role: 'user', content: 'QA health check. Respond with OK.' }], clientId: PETRONAS_CLIENT_ID }
+            body: { agentId: aegis.id, messages: [{ role: 'user', content: 'QA health check. Respond with OK.' }], clientId: PETRONAS_CLIENT_ID, stream: false }
           });
           const ms = Date.now() - start;
           return {

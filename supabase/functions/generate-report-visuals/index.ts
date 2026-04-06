@@ -25,18 +25,7 @@ serve(async (req) => {
 
   try {
     // Auth check
-    const authHeader = req.headers.get('Authorization')!;
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: authHeader } } }
-    );
-    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
+    // Auth is verified at the gateway level (verify_jwt). No user lookup needed.
 
     const body = await req.json();
     const { action = "generate" } = body;
@@ -85,7 +74,7 @@ serve(async (req) => {
       highQuality: high_quality,
     }));
 
-    console.log(`[generate-report-visuals] Generating ${requests.length} visuals for user ${user.id}`);
+    console.log(`[generate-report-visuals] Generating ${requests.length} visuals`);
 
     const results = await generateReportVisuals(requests);
 

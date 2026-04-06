@@ -612,17 +612,22 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
     }
     } // Close the validatedExplicitClientId else block
 
-    // Calculate content hash BEFORE insertion for duplicate detection
+    // Calculate content hash BEFORE insertion for duplicate detection.
+    // Hash on source_url when available — AI paraphrases snippet text each run, so
+    // text-based hashes diverge even for the same article. URL is the stable identifier.
     const encoder = new TextEncoder();
-    const data = encoder.encode(signalText);
+    const contentToHash = source_url ? `url:${source_url}` : signalText;
+    const data = encoder.encode(contentToHash);
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const contentHash = hashArray.map((b: number) => b.toString(16).padStart(2, '0')).join('');
-    
-    console.log(`Calculated content hash: ${contentHash.substring(0, 16)}...`);
+
+    console.log(`Calculated content hash: ${contentHash.substring(0, 16)}... (basis: ${source_url ? 'source_url' : 'text'})`);
     
     // Check if this content was previously rejected/deleted by user
-    const { data: rejectedHash } = await supabase
+    // Skip for qa_test signals so repeated QA runs always reach the relevance gate
+    const isQaTestEarly = validationResult.data.sourceType === 'qa_test' || rawBody?.sourceType === 'qa_test';
+    const { data: rejectedHash } = isQaTestEarly ? { data: null } : await supabase
       .from('rejected_content_hashes')
       .select('id')
       .eq('content_hash', contentHash)
@@ -672,6 +677,27 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
             { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
+      }
+    }
+
+    // Fast URL-based dedup: if we've already ingested this URL in the last 30 days, skip.
+    // This catches repeated monitor runs returning the same article with different snippet text.
+    if (source_url && !isQaTest) {
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const { data: existingByUrl } = await supabase
+        .from('signals')
+        .select('id')
+        .eq('source_url', source_url)
+        .gte('created_at', thirtyDaysAgo)
+        .limit(1)
+        .maybeSingle();
+      if (existingByUrl) {
+        console.log(`[URL-dedup] Duplicate source URL blocked: ${source_url}`);
+        return new Response(JSON.stringify({
+          status: 'suppressed',
+          reason: 'duplicate_url',
+          existing_signal_id: existingByUrl.id
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
     }
 
@@ -871,16 +897,16 @@ CONNECTION TYPES (pick one):
 - tactical: activist/attack tactic relevant to client's threat model
 - none: no meaningful connection
 
-ALWAYS REJECT (score 0.0–0.19) — geographic proximity does NOT override these:
-- Sports leagues, athletic events, recreational activities, school sports
-- Entertainment events, concerts, festivals, cultural events
-- Client's own positive PR, sponsorships, community goodwill posts
-- Events in regions with zero operational overlap and no precedent value
+CATEGORICAL EXCLUSIONS — return score 0.0 regardless of location:
+- Any signal about sports leagues, teams, tryouts, tournaments, or recreational activities
+- Any signal about school events, graduations, concerts, festivals, or community social events
+- Any signal about retail sales, restaurant openings, or local business news unrelated to energy
+- Client's own positive PR, sponsorships, or community goodwill posts
 - Software product announcements (non-security)
-- Generic "about us" pages, merchandise listings, job postings
-- Local community events unrelated to security, protest, or operational risk
+- Generic "about us" pages, merchandise listings, or job postings
+Geographic location in BC or Alberta does NOT override these exclusions. If a signal matches any categorical exclusion, you MUST set score to 0.0 and primary_connection to "none".
 
-Geographic overlap alone (e.g., same city as client's assets) does NOT make a sports or entertainment story relevant. Only score > 0.2 if there is a direct or indirect SECURITY or OPERATIONAL RISK connection.
+Only score > 0.2 if there is a direct or indirect SECURITY or OPERATIONAL RISK connection beyond mere geographic proximity.
 
 Respond with JSON: {"score": 0.0-1.0, "relevant": true/false, "primary_connection": "...", "reason": "one sentence"}`
               },

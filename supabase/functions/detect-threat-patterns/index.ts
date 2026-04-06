@@ -121,10 +121,8 @@ Deno.serve(async (req) => {
           clientPatterns.push({ type: 'entity_escalation', entity: entityName, count: uniqueIds.length, severity });
           console.log(`[PatternDetect] entity_escalation: "${entityName}" × ${uniqueIds.length} for ${client.name} → ${severity}`);
 
-          if (escalatedScore >= 50) {
-            supabase.functions.invoke('check-incident-escalation', { body: { signalId: patternSignal.id } })
-              .catch(err => console.error('[PatternDetect] escalation invoke error:', err));
-          }
+          // Pattern signals must not auto-create incidents — they are meta-signals, not raw threat events
+          // check-incident-escalation intentionally not invoked here
         }
         break; // one entity escalation per run per client
       }

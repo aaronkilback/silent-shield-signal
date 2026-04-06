@@ -11,6 +11,32 @@ import { CalendarClock, Plus, Trash2, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 
 const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function getNextRunDisplay(schedule: { next_run_at: string | null; frequency: string; day_of_week: number; hour_utc: number }): Date | null {
+  if (!schedule.next_run_at) return null;
+  const stored = new Date(schedule.next_run_at);
+  if (stored > new Date()) return stored;
+  // Stale — recompute from schedule
+  const now = new Date();
+  const next = new Date(now);
+  next.setUTCHours(schedule.hour_utc, 0, 0, 0);
+  switch (schedule.frequency) {
+    case 'daily':
+      if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+      break;
+    case 'weekly':
+      do { next.setUTCDate(next.getUTCDate() + 1); } while (next.getUTCDay() !== schedule.day_of_week);
+      break;
+    case 'biweekly':
+      do { next.setUTCDate(next.getUTCDate() + 1); } while (next.getUTCDay() !== schedule.day_of_week);
+      next.setUTCDate(next.getUTCDate() + 7);
+      break;
+    case 'monthly':
+      next.setUTCMonth(next.getUTCMonth() + 1, 1);
+      break;
+  }
+  return next;
+}
 const frequencyLabels: Record<string, string> = {
   daily: "Daily",
   weekly: "Weekly",
@@ -164,11 +190,7 @@ export const ReportScheduleManager = () => {
                     <span className="text-xs text-muted-foreground">
                       • {schedule.email_recipients?.length || 0} recipient(s)
                     </span>
-                    {schedule.next_run_at && (
-                      <span className="text-xs text-muted-foreground">
-                        • Next: {format(new Date(schedule.next_run_at), "MMM d, h:mm a")}
-                      </span>
-                    )}
+                    {(() => { const d = getNextRunDisplay(schedule); return d ? <span className="text-xs text-muted-foreground">• Next: {format(d, "MMM d, h:mm a")}</span> : null; })()}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 ml-2">

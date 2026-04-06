@@ -282,7 +282,7 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
     total: incidents.length,
     open: incidents.filter((i) => i.status === "open").length,
     acknowledged: incidents.filter((i) => i.status === "acknowledged").length,
-    critical: incidents.filter((i) => i.priority === "p1").length,
+    critical: incidents.filter((i) => i.priority === "p1" && i.status === "open").length,
   };
 
   // Bulk selection handlers

@@ -8,7 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CheckCircle, XCircle, Users, AlertCircle, ExternalLink, GitMerge, Trash2 } from "lucide-react";
+import { CheckCircle, XCircle, Users, AlertCircle, ExternalLink, GitMerge, Trash2, Brain, Loader2 } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
@@ -25,6 +25,15 @@ export const EntitySuggestionsPanel = () => {
   const [selectedEntityForMerge, setSelectedEntityForMerge] = useState<string>("");
   const [selectedSuggestions, setSelectedSuggestions] = useState<Set<string>>(new Set());
   const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false);
+  const [assessingIds, setAssessingIds] = useState<Set<string>>(new Set());
+
+  const RISK_LEVEL_COLORS: Record<string, string> = {
+    critical: 'bg-red-500/20 text-red-400 border-red-500/30',
+    high: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+    medium: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+    low: 'bg-green-500/20 text-green-400 border-green-500/30',
+    informational: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+  };
 
   const getSourceLink = (sourceType: string, sourceId: string) => {
     switch (sourceType) {
@@ -85,6 +94,25 @@ export const EntitySuggestionsPanel = () => {
       return data;
     }
   });
+
+  const assessSuggestion = async (suggestionId: string) => {
+    if (assessingIds.has(suggestionId)) return;
+    setAssessingIds(prev => new Set(prev).add(suggestionId));
+    try {
+      await supabase.functions.invoke('assess-entity', {
+        body: { suggestionId }
+      });
+      queryClient.invalidateQueries({ queryKey: ['entity-suggestions'] });
+    } catch (err) {
+      console.error('Assessment failed:', err);
+    } finally {
+      setAssessingIds(prev => {
+        const next = new Set(prev);
+        next.delete(suggestionId);
+        return next;
+      });
+    }
+  };
 
   const approveMutation = useMutation({
     mutationFn: async ({ suggestionId, attributes }: { suggestionId: string; attributes?: any }) => {
@@ -435,11 +463,25 @@ export const EntitySuggestionsPanel = () => {
                         </div>
                       )}
 
-                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                         <div className="flex items-center gap-2">
                           <AlertCircle className="w-3 h-3" />
                           <span>Confidence: {(suggestion.confidence * 100).toFixed(0)}%</span>
                         </div>
+                        {(suggestion as any).ai_risk_level && (
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${RISK_LEVEL_COLORS[(suggestion as any).ai_risk_level] || ''}`}
+                          >
+                            <Brain className="w-3 h-3 mr-1" />
+                            AEGIS: {(suggestion as any).ai_risk_level}
+                          </Badge>
+                        )}
+                        {(suggestion as any).ai_assessment?.summary && (
+                          <span className="text-xs text-muted-foreground italic max-w-xs truncate">
+                            {(suggestion as any).ai_assessment.summary}
+                          </span>
+                        )}
                         {getSourceLink(suggestion.source_type, suggestion.source_id) && (
                           <Button
                             variant="ghost"
@@ -459,6 +501,22 @@ export const EntitySuggestionsPanel = () => {
                     </div>
 
                     <div className="flex gap-2 flex-shrink-0 flex-wrap ml-7">
+                      {!(suggestion as any).ai_risk_level && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => assessSuggestion(suggestion.id)}
+                          disabled={assessingIds.has(suggestion.id)}
+                          className="flex-1 sm:flex-none"
+                        >
+                          {assessingIds.has(suggestion.id) ? (
+                            <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                          ) : (
+                            <Brain className="w-4 h-4 mr-1" />
+                          )}
+                          {assessingIds.has(suggestion.id) ? 'Assessing...' : 'Assess'}
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="default"

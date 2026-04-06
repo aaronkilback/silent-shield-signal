@@ -175,15 +175,24 @@ Deno.serve(async (req) => {
       return result;
     }
 
-    // Filter out junk signals before any analysis
+    // Filter out junk signals before any analysis — use freshSignals (not raw signals) to exclude stale/historical data
     const EXCLUDE_CATEGORIES = new Set(['weather', 'test', 'work_interruption', 'advisory', 'health_concern', 'system_alert']);
     const HIGH_VALUE_CATEGORIES = new Set(['active_threat', 'cybersecurity', 'insider_threat', 'protest', 'regulatory', 'operational']);
 
-    const reportableSignals = (signals || []).filter((s: any) => {
+    const reportableSignals = (freshSignals || []).filter((s: any) => {
       if (EXCLUDE_CATEGORIES.has(s.category)) return false;
       if (HIGH_VALUE_CATEGORIES.has(s.category) && s.severity === 'low') return false;
       return true;
     });
+
+    // Zero signal guard — refuse to generate a report without minimum signal data
+    if (reportableSignals.length < 3) {
+      return new Response(JSON.stringify({
+        error: 'INSUFFICIENT_SIGNAL_DATA',
+        message: `Report requires minimum 3 signals. Only ${reportableSignals.length} found for this period.`,
+        signals_analyzed: reportableSignals.length
+      }), { status: 422, headers: { 'Content-Type': 'application/json' } });
+    }
 
     function getHostname(url: string | null | undefined): string {
       if (!url) return 'Fortress Intelligence';
@@ -602,6 +611,13 @@ MANDATORY TRADECRAFT RULES:
 - Never use vague language like "may pose risks" — state the specific risk clearly
 - ONLY reference events, names, and facts that appear in the signals provided above — never introduce information from your training data or general knowledge
 - Named individuals: only use names that appear verbatim in the signal text — do not infer, reconstruct, or introduce names from context
+
+GROUNDING VERIFICATION — before writing each deduction:
+1. Identify the specific signal number above that supports this claim
+2. If you cannot cite a specific signal number — DO NOT include the claim
+3. Never reference APT groups, threat actors, activist organizations, or events unless their exact name appears in the signals list above
+4. If signals are insufficient to support 3 deductions — write fewer deductions rather than inventing claims
+5. Zero signals = zero deductions. Write "Insufficient signal data for strategic deductions this period." instead.
 
 Threat signals to analyze:
 ${[...criticalSignals, ...highSignals].slice(0, 10).map((s, i) =>

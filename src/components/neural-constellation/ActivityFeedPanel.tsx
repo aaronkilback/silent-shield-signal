@@ -48,7 +48,7 @@ export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [
     queryFn: async () => {
       const { data, error } = await supabase
         .from("signals")
-        .select("id, signal_type, title, severity, created_at, category, location, normalized_text, sources_json, signal_count, confidence, source_reliability, information_accuracy, event_date, post_caption, thumbnail_url, media_urls, hashtags, mentions, engagement_metrics, raw_json")
+        .select("*")
         .order("created_at", { ascending: false })
         .limit(30);
       if (error) throw error;

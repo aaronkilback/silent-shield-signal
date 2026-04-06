@@ -4,7 +4,6 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Send, Loader2, Paperclip, X, Mic, MicOff, MessageSquarePlus, Users, User, Share2 } from "lucide-react";
 import { AegisCapabilityHints } from "@/components/AegisCapabilityHints";
-import { LoginBriefing } from "@/components/LoginBriefing";
 import { useOpenAIRealtime } from "./voice/useOpenAIRealtime";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -42,6 +41,8 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
   const STORAGE_KEY = "fortress-ai-chat-history";
   
   const [messages, setMessages] = useState<Message[]>([]);
+  const [historyMessages, setHistoryMessages] = useState<Message[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
@@ -120,6 +121,8 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
       try {
         debug(`🔄 Loading chat history for user ${user.id}, mode: ${viewMode}`);
         setIsLoadingHistory(true);
+        setShowHistory(false);
+        setHistoryMessages([]);
         
         let query = supabase
           .from('ai_assistant_messages')
@@ -163,13 +166,15 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
             user_id: msg.user_id,
             conversation_id: msg.conversation_id || undefined,
           }));
-          setMessages(formattedMessages);
-          // Set current conversation from last message
+          // Store history separately — don't auto-populate the chat on load
+          setHistoryMessages(formattedMessages);
+          setMessages([defaultMessage]);
+          // Set current conversation from last message so new messages append to it
           const lastConvId = formattedMessages[formattedMessages.length - 1]?.conversation_id;
           if (lastConvId) {
             setCurrentConversationId(lastConvId);
           }
-          debug(`✅ Loaded ${formattedMessages.length} messages for ${viewMode} view`);
+          debug(`✅ Loaded ${formattedMessages.length} messages for ${viewMode} view (history hidden)`);
         } else if (viewMode === "personal") {
           // Only migrate from localStorage for personal view
           const stored = localStorage.getItem(STORAGE_KEY);
@@ -706,13 +711,17 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
             const processingPromise = (async () => {
               debug(`Starting processing for ${file.name} (ID: ${archivalDoc.id})`);
               
-              const { data, error } = await invokeWithRetry('process-stored-document', {
-                documentId: archivalDoc.id,
-                storagePath: storageData.path
+              // sync:true waits for full processing — don't retry (not idempotent, slow)
+              const { data, error } = await supabase.functions.invoke('process-stored-document', {
+                body: { documentId: archivalDoc.id, storagePath: storageData.path, sync: true }
               });
-              
+
               if (error) {
-                console.error(`Document processing failed for ${file.name}:`, error);
+                console.error(`[AEGIS upload] process-stored-document failed for ${file.name}:`);
+                console.error('[AEGIS upload] error object:', JSON.stringify(error, null, 2));
+                console.error('[AEGIS upload] error.message:', error?.message);
+                console.error('[AEGIS upload] error.context:', (error as any)?.context);
+                console.error('[AEGIS upload] data alongside error:', JSON.stringify(data, null, 2));
                 
                 // Update record to reflect failure
                 await supabase
@@ -1046,7 +1055,7 @@ If not visible, try: **Ctrl+Shift+R** (hard refresh)`,
   };
 
   const MessageList = useMemo(() => {
-    return messages.map((message, index) => (
+    return messages.filter(m => !m.content.includes('[tool:')).map((message, index) => (
       <div
         key={`${index}-${message.content.substring(0, 20)}`}
         className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
@@ -1377,6 +1386,28 @@ How can I help you now?`,
               )}
             </div>
             <div className="flex items-center gap-2">
+              {historyMessages.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (showHistory) {
+                      setMessages([{
+                        role: "assistant",
+                        content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Upload documents for analysis or ask me anything!",
+                      }]);
+                      setShowHistory(false);
+                    } else {
+                      setMessages(historyMessages);
+                      setShowHistory(true);
+                    }
+                  }}
+                  className="text-xs shrink-0"
+                  title="Toggle chat history"
+                >
+                  {showHistory ? "Hide History" : `History (${historyMessages.length})`}
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -1420,13 +1451,10 @@ How can I help you now?`,
                 ) : (
                   <>
                     {fullScreen && messages.length <= 1 && (
-                      <>
-                        <LoginBriefing onAskAegis={(q) => { setInput(q); }} />
-                        <AegisCapabilityHints
-                          onSelect={(hint) => { setInput(hint); }}
-                          visible={messages.length <= 1}
-                        />
-                      </>
+                      <AegisCapabilityHints
+                        onSelect={(hint) => { setInput(hint); }}
+                        visible={messages.length <= 1}
+                      />
                     )}
                     {MessageList}
                     {streamingContent && (

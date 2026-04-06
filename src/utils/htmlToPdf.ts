@@ -109,7 +109,8 @@ function findSmartBreakPoints(
  */
 export async function generatePdfFromHtml(
   html: string,
-  _options?: { backgroundColor?: string }
+  _options?: { backgroundColor?: string },
+  preOpenedWindow?: Window | null
 ): Promise<jsPDF> {
   const printHtml = html
     .replace("</style>", `
@@ -127,7 +128,9 @@ export async function generatePdfFromHtml(
   </script>
 </body>`);
 
-  const popup = window.open("", "_blank", "width=900,height=700");
+  // Use pre-opened window if provided (required when called after an async gap,
+  // since browsers block window.open() outside a synchronous user-gesture callstack).
+  const popup = preOpenedWindow ?? window.open("", "_blank", "width=900,height=700");
   if (!popup) throw new Error("Popup blocked — allow popups for this site and try again.");
 
   popup.document.write(printHtml);

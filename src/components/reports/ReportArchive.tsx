@@ -19,12 +19,16 @@ export const ReportArchive = () => {
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
   const handlePreview = async (reportId: string) => {
+    // Open window NOW while still in the synchronous user-gesture callstack.
+    // Browsers block window.open() called after an await.
+    const w = window.open("", "_blank");
+    if (!w) { toast.error("Popup blocked — allow popups for this site and try again."); return; }
     try {
       setLoadingId(reportId);
       const html = await getReportHtml(reportId);
-      const w = window.open();
-      if (w) { w.document.write(html); w.document.close(); }
-    } catch { toast.error("Failed to load report"); }
+      w.document.write(html);
+      w.document.close();
+    } catch { w.close(); toast.error("Failed to load report"); }
     finally { setLoadingId(null); }
   };
 
@@ -44,14 +48,16 @@ export const ReportArchive = () => {
   };
 
   const handleDownloadPdf = async (reportId: string, title: string) => {
+    // Pre-open the window in gesture context before any await.
+    const popup = window.open("", "_blank", "width=900,height=700");
+    if (!popup) { toast.error("Popup blocked — allow popups for this site and try again."); return; }
     try {
       setLoadingId(reportId);
       toast.info("Generating PDF…");
       const html = await getReportHtml(reportId);
-      const pdf = await generatePdfFromHtml(html);
-      pdf.save(`${title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.pdf`);
-      toast.success("PDF downloaded");
-    } catch { toast.error("PDF generation failed"); }
+      await generatePdfFromHtml(html, undefined, popup);
+      toast.success("PDF ready — use the browser print dialog to save as PDF");
+    } catch { popup.close(); toast.error("PDF generation failed"); }
     finally { setLoadingId(null); }
   };
 

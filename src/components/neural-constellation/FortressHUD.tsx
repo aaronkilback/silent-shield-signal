@@ -49,8 +49,8 @@ export function FortressHUD({ health, isLoading }: FortressHUDProps) {
   });
 
   return (
-    <div className="absolute top-4 right-4 z-20 pointer-events-auto" style={{ marginTop: "120px" }}>
-      <div className="backdrop-blur-xl border rounded-lg transition-all duration-500 bg-card/80 border-border overflow-hidden"
+    <div className="absolute top-4 right-4 z-20 pointer-events-none" style={{ marginTop: "120px" }}>
+      <div className="backdrop-blur-xl border rounded-lg transition-all duration-500 bg-card/80 border-border overflow-hidden pointer-events-auto"
         style={{ minWidth: expanded ? "260px" : "200px" }}>
         
         {/* Compact header */}

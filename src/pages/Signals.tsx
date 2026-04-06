@@ -22,7 +22,7 @@ import { AssignClientDialog } from "@/components/signals/AssignClientDialog";
 import { SignalDetailSheet } from "@/components/signals/SignalDetailSheet";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Search, CheckCircle, XCircle, UserPlus, Loader2, FileSearch, VolumeX, Archive, ExternalLink } from "lucide-react";
+import { Search, CheckCircle, XCircle, UserPlus, Loader2, FileSearch, VolumeX, Archive, ExternalLink, Trash2 } from "lucide-react";
 
 interface UnmatchedSignal {
   id: string;
@@ -191,6 +191,30 @@ const Signals = () => {
     },
     onError: (error) => {
       toast.error("Failed to mark signal as noise: " + error.message);
+    },
+  });
+
+  // Delete signal mutation — removes correlation group and its primary signal row
+  const deleteMutation = useMutation({
+    mutationFn: async (signal: UnmatchedSignal) => {
+      // Delete the signals row first (FK child), then the correlation group
+      if (signal.primary_signal_id) {
+        const { error } = await supabase.from("signals").delete().eq("id", signal.primary_signal_id);
+        if (error) throw error;
+      }
+      const { error } = await supabase.from("signal_correlation_groups").delete().eq("id", signal.id);
+      if (error) throw error;
+    },
+    onSuccess: (_data, signal) => {
+      queryClient.setQueriesData(
+        { queryKey: ["unmatched-signals"] },
+        (old: UnmatchedSignal[] | undefined) => (old || []).filter(s => s.id !== signal.id)
+      );
+      queryClient.invalidateQueries({ queryKey: ["unmatched-signals"] });
+      toast.success("Signal deleted");
+    },
+    onError: (error) => {
+      toast.error("Failed to delete signal: " + error.message);
     },
   });
 
@@ -520,6 +544,18 @@ const Signals = () => {
                             >
                               <VolumeX className="h-4 w-4 mr-1" />
                               Noise
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteMutation.mutate(signal);
+                              }}
+                              disabled={deleteMutation.isPending}
+                              className="text-destructive hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
                             </Button>
                           </div>
                         </div>

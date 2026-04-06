@@ -52,7 +52,9 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
       let incidentsQuery = supabase
         .from('incidents')
         .select('severity_level, status, created_at')
-        .gte('created_at', sevenDaysAgo.toISOString());
+        .gte('created_at', sevenDaysAgo.toISOString())
+        .eq('status', 'open')
+        .is('deleted_at', null);
 
       if (clientId) {
         incidentsQuery = incidentsQuery.eq('client_id', clientId);

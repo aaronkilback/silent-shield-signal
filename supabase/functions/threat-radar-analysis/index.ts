@@ -346,10 +346,16 @@ Provide concise, actionable intelligence assessments focused on proactive threat
           aiAnalysis = aiResult.content;
 
           const probMatch = aiAnalysis.match(/(\d{1,3})%?\s*(?:chance|probability)/i);
-          const escalationProbability = probMatch ? parseInt(probMatch[1]) : overallThreatScore;
+          let escalationProbability: number | null = probMatch ? parseInt(probMatch[1]) : null;
+
+          // Consistency check: LOW threat level should not have high escalation probability
+          if (escalationProbability !== null && overallThreatLevel === 'low' && escalationProbability > 25) {
+            console.warn(`[ThreatRadar] Consistency cap applied: threatLevel=LOW but escalationProbability=${escalationProbability} — capping at 25`);
+            escalationProbability = 25;
+          }
 
           predictions = {
-            escalation_probability: Math.min(100, escalationProbability),
+            escalation_probability: escalationProbability !== null ? Math.min(100, escalationProbability) : null,
             predicted_timeframe: overallThreatScore >= 60 ? 'days' : overallThreatScore >= 40 ? 'weeks' : 'months',
             confidence_level: overallThreatScore >= 50 ? 'high' : overallThreatScore >= 30 ? 'medium' : 'low',
             ai_assessment: aiAnalysis

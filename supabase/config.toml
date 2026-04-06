@@ -73,10 +73,10 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.enrich-entity]
-verify_jwt = true
+verify_jwt = false
 
 [functions.osint-entity-scan]
-verify_jwt = true
+verify_jwt = false
 
 [functions.send-notification-email]
 verify_jwt = false
@@ -91,7 +91,13 @@ verify_jwt = true
 verify_jwt = false
 
 [functions.scan-entity-photos]
-verify_jwt = true
+verify_jwt = false
+
+[functions.assess-entity]
+verify_jwt = false
+
+[functions.merge-duplicate-entities]
+verify_jwt = false
 
 [functions.investigation-ai-assist]
 verify_jwt = true
@@ -100,7 +106,7 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.cross-reference-entities]
-verify_jwt = true
+verify_jwt = false
 
 [functions.monitor-canadian-sources]
 verify_jwt = false
@@ -299,7 +305,7 @@ verify_jwt = true
 verify_jwt = false
 
 [functions.configure-entity-monitoring]
-verify_jwt = true
+verify_jwt = false
 
 [functions.correlate-entities]
 verify_jwt = false
@@ -317,7 +323,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.entity-deep-scan]
-verify_jwt = true
+verify_jwt = false
 
 [functions.investigate-poi]
 verify_jwt = false
@@ -566,4 +572,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.knowledge-synthesizer]
+verify_jwt = false
+
+[functions.generate-report-visuals]
 verify_jwt = false

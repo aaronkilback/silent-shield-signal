@@ -116,11 +116,14 @@ const ThreatRadar = () => {
 
   if (!user && !loading) return null;
 
-  const threatLevel = radarData?.threat_assessment?.overall_level || 'low';
+  const threatLevel = radarData?.threat_assessment?.threat_level || 'low';
   const threatScore = radarData?.threat_assessment?.overall_score || 0;
   const activeSignals = radarData?.top_alerts?.length ?? radarData?.threat_assessment?.scores?.active_signals ?? 0;
   const activePrecursors = radarData?.active_precursors?.length ?? 0;
-  const escalationPct = radarData?.threat_assessment?.scores?.escalation_probability ?? 0;
+  const rawEscalationPct = radarData?.predictions?.escalation_probability ?? null;
+  // Belt-and-suspenders frontend cap: LOW threat should never show >25% escalation
+  const escalationPct = (threatLevel === 'low' && rawEscalationPct != null && rawEscalationPct > 25) ? 25 : rawEscalationPct;
+  const escalationCapped = threatLevel === 'low' && rawEscalationPct != null && rawEscalationPct > 25;
 
   const getThreatLevelColor = (level: string) => {
     switch (level) {
@@ -229,7 +232,8 @@ const ThreatRadar = () => {
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border/50 bg-background text-sm">
               <Zap className="w-3.5 h-3.5 text-orange-400" />
               <span className="text-muted-foreground">Escalation:</span>
-              <span className="font-semibold">{isLoadingRadar ? '—' : `${escalationPct}%`}</span>
+              <span className="font-semibold">{isLoadingRadar ? '—' : escalationPct != null ? `${escalationPct}%` : 'Calculating...'}</span>
+              {escalationCapped && <span className="text-xs text-yellow-400" title="AI output capped — inconsistent with LOW threat level">⚠ capped</span>}
             </div>
           </div>
         </div>

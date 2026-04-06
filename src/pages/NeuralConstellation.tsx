@@ -20,7 +20,7 @@ import { SignalDetailSheet } from "@/components/signals/SignalDetailSheet";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  useAgentCommLinks, useActiveDebates, useScanPulses, useAgentActivityMetrics,
+  useAgentCommLinks, useActiveDebates, useScanPulses, useScanCount, useDebateCount, useAgentActivityMetrics,
   useKnowledgeGraphEdges, useOperatorDevices, useOperatorMessageActivity, useKnowledgeGrowthData,
   useConstellationEntities, useSignalRealtime, useMessageRealtime,
   type SignalBurstEvent, type MessageBurstEvent,
@@ -200,6 +200,8 @@ const NeuralConstellation = () => {
   const { data: commLinks = [] } = useAgentCommLinks(!!user);
   const { data: activeDebates = [] } = useActiveDebates(deferredEnabled);
   const { data: scanPulses = [] } = useScanPulses(!!user);
+  const { data: scanCount = 0 } = useScanCount(deferredEnabled);
+  const { data: debateCount = 0 } = useDebateCount(deferredEnabled);
 
   // Stable shape for ActivityFeedPanel — avoids new array ref every render
   const recentScans = useMemo(
@@ -367,24 +369,24 @@ const NeuralConstellation = () => {
         {/* Bottom status bar (draggable) */}
         <DraggablePanel className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10" style={{ pointerEvents: "auto" }}>
           <div data-drag-handle className="flex items-center gap-6 bg-card/70 backdrop-blur-xl border border-border rounded px-5 py-2">
-            <div className="text-[10px] tracking-widest uppercase">
+            <div className="text-[10px] tracking-widest uppercase" title="Active communication links between agents">
               <span className="text-muted-foreground">Live Comms: </span>
               <span className="text-cyan-400 font-bold">{commLinks.length}</span>
             </div>
             <div className="w-px h-4 bg-border" />
-            <div className="text-[10px] tracking-widest uppercase">
+            <div className="text-[10px] tracking-widest uppercase" title="Total agent debate records">
               <span className="text-muted-foreground">Active Debates: </span>
-              <span className="text-amber-400 font-bold">{activeDebates.length}</span>
+              <span className="text-amber-400 font-bold">{debateCount}</span>
             </div>
             <div className="w-px h-4 bg-border" />
-            <div className="text-[10px] tracking-widest uppercase">
+            <div className="text-[10px] tracking-widest uppercase" title="Threats Resolved (Signals)">
               <span className="text-muted-foreground">Threats Neutralized: </span>
               <span className="text-emerald-400 font-bold">{neutralizedCount}</span>
             </div>
             <div className="w-px h-4 bg-border" />
-            <div className="text-[10px] tracking-widest uppercase">
+            <div className="text-[10px] tracking-widest uppercase" title="Autonomous scans in the last 24 hours">
               <span className="text-muted-foreground">Scans: </span>
-              <span className="text-primary font-bold">{scanPulses.length}</span>
+              <span className="text-primary font-bold">{scanCount}</span>
             </div>
             <div className="w-px h-4 bg-border" />
             <div className="text-[10px] tracking-widest uppercase">

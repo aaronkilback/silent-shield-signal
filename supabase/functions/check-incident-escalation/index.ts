@@ -114,6 +114,35 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Determine incident priority using PECL grading rules
+    // P1: active_threat category + confirmed client + high score (not a cyber advisory)
+    // P2: credible threat with client confirmation OR high-relevance category
+    // P3: everything else — advisories, global intel, unconfirmed relevance
+    const P1_CATEGORIES = ['active_threat'];
+    const P2_CATEGORIES = ['cybersecurity', 'protest', 'insider_threat', 'regulatory', 'violence'];
+    const isCisaKev = signal.category === 'malware' &&
+      (signal.source_url?.includes('cisa.gov') ||
+       signal.normalized_text?.toLowerCase().includes('cisa kev'));
+    const hasClientConfirmation = signal.client_id != null;
+
+    let incidentPriority: string;
+    if (
+      severityLevel === 'P1' &&
+      hasClientConfirmation &&
+      P1_CATEGORIES.includes(signal.category) &&
+      !isCisaKev
+    ) {
+      incidentPriority = 'p1';
+    } else if (
+      (severityLevel === 'P1' || severityLevel === 'P2') &&
+      !isCisaKev &&
+      (hasClientConfirmation || P2_CATEGORIES.includes(signal.category))
+    ) {
+      incidentPriority = 'p2';
+    } else {
+      incidentPriority = 'p3';
+    }
+
     // Create incident
     const { data: incident, error: incidentError } = await supabase
       .from('incidents')
@@ -122,13 +151,13 @@ Deno.serve(async (req) => {
         summary: signal.description,
         incident_type: signal.signal_type,
         severity_level: severityLevel,
-        priority: severityLevel as any,
+        priority: incidentPriority as any,
         status: 'open',
         opened_at: new Date().toISOString(),
         timeline_json: [{
           timestamp: new Date().toISOString(),
           action: 'created',
-          note: `Auto-escalated from signal due to ${severityLevel} severity (score: ${severityScore})`
+          note: `Auto-escalated from signal. Severity score: ${severityScore} (${severityLevel}), assigned priority: ${incidentPriority.toUpperCase()}. Category: ${signal.category}, client confirmed: ${hasClientConfirmation}`
         }]
       })
       .select()

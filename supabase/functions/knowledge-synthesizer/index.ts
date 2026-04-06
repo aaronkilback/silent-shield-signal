@@ -16,6 +16,14 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
+
+    const { data: heartbeatRow } = await supabase.from('cron_heartbeat').insert({
+      job_name: 'knowledge-synthesizer-nightly',
+      started_at: new Date().toISOString(),
+      status: 'running',
+    }).select('id').single();
+    const heartbeatId: string | null = heartbeatRow?.id ?? null;
+
     const body = await req.json().catch(() => ({}));
     const {
       force = false,
@@ -153,11 +161,37 @@ Deno.serve(async (req) => {
     };
     if (debug) { response.diagnostics = diagnostics; response.conn_debug = connDebug; }
 
+    if (heartbeatId) {
+      await supabase.from('cron_heartbeat').update({
+        completed_at: new Date().toISOString(),
+        status: 'succeeded',
+        result_summary: {
+          entries_processed: entries.length,
+          agents_synthesized: agentKeys.length,
+          beliefs_created: beliefsCreated,
+          beliefs_updated: beliefsUpdated,
+          connections_created: connectionsCreated,
+        },
+      }).eq('id', heartbeatId);
+    }
+
     return successResponse(response);
 
   } catch (err) {
     console.error('[knowledge-synthesizer] Error:', err);
-    return errorResponse(err instanceof Error ? err.message : 'Unknown error', 500);
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    try {
+      const supabase = createServiceClient();
+      // heartbeatId not in scope here; insert a fresh failure row
+      await supabase.from('cron_heartbeat').insert({
+        job_name: 'knowledge-synthesizer-nightly',
+        started_at: new Date().toISOString(),
+        completed_at: new Date().toISOString(),
+        status: 'failed',
+        result_summary: { error: message },
+      });
+    } catch (_) {}
+    return errorResponse(message, 500);
   }
 });
 

@@ -8,6 +8,7 @@ import { AgentInteraction } from "@/components/agents/AgentInteraction";
 
 interface AskAegisButtonProps {
   context: string;
+  initialMessage?: string;
   size?: "sm" | "default";
   variant?: "ghost" | "outline" | "default";
   label?: string;
@@ -15,6 +16,7 @@ interface AskAegisButtonProps {
 
 export function AskAegisButton({
   context,
+  initialMessage,
   size = "sm",
   variant = "ghost",
   label = "Ask Aegis",
@@ -68,7 +70,7 @@ export function AskAegisButton({
                 <Loader2 className="w-6 h-6 animate-spin text-primary" />
               </div>
             )}
-            {agent && <AgentInteraction agent={agent} />}
+            {agent && <AgentInteraction agent={agent} initialMessage={initialMessage} />}
           </div>
         </DialogContent>
       </Dialog>

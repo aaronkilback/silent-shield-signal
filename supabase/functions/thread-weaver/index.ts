@@ -182,11 +182,12 @@ Deno.serve(async (req: Request) => {
   try {
     const supabase = createServiceClient();
 
-    await supabase.from('cron_heartbeat').upsert({
+    const { data: heartbeatRow } = await supabase.from('cron_heartbeat').insert({
       job_name: 'thread-weaver-2am',
       started_at: new Date().toISOString(),
       status: 'running',
-    }, { onConflict: 'job_name' });
+    }).select('id').single();
+    const heartbeatId: string | null = heartbeatRow?.id ?? null;
 
     const result: WeaverResult = {
       threads_created: 0,
@@ -199,12 +200,24 @@ Deno.serve(async (req: Request) => {
 
     const since48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
 
-    const { data: rawMemories, error: memError } = await supabase
+    // Fetch already-threaded memory IDs to exclude (PostgREST doesn't support subqueries)
+    const { data: threadedRefs } = await supabase
+      .from('thread_memories')
+      .select('memory_id')
+      .gte('created_at', since48h);
+    const threadedIds = (threadedRefs ?? []).map((r: any) => r.memory_id).filter(Boolean);
+
+    let memoriesQuery = supabase
       .from('agent_investigation_memory')
       .select('id, agent_call_sign, content, memory_type, entities, tags, confidence, client_id, incident_id, embedding, created_at')
       .gte('created_at', since48h)
-      .or('is_significant.eq.true,confidence.gt.0.75')
-      .not('id', 'in', `(SELECT memory_id FROM thread_memories)`);
+      .gt('confidence', 0.75);
+
+    if (threadedIds.length > 0) {
+      memoriesQuery = memoriesQuery.not('id', 'in', `(${threadedIds.map((id: string) => `"${id}"`).join(',')})`);
+    }
+
+    const { data: rawMemories, error: memError } = await memoriesQuery;
 
     if (memError) {
       console.error('[ThreadWeaver] Failed to load memories:', memError);
@@ -399,12 +412,13 @@ Deno.serve(async (req: Request) => {
 
     console.log('[ThreadWeaver] Run complete:', result);
 
-    await supabase.from('cron_heartbeat').upsert({
-      job_name: 'thread-weaver-2am',
-      completed_at: new Date().toISOString(),
-      status: 'succeeded',
-      result_summary: { threads_created: result.threads_created, threads_updated: result.threads_updated, memories_linked: result.memories_linked, cold_threads: result.cold_threads },
-    }, { onConflict: 'job_name' });
+    if (heartbeatId) {
+      await supabase.from('cron_heartbeat').update({
+        completed_at: new Date().toISOString(),
+        status: 'succeeded',
+        result_summary: { threads_created: result.threads_created, threads_updated: result.threads_updated, memories_linked: result.memories_linked, cold_threads: result.cold_threads },
+      }).eq('id', heartbeatId);
+    }
 
     return successResponse({
       success: true,
@@ -417,12 +431,13 @@ Deno.serve(async (req: Request) => {
     console.error('[ThreadWeaver] Fatal error:', err);
     try {
       const supabase = createServiceClient();
-      await supabase.from('cron_heartbeat').upsert({
+      await supabase.from('cron_heartbeat').insert({
         job_name: 'thread-weaver-2am',
+        started_at: new Date().toISOString(),
         completed_at: new Date().toISOString(),
         status: 'failed',
         result_summary: { error: message },
-      }, { onConflict: 'job_name' });
+      });
     } catch (_) {}
     return errorResponse(`Thread weaver failed: ${message}`, 500);
   }

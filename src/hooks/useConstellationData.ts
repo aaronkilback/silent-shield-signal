@@ -180,7 +180,7 @@ export function useActiveDebates(enabled: boolean) {
   });
 }
 
-/** Fetch recent autonomous scan results */
+/** Fetch recent autonomous scan results (last 20 rows for activity feed display) */
 export function useScanPulses(enabled: boolean) {
   return useQuery({
     queryKey: ["scan-pulses"],
@@ -204,6 +204,40 @@ export function useScanPulses(enabled: boolean) {
     },
     enabled,
     refetchInterval: 30000,
+  });
+}
+
+/** Count of autonomous scans in the last 24 hours — for the status bar counter */
+export function useScanCount(enabled: boolean) {
+  return useQuery({
+    queryKey: ["scan-count-24h"],
+    queryFn: async () => {
+      const since = new Date(Date.now() - 86400000).toISOString();
+      const { count, error } = await supabase
+        .from("autonomous_scan_results")
+        .select("*", { count: "exact", head: true })
+        .gte("created_at", since);
+      if (error) throw error;
+      return count ?? 0;
+    },
+    enabled,
+    refetchInterval: 60000,
+  });
+}
+
+/** Total count of agent debates — for the status bar counter */
+export function useDebateCount(enabled: boolean) {
+  return useQuery({
+    queryKey: ["debate-count"],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("agent_debate_records")
+        .select("*", { count: "exact", head: true });
+      if (error) throw error;
+      return count ?? 0;
+    },
+    enabled,
+    refetchInterval: 60000,
   });
 }
 

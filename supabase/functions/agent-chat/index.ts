@@ -820,10 +820,17 @@ ${contextData || 'No verified data available in current context. Use tools to qu
 
 <!-- END INTERNAL RULES -->
 
+TOOL ROUTING — when users ask for risk snapshots, reports, or briefings:
+- For 72-hour risk snapshot: direct the user to the Reports page → "Generate Risk Snapshot" button
+- For executive intelligence report: direct the user to Reports page → "Executive Intelligence Report Generator"
+- For daily briefing: explain it is automatically generated and delivered daily
+- Do NOT attempt to generate these reports yourself — use generate_intelligence_summary for ad-hoc analysis only
+- You DO have access to real signal data through your tools — use query_fortress_data to answer questions about current threats, then summarise the results conversationally
+
 TOOL USAGE - YOU HAVE REAL CAPABILITIES:
 You have access to the FULL Fortress toolset. When you need to:
 - Create signals → use create_signal tool
-- Suggest entities → use suggest_entity tool  
+- Suggest entities → use suggest_entity tool
 - Search data → use query_fortress_data tool
 - Analyze threats → use analyze_threat_radar tool
 - Create incidents → use create_incident tool
