@@ -298,10 +298,43 @@ Three active defenses against Mythos-class AI attacks added to `wraith-security-
 - `wraith_signal_threat_scores` — per-signal AI attack scores
 - `wraith_prompt_injection_log` — admin-only injection attempt log
 
-### Critical gap
-Tool 3 (prompt injection gate) must be wired into `dashboard-ai-assistant` before tool dispatch. Without this, injection detection runs but cannot block attacks. Find tool dispatch in dashboard-ai-assistant and add: call wraith-security-advisor with action: detect_prompt_injection before executing any tool call.
+### WRAITH fully wired (April 8, 2026) — COMPLETE
+- Injection log insert bugs fixed: `action_taken = 'logged'` → `'flagged'` (constraint), `raw_analysis` → `indicators` (correct column)
+- RLS policy on `wraith_prompt_injection_log` updated: added `OR current_setting('role', true) = 'service_role'` so JS SDK inserts succeed
+- Codebase snapshot pipeline operational: `scripts/upload-codebase-snapshot.py` → `codebase-source` Storage bucket → `wraith-snapshot-codebase` function (nightly 05:45 UTC) → `codebase_snapshots` table → vulnerability scanner
 
+---
 
+## 13. STALENESS GATE & HISTORICAL SIGNAL ROUTING (April 8, 2026) — COMPLETE
+
+- Articles older than 365 days → `signal_type = 'historical'`, routed to "Older Intel" tab, no incident created
+- Cyber/CVE threshold: 730 days
+- Historical signals skip `ai-decision-engine` entirely via early return in `ingest-signal`
+- Root cause fixed: `ai-decision-engine` was invoked for ALL signals; its own incident creation path fired independently of `ingest-signal`'s `!isHistorical` gate
+- `skip_relevance_gate: true` bypasses staleness (analyst uploads, QA)
+- **Verified:** CGL 2022 sabotage article no longer generates incidents. Historical signal stored, no incident created.
+
+---
+
+## 14. UI CHANGES (April 8, 2026) — COMPLETE
+
+- Removed "Historical" top tab from Signals page (archived status pathway removed)
+- `archivedSignals` query and `unarchiveMutation` removed from `Signals.tsx`
+- SignalHistory sub-tabs: "Historical" → "Older Intel", "Review" → "Low Confidence"
+- `triage_override` DB values `'historical'` and `'review'` still valid — mapped to new tab names on read
+
+---
+
+## 15. MONITORING KEYWORD EXPANSION (April 8, 2026) — COMPLETE
+
+- PECL `monitoring_keywords`: 102 → 203 entries
+- New coverage: BC Energy Policy (LNG Canada, BC Energy Regulator, David Eby, Impact Assessment Act), Indigenous Governance (FNLC, Haisla Nation, Lax Kw'alaams, UNDRIP, FPIC, Section 35, Tahltan, Gitxsan), Industry (TC Energy, Enbridge, Trans Mountain, AER, CER, oilsands), Energy Security (SCADA attack, OT security, ICS, critical infrastructure, US tariffs Canada energy, Alberta sovereignty)
+- Locations: 3 → 8 (added British Columbia, Kitimat, Prince Rupert, Fort St. John, Peace River)
+- Entity monitoring (30 entities, `active_monitoring_enabled = true`) runs independently of keyword pipeline
+
+---
+
+## REMAINING GAPS (April 8, 2026)
 
 1. **Fix test signal contamination** — `is_test = false` filter in `generate-executive-report`
 2. **Fix incident titles** — content-based title generation from signal
@@ -309,7 +342,7 @@ Tool 3 (prompt injection gate) must be wired into `dashboard-ai-assistant` befor
 4. **Fix incident table join** in report — show real titles/types not "Classification pending"
 5. **Complete AEGIS tool audit** — get_threat_intel_feeds, dispatch_agent_investigation, get_system_health
 6. **Signal verification gate** — LOCUS-INTEL narrative review before report assembly
-7. **Source credibility calibration** — backfill composite_confidence on 78 legacy signals or exclude from scoring
+7. **Source credibility calibration** — backfill composite_confidence on legacy signals or exclude from scoring
 8. **Wildfire tool** — implement with BC Wildfire Service API before May 1, 2026
 
 ---
@@ -322,11 +355,11 @@ Tool 3 (prompt injection gate) must be wired into `dashboard-ai-assistant` befor
 - **Codebase:** /Users/aaronkilback/silent-shield-signal
 - **Architecture document:** FORTRESS_INTELLIGENCE_ARCHITECTURE.md
 - **This document:** FORTRESS_PLATFORM_STATE.md
-- **Last full audit:** April 7, 2026
+- **Last full audit:** April 8, 2026
 
 ---
 
-*This document reflects verified state as of April 7, 2026. Update after each significant change.*
+*This document reflects verified state as of April 8, 2026. Update after each significant change.*
 
 ---
 

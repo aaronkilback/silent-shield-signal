@@ -128,6 +128,26 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - REMEDIATION: Trigger monitoring source re-scans via edge functions
 - ADAPTIVE THRESHOLDS: Signal volume baselines auto-adjust based on 30-day rolling averages.
 
+### Staleness Gate (April 8, 2026) — COMPLETE
+- Articles older than 365 days (730 days for cyber/CVE categories) are routed to \`signal_type = 'historical'\` instead of being hard-rejected
+- Historical signals skip the AI decision engine entirely — no incident creation, no anomaly scoring, no escalation
+- Signal is stored in DB for context; routed to "Older Intel" sub-tab in UI
+- \`skip_relevance_gate: true\` bypasses staleness gate (analyst-uploaded documents, QA tests)
+- Root cause of original bug: \`ai-decision-engine\` was invoked for ALL signals including historical ones, creating incidents independently. Fixed by early-returning in \`ingest-signal\` before the \`ai-decision-engine\` call when \`isHistorical = true\`
+- WATCHDOG MONITORS: \`signals WHERE signal_type = 'historical'\` count growing = gate working. Any incidents linked to signals with \`signal_type = 'historical'\` = gate regression.
+- EXPECTED: Historical signals accumulate without generating incidents. Active feed stays clean.
+
+### WRAITH AI Defense Layer (April 8, 2026) — COMPLETE
+- Three-layer prompt injection gate on all AEGIS tool dispatches:
+  1. **Pre-screen** (all messages, before OpenAI): regex gate screens user message before model sees it. Logs at confidence ≥ 0.6, blocks at ≥ 0.85. Fires \`[WRAITH] Pre-screen blocked message\` in logs.
+  2. **Tool dispatch regex** (all tools): same 8-pattern regex gate runs before each \`executeTool\` call. Catches injection that passed pre-screen.
+  3. **Tool dispatch AI** (high-risk tools only): calls \`wraith-security-advisor\` with \`action: detect_prompt_injection\`. High-risk tools: \`inject_test_signal\`, \`fix_duplicate_signals\`, \`submit_ai_feedback\`, \`create_entity\`, \`auto_summarize_incidents\`, \`delete_*\`. 3-second timeout, fails open on network error.
+- All injection events logged to \`wraith_prompt_injection_log\` with \`message_preview\`, \`injection_type\`, \`confidence\`, \`action_taken\` (flagged/blocked)
+- \`action_taken\` values: \`flagged\` (logged, execution continues), \`blocked\` (execution stopped, error returned to model)
+- Codebase snapshot pipeline: \`scripts/upload-codebase-snapshot.py\` uploads 5 function source files to \`codebase-source\` Storage bucket. \`wraith-snapshot-codebase\` function reads them nightly at 05:45 UTC into \`codebase_snapshots\` table. \`wraith-security-advisor\` vulnerability scan reads from \`codebase_snapshots\`.
+- WATCHDOG MONITORS: \`wraith_prompt_injection_log\` — any \`action_taken = 'blocked'\` entries = active attack attempt. \`codebase_snapshots\` — \`MAX(snapshotted_at)\` should be within 25 hours (nightly cron). Zero snapshots = codebase vulnerability scanner blind.
+- EXPECTED: \`wraith_prompt_injection_log\` has occasional \`flagged\` entries from legitimate analyst messages hitting patterns. Zero \`blocked\` entries in normal operation.
+
 ### Signal Source URL Coverage (April 8, 2026) — COMPLETE
 - All monitoring functions pass \`source_url\` pointing to the original article/feed item:
   - \`monitor-canadian-sources\`: \`item.link\` from RSS feed
@@ -146,11 +166,27 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - Report HTML uploaded with \`contentType: "text/html; charset=utf-8"\` on all paths
 - WATCHDOG MONITORS: Cannot auto-detect — verify manually if report download complaints arise
 
-### KNOWN PLATFORM GAPS (April 7, 2026 — require human fixes)
+### UI Changes (April 8, 2026) — COMPLETE
+- Removed "Historical" top tab from Signals page — archived status pathway was redundant
+- SignalHistory sub-tabs renamed: "Historical" → "Older Intel", "Review" → "Low Confidence"
+- \`triage_override\` DB values \`'historical'\` and \`'review'\` are still valid — UI maps them to new tab names on read
 
-1. TEST SIGNAL CONTAMINATION IN REPORTS
-   - generate-executive-report does NOT filter is_test = false on signal queries
-   - Test signals injected during development appear as real evidence citations in executive reports
+### Monitoring Keyword Expansion (April 8, 2026) — COMPLETE
+- Petronas Canada (PECL) monitoring keywords expanded from 102 → 203 entries
+- Four coverage gaps filled:
+  - BC Energy Policy: LNG Canada, BC Energy Regulator, David Eby, Impact Assessment Act, methane regulations, emissions cap, clean energy BC
+  - Indigenous Governance (broader): hereditary chief, FNLC, Haisla Nation, Lax Kw'alaams, UNDRIP, FPIC, Section 35, Tahltan Nation, Gitxsan Nation
+  - Industry context: TC Energy, Enbridge, Trans Mountain, TMX, AER, CER hearing, PETRONAS LNG, Pacific NorthWest LNG, oilsands
+  - Energy Security / Geopolitical: SCADA attack, OT security, ICS, critical infrastructure attack, US tariffs Canada energy, Alberta sovereignty
+- Locations expanded from 3 → 8: added British Columbia, Kitimat, Prince Rupert, Fort St. John, Peace River
+- Entity monitoring pipeline (30 entities with \`active_monitoring_enabled = true\`) runs separately from keyword pipeline — unaffected by keyword changes
+- WATCHDOG MONITORS: Cannot auto-detect keyword coverage gaps. Review signal breadth quarterly.
+
+### KNOWN PLATFORM GAPS (April 8, 2026 — require human fixes)
+
+1. TEST SIGNAL CONTAMINATION IN REPORTS — PARTIALLY MITIGATED
+   - All test signals and test incidents hard-deleted April 8, 2026
+   - generate-executive-report may still lack \`.eq('is_test', false)\` filter — verify before next report generation
    - Fix: add .eq('is_test', false) to all signal queries in generate-executive-report/index.ts
    - WATCHDOG MONITORS: Cannot auto-detect — requires code fix
 
