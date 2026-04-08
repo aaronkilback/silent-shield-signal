@@ -130,6 +130,134 @@ async function processSingleUpdate(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  PHASE 3: INCIDENT OUTCOME FEEDBACK LOOP
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Process unprocessed incident outcomes and update source credibility scores.
+ * Runs as part of the nightly batch. Uses credibility_updated flag to prevent
+ * double-counting across batch runs.
+ *
+ * Flow: incident_outcomes (was_accurate) → signal source_key → source_credibility_scores
+ */
+async function processIncidentOutcomes(supabase: any): Promise<{ processed: number; details: any[] }> {
+  // Fetch unprocessed outcomes that have a linked signal
+  const { data: outcomes, error: fetchErr } = await supabase
+    .from('incident_outcomes')
+    .select(`
+      id,
+      signal_id,
+      outcome_type,
+      was_accurate,
+      false_positive,
+      incidents!incident_outcomes_incident_id_fkey(signal_id)
+    `)
+    .or('credibility_updated.is.null,credibility_updated.eq.false')
+    .limit(20);
+
+  if (fetchErr) {
+    console.error('[source-credibility-updater] Outcome fetch error:', fetchErr);
+    return { processed: 0, details: [] };
+  }
+
+  if (!outcomes || outcomes.length === 0) {
+    console.log('[source-credibility-updater] No unprocessed incident outcomes');
+    return { processed: 0, details: [] };
+  }
+
+  const details: any[] = [];
+  let processed = 0;
+  const now = new Date().toISOString();
+
+  for (const outcome of outcomes) {
+    // Resolve the signal_id: direct on outcome, or via the linked incident
+    const signalId = outcome.signal_id || outcome.incidents?.signal_id;
+    if (!signalId) {
+      // No signal traceable — stamp as processed so we don’t retry endlessly
+      await supabase
+        .from('incident_outcomes')
+        .update({ credibility_updated: true, credibility_updated_at: now })
+        .eq('id', outcome.id);
+      continue;
+    }
+
+    // Get the signal’s source_key
+    const { data: signal } = await supabase
+      .from('signals')
+      .select('source_key, source_id, sources(name)')
+      .eq('id', signalId)
+      .maybeSingle();
+
+    const sourceKey: string = signal?.source_key
+      || signal?.sources?.name
+      || 'unknown';
+
+    if (sourceKey === 'unknown') {
+      await supabase
+        .from('incident_outcomes')
+        .update({ credibility_updated: true, credibility_updated_at: now })
+        .eq('id', outcome.id);
+      continue;
+    }
+
+    const wasAccurate = outcome.was_accurate ?? !outcome.false_positive;
+
+    // Bayesian update on source_credibility_scores directly
+    // (bypass signal_verifications dedup — this is outcome-level, not signal-level)
+    const { data: existing } = await supabase
+      .from('source_credibility_scores')
+      .select('current_credibility, total_signals, confirmed_signals, refuted_signals')
+      .eq('source_key', sourceKey)
+      .maybeSingle();
+
+    const oldCredibility: number = existing?.current_credibility ?? 0.65;
+    const newCredibility = updateCredibilityScore(oldCredibility, wasAccurate);
+    const newTotal = (existing?.total_signals ?? 0) + 1;
+    const newConfirmed = (existing?.confirmed_signals ?? 0) + (wasAccurate ? 1 : 0);
+    const newRefuted = (existing?.refuted_signals ?? 0) + (wasAccurate ? 0 : 1);
+
+    const { error: upsertErr } = await supabase
+      .from('source_credibility_scores')
+      .upsert({
+        source_key: sourceKey,
+        prior_credibility: existing?.current_credibility ?? 0.65,
+        current_credibility: Math.round(newCredibility * 1000) / 1000,
+        total_signals: newTotal,
+        confirmed_signals: newConfirmed,
+        refuted_signals: newRefuted,
+        last_updated_at: now,
+      }, { onConflict: 'source_key' });
+
+    if (upsertErr) {
+      console.error(`[Phase3] Failed to update credibility for ${sourceKey}:`, upsertErr);
+      continue;
+    }
+
+    // Stamp outcome as processed
+    await supabase
+      .from('incident_outcomes')
+      .update({ credibility_updated: true, credibility_updated_at: now })
+      .eq('id', outcome.id);
+
+    const adjustment = Math.round((newCredibility - oldCredibility) * 1000) / 1000;
+    console.log(`[Phase3] ${sourceKey}: ${oldCredibility.toFixed(3)} → ${newCredibility.toFixed(3)} (${adjustment > 0 ? '+' : ''}${adjustment}) via outcome ${outcome.outcome_type}`);
+
+    details.push({
+      outcome_id: outcome.id,
+      source_key: sourceKey,
+      old_credibility: Math.round(oldCredibility * 1000) / 1000,
+      new_credibility: Math.round(newCredibility * 1000) / 1000,
+      adjustment,
+      outcome_type: outcome.outcome_type,
+      was_accurate: wasAccurate,
+    });
+    processed++;
+  }
+
+  return { processed, details };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  BATCH MODE
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -196,6 +324,11 @@ async function processBatch(supabase: any): Promise<{ processed: number; details
       console.warn(`[source-credibility-updater] Batch skip signal ${sig.id}:`, err instanceof Error ? err.message : err);
     }
   }
+
+  // Phase 3: also process incident outcomes not yet reflected in source scores
+  const outcomeResult = await processIncidentOutcomes(supabase);
+  processed += outcomeResult.processed;
+  details.push(...outcomeResult.details);
 
   return { processed, details };
 }

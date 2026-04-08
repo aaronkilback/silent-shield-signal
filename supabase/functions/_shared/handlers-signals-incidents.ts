@@ -71,9 +71,10 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
   get_recent_signals: async (args, supabaseClient) => {
     let query = supabaseClient
       .from("signals")
-      .select("id, title, description, severity, received_at, created_at, event_date, status, client_id, clients(name)")
+      .select("id, title, description, severity, received_at, created_at, event_date, status, client_id, source_url, clients(name)")
+      .gte("received_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
       .order("received_at", { ascending: false })
-      .limit(args.limit || 10);
+      .limit(args.limit || 50);
 
     if (args.client_id) {
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -592,6 +593,66 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
       })),
       count: metrics?.length || 0,
       summary: `${metrics?.length || 0} analysts calibrated. Average accuracy: ${metrics && metrics.length > 0 ? Math.round((metrics.reduce((s: number, m: any) => s + m.accuracy_score, 0) / metrics.length) * 100) : 0}%.`,
+    };
+  },
+
+  // ═══ Monitored Queue (Phase 2C) ═══
+  get_monitored_signals: async (args, supabaseClient) => {
+    const limit = args.limit || 10;
+
+    // Resolve client_id from name if needed
+    let clientId = args.client_id;
+    if (clientId && !/^[0-9a-f-]{36}$/.test(clientId)) {
+      const { data: client } = await supabaseClient
+        .from('clients')
+        .select('id')
+        .ilike('name', `%${clientId}%`)
+        .limit(1)
+        .maybeSingle();
+      clientId = client?.id || null;
+    }
+
+    let query = supabaseClient
+      .from('signals')
+      .select('id, title, normalized_text, severity, category, composite_confidence, relevance_score, confidence, source_url, created_at, client_id, clients(name)')
+      .is('deleted_at', null)
+      .not('composite_confidence', 'is', null)
+      .gte('composite_confidence', 0.40)
+      .lt('composite_confidence', 0.65)
+      .order('composite_confidence', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (clientId) {
+      query = query.eq('client_id', clientId);
+    }
+
+    const { data: signals, error } = await query;
+    if (error) return { error: error.message };
+    if (!signals || signals.length === 0) {
+      return {
+        monitored_count: 0,
+        signals: [],
+        summary: 'No signals currently in the monitored queue. Signals appear here when their composite confidence score is between 0.40 and 0.64 \u2014 strong enough to be relevant, not yet strong enough to auto-create an incident.',
+      };
+    }
+
+    return {
+      monitored_count: signals.length,
+      threshold_explanation: 'Composite score = (ai_confidence \u00d7 0.50) + (relevance_score \u00d7 0.35) + (source_credibility \u00d7 0.15). Scores 0.40\u20130.64 are watched; \u22650.65 trigger incident creation.',
+      signals: signals.map((s: any) => ({
+        id: s.id,
+        title: s.title || s.normalized_text?.substring(0, 80),
+        severity: s.severity,
+        category: s.category,
+        composite_confidence: s.composite_confidence,
+        ai_confidence: s.confidence,
+        relevance_score: s.relevance_score,
+        client: s.clients?.name,
+        source_url: s.source_url,
+        created_at: s.created_at,
+        gap_to_threshold: Math.round((0.65 - s.composite_confidence) * 100) / 100,
+      })),
     };
   },
 

@@ -1506,6 +1506,7 @@ Only extract genuinely valuable intelligence insights. Skip boilerplate and gene
               text: signalText,
               client_id: document.client_id,
               sourceType: 'document_upload',
+              source_url: `${Deno.env.get('SUPABASE_URL')?.replace('/rest/v1', '')}/storage/v1/object/public/archival-documents/${document.storage_path}`,
               sourceData: {
                 document_id: documentId,
                 filename: document.filename,

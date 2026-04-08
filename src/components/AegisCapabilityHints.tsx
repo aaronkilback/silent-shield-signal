@@ -5,21 +5,22 @@ import { cn } from "@/lib/utils";
 
 const CAPABILITIES = [
   { hint: "Show me today's threat landscape", category: "Awareness" },
-  { hint: "Run a deep scan on a VIP", category: "Intelligence" },
+  { hint: "Run a deep scan on a VIP", category: "Intelligence", path: "/vip-deep-scan" },
   { hint: "What signals came in overnight?", category: "Monitoring" },
   { hint: "Generate an executive briefing", category: "Reports" },
   { hint: "Check dark web exposure for our client", category: "OSINT" },
-  { hint: "Open the threat radar", category: "Navigation" },
+  { hint: "Open the threat radar", category: "Navigation", path: "/threat-radar" },
   { hint: "Analyze travel risk for Tokyo next week", category: "Travel" },
   { hint: "What incidents need attention?", category: "Operations" },
 ];
 
 interface AegisCapabilityHintsProps {
   onSelect: (hint: string) => void;
+  onNavigate: (path: string) => void;
   visible: boolean;
 }
 
-export const AegisCapabilityHints = ({ onSelect, visible }: AegisCapabilityHintsProps) => {
+export const AegisCapabilityHints = ({ onSelect, onNavigate, visible }: AegisCapabilityHintsProps) => {
   const [dismissed, setDismissed] = useState(false);
   const [shuffled, setShuffled] = useState<typeof CAPABILITIES>([]);
 
@@ -51,7 +52,7 @@ export const AegisCapabilityHints = ({ onSelect, visible }: AegisCapabilityHints
         {shuffled.map((cap, i) => (
           <button
             key={i}
-            onClick={() => onSelect(cap.hint)}
+            onClick={() => cap.path ? onNavigate(cap.path) : onSelect(cap.hint)}
             className={cn(
               "text-left px-3 py-2 rounded-lg border border-border/50",
               "bg-card/50 hover:bg-accent/50 transition-colors",

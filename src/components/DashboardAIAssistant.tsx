@@ -54,6 +54,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
   const [streamingContent, setStreamingContent] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   
   const hasLoadedOnceRef = useRef(false);
   
@@ -1099,6 +1100,8 @@ If not visible, try: **Ctrl+Shift+R** (hard refresh)`,
                             if (href?.startsWith('/')) {
                               navigate(href);
                               toast.success("Navigating to " + href);
+                            } else if (href?.includes('supabase.co') && href?.includes('download=')) {
+                              window.location.href = href;
                             } else if (href) {
                               window.open(href, '_blank', 'noopener,noreferrer');
                             }
@@ -1418,15 +1421,6 @@ How can I help you now?`,
                 <MessageSquarePlus className="w-3.5 h-3.5 mr-1.5" />
                 New Chat
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={clearHistory}
-                className="text-xs shrink-0"
-                title="Clear conversation messages only (AI keeps all platform knowledge and tools)"
-              >
-                Clear Chat
-              </Button>
             </div>
           </div>
         </div>
@@ -1452,7 +1446,11 @@ How can I help you now?`,
                   <>
                     {fullScreen && messages.length <= 1 && (
                       <AegisCapabilityHints
-                        onSelect={(hint) => { setInput(hint); }}
+                        onSelect={(hint) => {
+                          setInput(hint);
+                          requestAnimationFrame(() => formRef.current?.requestSubmit());
+                        }}
+                        onNavigate={(path) => navigate(path)}
                         visible={messages.length <= 1}
                       />
                     )}
@@ -1609,7 +1607,7 @@ How can I help you now?`,
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="flex gap-2">
+            <form ref={formRef} onSubmit={handleSubmit} className="flex gap-2">
               <input
                 type="file"
                 ref={fileInputRef}

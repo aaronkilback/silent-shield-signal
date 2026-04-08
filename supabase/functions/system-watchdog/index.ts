@@ -50,14 +50,149 @@ USE THIS HISTORY TO:
 ## PLATFORM ARCHITECTURE
 Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 
+### Phase 1 Intelligence Foundation (April 2026) — COMPLETE
+- Soft deletes on signals + incidents — hard deletes replaced, evidence never destroyed
+- Provenance chain on incidents — every incident has \`provenance_type\`, \`provenance_id\`, \`provenance_summary\`, \`created_by_function\`
+- Outcome tracking — \`incident-action\` resolve writes to \`incident_outcomes\` table for learning loop
+- \`monitor-canadian-sources\` now routes through \`ingest-signal\` — bypasses closed, full 7-layer dedup active
+
+### Phase 2 Intelligence Foundation (April 2026) — COMPLETE
+- Confidence gate is now COMPOSITE — three independent inputs must agree before an incident is created:
+  - AI decision engine confidence (50%) — self-reported from analysis
+  - AI relevance gate score (35%) — \`signal.relevance_score\`, computed independently in ingest-signal BEFORE the AI sees the signal
+  - Source credibility score (15%) — from \`source_credibility_scores\` table, Bayesian history per source_key; defaults to 0.65 until history accumulates
+  - Formula: \`(ai_confidence × 0.50) + (relevance_score × 0.35) + (source_credibility × 0.15)\`
+  - Threshold: composite < 0.65 → logged to \`incident_creation_failures\`, no incident created
+  - All three components are logged to \`incident_creation_failures.attempted_data\` on rejection
+- **Rule-based path now writes composite_confidence (fixed April 8, 2026)**: Previously only the AI path wrote \`composite_confidence\`. The rule-based early-exit (medium/low severity signals) skipped composite scoring, leaving 96% of signals unscored. Fixed by computing and writing the composite score before the rule-based return. All new signals now receive a queryable \`composite_confidence\` score regardless of path.
+- Signal feedback loop is fully connected:
+  - Analyst marks signal relevant/irrelevant via \`submit_ai_feedback\` AEGIS tool → \`process-feedback\`
+  - \`process-feedback\` updates BOTH \`source_reliability_metrics\` (read by ingest-signal) AND \`source_credibility_scores\` (read by composite gate)
+  - Same Bayesian math: accurate → score +15% of remaining headroom; inaccurate → score -20% of current value; bounds 0.05–0.98
+  - Signal feedback now directly affects the 15% source credibility component in the composite gate
+- WATCHDOG MONITORS:
+  - \`incident_creation_failures\`: accumulation rate — if >10/day = signal quality or threshold problem. Check \`attempted_data\` for which component is dragging composite below threshold.
+  - \`incidents\` with null \`provenance_type\` created after April 7 — bypass indicator
+  - \`incident_outcomes\` write rate — if incidents close but table stays empty, feedback loop broken
+  - Soft delete compliance — \`signals.deleted_at\` should accumulate over time, not stay at 0
+- EXPECTED: \`incident_creation_failures\` has occasional entries (normal — signals below composite threshold). Zero incidents with null provenance on NEW incidents (post April 7). \`source_credibility_scores\` table grows as outcomes feed Bayesian updater.
+- REMEDIATION: \`fix_orphaned_provenance\` — tag incidents created after April 7 with null provenance as 'legacy_unknown'
+
+### Phase 3 Outcome Feedback Loop (April 2026) — COMPLETE (3A + 3B)
+- \`incident-action\` resolve writes to \`incident_outcomes\` with \`outcome_type\`, \`was_accurate\`, \`false_positive\`
+- \`source-credibility-updater\` batch now calls \`processIncidentOutcomes\` — reads unprocessed outcome rows, resolves signal → source_key, applies Bayesian update to \`source_credibility_scores\`, stamps \`credibility_updated = true\`
+- Migration \`20260407000004\` added \`credibility_updated BOOLEAN DEFAULT FALSE\` to \`incident_outcomes\` — prevents double-counting across batch runs
+- WATCHDOG MONITORS: \`incident_outcomes\` rows where \`credibility_updated = false\` older than 24h = batch not running or failing silently
+- EXPECTED: \`credibility_updated_at\` timestamps appear after each nightly batch. \`source_credibility_scores\` scores drift over time as outcomes accumulate.
+
+### Phase 4D Entity Graph Relationships (April 2026) — COMPLETE
+- \`correlate-entities\` traverses \`entity_relationships\` after writing entity mentions
+- One hop traversal, strength >= 0.5 threshold
+- Checks \`entity_mentions\` for related entity activity in 72h window
+- If corroboration found: boosts \`composite_confidence\` by min(count × 0.05, 0.15), writes \`phase4d_traversal\` context to \`raw_json\`
+- Traversal is non-blocking — failure never stops signal ingestion
+- WATCHDOG MONITORS: signals with \`raw_json->phase4d_traversal\` present and \`confidence_boost > 0\` = graph traversal firing correctly
+- EXPECTED: Related signals in same entity cluster receive confidence boosts. A Gidimt’en Checkpoint signal followed by a Coastal GasLink signal within 72h should both show +0.05–0.15 boosts
+
+### Phase 4C Cross-Signal Pattern Detection (April 2026) — COMPLETE
+- Four pattern types: entity_escalation (3+ signals/7d), geographic_cluster (2+ signals/48h), frequency_spike (2× prior week + ≥3), type_cluster (3+ threat signals/72h)
+- Entity escalation upgraded: reads \`entity_mentions\` (Phase 4B resolved IDs) as primary source; falls back to raw \`entity_tags\` for untagged signals
+- Pattern signals include \`entity_id\` and \`resolved_from_graph: true\` when matched via entity graph
+- Cooldown guard: \`pattern_already_detected()\` prevents duplicate patterns within 24h per client
+- WATCHDOG MONITORS: \`signals\` with \`signal_type = pattern\` accumulating = healthy. Zero pattern signals after a high-signal week = detector not running or no qualifying clusters
+- EXPECTED: Pattern signals appear in dashboard as high-severity signals. \`resolved_from_graph: true\` on entity escalation patterns confirms 4A/4B/4C chain is working end-to-end
+
+### Phase 4A Entity Graph — Core Entities Seeded (April 2026) — COMPLETE
+- 5 missing entities inserted: Houston BC (critical), Wedzin Kwa/Morice River (critical), Peace River Region (medium), First Nations LNG Coalition (low), PETRONAS Canada (medium)
+- 15 entity relationships wired: CGL opposed_by Wet'suwet'en, Gidimt'en part_of Wet'suwet'en, LNG Canada depends_on CGL, PETRONAS Canada equity_partner in LNG Canada, etc.
+- pg_trgm extension enabled; trigram + GIN indexes on entities for fast matching
+- WATCHDOG MONITORS: entity quality_score = 0 entries growing unexpectedly = ingestion noise
+- EXPECTED: Entity count stable/growing. Relationship graph queryable.
+
+### Phase 4B Signal Auto-Tagging (April 2026) — COMPLETE
+- \`correlate-entities\` now fires from \`ingest-signal\` on BOTH fast-path (P1 critical) and standard path — every ingested signal triggers entity correlation
+- Token boundary matching (\`hasTokenMatch\`) replaced fragile \`\\b\` regex — correctly handles apostrophes in names like Gidimt'en, Wet'suwet'en
+- PostgREST 1000-row default cap fixed with pagination — all 1867 active entities are now checked (not just first 1000)
+- Alias collision fixed: Gidimt'en, Unist'ot'en, Tsayu, Gitdumden removed from Wet'suwet'en aliases (they are clan names, not nation name variants) — ensures tagger resolves Gidimt'en Checkpoint as its own entity
+- Variant matching: parenthetical stripping (\"Coastal GasLink (CGL)\" → \"Coastal GasLink\"), punctuation stripping (\"Houston, BC\" → \"Houston BC\") — handles common formatting differences
+- Duplicate mention guard: checks existing entity_mentions before INSERT to prevent double-fire
+- VERIFIED: 7 entities tagged from single test signal — Gidimt'en Checkpoint, Wedzin Kwa, Coastal GasLink, Houston BC, Wet'suwet'en, PETRONAS Canada, RCMP
+- WATCHDOG MONITORS: \`entity_mentions\` write rate — if signals are ingesting but no new mentions = correlate-entities failing silently
+- EXPECTED: Every signal with named entity references creates entity_mention rows within seconds of ingestion
+
 ### Signal Pipeline (CRITICAL)
-- Monitoring sources (RSS, social, threat intel, OSINT) continuously ingest signals
 - Signals deduplicated via SHA-256 content hashing, 24hr lookback
 - AI Decision Engine categorizes, scores relevance, routes signals
 - Source reliability weighting (0.0-1.0) with 14-day temporal decay
 - EXPECTED: Steady flow. Zero signals for 6+ hours = pipeline stall
 - REMEDIATION: Trigger monitoring source re-scans via edge functions
-- ADAPTIVE THRESHOLDS: Signal volume baselines auto-adjust based on 30-day rolling averages. If the platform is growing (>20% increase), stale thresholds widen. If declining (>20% drop), investigate root cause before alerting.
+- ADAPTIVE THRESHOLDS: Signal volume baselines auto-adjust based on 30-day rolling averages.
+
+### Signal Source URL Coverage (April 8, 2026) — COMPLETE
+- All monitoring functions pass \`source_url\` pointing to the original article/feed item:
+  - \`monitor-canadian-sources\`: \`item.link\` from RSS feed
+  - \`monitor-news\`: \`rawLink\` from RSS feed
+  - \`monitor-threat-intel\` CVE path: RSS link per CVE
+  - \`monitor-threat-intel\` CISA KEV: \`https://www.cisa.gov/known-exploited-vulnerabilities-catalog#CVE-ID\` (anchored to specific CVE)
+  - \`monitor-court-registry\`, \`monitor-csis\`, \`monitor-news-google\`: feed/search result links
+  - \`process-stored-document\`: Supabase storage public URL for the uploaded document
+- Frontend \`Signals.tsx\` checks full fallback chain: \`source_url || raw_json.source_url || raw_json.url || raw_json.link\`
+- WATCHDOG MONITORS: signals with no source_url and no raw_json url/link = monitoring function regression
+
+### Report Download (April 8, 2026) — FIXED
+- Executive reports now download as .html files via \`createSignedUrl(..., { download: filename })\` — prevents Supabase Storage serving HTML as text/plain in browser tab
+- Both executive path (\`tenant-files\`) and bulletin fallback path use download parameter
+- \`download_instructions\` in tool response tells AEGIS to give user a markdown link + 2–3 sentence summary, never dump raw HTML
+- Report HTML uploaded with \`contentType: "text/html; charset=utf-8"\` on all paths
+- WATCHDOG MONITORS: Cannot auto-detect — verify manually if report download complaints arise
+
+### KNOWN PLATFORM GAPS (April 7, 2026 — require human fixes)
+
+1. TEST SIGNAL CONTAMINATION IN REPORTS
+   - generate-executive-report does NOT filter is_test = false on signal queries
+   - Test signals injected during development appear as real evidence citations in executive reports
+   - Fix: add .eq('is_test', false) to all signal queries in generate-executive-report/index.ts
+   - WATCHDOG MONITORS: Cannot auto-detect — requires code fix
+
+2. GENERIC INCIDENT TITLES — PARTIALLY FIXED APRIL 8, 2026
+   - Incidents created from test signals get titles like "protest Incident - Petronas Canada"
+   - Title generation in ingest-signal/ai-decision-engine not reading signal content
+   - Two existing PECL incidents manually renamed on April 8 using signal content as source
+   - Fix: use auto_summarize_incidents tool or fix title generation in ingest-signal
+   - WATCHDOG MONITORS: incidents WHERE title ILIKE '%Incident - %' AND title NOT ILIKE '%:% ' = generic title pattern
+
+3. PERSONAL EMAIL IN REPORT ACTION ITEMS
+   - ak@silentshieldsecurity.com appears as action item owner in executive reports
+   - Unacceptable in client-facing documents
+   - Fix: replace with role-based owner or remove email from action items entirely
+   - WATCHDOG MONITORS: Cannot auto-detect — requires code fix in generate-executive-report
+
+4. INCIDENT OUTCOMES TABLE EMPTY
+   - 0 rows in incident_outcomes as of April 8, 2026
+   - Phase 3 feedback loop infrastructure is correct — write path fires via IncidentFeedbackDialog when analyst resolves an incident through the UI
+   - NOT a code bug — requires real analyst usage. Direct SQL closes (e.g. closing Fortinet incident via SQL) bypass the dialog and do not write outcomes
+   - The Bayesian source credibility updater cannot run until outcomes exist
+   - WATCHDOG MONITORS: SELECT COUNT(*) FROM incident_outcomes — if 0 after 14 days of analyst activity = feedback loop never triggered
+
+5. COMPOSITE CONFIDENCE NULL ON 78 OF 81 SIGNALS — FIXED APRIL 8, 2026
+   - Root cause: rule-based path (medium/low severity) returned early without writing composite_confidence
+   - Fix: composite score now computed and written on rule-based exit path using same formula as AI path
+   - Historical signals (pre-fix) still have NULL — these were bulk-imported and never went through ai-decision-engine
+   - All new signals ingested after April 8 will have composite_confidence regardless of AI vs rule-based path
+   - WATCHDOG MONITORS: COUNT of signals with NULL composite_confidence should now trend DOWN as new signals flow in
+
+6. SIGNAL VERIFICATION GATE NOT BUILT
+   - Executive report narrative can go beyond what source signals actually say
+   - No LOCUS-INTEL review step before narrative is assembled
+   - This is a designed future feature — not yet implemented
+   - WATCHDOG MONITORS: Cannot auto-detect fabricated narrative — requires human review of reports
+
+7. WILDFIRE TOOL DISABLED
+   - get_wildfire_intelligence removed from AEGIS tool definitions (April 7, 2026)
+   - Was fabricating data with no real data source behind it
+   - TODO: Implement with BC Wildfire Service API before fire season May 1, 2026
+   - URL: https://openmaps.gov.bc.ca/geo/pub/WHSE_LAND_AND_NATURAL_RESOURCE.PROT_CURRENT_FIRE_POLYS_SP
+   - WATCHDOG MONITORS: Flag this in April 30 report as fire season approaching
 
 ### AEGIS AI Assistant (CRITICAL)
 - Primary user interface â agent-mediated UI philosophy
@@ -394,6 +529,13 @@ interface TelemetryData {
     missingQualityCount: number;
     watchListCount: number;
     lastArchiveRun: string | null;
+  };
+  phase1Foundation: {
+    incidentCreationFailures24h: number;
+    incidentsWithoutProvenance: number;
+    incidentOutcomesWritten24h: number;
+    softDeletedSignals: number;
+    confidenceThresholdFiring: boolean;
   };
 }
 
@@ -861,6 +1003,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     autonomousOps: { recentActions: autonomousActionsResult.count || 0, lastActionAge },
     aiHealth: { systemHealthCheckStatus: aiHealthStatus },
     aegisBehavior,
+    phase1Foundation: await collectPhase1Telemetry(supabase),
     communications: {
       sendSmsDeployed: commsDeployment['send-sms'] || false,
       ingestCommDeployed: commsDeployment['ingest-communication'] || false,
@@ -908,6 +1051,43 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
 // âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 //              DLQ & SCHEMA ERROR TELEMETRY
 // âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+
+async function collectPhase1Telemetry(supabase: any): Promise<TelemetryData['phase1Foundation']> {
+  const twentyFourHoursAgo = new Date(Date.now() - 86400000).toISOString();
+  const phase1Date = '2026-04-07T00:00:00Z'; // Columns added April 7
+
+  const [
+    failuresResult,
+    orphanedProvenanceResult,
+    outcomesResult,
+    softDeletedResult,
+  ] = await Promise.all([
+    supabase.from('incident_creation_failures')
+      .select('*', { count: 'exact', head: true })
+      .gte('attempted_at', twentyFourHoursAgo),
+    supabase.from('incidents')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', phase1Date)
+      .is('provenance_type', null)
+      .not('status', 'eq', 'closed'),
+    supabase.from('incident_outcomes')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', twentyFourHoursAgo),
+    supabase.from('signals')
+      .select('*', { count: 'exact', head: true })
+      .not('deleted_at', 'is', null),
+  ]);
+
+  const failures24h = failuresResult.count || 0;
+
+  return {
+    incidentCreationFailures24h: failures24h,
+    incidentsWithoutProvenance: orphanedProvenanceResult.count || 0,
+    incidentOutcomesWritten24h: outcomesResult.count || 0,
+    softDeletedSignals: softDeletedResult.count || 0,
+    confidenceThresholdFiring: failures24h > 0,
+  };
+}
 
 async function collectDlqTelemetry(supabase: any): Promise<TelemetryData['deadLetterQueue']> {
   const [exhaustedResult, pendingResult] = await Promise.all([
@@ -1008,6 +1188,9 @@ async function collectSelfValidation(supabase: any): Promise<TelemetryData['self
     { name: 'watchdog_learnings', query: () => supabase.from('watchdog_learnings').select('id').limit(1) },
     { name: 'signals', query: () => supabase.from('signals').select('id').limit(1) },
     { name: 'incidents', query: () => supabase.from('incidents').select('id').limit(1) },
+    { name: 'incident_creation_failures', query: () => supabase.from('incident_creation_failures').select('id').limit(1) },
+    { name: 'incident_outcomes', query: () => supabase.from('incident_outcomes').select('id').limit(1) },
+    { name: 'source_credibility_scores', query: () => supabase.from('source_credibility_scores').select('source_key').limit(1) },
     { name: 'monitoring_history', query: () => supabase.from('monitoring_history').select('id').limit(1) },
     { name: 'autonomous_actions_log', query: () => supabase.from('autonomous_actions_log').select('id').limit(1) },
   ];

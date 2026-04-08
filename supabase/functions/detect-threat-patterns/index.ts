@@ -52,25 +52,72 @@ Deno.serve(async (req) => {
 
       if (!recentSignals || recentSignals.length === 0) continue;
 
+      // Phase 4C: also load entity_mentions for signals in this window.
+      // entity_mentions uses resolved entity IDs (from Phase 4B correlate-entities),
+      // which are far more reliable than raw entity_tags text strings.
+      // We build a map: signal_id -> [entity_id, ...]
+      const signalIds = recentSignals.map(s => s.id);
+      const { data: mentionRows } = await supabase
+        .from('entity_mentions')
+        .select('signal_id, entity_id, entities(id, name)')
+        .in('signal_id', signalIds);
+
+      // Build: entity_id -> { name, signal_ids[], maxScore }
+      const entityMentionMap: Record<string, { name: string; signalIds: string[]; maxScore: number }> = {};
+      for (const row of (mentionRows || [])) {
+        const entityId = row.entity_id;
+        const entityName = (row.entities as any)?.name || entityId;
+        const sig = recentSignals.find(s => s.id === row.signal_id);
+        if (!entityMentionMap[entityId]) {
+          entityMentionMap[entityId] = { name: entityName, signalIds: [], maxScore: 0 };
+        }
+        entityMentionMap[entityId].signalIds.push(row.signal_id);
+        entityMentionMap[entityId].maxScore = Math.max(
+          entityMentionMap[entityId].maxScore,
+          sig?.severity_score || 0
+        );
+      }
+
       const clientPatterns: any[] = [];
 
       // ── 1. ENTITY ESCALATION ──────────────────────────────────────────
-      const entitySignalMap: Record<string, { ids: string[]; maxScore: number }> = {};
+      // Phase 4C: prefer entity_mentions (resolved entity IDs from Phase 4B)
+      // over raw entity_tags text. Falls back to entity_tags if no mentions exist.
+      const entitySignalMap: Record<string, { ids: string[]; maxScore: number; resolvedName?: string }> = {};
+
+      // Primary: use resolved entity mentions (more reliable)
+      for (const [entityId, data] of Object.entries(entityMentionMap)) {
+        const uniqueIds = [...new Set(data.signalIds)];
+        entitySignalMap[`entity:${entityId}`] = {
+          ids: uniqueIds,
+          maxScore: data.maxScore,
+          resolvedName: data.name,
+        };
+      }
+
+      // Fallback: raw entity_tags for signals without mention data
+      const signalsWithMentions = new Set(Object.values(entityMentionMap).flatMap(d => d.signalIds));
       for (const sig of recentSignals) {
+        if (signalsWithMentions.has(sig.id)) continue; // already covered by mentions
         for (const tag of (sig.entity_tags || [])) {
-          const key = tag.toLowerCase().trim();
+          const key = `tag:${tag.toLowerCase().trim()}`;
           if (!entitySignalMap[key]) entitySignalMap[key] = { ids: [], maxScore: 0 };
           entitySignalMap[key].ids.push(sig.id);
           entitySignalMap[key].maxScore = Math.max(entitySignalMap[key].maxScore, sig.severity_score || 0);
         }
       }
 
-      for (const [entityName, data] of Object.entries(entitySignalMap)) {
+      for (const [entityKey, data] of Object.entries(entitySignalMap)) {
         if (data.ids.length < 3) continue;
 
         // Deduplicate contributing IDs
         const uniqueIds = [...new Set(data.ids)];
         if (uniqueIds.length < 3) continue;
+
+        // Use resolved entity name if available, fall back to raw key
+        const displayName = data.resolvedName || entityKey.replace(/^(entity:|tag:)/, '');
+        const isResolvedEntity = entityKey.startsWith('entity:');
+        const entityId = isResolvedEntity ? entityKey.replace('entity:', '') : null;
 
         const alreadyDetected = await supabase.rpc('pattern_already_detected', {
           p_client_id: client.id,
@@ -87,9 +134,9 @@ Deno.serve(async (req) => {
 
         const { data: patternSignal, error: psErr } = await supabase.from('signals').insert({
           client_id: client.id,
-          title: `[PATTERN] Entity escalation: "${entityName}" (${uniqueIds.length} signals in 7d)`,
-          description: `Automated pattern detection: entity "${entityName}" has appeared in ${uniqueIds.length} signals over the past 7 days, indicating sustained attention or escalating activity. Contributing signals have been linked below.`,
-          normalized_text: `Entity escalation pattern detected for "${entityName}": ${uniqueIds.length} signals in 7 days.`,
+          title: `[PATTERN] Entity escalation: "${displayName}" (${uniqueIds.length} signals in 7d)`,
+          description: `Automated pattern detection: entity "${displayName}" has appeared in ${uniqueIds.length} signals over the past 7 days${isResolvedEntity ? ' (resolved via entity graph)' : ''}, indicating sustained attention or escalating activity. Contributing signals have been linked below.`,
+          normalized_text: `Entity escalation pattern detected for "${displayName}": ${uniqueIds.length} signals in 7 days.`,
           signal_type: 'pattern',
           category: 'active_threat',
           severity_score: escalatedScore,
@@ -101,7 +148,9 @@ Deno.serve(async (req) => {
             pattern_window_hours: 168,
             contributing_signal_ids: uniqueIds,
             contributing_count: uniqueIds.length,
-            entity_name: entityName,
+            entity_name: displayName,
+            entity_id: entityId,
+            resolved_from_graph: isResolvedEntity,
             max_contributing_score: data.maxScore,
             detected_at: new Date().toISOString(),
             auto_detected: true,
@@ -118,8 +167,8 @@ Deno.serve(async (req) => {
             }))
           );
           totalPatternsDetected++;
-          clientPatterns.push({ type: 'entity_escalation', entity: entityName, count: uniqueIds.length, severity });
-          console.log(`[PatternDetect] entity_escalation: "${entityName}" × ${uniqueIds.length} for ${client.name} → ${severity}`);
+          clientPatterns.push({ type: 'entity_escalation', entity: displayName, count: uniqueIds.length, severity, resolved: isResolvedEntity });
+          console.log(`[PatternDetect] entity_escalation: "${displayName}" × ${uniqueIds.length} for ${client.name} → ${severity} (${isResolvedEntity ? 'graph-resolved' : 'tag-based'})`);
 
           // Pattern signals must not auto-create incidents — they are meta-signals, not raw threat events
           // check-incident-escalation intentionally not invoked here

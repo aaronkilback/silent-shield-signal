@@ -24,9 +24,10 @@ serve(async (req) => {
       case "get_recent_signals":
         const { data: signals } = await supabase
           .from("signals")
-          .select("id, title, description, severity, confidence, received_at, status, client_id, clients(name)")
+          .select("id, title, description, severity, confidence, received_at, status, client_id, source_url, clients(name)")
+          .gte("received_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
           .order("received_at", { ascending: false })
-          .limit(parameters?.limit || 10);
+          .limit(parameters?.limit || 50);
         result = signals;
         break;
 

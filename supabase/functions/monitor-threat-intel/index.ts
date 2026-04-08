@@ -31,7 +31,7 @@ Deno.serve(async (req) => {
             const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
               body: {
                 text: `CISA KEV: ${vuln.vulnerabilityName}\n\n${vuln.shortDescription || ''}\n\nVendor: ${vuln.vendorProject}. Product: ${vuln.product}. Required action: ${vuln.requiredAction || 'Patch immediately'}. Due: ${vuln.dueDate || 'N/A'}.`,
-                source_url: `https://www.cisa.gov/known-exploited-vulnerabilities-catalog`,
+                source_url: `https://www.cisa.gov/known-exploited-vulnerabilities-catalog#${vuln.cveID}`,
                 location: 'Global',
               },
             });

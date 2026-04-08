@@ -19,7 +19,8 @@ Deno.serve(async (req) => {
       return errorResponse('Unauthorized', 401);
     }
 
-    const { incident_id, action, note } = await req.json();
+    const body = await req.json();
+    const { incident_id, action, note, outcome_type } = body;
     
     if (!incident_id || !action) {
       return errorResponse('incident_id and action are required', 400);
@@ -49,6 +50,11 @@ Deno.serve(async (req) => {
       case 'resolve':
         updates.resolved_at = now;
         updates.status = 'resolved';
+        // Write outcome if provided — feeds back to learning loop
+        if (note) {
+          updates.outcome_notes = note;
+          updates.outcome_recorded_at = now;
+        }
         break;
       case 'escalate':
         updates.status = 'escalated';
@@ -100,6 +106,25 @@ Deno.serve(async (req) => {
     }
 
     console.log(`[IncidentAction] Incident ${incident_id} updated to status: ${updates.status}`);
+
+    // If resolving, write to incident_outcomes for learning loop
+    if (action === 'resolve') {
+      const outcomeType = outcome_type || 'under_investigation';
+      await supabase.from('incident_outcomes').insert({
+        incident_id: incident_id,
+        signal_id: updated.signal_id || null,
+        outcome_type: outcomeType,
+        was_accurate: outcomeType === 'legitimate',
+        false_positive: outcomeType === 'false_positive',
+        lessons_learned: note || null,
+      });
+      // Also stamp outcome_type directly on the incident for quick query
+      await supabase.from('incidents').update({
+        outcome_type: outcomeType,
+        outcome_recorded_at: now,
+      }).eq('id', incident_id);
+      console.log(`[IncidentAction] Outcome recorded: ${outcomeType} for incident ${incident_id}`);
+    }
 
     return successResponse({ incident: updated });
   } catch (error) {

@@ -6,6 +6,49 @@
 // Each tool definition maps to a case in executeTool().
 
 export const aegisToolDefinitions = [
+  // ── Codebase audit tools ──────────────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "list_source_files",
+      description: `List all source files in the codebase snapshot. Returns a manifest of Edge Functions, shared modules, config files, and docs WITHOUT their content.
+
+Use this BEFORE making architectural or pipeline recommendations so you understand what is actually deployed. The manifest includes file_path, file_type, function_name, and byte_size.
+
+file_type values: 'edge_function' | 'shared' | 'config' | 'doc'
+
+After reviewing the manifest, use get_source_file to read specific files you need to inspect.`,
+      parameters: {
+        type: "object",
+        properties: {
+          file_type: {
+            type: "string",
+            description: "Filter by type: 'edge_function', 'shared', 'config', or 'doc'. Omit to get all.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_source_file",
+      description: `Read the full source code of a specific file from the codebase snapshot.
+
+Use list_source_files first to get the file_path, then call this to read the content. Returns the full TypeScript/SQL/Markdown source so you can audit the current implementation before making recommendations.`,
+      parameters: {
+        type: "object",
+        properties: {
+          file_path: {
+            type: "string",
+            description: "The file_path as returned by list_source_files, e.g. 'supabase/functions/ingest-signal/index.ts'",
+          },
+        },
+        required: ["file_path"],
+      },
+    },
+  },
+  // ── Signal / incident tools ───────────────────────────────────────────────
   {
     type: "function",
     function: {
@@ -172,6 +215,34 @@ Inform user of successful creation and instruct to refresh if needed
           include_stale: {
             type: "boolean",
             description: "Include older incidents that haven't been updated recently (default: true). Set to false for executive briefings focusing on recent activity.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_monitored_signals",
+      description: `MONITORED QUEUE: Get signals that passed the relevance gate but scored below the incident creation threshold on the composite confidence score. These signals are being watched — they contain real intelligence but haven't yet reached the confidence level required to auto-create an incident.
+
+Composite score formula: (ai_confidence × 0.50) + (relevance_score × 0.35) + (source_credibility × 0.15)
+Threshold: signals with composite_confidence between 0.40 and 0.64 are in the monitored queue.
+
+Use when:
+- User asks "what signals are being watched" or "what's in the monitored queue"
+- Operator wants to review weak signals before they age out
+- Building situational awareness beyond just open incidents`,
+      parameters: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Number of signals to return (default 10)",
+          },
+          client_id: {
+            type: "string",
+            description: "Filter by client ID or name",
           },
         },
       },
@@ -1082,21 +1153,28 @@ Supports files up to 20MB and processes up to 10 pages for PDFs.`,
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "get_wildfire_intelligence",
-      description: "Get real-time wildfire intelligence from NASA FIRMS satellite data, NWS fire weather alerts, and NIFC active fire perimeters.",
-      parameters: {
-        type: "object",
-        properties: {
-          client_id: { type: "string", description: "Optional client UUID to check proximity" },
-          region: { type: "string", description: "Geographic region filter (e.g., 'British Columbia', 'Alberta', 'Western Canada')" },
-          include_fuel_data: { type: "boolean", description: "Include Fire Weather Index and fuel moisture data (default: true)" },
-        },
-      },
-    },
-  },
+  // ═══ WILDFIRE TOOL — DISABLED (no handler, fabricates data) ═══
+  // get_wildfire_intelligence is defined in aegis-tool-definitions.ts but has
+  // NO real data handler. When called, AEGIS generates plausible-sounding
+  // wildfire data from model knowledge — NOT from real sources.
+  // This is dangerous: a fabricated "7 red flag warnings, 100 fire perimeters"
+  // response was returned in April (winter, snow on ground).
+  //
+  // Real implementation requires:
+  //   - BC Wildfire Service open API: https://openmaps.gov.bc.ca/geo/pub/WHSE_LAND_AND_NATURAL_RESOURCE.PROT_CURRENT_FIRE_POLYS_SP
+  //   - NWS Fire Weather API: https://api.weather.gov/products?type=FWF
+  //   - Seasonal gate: only activate between May 1 and October 31
+  //
+  // TODO: Implement before fire season 2026 (May)
+  //
+  // {{
+  //   type: "function",
+  //   function: {
+  //     name: "get_wildfire_intelligence",
+  //     ...
+  //   },
+  // }},
+
   {
     type: "function",
     function: {
@@ -1117,7 +1195,7 @@ Supports files up to 20MB and processes up to 10 pages for PDFs.`,
     type: "function",
     function: {
       name: "run_vip_deep_scan",
-      description: `VIP DEEP SCAN: Comprehensive OSINT intelligence gathering for high-net-worth individuals and executives. Performs multi-phase terrain mapping across identity, physical, digital, and operational domains.`,
+      description: `VIP DEEP SCAN: This capability is handled by the dedicated VIP Deep Scan wizard at /vip-deep-scan. When a user asks to run a VIP deep scan, deep dive, or SRA on a person, do NOT attempt to run it here. Instead, tell them: "VIP deep scans are handled by the dedicated wizard — navigate to VIP Deep Scan in the sidebar, or I can take you there now." Do not call this tool directly.`,
       parameters: {
         type: "object",
         properties: {

@@ -98,6 +98,19 @@ Deno.serve(async (req) => {
 
     if (signalError) throw signalError;
 
+    // Fetch source credibility score for this signal's source_key
+    let sourceCredibility = 0.65; // default — neutral score before enough history
+    if (signal.source_key) {
+      const { data: credScore } = await supabase
+        .from('source_credibility_scores')
+        .select('current_credibility')
+        .eq('source_key', signal.source_key)
+        .maybeSingle();
+      if (credScore?.current_credibility) {
+        sourceCredibility = credScore.current_credibility;
+      }
+    }
+
     // Fetch recent signals for the same client to enable pattern detection (last 30 days)
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -238,10 +251,16 @@ Deno.serve(async (req) => {
         reasoning: 'Auto-classified as low priority based on severity and confidence scores'
       };
 
+      const ruleRelevanceScore = signal.relevance_score || 0.5;
+      const ruleCompositeScore = Math.round(
+        ((ruleBasedDecision.confidence * 0.50) + (ruleRelevanceScore * 0.35) + (sourceCredibility * 0.15)) * 1000
+      ) / 1000;
+
       await supabase
         .from('signals')
         .update({
           status: 'triaged',
+          composite_confidence: ruleCompositeScore,
           raw_json: {
             ...signal.raw_json,
             ai_decision: ruleBasedDecision,
@@ -250,10 +269,13 @@ Deno.serve(async (req) => {
         })
         .eq('id', signal_id);
 
+      console.log(`[AI-Decision] Rule-based composite: ${ruleCompositeScore} (confidence=${ruleBasedDecision.confidence}, relevance=${ruleRelevanceScore}, source=${sourceCredibility})`);
+
       return new Response(
         JSON.stringify({
           success: true,
           decision: ruleBasedDecision,
+          composite_confidence: ruleCompositeScore,
           processing_method: 'rule-based',
           credits_used: false
         }),
@@ -638,6 +660,49 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
           return 'P4'; // low or default
         };
 
+        // ═══ PHASE 2: COMPOSITE CONFIDENCE GATE ═══
+        // Three independent inputs must agree before an incident is created.
+        // Weights are conservative — source credibility has low weight until
+        // enough outcomes accumulate to make it meaningful.
+        const aiConfidence = decision.confidence || 0;
+        const relevanceScore = signal.relevance_score || 0.5; // from ingest-signal PECL gate
+        const compositeScore = (aiConfidence * 0.50) + (relevanceScore * 0.35) + (sourceCredibility * 0.15);
+
+        console.log(`[AI-Decision] Composite score: ${compositeScore.toFixed(3)} (ai=${aiConfidence.toFixed(2)}, relevance=${relevanceScore.toFixed(2)}, source=${sourceCredibility.toFixed(2)})`);
+
+        // Phase 2B: Write composite score back to signal row for auditability.
+        // Stored regardless of whether the gate passes or fails — every signal
+        // gets a queryable score showing exactly why it did or didn't become an incident.
+        supabase.from('signals').update({
+          composite_confidence: Math.round(compositeScore * 1000) / 1000
+        }).eq('id', signal.id).then(
+          () => {},
+          (e: any) => console.warn('[AI-Decision] Failed to write composite_confidence:', e)
+        );
+
+        if (compositeScore < 0.65) {
+          console.log(`[AI-Decision] Composite score ${compositeScore.toFixed(3)} below 0.65 — signal ${signal.id} monitored, no incident created.`);
+          await supabase.from('incident_creation_failures').insert({
+            source_function: 'ai-decision-engine',
+            failure_reason: `Composite score ${compositeScore.toFixed(3)} below threshold 0.65`,
+            signal_id: signal.id,
+            client_id: signal.client_id,
+            attempted_data: {
+              ai_confidence: aiConfidence,
+              relevance_score: relevanceScore,
+              source_credibility: sourceCredibility,
+              composite_score: compositeScore,
+              threat_level: decision.threat_level,
+              incident_priority: decision.incident_priority,
+              reasoning: (decision.reasoning || '').substring(0, 200),
+            }
+          }).then(
+            () => {},
+            (e: any) => console.warn('[AI-Decision] Failed to log creation failure:', e)
+          );
+          incident_id = null;
+        } else {
+
         // Automatically create incident with AI Agent Task Force assignment
         const { data: incident, error: incidentError } = await supabase
           .from('incidents')
@@ -653,6 +718,10 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
             investigation_status: 'pending',
             assigned_agent_ids: [initialAgent.agentId],
             initial_agent_prompt: initialAgent.prompt,
+            provenance_type: 'signal',
+            provenance_id: signal.id,
+            provenance_summary: `Signal [${signal.category || 'unknown'}]: ${(signal.normalized_text || '').substring(0, 200)}`,
+            created_by_function: 'ai-decision-engine',
             ai_analysis_log: [{
               timestamp: new Date().toISOString(),
               agent_id: null,
@@ -734,6 +803,7 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
               .eq('id', incident.id);
           }
         }
+        } // end confidence threshold else
       }
     }
 

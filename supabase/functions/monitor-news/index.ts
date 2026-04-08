@@ -1,26 +1,57 @@
-import { createServiceClient, handleCors, successResponse, errorResponse, corsHeaders } from "../_shared/supabase-client.ts";
-import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-// Security-related keywords to filter news
-const SECURITY_KEYWORDS = [
-  'breach', 'hack', 'cyber', 'ransomware', 'malware', 'vulnerability',
-  'threat', 'attack', 'security', 'data leak', 'phishing', 'zero-day',
-  'exploit', 'compromise', 'incident'
+// TIER 1 — Direct entity/project match. Any single hit → send to AI gate.
+const TIER1_KEYWORDS = [
+  // Entity names
+  'petronas', 'petronas canada', 'pecl',
+  // Projects and infrastructure
+  'lng canada', 'coastal gaslink', 'cgl',
+  // Indigenous groups active on these projects
+  "wet'suwet'en", "wetsuweten", "gidimt'en", "gitdumt'en", "unist'ot'en",
+  // Activist groups targeting LNG Canada
+  'stand.earth', 'dogwood bc', 'dogwood initiative',
+  // Narrow pipeline/LNG terms (not generic)
+  'lng export', 'bc lng', 'liquefied natural gas bc',
+  'pipeline protest', 'pipeline opposition', 'pipeline injunction',
+  'energy infrastructure bc', 'alberta energy infrastructure',
 ];
 
-// Deal/Business keywords that can trigger reputational issues
-const DEAL_KEYWORDS = [
-  'acquisition', 'merger', 'partnership', 'supply deal', 'contract',
-  'agreement', 'offtake', 'LNG', 'pipeline deal', 'joint venture',
-  'investment', 'financing', 'expansion', 'MOU', 'signs deal'
+// TIER 2A — Geographic scope: PETRONAS asset areas.
+const TIER2_GEO = [
+  'fort st. john', 'peace region', 'northeast bc', 'dawson creek',
+  'kitimat', 'prince rupert', 'northwest bc',
+  'coastal gaslink corridor', 'highway 16', 'stewart-cassiar',
+  'peace river', 'liard river',
 ];
 
-// Reputational risk keywords
-const REPUTATIONAL_KEYWORDS = [
-  'lawsuit', 'protest', 'activist', 'opposition', 'controversy',
-  'criticized', 'backlash', 'investigation', 'fine', 'penalty',
-  'environmental', 'indigenous', 'climate', 'emissions', 'flaring'
+// TIER 2B — Threat types: operational safety risks.
+// An article must hit BOTH a Tier 2A geo term AND a Tier 2B threat term to qualify.
+const TIER2_THREAT = [
+  'wildfire bc', 'wildfire alberta', 'evacuation order bc', 'evacuation alert bc',
+  'flood warning bc', 'avalanche bc', 'extreme weather bc',
+  'pipeline explosion', 'pipeline rupture', 'pipeline fire',
+  'protest blockade bc', 'rail blockade bc', 'highway blockade bc',
+  'indigenous land defenders', 'injunction bc',
+  'industrial accident bc', 'worker fatality bc', 'hse incident bc',
+  'power outage bc', 'grid failure bc',
 ];
+
+// Direct Canadian news RSS feeds — replaces Google News RSS which blocks cloud/datacenter IPs
+const CANADIAN_NEWS_FEEDS = [
+  { name: 'CBC Top Stories',         url: 'https://www.cbc.ca/cmlink/rss-topstories' },
+  { name: 'CBC Business',            url: 'https://www.cbc.ca/cmlink/rss-business' },
+  { name: 'Globe and Mail Business', url: 'https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/business/' },
+  { name: 'Financial Post',          url: 'https://financialpost.com/feed' },
+  { name: 'Reuters Canada',          url: 'https://feeds.reuters.com/reuters/CATopNews' },
+];
+
+// Extract a field from an RSS item, handling both CDATA and plain text
+function extractField(itemXml: string, tag: string): string {
+  const m = itemXml.match(new RegExp(`<${tag}>[\\s\\S]*?<\\/${tag}>`));
+  if (!m) return '';
+  const raw = m[0].slice(tag.length + 2, -(tag.length + 3));
+  return raw.replace(/^<!\[CDATA\[/, '').replace(/\]\]>$/, '').trim();
+}
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -35,43 +66,13 @@ Deno.serve(async (req) => {
       .insert({
         source_name: 'News Monitor',
         status: 'running',
-        scan_metadata: { sources: ['News API', 'Google News'] }
+        scan_metadata: { sources: CANADIAN_NEWS_FEEDS.map(f => f.name) }
       })
       .select()
       .single();
 
     if (historyError) {
       console.error('Failed to create monitoring history:', historyError);
-    }
-
-    console.log('Starting security news monitoring scan...');
-
-    // Fetch active news sources from database
-    const { data: newsSources, error: sourcesError } = await supabase
-      .from('sources')
-      .select('*')
-      .eq('status', 'active')
-      .or('type.eq.api_feed,type.eq.rss')
-      .contains('config', { monitor_type: 'news' });
-
-    if (sourcesError) {
-      console.error('Error fetching news sources:', sourcesError);
-    }
-
-    const activeSourcesCount = newsSources?.length || 0;
-    console.log(`Found ${activeSourcesCount} active news sources in database`);
-
-    // Update history with actual sources count
-    if (historyEntry) {
-      await supabase
-        .from('monitoring_history')
-        .update({
-          scan_metadata: { 
-            sources_configured: activeSourcesCount,
-            source_names: newsSources?.map(s => s.name) || []
-          }
-        })
-        .eq('id', historyEntry.id);
     }
 
     // Get all clients
@@ -82,161 +83,248 @@ Deno.serve(async (req) => {
     if (clientsError) throw clientsError;
 
     console.log(`Found ${clients?.length || 0} clients to monitor`);
+    console.log(`[KEYWORDS] Tier1: ${TIER1_KEYWORDS.length} terms | Tier2 geo: ${TIER2_GEO.length} | Tier2 threat: ${TIER2_THREAT.length}`);
+    for (const client of clients || []) {
+      console.log(`  CLIENT: "${client.name}"`);
+    }
 
-    let documentsIngested = 0;
     let signalsCreated = 0;
 
-    // Get client keywords for targeted searches
-    const searchQueries: string[] = [];
-    for (const client of clients || []) {
-      if (client.monitoring_keywords && client.monitoring_keywords.length > 0) {
-        searchQueries.push(...client.monitoring_keywords.slice(0, 5));
-      }
-      searchQueries.push(client.name);
-    }
+    // Stage counters
+    const stage = {
+      feeds_attempted: 0,
+      feeds_http_ok: 0,
+      feeds_http_error: 0,
+      items_from_rss: 0,
+      items_too_old: 0,
+      items_no_parse: 0,
+      items_short_content: 0,
+      items_no_keyword_match: 0,
+      items_tier1_match: 0,
+      items_tier2_match: 0,
+      items_sent_to_ingest: 0,
+      ingest_accepted: 0,
+      ingest_rejected: 0,
+      ingest_suppressed: 0,
+      ingest_filed_as_update: 0,
+      ingest_error: 0,
+      ingest_unknown: 0,
+    };
 
-    // Add general security and business topics
-    searchQueries.push(
-      'security breach', 'cyber attack', 'ransomware', 'data leak',
-      'environmental protest', 'corporate controversy', 'regulatory fine',
-      'activist campaign', 'supply chain disruption'
-    );
+    const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
+    console.log(`[CONFIG] Feeds: ${CANADIAN_NEWS_FEEDS.length} | 24h cutoff: ${new Date(cutoffMs).toISOString()}`);
 
-    // Use Google News RSS feed with client-specific queries
-    for (const query of searchQueries.slice(0, 20)) {
+    for (let fi = 0; fi < CANADIAN_NEWS_FEEDS.length; fi++) {
+      const feed = CANADIAN_NEWS_FEEDS[fi];
+      stage.feeds_attempted++;
+      let feedItems = 0;
+      let feedPassed = 0;
+      let feedMatched = 0;
+
       try {
-        const feedUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}+when:1d&hl=en-US&gl=US&ceid=US:en`;
-        const response = await fetch(feedUrl);
-        if (!response.ok) continue;
+        const response = await fetch(feed.url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 OSINT Monitor' },
+          signal: AbortSignal.timeout(30000),
+        });
 
+        if (!response.ok) {
+          stage.feeds_http_error++;
+          console.log(`[FEED ${fi + 1}/${CANADIAN_NEWS_FEEDS.length}] "${feed.name}" → HTTP ${response.status} ${response.statusText} — SKIPPED`);
+          continue;
+        }
+
+        stage.feeds_http_ok++;
         const xmlText = await response.text();
-        const items = xmlText.match(/<item>(.*?)<\/item>/gs) || [];
-        
-        for (const item of items.slice(0, 5)) {
-          const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/);
-          const descMatch = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/);
-          const linkMatch = item.match(/<link>(.*?)<\/link>/);
+        const itemMatches = [...xmlText.matchAll(/<item>([\s\S]*?)<\/item>/g)];
+        feedItems = itemMatches.length;
+        stage.items_from_rss += feedItems;
 
-          if (!titleMatch || !descMatch) continue;
+        console.log(`[FEED ${fi + 1}/${CANADIAN_NEWS_FEEDS.length}] "${feed.name}" → HTTP ${response.status} → ${feedItems} items in XML`);
 
-          const title = titleMatch[1];
-          const rawDescription = descMatch[1];
-          // Strip HTML tags from RSS description
+        for (const match of itemMatches) {
+          const itemXml = match[1];
+
+          const title = extractField(itemXml, 'title');
+          const rawLink = extractField(itemXml, 'link');
+          const rawDescription = extractField(itemXml, 'description');
+          const pubDate = extractField(itemXml, 'pubDate');
+
+          if (!title) {
+            stage.items_no_parse++;
+            continue;
+          }
+
+          // Filter to last 24 hours
+          if (pubDate) {
+            const ts = new Date(pubDate).getTime();
+            if (!isNaN(ts) && ts < cutoffMs) {
+              stage.items_too_old++;
+              continue;
+            }
+          }
+
           const description = rawDescription.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          const link = linkMatch ? linkMatch[1] : '';
 
-          // Skip items with no meaningful content beyond the title
-          if (description.length < 40) continue;
+          if (description.length < 40 && title.length < 20) {
+            stage.items_short_content++;
+            console.log(`  [SHORT] "${title.substring(0, 60)}" | desc:${description.length}chars`);
+            continue;
+          }
 
+          feedPassed++;
+          const validLink = rawLink.startsWith('http') ? rawLink : '';
           const fullContent = `${title}\n\n${description}`.toLowerCase();
 
+          // Two-tier keyword matching:
+          // Tier 1 — any direct entity/project hit passes immediately.
+          // Tier 2 — requires BOTH a geo hit AND a threat-type hit (prevents "Kitimat fishing tournament").
+          const tier1Hits = TIER1_KEYWORDS.filter(kw => fullContent.includes(kw));
+          const tier2GeoHits = TIER2_GEO.filter(kw => fullContent.includes(kw));
+          const tier2ThreatHits = TIER2_THREAT.filter(kw => fullContent.includes(kw));
+
+          const tier1Match = tier1Hits.length > 0;
+          const tier2Match = tier2GeoHits.length > 0 && tier2ThreatHits.length > 0;
+
+          if (!tier1Match && !tier2Match) {
+            stage.items_no_keyword_match++;
+            continue;
+          }
+
+          const matchedTier = tier1Match ? 'tier1' : 'tier2';
+          const matchedKeywords = tier1Match
+            ? tier1Hits
+            : [...tier2GeoHits, ...tier2ThreatHits];
+
+          if (tier1Match) stage.items_tier1_match++;
+          else stage.items_tier2_match++;
+
+          // Assign to the first client (Petronas Canada) — expand when multi-client needed
+          const matchedClient = (clients || [])[0];
+          if (!matchedClient) {
+            stage.items_no_keyword_match++;
+            continue;
+          }
+
+          feedMatched++;
+          stage.items_sent_to_ingest++;
+          const signalText = `${title}\n\n${description.slice(0, 1000)}`;
+          console.log(`  [→ INGEST][${matchedTier}] "${title.substring(0, 70)}" | matched:${matchedKeywords.slice(0, 4).join(', ')} | url:${validLink || 'none'}`);
+
           try {
-            // Check if content matches ANY client's keywords
-            let matchedClient = null;
-            let matchedKeywords: string[] = [];
-            
-            for (const client of clients || []) {
-              if (fullContent.includes(client.name.toLowerCase())) {
-                matchedClient = client;
-                matchedKeywords.push(`client_name:${client.name}`);
-                break;
-              }
-              
-              if (client.monitoring_keywords && client.monitoring_keywords.length > 0) {
-                const foundKeywords = client.monitoring_keywords.filter((keyword: string) => 
-                  fullContent.includes(keyword.toLowerCase())
-                );
-                
-                if (foundKeywords.length > 0) {
-                  matchedClient = client;
-                  matchedKeywords = foundKeywords;
-                  console.log(`✓ KEYWORD MATCH for ${client.name}: ${foundKeywords.join(', ')}`);
-                  break;
-                }
-              }
-            }
-
-            if (matchedClient) {
-              const signalText = `${title}\n\n${description.slice(0, 1000)}`;
-
-              // Route through ingest-signal for PECL classification, relevance gate, and dedup
-              const ingestResult = await supabase.functions.invoke('ingest-signal', {
-                body: {
-                  text: signalText,
-                  source_url: link || null,
-                  client_id: matchedClient.id,
-                  raw_json: {
-                    source: 'google_news_rss',
-                    source_url: link,
-                    description,
-                    search_query: query,
-                    matched_keywords: matchedKeywords,
-                    matched_client: matchedClient.name,
-                  },
+            const ingestResult = await supabase.functions.invoke('ingest-signal', {
+              body: {
+                text: signalText,
+                ...(validLink && { source_url: validLink }),
+                client_id: matchedClient.id,
+                raw_json: {
+                  source: 'canadian_news_rss',
+                  feed_name: feed.name,
+                  ...(validLink && { source_url: validLink }),
+                  description,
+                  matched_keywords: matchedKeywords,
+                  matched_client: matchedClient.name,
+                  matched_tier: matchedTier,
                 },
-              });
+              },
+            });
 
-              if (ingestResult.error) {
-                console.error(`ingest-signal error for "${title.substring(0, 50)}":`, ingestResult.error);
-                continue;
-              }
-
-              const ingestData = ingestResult.data as any;
-              const ingestStatus = ingestData?.status || 'unknown';
-
-              if (ingestStatus === 'rejected' || ingestStatus === 'suppressed' || ingestStatus === 'filed_as_update') {
-                console.log(`↳ ${ingestStatus}: ${title.substring(0, 50)}... (${ingestData?.reason || ingestData?.detail || ''})`);
-                continue;
-              }
-
-              if (ingestData?.signal_id || ingestStatus === 'enqueued' || ingestStatus === 'critical_processed') {
-                signalsCreated++;
-                documentsIngested++;
-                console.log(`✓ CREATED SIGNAL for ${matchedClient.name}: ${title.substring(0, 60)}... (matched: ${matchedKeywords.join(', ')})`);
-              }
-            } else {
-              console.log(`- No keyword match for: ${title.substring(0, 60)}...`);
+            if (ingestResult.error) {
+              stage.ingest_error++;
+              console.error(`  [INGEST ERROR]:`, ingestResult.error);
+              continue;
             }
-          } catch (error) {
-            console.error(`Error processing news item:`, error);
+
+            const ingestData = ingestResult.data as any;
+            const ingestStatus = ingestData?.status || 'unknown';
+            const detail = ingestData?.reason || ingestData?.detail || ingestData?.message || '';
+
+            if (ingestStatus === 'rejected') {
+              stage.ingest_rejected++;
+              console.log(`  [INGEST:rejected] score:${ingestData?.relevance_score ?? '?'} | ${detail} | "${title.substring(0, 50)}"`);
+            } else if (ingestStatus === 'suppressed') {
+              stage.ingest_suppressed++;
+              console.log(`  [INGEST:suppressed/dedup] ${detail} | "${title.substring(0, 50)}"`);
+            } else if (ingestStatus === 'filed_as_update') {
+              stage.ingest_filed_as_update++;
+              console.log(`  [INGEST:filed_as_update] ${detail} | "${title.substring(0, 50)}"`);
+            } else if (ingestData?.signal_id || ingestStatus === 'enqueued' || ingestStatus === 'critical_processed') {
+              stage.ingest_accepted++;
+              signalsCreated++;
+              console.log(`  [INGEST:accepted] status:${ingestStatus} | signal_id:${ingestData?.signal_id || 'batch'} | "${title.substring(0, 60)}"`);
+            } else {
+              stage.ingest_unknown++;
+              console.log(`  [INGEST:unknown] status:${ingestStatus} | ${detail} | "${title.substring(0, 50)}"`);
+            }
+          } catch (err) {
+            stage.ingest_error++;
+            console.error(`  [INGEST ERROR] threw:`, err);
           }
         }
-      } catch (error) {
-        console.error(`Error fetching news for query "${query}":`, error);
+
+        console.log(`  [FEED DONE] "${feed.name}": ${feedItems} items → ${feedPassed} passed age/content filters → ${feedMatched} keyword matches`);
+
+      } catch (err) {
+        stage.feeds_http_error++;
+        console.error(`[FEED ${fi + 1}/${CANADIAN_NEWS_FEEDS.length}] "${feed.name}" → fetch threw:`, err);
       }
     }
 
-    console.log(`News monitoring complete. Created ${signalsCreated} immediate signals. Ingested ${documentsIngested} documents for AI analysis.`);
+    console.log(`
+=== NEWS MONITOR PIPELINE SUMMARY ===
+Feeds attempted:           ${stage.feeds_attempted}
+  HTTP OK:                 ${stage.feeds_http_ok}
+  HTTP errors/throws:      ${stage.feeds_http_error}
+RSS items total:           ${stage.items_from_rss}
+  Too old (>24h):          ${stage.items_too_old}
+  Failed to parse:         ${stage.items_no_parse}
+  Content too short:       ${stage.items_short_content}
+  No keyword match:        ${stage.items_no_keyword_match}
+  Tier 1 match (entity):   ${stage.items_tier1_match}
+  Tier 2 match (geo+threat):${stage.items_tier2_match}
+  Sent to ingest-signal:   ${stage.items_sent_to_ingest}
+    Accepted (created):        ${stage.ingest_accepted}
+    Rejected (AI gate):        ${stage.ingest_rejected}
+    Suppressed (dedup):        ${stage.ingest_suppressed}
+    Filed as update:           ${stage.ingest_filed_as_update}
+    Errors:                    ${stage.ingest_error}
+    Unknown status:            ${stage.ingest_unknown}
+======================================`);
 
-    // Update monitoring history on success
     if (historyEntry) {
       await supabase
         .from('monitoring_history')
         .update({
           status: 'completed',
           scan_completed_at: new Date().toISOString(),
-          signals_created: signalsCreated + documentsIngested,
-          scan_metadata: { 
-            sources: ['News API', 'Google News'],
+          items_scanned: stage.items_from_rss,
+          signals_created: signalsCreated,
+          scan_metadata: {
+            sources: CANADIAN_NEWS_FEEDS.map(f => f.name),
             clients_scanned: clients?.length || 0,
-            immediate_signals: signalsCreated,
-            documents_ingested: documentsIngested
+            pipeline: stage,
           }
         })
         .eq('id', historyEntry.id);
     }
 
-    return successResponse({ 
-      success: true, 
+    return successResponse({
+      success: true,
       clients_scanned: clients?.length || 0,
-      signals_created: signalsCreated + documentsIngested,
-      source: 'security-news'
+      feeds_scanned: stage.feeds_http_ok,
+      items_from_rss: stage.items_from_rss,
+      items_tier1_match: stage.items_tier1_match,
+      items_tier2_match: stage.items_tier2_match,
+      items_sent_to_ingest: stage.items_sent_to_ingest,
+      signals_created: signalsCreated,
+      stage,
+      source: 'canadian-news-rss',
     });
+
   } catch (error) {
     console.error('Error in news monitoring:', error);
-    
+
     const supabase = createServiceClient();
-    
+
     try {
       const { data: failedEntry } = await supabase
         .from('monitoring_history')
@@ -260,7 +348,7 @@ Deno.serve(async (req) => {
     } catch (updateError) {
       console.error('Failed to update monitoring history:', updateError);
     }
-    
+
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

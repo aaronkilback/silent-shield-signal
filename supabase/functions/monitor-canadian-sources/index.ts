@@ -54,6 +54,8 @@ Deno.serve(async (req) => {
     if (clientsError) throw clientsError;
 
     let signalsCreated = 0;
+    let signalsFiltered = 0;
+    let signalsDeduplicated = 0;
     const sources = [];
 
     // 1. RCMP Gazette (RSS feed)
@@ -70,11 +72,9 @@ Deno.serve(async (req) => {
           const match = calculateRelevance(client, content, 'RCMP Gazette');
           
           if (match.score >= (client.monitoring_config?.min_relevance_score || 35)) {
-            await createSignal(supabaseClient, {
+            const result = await ingestSignalViaGateway(supabaseClient, {
               client_id: client.id,
               source: 'RCMP Gazette',
-              category: 'threat-intelligence',
-              severity: determineSeverity(content, match.score),
               title: item.title,
               description: item.description,
               url: item.link,
@@ -82,7 +82,9 @@ Deno.serve(async (req) => {
               relevance_score: match.score,
               relevance_reasons: match.reasons
             });
-            signalsCreated++;
+            if (result === 'created') signalsCreated++;
+            else if (result === 'filtered') signalsFiltered++;
+            else if (result === 'deduplicated') signalsDeduplicated++;
           }
         }
       }
@@ -105,11 +107,9 @@ Deno.serve(async (req) => {
           const match = calculateRelevance(client, content, 'BC Energy Regulator');
           
           if (match.score >= (client.monitoring_config?.min_relevance_score || 35)) {
-            await createSignal(supabaseClient, {
+            const result = await ingestSignalViaGateway(supabaseClient, {
               client_id: client.id,
               source: 'BC Energy Regulator',
-              category: 'regulatory',
-              severity: determineSeverity(content, match.score),
               title: item.title,
               description: item.description,
               url: item.link,
@@ -117,7 +117,9 @@ Deno.serve(async (req) => {
               relevance_score: match.score,
               relevance_reasons: match.reasons
             });
-            signalsCreated++;
+            if (result === 'created') signalsCreated++;
+            else if (result === 'filtered') signalsFiltered++;
+            else if (result === 'deduplicated') signalsDeduplicated++;
           }
         }
       }
@@ -126,7 +128,7 @@ Deno.serve(async (req) => {
       console.error('Error monitoring BC Energy Regulator:', error);
     }
 
-    console.log(`Canadian sources monitoring complete. Created ${signalsCreated} signals from sources: ${sources.join(', ')}`);
+    console.log(`Canadian sources monitoring complete. Created ${signalsCreated} signals, ${signalsFiltered} filtered, ${signalsDeduplicated} deduplicated. Sources: ${sources.join(', ')}`);
 
     // Update monitoring history with success
     if (historyEntry) {
@@ -137,15 +139,17 @@ Deno.serve(async (req) => {
           scan_completed_at: new Date().toISOString(),
           items_scanned: sources.length,
           signals_created: signalsCreated,
-          scan_metadata: { sources, details: `Scanned ${sources.length} sources` }
+          scan_metadata: { sources, details: `Created ${signalsCreated}, filtered ${signalsFiltered}, deduplicated ${signalsDeduplicated}` }
         })
         .eq('id', historyEntry.id);
     }
 
     return successResponse({
       success: true,
-      message: `Scanned ${sources.length} Canadian sources with enhanced relevance scoring`,
+      message: `Scanned ${sources.length} Canadian sources via ingest-signal pipeline`,
       signalsCreated,
+      signalsFiltered,
+      signalsDeduplicated,
       sources,
       historyId: historyEntry?.id
     });
@@ -356,39 +360,30 @@ function determineSeverity(text: string, relevanceScore: number): string {
   return 'low';
 }
 
-// Create a signal in the database with relevance metadata
-async function createSignal(supabaseClient: any, data: {
+// Route signal through ingest-signal for full quality pipeline:
+// 7-layer dedup, AI relevance gate, entity extraction, historical guardrail,
+// expert enrichment, learned pattern suppression, and provenance chain.
+// This replaces the old direct DB write that bypassed all quality controls.
+async function ingestSignalViaGateway(supabaseClient: any, data: {
   client_id: string;
   source: string;
-  category: string;
-  severity: string;
   title: string;
   description: string;
   url?: string;
   published_date?: string;
   relevance_score: number;
   relevance_reasons: string[];
-}) {
+}): Promise<'created' | 'filtered' | 'deduplicated' | 'error'> {
   try {
-    // Extract event_date from published_date
-    let eventDate: string | null = null;
-    if (data.published_date) {
-      try {
-        const parsed = new Date(data.published_date);
-        if (!isNaN(parsed.getTime())) {
-          eventDate = parsed.toISOString();
-        }
-      } catch { /* ignore */ }
-    }
+    const content = `${data.title}\n\n${data.description}`;
+    const sourceKey = data.source.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
-    const { error } = await supabaseClient
-      .from('signals')
-      .insert({
+    const { data: result, error } = await supabaseClient.functions.invoke('ingest-signal', {
+      body: {
+        text: content,
+        source_url: data.url || undefined,
         client_id: data.client_id,
-        category: data.category,
-        severity: data.severity,
-        status: 'new',
-        normalized_text: `${data.title}\n\n${data.description}`,
+        source_key: sourceKey,
         raw_json: {
           source: data.source,
           title: data.title,
@@ -398,19 +393,32 @@ async function createSignal(supabaseClient: any, data: {
           link: data.url,
           published_date: data.published_date,
           relevance_score: data.relevance_score,
-          relevance_reasons: data.relevance_reasons
+          relevance_reasons: data.relevance_reasons,
         },
-        confidence: data.relevance_score,
-        received_at: new Date().toISOString(),
-        event_date: eventDate
-      });
+      }
+    });
 
     if (error) {
-      console.error('Error creating signal:', error);
-    } else {
-      console.log(`Created signal with ${data.relevance_score}% relevance: ${data.title.substring(0, 50)}...`);
+      console.error(`[monitor-canadian-sources] ingest-signal error for "${data.title.substring(0, 50)}": `, error);
+      return 'error';
     }
-  } catch (error) {
-    console.error('Error in createSignal:', error);
+
+    // Interpret ingest-signal's response
+    if (result?.signal_id || result?.status === 'enqueued' || result?.status === 'critical_processed') {
+      console.log(`[monitor-canadian-sources] ✓ Signal created: ${data.title.substring(0, 50)}`);
+      return 'created';
+    } else if (result?.deduplicated || result?.status === 'suppressed' || result?.status === 'filed_as_update') {
+      console.log(`[monitor-canadian-sources] Deduplicated/suppressed: ${data.title.substring(0, 50)}`);
+      return 'deduplicated';
+    } else if (result?.status === 'rejected') {
+      console.log(`[monitor-canadian-sources] Filtered (${result?.reason}): ${data.title.substring(0, 50)}`);
+      return 'filtered';
+    }
+
+    console.log(`[monitor-canadian-sources] Unknown result for "${data.title.substring(0, 50)}": ${JSON.stringify(result).substring(0, 100)}`);
+    return 'error';
+  } catch (err) {
+    console.error('[monitor-canadian-sources] ingest-signal invocation failed:', err);
+    return 'error';
   }
 }

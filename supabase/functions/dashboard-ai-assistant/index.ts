@@ -174,6 +174,9 @@ ${TOOL_USAGE_GUIDANCE}
 
 ${FORTRESS_WORKFLOW_INSTRUCTIONS}
 
+═══ CODEBASE AUDIT (USE BEFORE MAKING RECOMMENDATIONS) ═══
+Before recommending changes to pipelines, functions, or architecture, call list_source_files to review the manifest, then get_source_file to read any relevant implementation. Base recommendations on the actual deployed code, not assumptions.
+
 ═══ FINAL REMINDER (HIGHEST PRIORITY — RECENCY BIAS) ═══
 YOU ARE AEGIS — a FULL intelligence platform with 21+ operational tools.
 You HAVE agents. You DISPATCH them. You CREATE reports. You GENERATE audio.
@@ -232,6 +235,73 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
   // 2. Legacy switch for remaining handlers (will be migrated incrementally)
   try {
     switch (toolName) {
+
+    // ── Codebase audit ──────────────────────────────────────────────────────
+
+    case "list_source_files": {
+      const { file_type } = args;
+      let query = supabaseClient
+        .from("codebase_snapshot")
+        .select("file_path, file_type, function_name, byte_size, updated_at")
+        .order("file_type")
+        .order("file_path");
+
+      if (file_type) {
+        query = query.eq("file_type", file_type);
+      }
+
+      const { data, error } = await query;
+      if (error) return { success: false, error: error.message };
+
+      const grouped: Record<string, any[]> = {};
+      for (const row of data ?? []) {
+        if (!grouped[row.file_type]) grouped[row.file_type] = [];
+        grouped[row.file_type].push({
+          file_path: row.file_path,
+          function_name: row.function_name,
+          byte_size: row.byte_size,
+          updated_at: row.updated_at,
+        });
+      }
+
+      return {
+        success: true,
+        total_files: data?.length ?? 0,
+        last_sync: data?.[0]?.updated_at ?? null,
+        manifest: grouped,
+        usage_hint: "Call get_source_file with a file_path to read its full content.",
+      };
+    }
+
+    case "get_source_file": {
+      const { file_path } = args;
+      if (!file_path) return { success: false, error: "file_path is required" };
+
+      const { data, error } = await supabaseClient
+        .from("codebase_snapshot")
+        .select("file_path, file_type, function_name, content, byte_size, updated_at")
+        .eq("file_path", file_path)
+        .single();
+
+      if (error || !data) {
+        return {
+          success: false,
+          error: `File not found: ${file_path}. Run list_source_files to see available paths.`,
+        };
+      }
+
+      return {
+        success: true,
+        file_path: data.file_path,
+        file_type: data.file_type,
+        function_name: data.function_name,
+        byte_size: data.byte_size,
+        updated_at: data.updated_at,
+        content: data.content,
+      };
+    }
+
+    // ── Signal deduplication ────────────────────────────────────────────────
 
     case "fix_duplicate_signals": {
       const { signal_ids, action, keep_signal_id } = args;
@@ -1630,8 +1700,6 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
       console.log(`Analyzing visual document: ${doc.filename} (${fileSizeMB.toFixed(1)}MB)`);
 
       const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-      ;
-      }
 
       // Determine analysis prompt based on focus
       const focusPrompts: Record<string, string> = {
@@ -7001,7 +7069,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
             if (!fallbackError) {
               const { data: signedData } = await serviceClient.storage
                 .from("tenant-files")
-                .createSignedUrl(storagePath, 3600);
+                .createSignedUrl(storagePath, 3600, { download: `${filename}.html` });
               downloadUrl = signedData?.signedUrl || "";
             }
           }
@@ -7083,6 +7151,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
           // ═══════════════════════════════════════════════════════════════
           const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
           let enrichedHtml = reportData.html;
+          let mediaItems: { url: string; caption: string; source: string }[] = [];
 
           try {
             // Determine time window for media queries
@@ -7101,8 +7170,6 @@ The signal is now in the database with status 'triaged' and rules have been appl
                 .limit(100);
               signalIds = (clientSignals || []).map((s: any) => s.id);
             }
-
-            let mediaItems: { url: string; caption: string; source: string }[] = [];
 
             if (signalIds.length > 0) {
               // Fetch attachments linked to these signals (images only)
@@ -7214,7 +7281,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
           const { error: uploadError } = await serviceClient.storage
             .from("tenant-files")
             .upload(storagePath, htmlBytes, {
-              contentType: "text/html",
+              contentType: "text/html; charset=utf-8",
               upsert: true,
             });
 
@@ -7222,7 +7289,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
           if (!uploadError) {
             const { data: signedData } = await serviceClient.storage
               .from("tenant-files")
-              .createSignedUrl(storagePath, 3600);
+              .createSignedUrl(storagePath, 3600, { download: `${filename}.html` });
             downloadUrl = signedData?.signedUrl || "";
           } else {
             console.error("Failed to upload report to storage:", uploadError);
@@ -7241,9 +7308,10 @@ The signal is now in the database with status 'triaged' and rules have been appl
             media_count: mediaItems?.length || 0,
             metadata: reportData.metadata || {},
             download_url: downloadUrl,
-            message: `✅ **${reportLabel}** generated successfully (${Math.round(enrichedHtml.length / 1024)}KB)${mediaItems?.length ? ` with ${mediaItems.length} embedded visual asset(s)` : ""}.`,
-            download_instructions: downloadUrl 
-              ? `Report is ready for download. Provide the user this download link: ${downloadUrl}` 
+            view_url: downloadUrl,
+            message: `✅ **${reportLabel}** generated successfully.`,
+            download_instructions: downloadUrl
+              ? `Report is ready. IMPORTANT: Do NOT show the HTML source. Give the user ONLY this clickable download link and a 2-3 sentence summary of key findings: [📄 Download ${reportLabel}](${downloadUrl}). Tell the user: click the link to download, then open the downloaded file in their browser to view the full formatted report.`
               : "Report was generated but storage upload failed. The report data is available in metadata."
           };
         } else if (reportData.success === false) {
@@ -8930,6 +8998,45 @@ The user's message is just a conversational acknowledgment - respond in kind, do
     // Fire-and-forget background pipeline
     (async () => {
       try {
+        // ── WRAITH PRE-SCREEN (runs before OpenAI sees the message) ───────────
+        {
+          const _preLastUser = processedMessages.filter((m: any) => m.role === "user").pop();
+          const _preUserText = typeof _preLastUser?.content === "string" ? _preLastUser.content : "";
+          if (_preUserText) {
+            const _prePatterns = [
+              /ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|directives?)/i,
+              /you\s+are\s+now\s+(?!aegis|fortress)/i,
+              /act\s+as\s+(if\s+you\s+are\s+)?(?!an?\s+(analyst|security))/i,
+              /disregard\s+(your\s+)?(system\s+)?(prompt|instructions?|rules?)/i,
+              /pretend\s+(you\s+are|to\s+be)/i,
+              /jailbreak|do\s+anything\s+now/i,
+              /exfiltrate|leak\s+(all\s+)?(data|secrets?|keys?)/i,
+              /override\s+(security|auth|permissions?|policies?)/i,
+            ];
+            const _preMatches = _prePatterns.filter(p => p.test(_preUserText));
+            if (_preMatches.length > 0) {
+              const _preConfidence = Math.min(0.6 + _preMatches.length * 0.1, 1.0);
+              const _preAction = _preConfidence >= 0.85 ? "blocked" : "flagged";
+              supabaseClient.from("wraith_prompt_injection_log").insert({
+                user_id: authenticatedUserId,
+                message_preview: _preUserText.substring(0, 200),
+                injection_type: "pre_ai_screen",
+                confidence: _preConfidence,
+                action_taken: _preAction,
+                indicators: [{ matched_patterns: _preMatches.length, stage: "pre_openai" }],
+              }).then(() => {}).catch((e: any) => console.error("[WRAITH] Log insert failed:", e?.message));
+              if (_preAction === "blocked") {
+                console.warn(`[WRAITH] Pre-screen blocked message (confidence: ${_preConfidence})`);
+                await writeSSEText(`data: {"choices":[{"delta":{"content":"I can't process that request — it was flagged by the WRAITH security layer."}}]}\n\n`);
+                await writeDone();
+                return;
+              }
+              console.warn(`[WRAITH] Pre-screen logged suspicious message (confidence: ${_preConfidence})`);
+            }
+          }
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         // ── FIRST AI CALL — streaming ─────────────────────────────────────────
         const firstResp = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
@@ -9238,6 +9345,88 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         firstMessage.tool_calls.map(async (toolCall: any) => {
           try {
             const args = JSON.parse(toolCall.function.arguments);
+
+            // ── WRAITH INJECTION CHECK ────────────────────────────────────────────
+            const _wraithLastUser = processedMessages.filter((m: any) => m.role === "user").pop();
+            const _wraithUserText = typeof _wraithLastUser?.content === "string" ? _wraithLastUser.content : "";
+            const _wraithArgText = JSON.stringify(args);
+            const _wraithPatterns = [
+              /ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?|directives?)/i,
+              /you\s+are\s+now\s+(?!aegis|fortress)/i,
+              /act\s+as\s+(if\s+you\s+are\s+)?(?!an?\s+(analyst|security))/i,
+              /disregard\s+(your\s+)?(system\s+)?(prompt|instructions?|rules?)/i,
+              /pretend\s+(you\s+are|to\s+be)/i,
+              /jailbreak|do\s+anything\s+now/i,
+              /exfiltrate|leak\s+(all\s+)?(data|secrets?|keys?)/i,
+              /override\s+(security|auth|permissions?|policies?)/i,
+            ];
+            const _wraithCombined = `${_wraithUserText}\n${_wraithArgText}`;
+            const _wraithMatches = _wraithPatterns.filter(p => p.test(_wraithCombined));
+            if (_wraithMatches.length > 0) {
+              const _wraithConfidence = Math.min(0.6 + _wraithMatches.length * 0.1, 1.0);
+              const _wraithAction = _wraithConfidence >= 0.85 ? "blocked" : "flagged";
+              await supabaseClient.from("wraith_prompt_injection_log").insert({
+                user_id: authenticatedUserId,
+                message_preview: _wraithUserText.substring(0, 200),
+                injection_type: "tool_dispatch_intercept",
+                confidence: _wraithConfidence,
+                action_taken: _wraithAction,
+                indicators: [{ matched_patterns: _wraithMatches.length, tool_name: toolCall.function.name }],
+              }).then(() => {}).catch((e: any) => console.error("[WRAITH] Log insert failed:", e?.message)); // non-blocking
+              if (_wraithAction === "blocked") {
+                console.warn(`[WRAITH] Blocked tool dispatch: ${toolCall.function.name} (confidence: ${_wraithConfidence})`);
+                return {
+                  tool_call_id: toolCall.id,
+                  role: "tool",
+                  name: toolCall.function.name,
+                  content: JSON.stringify({ success: false, error: "Request blocked by WRAITH security layer: adversarial input detected." }),
+                };
+              }
+              console.warn(`[WRAITH] Logged suspicious tool dispatch: ${toolCall.function.name} (confidence: ${_wraithConfidence})`);
+            }
+            // ─────────────────────────────────────────────────────────────────────
+
+            // ── WRAITH AI CHECK (high-risk tools only) ────────────────────────────
+            const _wraithHighRiskTools = [
+              "inject_test_signal",
+              "fix_duplicate_signals",
+              "submit_ai_feedback",
+              "create_entity",
+              "auto_summarize_incidents",
+            ];
+            const _isHighRisk = _wraithHighRiskTools.includes(toolCall.function.name) ||
+              toolCall.function.name.startsWith("delete_");
+            if (_isHighRisk) {
+              try {
+                const _wraithUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/wraith-security-advisor`;
+                const _wraithKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+                const _wraithResp = await Promise.race([
+                  fetch(_wraithUrl, {
+                    method: "POST",
+                    headers: { "Authorization": `Bearer ${_wraithKey}`, "Content-Type": "application/json" },
+                    body: JSON.stringify({ action: "detect_prompt_injection", message: _wraithCombined }),
+                  }),
+                  new Promise<Response>((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
+                ]) as Response;
+                if (_wraithResp.ok) {
+                  const _wraithAiResult = await _wraithResp.json();
+                  if (_wraithAiResult?.blocked === true) {
+                    console.warn(`[WRAITH AI] Blocked high-risk tool: ${toolCall.function.name}`);
+                    return {
+                      tool_call_id: toolCall.id,
+                      role: "tool",
+                      name: toolCall.function.name,
+                      content: JSON.stringify({ success: false, error: "Request blocked by WRAITH AI: adversarial input detected in high-risk operation." }),
+                    };
+                  }
+                }
+              } catch (_wraithAiErr) {
+                // Timeout or network error — fail open, log and continue
+                console.warn(`[WRAITH AI] Check failed for ${toolCall.function.name}, continuing:`, _wraithAiErr);
+              }
+            }
+            // ─────────────────────────────────────────────────────────────────────
+
             const result = await executeTool(toolCall.function.name, args, supabaseClient, authenticatedUserId);
             return {
               tool_call_id: toolCall.id,

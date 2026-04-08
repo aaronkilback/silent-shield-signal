@@ -25,6 +25,7 @@ const SignalInputSchema = z.object({
   clientId: z.string().uuid().optional(),  // camelCase alias (used by QA agent and frontend)
   sourceType: z.string().optional(),       // source type tag (e.g. 'qa_test')
   sourceData: z.any().optional(),          // source metadata
+  skip_relevance_gate: z.boolean().optional(), // bypass AI gate when upstream keyword matching already vetted the signal
 }).refine(data => data.text || data.event || data.url, {
   message: "Either 'text', 'event', or 'url' must be provided"
 });
@@ -122,7 +123,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test, client_id, clientId: clientIdCamel } = validationResult.data;
+    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test, client_id, clientId: clientIdCamel, skip_relevance_gate } = validationResult.data;
     const explicitClientId = client_id || clientIdCamel || null;
     
     // CRITICAL FIX: Validate explicit client_id if provided
@@ -864,7 +865,10 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
     // ===== AI RELEVANCE GATE: PECL-calibrated two-stage check =====
     // Stage 1: LLM scores relevance (0-1) + classifies connection type
     // Stage 2: Threshold check at 0.60 — below = write to filtered_signals and reject
-    if (clientId) {
+    if (skip_relevance_gate) {
+      console.log(`[AI Relevance Gate] BYPASSED — upstream keyword matching already vetted this signal`);
+    }
+    if (clientId && !skip_relevance_gate) {
       try {
         const { data: clientForGate } = await supabase
           .from('clients')
@@ -931,7 +935,27 @@ Score this signal's relevance and classify the connection.`
           const gateReason: string = gateResult.data?.reason || '';
           const primaryConnection: string = gateResult.data?.primary_connection || 'none';
 
-          if (gateScore < 0.60) {
+          // Phase 3C: Per-source threshold adjustment
+          // Low-credibility sources face a higher bar; proven sources get more slack.
+          // Bounded ±0.10 from base (floor 0.50, ceiling 0.70) to prevent runaway suppression.
+          let relevanceThreshold = 0.60;
+          if (source_key) {
+            const { data: credScore } = await supabase
+              .from('source_credibility_scores')
+              .select('current_credibility, total_signals')
+              .eq('source_key', source_key)
+              .maybeSingle();
+            // Only adjust if we have enough signal history (thin data protection)
+            if (credScore?.current_credibility && (credScore.total_signals ?? 0) >= 5) {
+              const adjustment = (0.65 - credScore.current_credibility) * 0.40;
+              relevanceThreshold = Math.min(0.70, Math.max(0.50, 0.60 + adjustment));
+              if (Math.abs(relevanceThreshold - 0.60) > 0.005) {
+                console.log(`[Phase3C] ${source_key} threshold adjusted: ${relevanceThreshold.toFixed(2)} (credibility: ${credScore.current_credibility.toFixed(3)}, signals: ${credScore.total_signals})`);
+              }
+            }
+          }
+
+          if (gateScore < relevanceThreshold) {
             console.log(`[AI Relevance Gate] REJECTED (score ${gateScore.toFixed(2)}): ${gateReason}`);
 
             // Audit trail — write to filtered_signals
@@ -1051,6 +1075,26 @@ Score this signal's relevance and classify the connection.`
       }
     }
 
+    // ── STALENESS GATE ────────────────────────────────────────────────────────
+    // Articles older than 365 days (730 for cyber/CVE) are ingested as
+    // signal_type = 'historical', routed to the Historical tab, and skipped
+    // for incident creation. skip_relevance_gate bypasses (analyst uploads).
+    let isHistorical = triageOverride === 'historical'; // already set for >90 days
+    if (eventDate && !skip_relevance_gate) {
+      const eventParsed = new Date(eventDate);
+      const cyberCategories = ['malware', 'phishing', 'intrusion', 'data_exfil', 'ddos', 'ransomware'];
+      const isCyber = cyberCategories.includes(classification.category || '');
+      const cutoffDays = isCyber ? 730 : 365;
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - cutoffDays);
+      if (eventParsed < cutoff) {
+        const daysOld = Math.floor((Date.now() - eventParsed.getTime()) / 86400000);
+        isHistorical = true;
+        console.log(`[Staleness] Routing to historical — event_date ${classResult.data?.event_date} is ${daysOld} days old (limit: ${cutoffDays})`);
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     // Compute severity_score (0-100) from text severity + relevance adjustment
     const severityScore = (() => {
       const base = classification.severity === 'critical' ? 90
@@ -1103,6 +1147,7 @@ Score this signal's relevance and classify the connection.`
         content_hash: contentHash,
         event_date: eventDate,
         triage_override: triageOverride,
+        signal_type: isHistorical ? 'historical' : null,
         source_url: source_url || signalRaw?.source_url || signalRaw?.url || signalRaw?.link || null,
         image_url: image_url || signalRaw?.image_url || signalRaw?.og_image || signalRaw?.thumbnail || null,
       })
@@ -1438,6 +1483,11 @@ Score this signal's relevance and classify the connection.`
           }
         })
         .eq('id', signal.id);
+
+      // Phase 4B: entity correlation on fast-path critical signals
+      supabase.functions.invoke('correlate-entities', {
+        body: { text: signal.normalized_text || signalText, sourceType: 'signal', sourceId: signal.id, autoApprove: false }
+      }).catch((err: Error) => console.error('[Phase4B] Fast-path entity correlation failed:', err));
       
       // Return immediately with fast-path confirmation
       return new Response(
@@ -1483,7 +1533,7 @@ Score this signal's relevance and classify the connection.`
         console.log('AI decision engine result:', aiDecisionResult.data);
 
         // Check if AI decision recommends incident creation
-        if (!isCyberAdvisory && !isQaTest && aiDecisionResult.data?.decision?.should_create_incident) {
+        if (!isCyberAdvisory && !isQaTest && !isHistorical && aiDecisionResult.data?.decision?.should_create_incident) {
           const { error: incidentError } = await supabase
             .from('incidents')
             .insert({
@@ -1622,6 +1672,47 @@ Score this signal's relevance and classify the connection.`
     } catch (error) {
       console.error('Failed to trigger correlation:', error);
       // Don't fail the main request if correlation fails
+    }
+
+    // Phase 4B: Trigger entity correlation (async, don't wait for it)
+    // Matches signal text against the entity graph — name + aliases + trigram.
+    // Creates entity_mentions linking this signal to matched entities.
+    // autoApprove: false means matches go to suggestions queue for analyst review.
+    try {
+      supabase.functions.invoke('correlate-entities', {
+        body: {
+          text: signal.normalized_text || signalText,
+          sourceType: 'signal',
+          sourceId: signal.id,
+          autoApprove: false,
+        }
+      }).then(({ error }) => {
+        if (error) console.error('[Phase4B] Entity correlation error:', error);
+        else console.log('[Phase4B] Entity correlation triggered for signal:', signal.id);
+      }).catch((err: Error) => console.error('[Phase4B] Entity correlation failed:', err));
+    } catch (error) {
+      // Non-blocking — entity tagging failure never stops signal ingestion
+      console.error('[Phase4B] Failed to trigger entity correlation:', error);
+    }
+
+    // WRAITH: Signal threat DNA analysis (async, non-blocking)
+    // Detects AI-generated attacks, synthetic intel, and adversarial payloads.
+    // Blocked signals are soft-deleted. Suspicious signals are flagged in raw_json.
+    try {
+      supabase.functions.invoke('wraith-security-advisor', {
+        body: {
+          action: 'analyze_signal_threat_dna',
+          signal_id: signal.id,
+          signal_text: signal.normalized_text || signalText,
+          signal_source_url: signal.source_url || undefined,
+        }
+      }).then(({ error }) => {
+        if (error) console.error('[WRAITH] Threat DNA analysis error:', error);
+        else console.log('[WRAITH] Threat DNA analysis triggered for signal:', signal.id);
+      }).catch((err: Error) => console.error('[WRAITH] Threat DNA failed:', err));
+    } catch (error) {
+      // Non-blocking — WRAITH failure never stops signal ingestion
+      console.error('[WRAITH] Failed to trigger threat DNA analysis:', error);
     }
 
     // Enqueue signal for batch processing instead of immediate processing

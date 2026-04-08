@@ -110,7 +110,7 @@ export const SignalHistory = () => {
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [dateRangeFilter, setDateRangeFilter] = useState<string>('30d');
   const [showCyberAdvisories, setShowCyberAdvisories] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<string>('recent'); // 'recent' | 'all' | 'historical' | 'international' | 'review'
+  const [activeTab, setActiveTab] = useState<string>('recent'); // 'recent' | 'all' | 'older-intel' | 'international' | 'low-confidence'
 
   const CYBER_ADVISORY_CATEGORIES = new Set(['malware', 'vulnerability', 'intrusion', 'data_exfil']);
   const isCyberAdvisory = (signal: Signal): boolean => {
@@ -445,15 +445,18 @@ export const SignalHistory = () => {
   };
 
   // Classify each signal into a primary bucket
-  const classifySignal = (signal: Signal): 'international' | 'review' | 'historical' | 'recent' => {
+  const classifySignal = (signal: Signal): 'international' | 'low-confidence' | 'older-intel' | 'recent' => {
     // Manual override takes precedence
     if (signal.triage_override) {
-      return signal.triage_override as 'international' | 'review' | 'historical' | 'recent';
+      const override = signal.triage_override;
+      if (override === 'historical') return 'older-intel';
+      if (override === 'review') return 'low-confidence';
+      return override as 'international' | 'recent';
     }
     if (isInternationalSignal(signal)) return 'international';
-    if (isQuestionableSignal(signal)) return 'review';
+    if (isQuestionableSignal(signal)) return 'low-confidence';
     const recency = categorizeByRecency(signal);
-    if (recency === 'historical') return 'historical';
+    if (recency === 'historical') return 'older-intel';
     return 'recent';
   };
 
@@ -476,12 +479,12 @@ export const SignalHistory = () => {
     
     if (activeTab === 'recent') {
       return classification === 'recent';
-    } else if (activeTab === 'historical') {
-      return classification === 'historical';
+    } else if (activeTab === 'older-intel') {
+      return classification === 'older-intel';
     } else if (activeTab === 'international') {
       return classification === 'international';
-    } else if (activeTab === 'review') {
-      return classification === 'review';
+    } else if (activeTab === 'low-confidence') {
+      return classification === 'low-confidence';
     }
     // 'all' tab shows everything
     return true;
@@ -499,9 +502,9 @@ export const SignalHistory = () => {
   // Counts for tabs (based on classification, excluding auto-hidden and cyber advisory filter)
   const visibleSignals = signals.filter(s => !isAutoHidden(s) && (showCyberAdvisories || !isCyberAdvisory(s)));
   const recentCount = visibleSignals.filter(s => classifySignal(s) === 'recent').length;
-  const historicalCount = visibleSignals.filter(s => classifySignal(s) === 'historical').length;
+  const olderIntelCount = visibleSignals.filter(s => classifySignal(s) === 'older-intel').length;
   const internationalCount = visibleSignals.filter(s => classifySignal(s) === 'international').length;
-  const reviewCount = visibleSignals.filter(s => classifySignal(s) === 'review').length;
+  const lowConfidenceCount = visibleSignals.filter(s => classifySignal(s) === 'low-confidence').length;
 
   // Get unique categories and priorities for filters
   const uniqueCategories = Array.from(new Set(signals.map(s => s.rule_category || s.category).filter(Boolean)));
@@ -553,11 +556,11 @@ export const SignalHistory = () => {
                 <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">{recentCount}</Badge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="historical" className="flex items-center gap-1.5">
+            <TabsTrigger value="older-intel" className="flex items-center gap-1.5">
               <Archive className="w-3.5 h-3.5" />
-              Historical
-              {historicalCount > 0 && (
-                <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs">{historicalCount}</Badge>
+              Older Intel
+              {olderIntelCount > 0 && (
+                <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs">{olderIntelCount}</Badge>
               )}
             </TabsTrigger>
             <TabsTrigger value="international" className="flex items-center gap-1.5">
@@ -567,11 +570,11 @@ export const SignalHistory = () => {
                 <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs">{internationalCount}</Badge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="review" className="flex items-center gap-1.5">
+            <TabsTrigger value="low-confidence" className="flex items-center gap-1.5">
               <AlertTriangle className="w-3.5 h-3.5" />
-              Review
-              {reviewCount > 0 && (
-                <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs text-amber-500 border-amber-500/30">{reviewCount}</Badge>
+              Low Confidence
+              {lowConfidenceCount > 0 && (
+                <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs text-amber-500 border-amber-500/30">{lowConfidenceCount}</Badge>
               )}
             </TabsTrigger>
             <TabsTrigger value="all" className="flex items-center gap-1.5">
@@ -656,7 +659,7 @@ export const SignalHistory = () => {
         {filteredSignals.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <AlertCircle className="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p>{signals.length === 0 ? 'No signals found. Use the Test Signal Generator to create demo signals.' : `No ${activeTab === 'review' ? 'questionable' : activeTab === 'international' ? 'international' : activeTab === 'historical' ? 'historical' : 'recent'} signals match the filters.`}</p>
+            <p>{signals.length === 0 ? 'No signals found. Use the Test Signal Generator to create demo signals.' : `No ${activeTab === 'low-confidence' ? 'low confidence' : activeTab === 'international' ? 'international' : activeTab === 'older-intel' ? 'older intel' : 'recent'} signals match the filters.`}</p>
           </div>
         ) : (
           <ScrollArea className="h-[400px] pr-4">
@@ -677,13 +680,13 @@ export const SignalHistory = () => {
                 </div>
               )}
 
-              {/* Review tab - flat list with warning marker */}
-              {activeTab === 'review' && (
+              {/* Low Confidence tab - flat list with warning marker */}
+              {activeTab === 'low-confidence' && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="outline" className="border-amber-500 text-amber-500">
                       <AlertTriangle className="w-3 h-3 mr-1" />
-                      Needs Review
+                      Low Confidence
                     </Badge>
                     <span className="text-xs text-muted-foreground">{filteredSignals.length} signals — low confidence, entertainment, or fragmentary sources</span>
                   </div>
@@ -694,7 +697,7 @@ export const SignalHistory = () => {
               )}
 
               {/* Today's signals - highlighted */}
-              {!['historical', 'international', 'review'].includes(activeTab) && groupedSignals.today.length > 0 && (
+              {!['older-intel', 'international', 'low-confidence'].includes(activeTab) && groupedSignals.today.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="default" className="bg-green-600">Today</Badge>
@@ -707,7 +710,7 @@ export const SignalHistory = () => {
               )}
 
               {/* This week's signals */}
-              {!['historical', 'international', 'review'].includes(activeTab) && groupedSignals.thisWeek.length > 0 && (
+              {!['older-intel', 'international', 'low-confidence'].includes(activeTab) && groupedSignals.thisWeek.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="secondary">This Week</Badge>
@@ -720,7 +723,7 @@ export const SignalHistory = () => {
               )}
 
               {/* This month's signals */}
-              {!['historical', 'international', 'review'].includes(activeTab) && groupedSignals.thisMonth.length > 0 && (
+              {!['older-intel', 'international', 'low-confidence'].includes(activeTab) && groupedSignals.thisMonth.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="outline">This Month</Badge>
@@ -733,7 +736,7 @@ export const SignalHistory = () => {
               )}
 
               {/* Older but not historical (Last 90 Days) */}
-              {!['historical', 'international', 'review'].includes(activeTab) && groupedSignals.recent.length > 0 && (
+              {!['older-intel', 'international', 'low-confidence'].includes(activeTab) && groupedSignals.recent.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="outline" className="opacity-70">Last 90 Days</Badge>
@@ -745,13 +748,13 @@ export const SignalHistory = () => {
                 </div>
               )}
 
-              {/* Historical signals */}
-              {['all', 'historical'].includes(activeTab) && groupedSignals.historical.length > 0 && (
+              {/* Older Intel signals */}
+              {['all', 'older-intel'].includes(activeTab) && groupedSignals.historical.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="outline" className="opacity-60 border-amber-500 text-amber-600">
                       <Archive className="w-3 h-3 mr-1" />
-                      Historical
+                      Older Intel
                     </Badge>
                     <span className="text-xs text-muted-foreground">{groupedSignals.historical.length} signals (90+ days old)</span>
                   </div>

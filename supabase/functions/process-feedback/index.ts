@@ -194,6 +194,42 @@ async function handleSignalFeedback(supabase: ReturnType<typeof createServiceCli
             last_updated: new Date().toISOString(),
           }, { onConflict: 'source_name' });
 
+          // ═══ PHASE 2 CONNECTION: also update source_credibility_scores ═══
+          // ai-decision-engine composite gate reads from source_credibility_scores.
+          // Signal feedback must update this table too, or signal-level learning
+          // never reaches the incident creation threshold.
+          // Bayesian update: accurate → score rises toward 0.98; inaccurate → falls toward 0.05
+          try {
+            const { data: existingCred } = await supabase
+              .from('source_credibility_scores')
+              .select('current_credibility, total_signals, confirmed_signals, refuted_signals')
+              .eq('source_key', src.name)
+              .maybeSingle();
+
+            const oldCred = existingCred?.current_credibility ?? 0.65;
+            const newCred = isAccurate
+              ? Math.min(0.98, oldCred + (1 - oldCred) * 0.15)
+              : Math.max(0.05, oldCred - oldCred * 0.20);
+            const credTotal = (existingCred?.total_signals ?? 0) + 1;
+            const credConfirmed = (existingCred?.confirmed_signals ?? 0) + (isAccurate ? 1 : 0);
+            const credRefuted = (existingCred?.refuted_signals ?? 0) + (isAccurate ? 0 : 1);
+
+            await supabase.from('source_credibility_scores').upsert({
+              source_key: src.name,
+              prior_credibility: existingCred?.current_credibility ?? 0.65,
+              current_credibility: Math.round(newCred * 1000) / 1000,
+              total_signals: credTotal,
+              confirmed_signals: credConfirmed,
+              refuted_signals: credRefuted,
+              last_updated_at: new Date().toISOString(),
+            }, { onConflict: 'source_key' });
+
+            console.log(`[Phase2] source_credibility_scores updated for ${src.name}: ${oldCred.toFixed(3)} → ${newCred.toFixed(3)}`);
+          } catch (credErr) {
+            console.error('[Phase2] Failed to update source_credibility_scores:', credErr);
+            // Non-blocking — source_reliability_metrics update succeeded, this is additive
+          }
+
           console.log(`[SourceReliability] Updated ${src.name}: reliability=${reliability.toFixed(2)} (${accurate}/${total})`);
         }
       }
@@ -230,6 +266,48 @@ async function handleIncidentFeedback(supabase: ReturnType<typeof createServiceC
     // Recalibrate analyst accuracy weights now that we have new outcome data
     await supabase.rpc('calibrate_analyst_accuracy');
     console.log(`[FeedbackLoop] Recorded incident outcome (${outcomeType}) and recalibrated analyst accuracy`);
+
+    // Phase 3D: Update learning profiles from incident outcomes
+    // False positive closures reinforce rejected_signal_patterns.
+    // Legitimate incident closures reinforce approved_signal_patterns.
+    // This means the AI has real-world outcome validation, not just analyst opinion.
+    try {
+      const { data: incidentData } = await supabase
+        .from('incidents')
+        .select('signal_id, category')
+        .eq('id', objectId)
+        .maybeSingle();
+
+      const linkedSignalId = incidentData?.signal_id;
+      if (linkedSignalId) {
+        const { data: signal } = await supabase
+          .from('signals')
+          .select('normalized_text, category, entity_tags')
+          .eq('id', linkedSignalId)
+          .maybeSingle();
+
+        if (signal?.normalized_text) {
+          const text = signal.normalized_text.toLowerCase();
+          const words = text.split(/\s+/).filter((w: string) => w.length > 4);
+          const keywords: Record<string, number> = {};
+          words.slice(0, 15).forEach((w: string) => { keywords[w] = 1; });
+          const cat = signal.category || incidentData?.category;
+          if (cat) keywords[`category:${cat}`] = 3;
+          (signal.entity_tags || []).forEach((tag: string) => {
+            keywords[`entity:${tag.toLowerCase()}`] = 2;
+          });
+
+          const profileType = isFalsePositive
+            ? 'rejected_signal_patterns'
+            : 'approved_signal_patterns';
+          await upsertLearningProfile(supabase, profileType, keywords);
+          console.log(`[Phase3D] Updated ${profileType} from incident outcome (${outcomeType})`);
+        }
+      }
+    } catch (learningErr) {
+      // Non-blocking — outcome already recorded, learning is additive
+      console.error('[Phase3D] Learning profile update failed:', learningErr);
+    }
   } catch (err) {
     console.error('[FeedbackLoop] Error recording incident outcome:', err);
   }
