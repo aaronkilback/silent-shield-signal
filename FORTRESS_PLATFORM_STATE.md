@@ -523,6 +523,37 @@ Deployed Functions on project kpuqukppbmwebiptqmog: monitor-canadian-sources
 
 ---
 
+---
+
+## 22. REGRESSION PREVENTION (April 10, 2026)
+
+### Root cause: AEGIS report download broken (April 10, 2026)
+- **Commit:** `c498bcf` (Feb 6, 2026) — switched upload target from `tenant-files` → `osint-media` and replaced `createSignedUrl` with `getPublicUrl`, incorrectly assuming `osint-media` was a public bucket.
+- **Symptom:** Clicking a generated report link returned `{"statusCode":"400","error":"InvalidJWT","message":"signature verification failed"}`.
+- **Fix:** Replaced `getPublicUrl` with `createSignedUrl(path, 604800)` in `dashboard-ai-assistant/index.ts` (both primary and fallback report URL paths).
+
+### Additional fixes (same session)
+- `generate-briefing-audio/index.ts`: Same `getPublicUrl` → `createSignedUrl` fix on `tenant-files` bucket.
+
+### Known remaining `getPublicUrl` instances (audit April 10, 2026)
+| File | Line | Bucket | Status |
+|---|---|---|---|
+| `dashboard-ai-assistant/index.ts` | ~1323 | `entity-photos` | Needs investigation — bucket visibility unknown |
+| `dashboard-ai-assistant/index.ts` | ~7251 | `osint-media` | Bulletin header images — base64 fallback exists; not critical |
+| `generate-agent-avatar/index.ts` | ~73 | `agent-avatars` | URL stored to DB — signed URL would expire; needs different approach |
+
+### Prevention measures implemented
+1. **CLAUDE.md bucket registry** — Explicit table of all buckets with their visibility and required URL method. Rule: `getPublicUrl` banned unless bucket appears in the public list.
+2. **Storage URL smoke test in `test-aegis-tools.mjs`** — After running the AEGIS tool health check, the script now generates a real report and verifies the `view_url` returns HTTP 200. Catches signed-vs-public URL regressions on every health check run.
+3. **`generate-briefing-audio` fix deployed** — Audio briefing URL generation now uses `createSignedUrl`.
+
+### Post-deploy checklist (run after every edge function deploy)
+- [ ] `node scripts/test-aegis-tools.mjs` — confirm pass count ≥ previous baseline
+- [ ] Storage URL smoke test passes (built into the above script)
+- [ ] If the deployed function generates URLs: manually click one and verify it opens
+- [ ] Check `cron_heartbeat` for the function's job name if it's a scheduled function
+- [ ] Verify no new `getPublicUrl` calls on private buckets (grep: `getPublicUrl` in changed files)
+
 *This document reflects verified state as of April 10, 2026. Update after each significant change.*
 
 ---

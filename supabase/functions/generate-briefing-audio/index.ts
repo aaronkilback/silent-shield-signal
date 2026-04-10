@@ -138,13 +138,17 @@ Deno.serve(async (req) => {
       throw new Error(`Upload error: ${uploadError.message}`);
     }
 
-    // Get public URL
-    const { data: urlData } = serviceClient.storage
+    // Create signed URL (tenant-files is a private bucket — getPublicUrl returns broken URLs)
+    const { data: urlData, error: urlError } = await serviceClient.storage
       .from("tenant-files")
-      .getPublicUrl(fileName);
+      .createSignedUrl(fileName, 604800); // 7-day expiry
+
+    if (urlError || !urlData?.signedUrl) {
+      throw new Error(`Failed to create signed URL: ${urlError?.message}`);
+    }
 
     return successResponse({
-      audio_url: urlData.publicUrl,
+      audio_url: urlData.signedUrl,
       duration_estimate: Math.ceil(cleanContent.length / 15), // Rough estimate: ~15 chars/second
       chunks_processed: chunks.length,
     });

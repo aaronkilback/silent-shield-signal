@@ -30,3 +30,38 @@ If one exists, do NOT create a duplicate — update or fix the existing one.
 ```
 node scripts/validate-cron-alignment.mjs
 ```
+
+---
+
+## Storage bucket rules
+
+### NEVER use `getPublicUrl` unless the bucket is in the public list below
+
+`getPublicUrl` generates a URL that only works if the bucket has public access enabled. All FORTRESS buckets are **private** except where explicitly listed. Using `getPublicUrl` on a private bucket produces a URL that returns `InvalidJWT` / 400 when fetched.
+
+**Always use `createSignedUrl(path, expirySeconds)` for private buckets.**
+
+Recommended expiry: `604800` (7 days) for user-facing links, `3600` (1 hour) for transient pipeline use.
+
+### Bucket registry
+
+| Bucket | Visibility | Correct URL method |
+|---|---|---|
+| `tenant-files` | **private** | `createSignedUrl` |
+| `osint-media` | **private** | `createSignedUrl` |
+| `entity-photos` | **private** | `createSignedUrl` |
+| `agent-avatars` | **private** | `createSignedUrl` (or store path + generate on read) |
+
+> If you add a new bucket, update this table before writing any URL generation code.
+> If a bucket needs to be made public, document that decision here with the reason.
+
+### Post-deploy smoke test
+
+After deploying any function that generates download/view URLs, run:
+```
+node scripts/test-aegis-tools.mjs --tool generate_fortress_report
+```
+Then verify the `view_url` in the output is reachable (HTTP 200). The full smoke test suite also checks this automatically:
+```
+node scripts/test-aegis-tools.mjs
+```

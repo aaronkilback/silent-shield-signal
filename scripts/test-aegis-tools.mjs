@@ -281,6 +281,48 @@ const EDGE_TESTS = [
   },
 ];
 
+// ── Storage URL Smoke Tests ───────────────────────────────────────────────────
+// Verify that URLs returned by report/document generators are actually reachable.
+// These catch regressions where getPublicUrl is used on a private bucket (returns 400/InvalidJWT).
+console.log(`\n${"─".repeat(70)}`);
+console.log(`STORAGE URL SMOKE TESTS`);
+console.log(`${"─".repeat(70)}\n`);
+
+try {
+  // Generate a real report and verify the view_url is reachable
+  const reportCtrl = new AbortController();
+  const reportTimeout = setTimeout(() => reportCtrl.abort(), 45000);
+  const reportRes = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${SERVICE_ROLE_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ tool_test: true, tool_name: "generate_fortress_report", args: { report_type: "risk_snapshot" } }),
+    signal: reportCtrl.signal,
+  });
+  clearTimeout(reportTimeout);
+  const reportJson = await reportRes.json();
+  const viewUrl = reportJson?.result?.view_url || reportJson?.result?.report_url;
+  if (!viewUrl) {
+    console.log(`  ❌ generate_fortress_report url check  no view_url in result — tool may have failed: ${JSON.stringify(reportJson).substring(0, 120)}`);
+  } else {
+    // Fetch the URL — expect HTTP 200
+    const urlCtrl = new AbortController();
+    const urlTimeout = setTimeout(() => urlCtrl.abort(), 15000);
+    try {
+      const urlRes = await fetch(viewUrl, { signal: urlCtrl.signal });
+      clearTimeout(urlTimeout);
+      const ok = urlRes.status === 200;
+      const mark = ok ? "✅" : "❌";
+      const label = "generate_fortress_report view_url".padEnd(46);
+      console.log(`  ${mark} ${label}  HTTP ${urlRes.status}${ok ? " — signed URL reachable" : " — URL broken (check bucket visibility / signed vs public URL)"}`);
+    } catch (fetchErr) {
+      clearTimeout(urlTimeout);
+      console.log(`  ❌ ${"generate_fortress_report view_url".padEnd(46)}  FETCH ERROR: ${fetchErr.message}`);
+    }
+  }
+} catch (e) {
+  console.log(`  ❌ ${"generate_fortress_report url check".padEnd(46)}  ERROR: ${e.message}`);
+}
+
 for (const test of EDGE_TESTS) {
   try {
     const ctrl = new AbortController();
