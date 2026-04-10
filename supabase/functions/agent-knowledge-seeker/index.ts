@@ -289,6 +289,20 @@ async function huntOneAngle(params: {
 
     const fullText = content + (citations.length ? `\n\nSources:\n${citations.join('\n')}` : '');
 
+    // When the practitioners angle succeeds, auto-discover and create expert profiles
+    if (angleConfig.angle === 'practitioners') {
+      autoDiscoverExperts({
+        practitionerContent: fullText,
+        specialty,
+        agentCallSign: agent.call_sign,
+        supabase,
+      }).then(r => {
+        if (r.discovered > 0) {
+          console.log(`[auto-discover] ${agent.call_sign}: added ${r.discovered} new experts: ${r.names.join(', ')}`);
+        }
+      }).catch(() => {});
+    }
+
     // AI extraction into structured entries
     const entries = await extractStructuredEntries(fullText, specialty, angleConfig.angle, agent);
 
@@ -451,6 +465,132 @@ async function runPractitionerSourceHunts(params: {
   }));
 
   return results;
+}
+
+// ── Auto-discover experts from practitioners angle ──────────────────────────
+// When the 'practitioners' angle returns content, extract named experts and
+// auto-create expert_profiles rows + trigger ingest-expert-media for each new one.
+// Capped at 3 new profiles per agent per run to prevent runaway expansion.
+async function autoDiscoverExperts(params: {
+  practitionerContent: string;
+  specialty: string;
+  agentCallSign: string;
+  supabase: any;
+}): Promise<{ discovered: number; skipped: number; names: string[] }> {
+  const { practitionerContent, specialty, agentCallSign, supabase } = params;
+
+  // Extract structured expert data from Perplexity response
+  let candidates: Array<{
+    name: string;
+    title: string;
+    linkedin_url: string | null;
+    website_url: string | null;
+    expertise_domains: string[];
+    ingestion_topics: string[];
+    why_relevant: string;
+  }> = [];
+
+  try {
+    const result = await callAiGateway({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `Extract up to 3 real, named security/intelligence practitioners from the following text. For each person return:
+- "name": full name (string)
+- "title": their most recent known title/role (string)
+- "linkedin_url": LinkedIn profile URL if mentioned, else null
+- "website_url": personal site or company site if mentioned, else null
+- "expertise_domains": 2-4 domain tags from: [cyber, physical_security, executive_protection, crisis_management, threat_intelligence, travel_security, counter_terrorism, geopolitical, fraud_social_engineering, insider_threat, maritime_security]
+- "ingestion_topics": 4-6 specific topic strings to research about this expert (e.g. "surveillance detection methodology", "protective intelligence framework")
+- "why_relevant": one sentence on why they are valuable to follow
+
+Return ONLY a JSON array. If fewer than 3 clear practitioners are named, return fewer. Do not invent people.`,
+        },
+        {
+          role: 'user',
+          content: practitionerContent.slice(0, 4000),
+        },
+      ],
+      functionName: `auto-discover-experts-${agentCallSign}`,
+      retries: 1,
+      extraBody: { max_completion_tokens: 1500 },
+    });
+
+    if (result.error || !result.content) return { discovered: 0, skipped: 0, names: [] };
+    const cleaned = result.content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+    const parsed = JSON.parse(cleaned);
+    candidates = Array.isArray(parsed) ? parsed.slice(0, 3) : [];
+  } catch (_) {
+    return { discovered: 0, skipped: 0, names: [] };
+  }
+
+  if (candidates.length === 0) return { discovered: 0, skipped: 0, names: [] };
+
+  // Fetch existing expert names to avoid duplicates
+  const { data: existingProfiles } = await supabase
+    .from('expert_profiles')
+    .select('name');
+  const existingNames = new Set(
+    (existingProfiles || []).map((p: any) => p.name.toLowerCase().trim())
+  );
+
+  let discovered = 0;
+  let skipped = 0;
+  const newNames: string[] = [];
+
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+  for (const candidate of candidates) {
+    if (!candidate.name || candidate.name.length < 3) { skipped++; continue; }
+
+    const normalised = candidate.name.toLowerCase().trim();
+    if (existingNames.has(normalised)) {
+      console.log(`[auto-discover] Skipping existing expert: ${candidate.name}`);
+      skipped++;
+      continue;
+    }
+
+    const { data: inserted, error: insertErr } = await supabase
+      .from('expert_profiles')
+      .insert({
+        name: candidate.name,
+        title: candidate.title || null,
+        linkedin_url: candidate.linkedin_url || null,
+        website_url: candidate.website_url || null,
+        expertise_domains: candidate.expertise_domains || [],
+        ingestion_topics: candidate.ingestion_topics || [],
+        notes: `[AUTO-DISCOVERED by ${agentCallSign} — ${new Date().toISOString().slice(0, 10)}] ${candidate.why_relevant}`,
+        is_active: true,
+        auto_discovered: true,
+        discovered_by_agent: agentCallSign,
+      })
+      .select('id')
+      .single();
+
+    if (insertErr) {
+      console.error(`[auto-discover] Failed to insert ${candidate.name}:`, insertErr.message);
+      skipped++;
+      continue;
+    }
+
+    existingNames.add(normalised); // prevent re-adding within same run
+    discovered++;
+    newNames.push(candidate.name);
+    console.log(`[auto-discover] Created expert profile: ${candidate.name} (${candidate.title})`);
+
+    // Fire background ingest-expert-media for immediate topic ingestion
+    if (supabaseUrl && serviceKey && inserted?.id) {
+      fetch(`${supabaseUrl}/functions/v1/ingest-expert-media`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` },
+        body: JSON.stringify({ expert_profile_id: inserted.id, topics_only: true }),
+      }).catch(() => {});
+    }
+  }
+
+  return { discovered, skipped, names: newNames };
 }
 
 function deriveDomain(specialty: string): string {
