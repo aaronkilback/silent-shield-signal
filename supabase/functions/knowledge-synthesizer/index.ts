@@ -310,11 +310,14 @@ async function synthesizeOperationalBeliefs(params: {
   ] = await Promise.all([
     supabase
       .from('signals')
-      .select('title, description, category, rule_category, severity, created_at, entity_tags')
+      .select('title, description, category, rule_category, severity, composite_confidence, relevance_score, created_at, entity_tags')
       .is('deleted_at', null)
       .eq('is_test', false)
+      .neq('severity', 'low')                    // low-severity signals add noise, not belief-worthy
+      .gte('composite_confidence', 0.45)          // ingest floor — anything below this shouldn't have reached the DB
+      .gte('relevance_score', 20)                 // minimum relevance before a signal informs a belief
       .gte('created_at', since)
-      .order('created_at', { ascending: false })
+      .order('composite_confidence', { ascending: false })  // highest-confidence signals first
       .limit(100),
     supabase
       .from('incidents')
@@ -387,6 +390,13 @@ async function synthesizeOperationalBeliefs(params: {
       });
 
       // All agents see all incidents and high-threat entities
+      // Require a minimum evidence base before forming beliefs.
+      // A single signal or one open incident is not a pattern.
+      const evidenceCount = domainSignals.length + incidents.length;
+      if (evidenceCount < 3) {
+        return { callSign, status: `skipped:insufficient_evidence (${domainSignals.length} signals + ${incidents.length} incidents)` };
+      }
+
       const combinedData = buildOperationalSummary({
         callSign,
         specialty,
@@ -527,19 +537,21 @@ async function extractOperationalBeliefs(
       {
         role: 'system',
         content: `You are ${callSign}, an intelligence analyst specializing in "${specialty}".
-Extract 3-5 analytical BELIEFS from this operational picture from a live security platform.
+Extract 2-4 analytical BELIEFS from this operational picture drawn from a live security platform.
 
-Beliefs are durable analytical conclusions with an assigned confidence level — NOT just restatements of the data.
-They should reflect patterns, trends, escalation trajectories, and threat assessments you would brief to an executive.
+STRICT QUALITY RULES — violating any of these means returning an empty array []:
+1. A belief MUST be supported by at least 3 independent signals or 1 active incident + 2 signals. Never form a belief from a single data point.
+2. Do NOT restate facts. "There are ransomware signals" is not a belief.
+3. Assign confidence honestly: 0.60-0.70 = emerging pattern (2-4 signals), 0.71-0.85 = established pattern (5+ signals or active incident), 0.86+ = high-confidence (multiple corroborating sources).
+4. If the data is too sparse or ambiguous to support a meaningful conclusion, return [].
+5. Never extrapolate beyond what the evidence shows. Hedge appropriately.
 
-Good: "Coastal GasLink-related protest activity is showing weekly escalation with increasing tactical coordination — kinetic confrontation is probable within 30 days."
+Good: "Coastal GasLink-related protest activity has shown 3× frequency increase over 30 days with growing tactical coordination — kinetic confrontation elevated probability." (confidence: 0.72)
 Bad: "There are protest signals in the database."
+Bad: "A cyberattack will occur." (unsupported extrapolation)
 
-Good: "Ransomware groups are increasingly targeting energy-sector OT/SCADA systems with pre-positioning activity weeks before detonation — dwell time is compressing."
-Bad: "There are ransomware signals."
-
-Return ONLY a JSON array:
-[{"hypothesis":"...","belief_type":"threat_model|pattern|actor_assessment|geographic_risk|tactical_insight","confidence":0.78}]`,
+Return ONLY a JSON array (empty array [] if evidence is insufficient):
+[{"hypothesis":"...","belief_type":"threat_model|pattern|actor_assessment|geographic_risk|tactical_insight","confidence":0.72}]`,
       },
       {
         role: 'user',
@@ -575,7 +587,15 @@ async function extractAgentBeliefs(
         role: 'system',
         content: `You are an intelligence analyst. Extract 3-5 analytical BELIEFS from this agent's knowledge base.
 
-Beliefs are conclusions, not facts. Good: "AI-driven tools compress attacker dwell time to under 48h, making reactive defense insufficient." Bad: "Cyber threats are growing."
+Beliefs are durable analytical conclusions — NOT facts or summaries of what sources say.
+Good: "AI-driven tools compress attacker dwell time to under 48h, making reactive defense insufficient."
+Bad: "Cyber threats are growing." (too vague)
+Bad: "According to Mike Baker..." (citation restatement, not a belief)
+
+Quality rules:
+- Each belief must be grounded in multiple knowledge entries, not a single source
+- Confidence 0.60-0.75 = established expert consensus; 0.76-0.90 = near-universal doctrine
+- If fewer than 3 entries exist, return []
 
 Respond with ONLY a JSON array, no other text:
 [{"hypothesis":"...","belief_type":"threat_model|pattern|actor_assessment|geographic_risk|tactical_insight","confidence":0.85}]`,
