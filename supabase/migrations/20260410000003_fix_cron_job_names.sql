@@ -151,7 +151,7 @@ SELECT cron.schedule(
       'Authorization', 'Bearer ' || current_setting('app.settings.service_role_key', true),
       'Content-Type', 'application/json'
     ),
-    body := '{"mode": "vulnerability_scan"}'::jsonb
+    body := '{"action": "run_vulnerability_scan"}'::jsonb
   )
   $$
 );
