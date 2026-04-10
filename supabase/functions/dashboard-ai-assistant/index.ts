@@ -9766,7 +9766,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         const finalResp1 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_REPORT_PRESENTER_PROMPT }, ...processedMessages, firstMessage, ...forcedToolResults1], stream: true }),
+          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_REPORT_PRESENTER_PROMPT }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_generate_fortress_report", type: "function", function: { name: "generate_fortress_report", arguments: "{}" } }] }, ...forcedToolResults1], stream: true }),
         }, AI_TIMEOUT_MS);
         if (finalResp1.ok) await pipeResponseBody(finalResp1.body!);
         return;
@@ -9781,7 +9781,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         const finalResp2 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_TOOL_SUMMARIZER_PROMPT }, ...processedMessages, firstMessage, ...forcedToolResults2], stream: true }),
+          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_TOOL_SUMMARIZER_PROMPT }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_inject_test_signal", type: "function", function: { name: "inject_test_signal", arguments: "{}" } }] }, ...forcedToolResults2], stream: true }),
         }, AI_TIMEOUT_MS);
         if (finalResp2.ok) await pipeResponseBody(finalResp2.body!);
         return;
@@ -9860,7 +9860,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
           const finalResp3 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
             method: "POST",
             headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_REPORT_PRESENTER_PROMPT }, ...processedMessages, firstMessage, ...forcedToolResults3], stream: true }),
+            body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_REPORT_PRESENTER_PROMPT }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_generate_report", type: "function", function: { name: "generate_fortress_report", arguments: "{}" } }] }, ...forcedToolResults3], stream: true }),
           }, AI_TIMEOUT_MS);
           if (finalResp3.ok) await pipeResponseBody(finalResp3.body!);
           return;
@@ -9876,7 +9876,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         const finalResp4 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_AGENT_CREATION_PROMPT }, ...processedMessages, firstMessage, ...forcedToolResults4], stream: true }),
+          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_AGENT_CREATION_PROMPT }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_create_agent", type: "function", function: { name: "create_agent", arguments: "{}" } }] }, ...forcedToolResults4], stream: true }),
         }, AI_TIMEOUT_MS);
         if (finalResp4.ok) await pipeResponseBody(finalResp4.body!);
         return;
@@ -9899,7 +9899,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         const finalResp5 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_DATA_PRESENTER_PROMPT }, ...processedMessages, firstMessage, ...forcedToolResults5], stream: true }),
+          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: AEGIS_DATA_PRESENTER_PROMPT }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_query_fortress_data", type: "function", function: { name: "query_fortress_data", arguments: "{}" } }] }, ...forcedToolResults5], stream: true }),
         }, AI_TIMEOUT_MS);
         if (finalResp5.ok) await pipeResponseBody(finalResp5.body!);
         return;
