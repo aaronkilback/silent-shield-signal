@@ -7474,25 +7474,25 @@ Return a JSON object (no markdown, only valid JSON):
           let downloadUrl = "";
           let viewUrl = "";
           if (!uploadError) {
-            // Public bucket - get direct public URL for viewing
-            const { data: publicUrlData } = serviceClient.storage
+            // Use signed URL (7 day expiry) — works regardless of bucket visibility
+            const { data: signedData } = await serviceClient.storage
               .from("osint-media")
-              .getPublicUrl(storagePath);
-            viewUrl = publicUrlData?.publicUrl || "";
+              .createSignedUrl(storagePath, 604800);
+            viewUrl = signedData?.signedUrl || "";
             downloadUrl = viewUrl;
           } else {
             console.error("Failed to upload bulletin to storage:", uploadError);
             // Fallback: try tenant-files bucket with signed URL
             const { error: fallbackError } = await serviceClient.storage
               .from("tenant-files")
-              .upload(storagePath, htmlBytes, { 
-                contentType: "text/html; charset=utf-8", 
+              .upload(storagePath, htmlBytes, {
+                contentType: "text/html; charset=utf-8",
                 upsert: true,
               });
             if (!fallbackError) {
               const { data: signedData } = await serviceClient.storage
                 .from("tenant-files")
-                .createSignedUrl(storagePath, 3600, { download: `${filename}.html` });
+                .createSignedUrl(storagePath, 604800, { download: `${filename}.html` });
               downloadUrl = signedData?.signedUrl || "";
             }
           }
