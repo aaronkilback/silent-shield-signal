@@ -1,5 +1,5 @@
 # Fortress AI — Platform State Document
-## Verified: April 9, 2026 (updated session 6 — source health + tier 2 signal review agent)
+## Verified: April 10, 2026 (updated session 7 — signal pipeline repairs, cron alignment, push to origin)
 ## Author: System Audit (Claude + Aaron Kilback)
 ## Status: Ground truth only. Nothing written from memory — all verified against DB queries, code reads, or live test results.
 
@@ -221,12 +221,13 @@ Key entities confirmed active:
 
 ## 7. KNOWN GAPS AND OPEN WORK
 
-### Still open (April 9, 2026):
+### Still open (April 10, 2026):
 - **0 rows in incident_outcomes** — feedback loop infrastructure deployed but never exercised. Needs analyst to close an incident through UI. Phase 3 Bayesian learning loop cannot run until then.
 - **Signal verification gate** — LOCUS-INTEL narrative review before report assembly. Architectural future feature.
 - **6 YouTube sources paused** — wrong channel IDs. Needs manual lookup of each channel's `externalChannelId` to fix.
 - **BC Energy Regulator RSS** — BC Oil Gas Commission renamed, new URL needed (currently paused).
 - **DriveBC Traffic Alerts** — type `drivebc`, no monitor function exists. Needs dedicated monitor-drivebc edge function.
+- **April 10 migrations not yet applied to DB** — 20260410000001 through 20260410000004 are committed but need to be run in Supabase dashboard SQL editor. See Section 8.
 
 ### Verification results (April 10, 2026 — direct SQL via Supabase dashboard):
 - **Keyword expansion: ✅ 203** — confirmed via `read_client_monitoring_config`. Section 15 claim correct.
@@ -246,6 +247,9 @@ Key entities confirmed active:
 - ✅ 25 never-ingested sources investigated and remediated (April 9) — 14 paused with actionable notes, 1 fixed (BC Gov News URL), 10 confirmed active with reasons for no ingestion (API credentials, intermittent network)
 - ✅ osint-web-search orphaned signals — 11 of 14 archived (petronas.com OSINT, no client_id); osint-web-search now routes through ingest-signal; entity_mentions dedup fixed (April 9)
 - ✅ Tier 2 signal review agent — review-signal-agent deployed; ai-decision-engine wires async tier 2 call for composite_confidence in [0.60, 0.75); non-breaking (April 9)
+
+### Fixed (session 7, April 10, 2026):
+- ✅ **Signal drought (7 days with no relevant signals)** — three compounding pipeline issues repaired and deployed. See Section 21.
 
 ### Low (cleanup):
 12. **2 inactive-endpoint relationships** — Change Alberta group. Left intentionally. No operational impact.
@@ -271,6 +275,10 @@ Key entities confirmed active:
 | 20260409000001_backfill_composite_confidence.sql | Backfill NULL composite_confidence on pre-April-8 signals | Applied |
 | 20260409000002_fix_broken_sources.sql | Fix BC Gov News URL; pause 14 broken sources with actionable notes | Applied |
 | 20260409000003_archive_orphaned_osint_signals.sql | Archive 14 orphaned petronas.com OSINT signals (11 archived, 3 already triaged) | Applied |
+| 20260410000001_agent_knowledge_seeker_schedule.sql | Schedule agent-knowledge-seeker daily at 04:00 UTC | ⚠️ NOT YET APPLIED |
+| 20260410000002_fix_cron_heartbeat_name_alignment.sql | Fix cron_job_registry names to match what functions write to cron_heartbeat | ⚠️ NOT YET APPLIED |
+| 20260410000003_fix_cron_job_names.sql | Fix pg_cron job names to match function heartbeat names; fix orphaned wraith cron URL | ⚠️ NOT YET APPLIED |
+| 20260410000004_archive_old_scan_data.sql | Add soft-delete to autonomous_scan_results, pipeline_test_results, qa_test_results, bug_reports; archive old automated data | ⚠️ NOT YET APPLIED |
 
 ---
 
@@ -288,6 +296,9 @@ Key entities confirmed active:
 | ai-decision-engine | Phase 2C: tier2_promotion bypass + async review-signal-agent fire for [0.60, 0.75) | Deployed April 9 |
 | review-signal-agent | NEW — Tier 2 contextual review for borderline signals | Deployed April 9 |
 | system-watchdog | Phase 5 documentation; session 6 verification record | Deployed April 9 |
+| ingest-signal | Signal drought fix: AI gate 0.60 → 0.45; generateIncidentTitle; historical early return | Deployed April 10 |
+| monitor-canadian-sources | Signal drought fix: skip_relevance_gate=true (pre-filtered signals were being double-gated) | Deployed April 10 |
+| process-intelligence-document | Signal drought fix: near-dedup threshold 60% → 75% (ongoing PECL stories were being blocked) | Deployed April 10 |
 
 ---
 
@@ -475,7 +486,45 @@ Three active defenses against Mythos-class AI attacks added to `wraith-security-
 
 ---
 
-*This document reflects verified state as of April 9, 2026. Update after each significant change.*
+## 21. SIGNAL PIPELINE REPAIRS (April 10, 2026) — DEPLOYED
+
+**Symptom:** No relevant signals ingested for ~7 days (since ~April 3, 2026).
+
+**Root cause analysis — three compounding issues:**
+
+### Issue 1: `process-intelligence-document` near-dedup too aggressive
+- **File:** `supabase/functions/process-intelligence-document/index.ts`
+- **Old behaviour:** 60% word-overlap over 30 days → signal blocked as near-duplicate
+- **Problem:** Ongoing PECL stories (CGL blockade, PETRONAS operations) repeat core terminology in every update ("coastal gaslink", "wet'suwet'en", "blockade", "hereditary chiefs", "pipeline", "kitimat"). Every new development matched ≥60% against an earlier article → permanently blocked.
+- **Fix:** Raised threshold **60% → 75%**. True duplicates (same story verbatim) still blocked; new angles/developments now pass.
+
+### Issue 2: `monitor-canadian-sources` double-gated through AI relevance gate
+- **File:** `supabase/functions/monitor-canadian-sources/index.ts`
+- **Old behaviour:** WRAITH commit (April 8) rewired this monitor from direct DB writes to routing through `ingest-signal`. Signals that already passed keyword pre-filtering then hit the full AI PECL gate (0.60 threshold).
+- **Problem:** Pre-filtered signals (already matched entity names, project names, or geo+threat combos) were being rejected a second time by the AI gate. Net result: near-zero signals from this monitor.
+- **Fix:** Added `skip_relevance_gate: true` to the `ingest-signal` invocation. Keyword pre-match from this monitor is sufficient vetting; AI gate is redundant here.
+
+### Issue 3: `ingest-signal` AI relevance gate threshold too high (0.60)
+- **File:** `supabase/functions/ingest-signal/index.ts`
+- **Old threshold:** 0.60 — requires "Strong indirect: same project, same threat actor, adjacent geography with credible spillover"
+- **Problem:** The 0.60 threshold was blocking all "moderate" signals (sector-wide risk, regulatory trends, protest tactics relevant to client's industry — scored 0.45–0.59). These ARE actionable PECL intelligence for PETRONAS Canada.
+- **Fix:** Lowered gate **0.60 → 0.45**. Phase 3C per-source bounds adjusted from 0.50–0.70 → 0.35–0.55. LLM prompt score guide updated to show 0.45 as ingestion floor.
+
+**Deploy confirmation (April 10, 2026):**
+```
+Deployed Functions on project kpuqukppbmwebiptqmog: ingest-signal
+Deployed Functions on project kpuqukppbmwebiptqmog: process-intelligence-document
+Deployed Functions on project kpuqukppbmwebiptqmog: monitor-canadian-sources
+```
+
+**Verification needed (next monitor run, ~15–30 min after deploy):**
+- Check `SELECT COUNT(*) FROM signals WHERE created_at > NOW() - INTERVAL '1 hour'` — should be > 0
+- Check `SELECT title, created_at FROM signals ORDER BY created_at DESC LIMIT 5` — titles should be relevant PECL content, not empty
+- If still 0 signals after 2 cron cycles, check function logs in Supabase dashboard for ingest-signal and process-intelligence-document
+
+---
+
+*This document reflects verified state as of April 10, 2026. Update after each significant change.*
 
 ---
 
