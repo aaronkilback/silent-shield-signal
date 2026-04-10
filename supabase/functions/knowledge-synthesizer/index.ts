@@ -194,7 +194,21 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── 2. CROSS-DOMAIN CONNECTIONS (batches of 4 agents) ────────────
+    // ── 2. OPERATIONAL BELIEF SYNTHESIS ──────────────────────────────
+    // Forms beliefs from live platform data: signals, incidents, entities,
+    // travel alerts. Runs when mode includes operational data.
+    let operationalBeliefsCreated = 0;
+    let operationalBeliefsUpdated = 0;
+    if (mode === 'all' || mode === 'operational') {
+      const opResult = await synthesizeOperationalBeliefs({ supabase, agentKeys, since_days, debug });
+      operationalBeliefsCreated = opResult.created;
+      operationalBeliefsUpdated = opResult.updated;
+      beliefsCreated += opResult.created;
+      beliefsUpdated += opResult.updated;
+      if (debug) diagnostics['__operational'] = opResult.diagnostics;
+    }
+
+    // ── 3. CROSS-DOMAIN CONNECTIONS (batches of 4 agents) ────────────
     const connDebug: any[] = [];
     if (mode !== 'beliefs' && agentKeys.length >= 2) {
       const CROSS_BATCH = 4;
@@ -214,10 +228,12 @@ Deno.serve(async (req) => {
 
     const response: any = {
       message: 'Knowledge synthesis complete',
-      entries_processed: entries.length,
+      entries_processed: (entries || []).length,
       agents_synthesized: agentKeys.length,
       beliefs_created: beliefsCreated,
       beliefs_updated: beliefsUpdated,
+      operational_beliefs_created: operationalBeliefsCreated,
+      operational_beliefs_updated: operationalBeliefsUpdated,
       connections_created: connectionsCreated,
     };
     if (debug) { response.diagnostics = diagnostics; response.conn_debug = connDebug; }
@@ -255,6 +271,294 @@ Deno.serve(async (req) => {
     return errorResponse(message, 500);
   }
 });
+
+// ── Domain → signal category routing ─────────────────────────────────────
+const DOMAIN_SIGNAL_CATEGORIES: Record<string, string[]> = {
+  cyber:                    ['cyber', 'malware', 'phishing', 'intrusion', 'data_exfil', 'ddos', 'ransomware', 'social_engineering'],
+  physical_security:        ['physical', 'sabotage', 'extremism', 'protest', 'violence'],
+  executive_protection:     ['physical', 'extremism', 'protest', 'sabotage', 'espionage'],
+  insider_threat:           ['insider_threat', 'social_engineering', 'fraud', 'espionage'],
+  counter_terrorism:        ['extremism', 'sabotage', 'physical', 'espionage'],
+  threat_intelligence:      ['cyber', 'espionage', 'sabotage', 'extremism', 'physical', 'malware', 'ransomware'],
+  fraud_social_engineering: ['fraud', 'social_engineering', 'phishing', 'insider_threat'],
+  geopolitical:             ['espionage', 'extremism', 'protest', 'sabotage'],
+  travel_security:          ['physical', 'extremism', 'protest', 'sabotage', 'espionage'],
+  maritime_security:        ['physical', 'sabotage', 'espionage'],
+  crisis_management:        ['physical', 'sabotage', 'extremism', 'protest', 'ransomware', 'ddos'],
+};
+
+// ── Operational belief synthesis ──────────────────────────────────────────
+// Pulls 30 days of live platform data (signals, incidents, entities, travel)
+// and forms durable beliefs for each agent based on what the platform is
+// actually observing — not just what experts say in theory.
+async function synthesizeOperationalBeliefs(params: {
+  supabase: any;
+  agentKeys: string[];
+  since_days: number;
+  debug: boolean;
+}): Promise<{ created: number; updated: number; diagnostics: any }> {
+  const { supabase, agentKeys, since_days, debug } = params;
+  const windowDays = Math.max(since_days, 30);
+  const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+
+  // ── Pull all relevant platform data in parallel ───────────────────
+  const [
+    { data: recentSignals },
+    { data: activeIncidents },
+    { data: topEntities },
+    { data: travelAlerts },
+  ] = await Promise.all([
+    supabase
+      .from('signals')
+      .select('title, description, category, rule_category, severity, created_at, entity_tags')
+      .is('deleted_at', null)
+      .eq('is_test', false)
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(100),
+    supabase
+      .from('incidents')
+      .select('title, incident_type, priority, severity, status, opened_at, description')
+      .in('status', ['open', 'investigating'])
+      .is('deleted_at', null)
+      .order('opened_at', { ascending: false })
+      .limit(20),
+    supabase
+      .from('entities')
+      .select('name, type, risk_level, threat_score, description')
+      .is('deleted_at', null)
+      .gte('threat_score', 0.55)
+      .order('threat_score', { ascending: false })
+      .limit(25),
+    supabase
+      .from('travel_alerts')
+      .select('title, severity, location, description, created_at')
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(15)
+      .then((r: any) => r)
+      .catch(() => ({ data: [] })),
+  ]);
+
+  const signals = recentSignals || [];
+  const incidents = activeIncidents || [];
+  const entities = topEntities || [];
+  const travel = travelAlerts || [];
+
+  if (signals.length === 0 && incidents.length === 0 && entities.length === 0) {
+    console.log('[knowledge-synthesizer] No operational data found for belief synthesis');
+    return { created: 0, updated: 0, diagnostics: { skipped: 'no_data' } };
+  }
+
+  console.log(`[knowledge-synthesizer] Operational data: ${signals.length} signals, ${incidents.length} incidents, ${entities.length} entities, ${travel.length} travel alerts`);
+
+  // ── Load agents with specialty for domain matching ────────────────
+  const { data: agentRows } = await supabase
+    .from('ai_agents')
+    .select('call_sign, specialty, mission_scope')
+    .eq('is_active', true);
+
+  const agentSpecialties: Record<string, string> = {};
+  for (const ag of (agentRows || [])) {
+    agentSpecialties[`agent:${ag.call_sign}`] = ag.specialty || '';
+  }
+
+  let totalCreated = 0;
+  let totalUpdated = 0;
+  const diagnostics: any[] = [];
+
+  // Process agents in batches of 4
+  const BATCH = 4;
+  for (let i = 0; i < agentKeys.length; i += BATCH) {
+    const batch = agentKeys.slice(i, i + BATCH);
+    const results = await Promise.allSettled(batch.map(async (agentKey) => {
+      const callSign = agentKey.replace('agent:', '');
+      const specialty = agentSpecialties[agentKey] || '';
+      const domain = deriveDomain(specialty);
+      const relevantCategories = new Set([
+        ...(DOMAIN_SIGNAL_CATEGORIES[domain] || []),
+        ...(DOMAIN_SIGNAL_CATEGORIES['threat_intelligence'] || []), // all agents get cross-cutting intel
+      ]);
+
+      // Filter signals to this agent's domain
+      const domainSignals = signals.filter((s: any) => {
+        const cat = (s.category || s.rule_category || '').toLowerCase();
+        return relevantCategories.has(cat);
+      });
+
+      // All agents see all incidents and high-threat entities
+      const combinedData = buildOperationalSummary({
+        callSign,
+        specialty,
+        domain,
+        signals: domainSignals.slice(0, 30),
+        incidents,
+        entities,
+        travel: (domain === 'travel_security' || domain === 'executive_protection' || domain === 'physical_security') ? travel : [],
+        windowDays,
+      });
+
+      if (combinedData.length < 100) return { callSign, status: 'skipped:insufficient_data' };
+
+      const { beliefs, geminiError } = await extractOperationalBeliefs(callSign, specialty, combinedData);
+      if (geminiError) return { callSign, status: `error:${geminiError}` };
+      if (!beliefs.length) return { callSign, status: 'no_beliefs_extracted' };
+
+      let created = 0, updated = 0;
+      for (const belief of beliefs) {
+        const { data: existing } = await supabase
+          .from('agent_beliefs')
+          .select('id, confidence, evolution_log')
+          .eq('agent_call_sign', callSign)
+          .eq('is_active', true)
+          .ilike('hypothesis', `%${belief.hypothesis.substring(0, 40).replace(/[%_]/g, ' ')}%`)
+          .limit(1);
+
+        if (existing?.length) {
+          const old = existing[0];
+          const newConf = Math.round(((old.confidence * 0.55) + (belief.confidence * 0.45)) * 100) / 100;
+          if (Math.abs(newConf - old.confidence) < 0.02) continue;
+          const log = [...(old.evolution_log || []), {
+            date: new Date().toISOString(),
+            old_confidence: old.confidence,
+            new_confidence: newConf,
+            reason: `Operational evidence update (${domainSignals.length} signals, ${incidents.length} incidents)`,
+          }];
+          await supabase.from('agent_beliefs')
+            .update({ confidence: newConf, last_updated_at: new Date().toISOString(), evolution_log: log })
+            .eq('id', old.id);
+          updated++;
+        } else {
+          await supabase.from('agent_beliefs').insert({
+            agent_call_sign: callSign,
+            hypothesis: belief.hypothesis,
+            belief_type: belief.belief_type || 'pattern',
+            confidence: belief.confidence,
+            related_domains: [domain],
+            evolution_log: [{
+              date: new Date().toISOString(),
+              old_confidence: null,
+              new_confidence: belief.confidence,
+              reason: `Formed from ${domainSignals.length} platform signals, ${incidents.length} active incidents`,
+            }],
+          });
+          created++;
+        }
+      }
+
+      totalCreated += created;
+      totalUpdated += updated;
+      return { callSign, domain, signals_used: domainSignals.length, beliefs_found: beliefs.length, created, updated };
+    }));
+
+    if (debug) {
+      results.forEach((r, idx) => {
+        diagnostics.push(r.status === 'fulfilled' ? r.value : { error: String(r.reason) });
+      });
+    }
+  }
+
+  return { created: totalCreated, updated: totalUpdated, diagnostics };
+}
+
+function buildOperationalSummary(params: {
+  callSign: string;
+  specialty: string;
+  domain: string;
+  signals: any[];
+  incidents: any[];
+  entities: any[];
+  travel: any[];
+  windowDays: number;
+}): string {
+  const { callSign, specialty, domain, signals, incidents, entities, travel, windowDays } = params;
+  const parts: string[] = [];
+
+  parts.push(`OPERATIONAL INTELLIGENCE PICTURE — ${callSign} (${specialty || domain})\nWindow: Last ${windowDays} days\n`);
+
+  if (signals.length > 0) {
+    // Group by category and count severity
+    const byCat: Record<string, { total: number; high: number; titles: string[] }> = {};
+    for (const s of signals) {
+      const cat = s.category || s.rule_category || 'unknown';
+      if (!byCat[cat]) byCat[cat] = { total: 0, high: 0, titles: [] };
+      byCat[cat].total++;
+      if (s.severity === 'critical' || s.severity === 'high') byCat[cat].high++;
+      if (byCat[cat].titles.length < 3) byCat[cat].titles.push(s.title);
+    }
+    const catLines = Object.entries(byCat)
+      .sort((a, b) => b[1].total - a[1].total)
+      .map(([cat, d]) => `  ${cat}: ${d.total} signals (${d.high} high/critical) — e.g. ${d.titles.slice(0, 2).join('; ')}`);
+    parts.push(`RECENT SIGNALS (${signals.length} total, domain-filtered):\n${catLines.join('\n')}`);
+  }
+
+  if (incidents.length > 0) {
+    const incLines = incidents.slice(0, 8).map((i: any) =>
+      `  [${(i.priority || i.severity || 'unknown').toUpperCase()}] ${i.title} (${i.status})`
+    );
+    parts.push(`ACTIVE/INVESTIGATING INCIDENTS (${incidents.length}):\n${incLines.join('\n')}`);
+  }
+
+  if (entities.length > 0) {
+    const entLines = entities.slice(0, 10).map((e: any) =>
+      `  ${e.name} [${e.type}] threat=${e.threat_score?.toFixed(2)} risk=${e.risk_level || 'unknown'}`
+    );
+    parts.push(`HIGH-THREAT ENTITIES (score ≥ 0.55):\n${entLines.join('\n')}`);
+  }
+
+  if (travel.length > 0) {
+    const travLines = travel.slice(0, 5).map((t: any) =>
+      `  [${(t.severity || 'advisory').toUpperCase()}] ${t.location}: ${t.title}`
+    );
+    parts.push(`TRAVEL ALERTS:\n${travLines.join('\n')}`);
+  }
+
+  return parts.join('\n\n');
+}
+
+async function extractOperationalBeliefs(
+  callSign: string,
+  specialty: string,
+  operationalSummary: string
+): Promise<{ beliefs: any[]; geminiError: string | null }> {
+  const result = await callAiGateway({
+    model: 'gpt-4o-mini',
+    messages: [
+      {
+        role: 'system',
+        content: `You are ${callSign}, an intelligence analyst specializing in "${specialty}".
+Extract 3-5 analytical BELIEFS from this operational picture from a live security platform.
+
+Beliefs are durable analytical conclusions with an assigned confidence level — NOT just restatements of the data.
+They should reflect patterns, trends, escalation trajectories, and threat assessments you would brief to an executive.
+
+Good: "Coastal GasLink-related protest activity is showing weekly escalation with increasing tactical coordination — kinetic confrontation is probable within 30 days."
+Bad: "There are protest signals in the database."
+
+Good: "Ransomware groups are increasingly targeting energy-sector OT/SCADA systems with pre-positioning activity weeks before detonation — dwell time is compressing."
+Bad: "There are ransomware signals."
+
+Return ONLY a JSON array:
+[{"hypothesis":"...","belief_type":"threat_model|pattern|actor_assessment|geographic_risk|tactical_insight","confidence":0.78}]`,
+      },
+      {
+        role: 'user',
+        content: operationalSummary.substring(0, 4500),
+      },
+    ],
+    functionName: `op-beliefs-${callSign}`,
+    retries: 1,
+    extraBody: { max_tokens: 1500 },
+    skipGuardrails: true,
+  });
+
+  if (result.error || !result.content) {
+    return { beliefs: [], geminiError: result.error };
+  }
+
+  const beliefs = extractJsonArray(result.content);
+  return { beliefs: beliefs.slice(0, 5), geminiError: null };
+}
 
 async function extractAgentBeliefs(
   callSign: string,
