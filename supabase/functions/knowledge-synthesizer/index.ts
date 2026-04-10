@@ -29,12 +29,16 @@ Deno.serve(async (req) => {
       force = false,
       agent_call_sign,
       since_days = 7,
+      since_hours,              // overrides since_days when set (for post-ingestion triggers)
+      include_human_experts = false, // also fold in human expert entries matched by domain
       debug = false,
       mode = 'all',  // 'beliefs' | 'connections' | 'all'
       max_agents = 999, // cap agent processing for beliefs
     } = body;
 
-    const since = new Date(Date.now() - since_days * 24 * 60 * 60 * 1000).toISOString();
+    const since = since_hours
+      ? new Date(Date.now() - since_hours * 60 * 60 * 1000).toISOString()
+      : new Date(Date.now() - since_days * 24 * 60 * 60 * 1000).toISOString();
 
     let query = supabase
       .from('expert_knowledge')
@@ -49,14 +53,57 @@ Deno.serve(async (req) => {
 
     const { data: entries, error: loadErr } = await query.limit(300);
     if (loadErr) return errorResponse(loadErr.message, 500);
-    if (!entries?.length) return successResponse({ message: 'No entries to synthesize', entries_checked: 0 });
 
-    // Group by agent
+    // ── Load human expert entries (practitioners, ingest-expert-media) ──
+    // These are NOT grouped by agent — instead they are matched to agents
+    // by domain overlap and folded into each relevant agent's entry set.
+    let humanEntries: any[] = [];
+    if (include_human_experts) {
+      const humanSince = new Date(Date.now() - Math.max(since_days, 14) * 24 * 60 * 60 * 1000).toISOString();
+      const { data: he } = await supabase
+        .from('expert_knowledge')
+        .select('id, expert_name, domain, subdomain, knowledge_type, title, content')
+        .gte('created_at', humanSince)
+        .eq('is_active', true)
+        .gte('confidence_score', 0.65)
+        .not('expert_name', 'like', 'agent:%')
+        .order('created_at', { ascending: false })
+        .limit(60);
+      humanEntries = he || [];
+      console.log(`[knowledge-synthesizer] Loaded ${humanEntries.length} human expert entries for domain matching`);
+    }
+
+    if (!entries?.length && !humanEntries.length) {
+      return successResponse({ message: 'No entries to synthesize', entries_checked: 0 });
+    }
+
+    // Group agent-hunted entries by agent
     const byAgent: Record<string, typeof entries> = {};
-    for (const entry of entries) {
+    for (const entry of (entries || [])) {
       const key = entry.expert_name || 'unknown';
       if (!byAgent[key]) byAgent[key] = [];
       byAgent[key].push(entry);
+    }
+
+    // Build a domain → human entries map for fast lookup
+    const humanByDomain: Record<string, any[]> = {};
+    for (const he of humanEntries) {
+      if (!he.domain) continue;
+      if (!humanByDomain[he.domain]) humanByDomain[he.domain] = [];
+      humanByDomain[he.domain].push(he);
+    }
+
+    // When include_human_experts is set and we have agents with no agent-hunted entries
+    // in the window, still process them so human expert knowledge reaches them.
+    if (include_human_experts && humanEntries.length > 0 && !agent_call_sign) {
+      const { data: activeAgents } = await supabase
+        .from('ai_agents')
+        .select('call_sign')
+        .eq('is_active', true);
+      for (const ag of (activeAgents || [])) {
+        const key = `agent:${ag.call_sign}`;
+        if (!byAgent[key]) byAgent[key] = [];
+      }
     }
 
     let beliefsCreated = 0;
@@ -72,11 +119,25 @@ Deno.serve(async (req) => {
     for (let i = 0; i < beliefAgentKeys.length; i += AGENT_BATCH) {
       const batch = beliefAgentKeys.slice(i, i + AGENT_BATCH);
       const results = await Promise.allSettled(batch.map(async (agentKey) => {
-        const agentEntries = byAgent[agentKey];
+        const agentEntries = byAgent[agentKey] || [];
         const callSign = agentKey.replace('agent:', '');
-        if (agentEntries.length < 3) return { callSign, status: 'skipped:too_few_entries' };
 
-        const { beliefs, rawContent, geminiError } = await extractAgentBeliefs(callSign, agentEntries);
+        // Fold in domain-matched human expert entries
+        const agentDomains = new Set(agentEntries.map((e: any) => e.domain).filter(Boolean));
+        // If no agent entries yet, infer domain from agent specialty
+        if (agentDomains.size === 0 && include_human_experts) {
+          // Add all human domains as candidates — the AI will still only use relevant ones
+          for (const d of Object.keys(humanByDomain)) agentDomains.add(d);
+        }
+        const matchedHuman = [...agentDomains].flatMap(d => (humanByDomain[d] || []).slice(0, 4));
+        const allEntries = [...agentEntries, ...matchedHuman];
+
+        if (allEntries.length < 2) return { callSign, status: 'skipped:too_few_entries' };
+        if (matchedHuman.length > 0) {
+          console.log(`[knowledge-synthesizer] ${callSign}: folding in ${matchedHuman.length} human expert entries (domains: ${[...agentDomains].join(', ')})`);
+        }
+
+        const { beliefs, rawContent, geminiError } = await extractAgentBeliefs(callSign, allEntries);
 
         if (geminiError) return { callSign, status: `gemini_error:${geminiError}` };
         if (!beliefs.length) return { callSign, status: `parse_fail`, rawPreview: rawContent?.substring(0, 600) };

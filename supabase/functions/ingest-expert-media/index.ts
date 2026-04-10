@@ -120,6 +120,24 @@ Deno.serve(async (req) => {
         updated_at: new Date().toISOString(),
       }).eq('id', expert_profile_id);
 
+      // Fire background belief synthesis — fold new expert knowledge into agent beliefs
+      if (totalEntries > 0) {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL');
+        const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+        if (supabaseUrl && serviceKey) {
+          fetch(`${supabaseUrl}/functions/v1/knowledge-synthesizer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` },
+            body: JSON.stringify({
+              mode: 'beliefs',
+              since_hours: 3,
+              include_human_experts: true,
+            }),
+          }).catch(() => {});
+          console.log(`[ingest-expert-media] Triggered belief synthesis for ${totalEntries} new entries from ${profile.name}`);
+        }
+      }
+
       return successResponse({
         expert: profile.name,
         sources_processed: urls.length,
@@ -145,9 +163,24 @@ Deno.serve(async (req) => {
       results.push(res);
     }
 
+    const totalStored = results.reduce((s, r) => s + (r.entries_stored || 0), 0);
+
+    // Fire background belief synthesis for single-URL ingestion too
+    if (totalStored > 0) {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL');
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      if (supabaseUrl && serviceKey) {
+        fetch(`${supabaseUrl}/functions/v1/knowledge-synthesizer`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` },
+          body: JSON.stringify({ mode: 'beliefs', since_hours: 3, include_human_experts: true }),
+        }).catch(() => {});
+      }
+    }
+
     return successResponse({
       processed: results.length,
-      total_entries: results.reduce((s, r) => s + (r.entries_stored || 0), 0),
+      total_entries: totalStored,
       results,
     });
 
