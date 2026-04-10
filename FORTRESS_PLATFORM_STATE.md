@@ -227,7 +227,6 @@ Key entities confirmed active:
 - **6 YouTube sources paused** — wrong channel IDs. Needs manual lookup of each channel's `externalChannelId` to fix.
 - **BC Energy Regulator RSS** — BC Oil Gas Commission renamed, new URL needed (currently paused).
 - **DriveBC Traffic Alerts** — type `drivebc`, no monitor function exists. Needs dedicated monitor-drivebc edge function.
-- **April 10 migrations not yet applied to DB** — 20260410000001 through 20260410000004 are committed but need to be run in Supabase dashboard SQL editor. See Section 8.
 
 ### Verification results (April 10, 2026 — direct SQL via Supabase dashboard):
 - **Keyword expansion: ✅ 203** — confirmed via `read_client_monitoring_config`. Section 15 claim correct.
@@ -275,10 +274,10 @@ Key entities confirmed active:
 | 20260409000001_backfill_composite_confidence.sql | Backfill NULL composite_confidence on pre-April-8 signals | Applied |
 | 20260409000002_fix_broken_sources.sql | Fix BC Gov News URL; pause 14 broken sources with actionable notes | Applied |
 | 20260409000003_archive_orphaned_osint_signals.sql | Archive 14 orphaned petronas.com OSINT signals (11 archived, 3 already triaged) | Applied |
-| 20260410000001_agent_knowledge_seeker_schedule.sql | Schedule agent-knowledge-seeker daily at 04:00 UTC | ⚠️ NOT YET APPLIED |
-| 20260410000002_fix_cron_heartbeat_name_alignment.sql | Fix cron_job_registry names to match what functions write to cron_heartbeat | ⚠️ NOT YET APPLIED |
-| 20260410000003_fix_cron_job_names.sql | Fix pg_cron job names to match function heartbeat names; fix orphaned wraith cron URL | ⚠️ NOT YET APPLIED |
-| 20260410000004_archive_old_scan_data.sql | Add soft-delete to autonomous_scan_results, pipeline_test_results, qa_test_results, bug_reports; archive old automated data | ⚠️ NOT YET APPLIED |
+| 20260410000001_agent_knowledge_seeker_schedule.sql | Schedule agent-knowledge-seeker daily at 04:00 UTC | Applied |
+| 20260410000002_fix_cron_heartbeat_name_alignment.sql | Fix cron_job_registry names to match what functions write to cron_heartbeat | Applied |
+| 20260410000003_fix_cron_job_names.sql | Fix pg_cron job names to match function heartbeat names; fix orphaned wraith cron URL | Applied |
+| 20260410000004_archive_old_scan_data.sql | Add soft-delete to autonomous_scan_results, pipeline_test_results, qa_test_results, bug_reports; archive old automated data | Applied |
 
 ---
 
