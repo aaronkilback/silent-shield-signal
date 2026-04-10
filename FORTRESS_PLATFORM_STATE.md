@@ -1,7 +1,9 @@
 # Fortress AI — Platform State Document
-## Verified: April 7, 2026
+## Verified: April 9, 2026 (updated session 6 — source health + tier 2 signal review agent)
 ## Author: System Audit (Claude + Aaron Kilback)
 ## Status: Ground truth only. Nothing written from memory — all verified against DB queries, code reads, or live test results.
+
+> **Note on structure:** Sections are numbered by when they were added across sessions, not by logical order. Section numbers are not sequential. Do not infer missing sections from gaps in numbering.
 
 ---
 
@@ -26,16 +28,28 @@
 | incidents | deleted_at, deletion_reason | ✅ |
 | entities | deleted_at, deletion_reason | ✅ (added Phase 4A) |
 
-### Signal sources (verified April 8, 2026)
-- 35 of 55 sources actively ingesting today
-- 0 new signals since April 3 — expected behaviour
-  - monitor-rss-sources deduplicates by URL in ingested_documents (permanent, not 24h window)
-  - All 205 items in current feeds already ingested — new articles will flow when published
-- 20 sources never ingested: missing URLs, likely timeout errors, or scraper types not RSS
-- monitor-canadian-sources has old hardcoded feeds (RCMP Gazette, BC Energy Regulator)
-  superseded by monitor-rss-sources which reads from sources table
-- 3 signals have composite_confidence (avg 0.698) — only signals that went through full Phase 4B pipeline post-deploy
-- 78 signals have NULL composite_confidence — ingested before Phase 2 deploy or before composite gate was wired
+### Signal sources (verified April 9, 2026)
+- 63 total sources — 46 active, 17 paused
+- RSS pipeline healthy: monitor-rss-sources scanned 55 sources, 212 items, 3 signals (April 9)
+- monitor-rss-sources deduplicates by URL in ingested_documents (permanent, not 24h window)
+- All signals now have composite_confidence — migration 20260409000001 backfilled legacy NULL rows (April 9, 2026)
+- New signals receive composite_confidence from ai-decision-engine (AI or rule-based path)
+- Legacy backfilled signals tagged `raw_json.composite_backfill = true` (formula uses default 0.65 source_credibility)
+
+**Source health audit completed April 9, 2026 (migration 20260409000002_fix_broken_sources.sql):**
+- ✅ BC Government News — fixed feed_url to `https://news.gov.bc.ca/feed` (was returning 404)
+- ⏸ 6 YouTube sources — paused: wrong channel IDs. To fix: visit each channel page source,
+  find `externalChannelId`, set `config.feed_url` to `https://www.youtube.com/feeds/videos.xml?channel_id=ID`
+- ⏸ Dawson Creek Mirror, Alaska Highway News — paused: DNS failure (domains offline)
+- ⏸ RCMP Press Releases — paused: SSL UnknownIssuer (rcmp-grc.gc.ca cert not trusted by Deno runtime)
+- ⏸ BC Wildfire Service (url_feed) — paused: SSL error + superseded by AEGIS get_wildfire_intelligence (BC OpenMaps WFS)
+- ⏸ Prince George Citizen, Podcast: Shawn Ryan Show RSS — paused: 404
+- ⏸ BC Oil Gas Commission — paused: agency renamed to BC Energy Regulator (BCER), update URL
+- ⏸ 3 Nitter sources — already paused (Nitter shut down)
+
+**Remaining active with errors (non-critical):**
+- Reddit: r/britishcolumbia, Reddit: r/alberta — 403 Forbidden (Reddit blocks scrapers; intermittent, did ingest April 5)
+- Natural Resources Canada News, CSIS Public Reports — HTTP/2 stream errors to canada.ca (IPv6 Supabase routing; intermittent)
 
 ### Incident state
 - 3 open incidents, all for PETRONAS Canada (0f5c809d), all with clean titles:
@@ -56,14 +70,12 @@
 - Daily accumulation confirmed
 
 ### Pattern signals
-- 2 pattern signals for PETRONAS Canada:
-  - entity_escalation (Fort St. John, graph_resolved: true) ✅
-  - frequency_spike (48 vs 20 prior week) ✅
 - Pattern detector scheduled every 6h via cron
+- **⚠️ Historical note (April 9):** 2 pattern signals that existed at time of Phase 4C verification (entity_escalation, frequency_spike) were soft-deleted during test data cleanup — they were generated from contaminated test signals. Pattern detection code is correct; the verified instances no longer exist. Current pattern signal count: not re-queried after cleanup.
 
 ### Phase 4D traversal
-- 3 signals have phase4d_traversal in raw_json
-- Confidence boost of +0.15 confirmed on test signals
+- 3 signals had phase4d_traversal in raw_json at time of verification
+- **⚠️ Historical note (April 9):** The test signals used to verify +0.15 boost were soft-deleted during test data cleanup. Code verified correct; live evidence gone. Current count of signals with phase4d_traversal: not re-queried after cleanup.
 
 ### Cron jobs (active)
 | Job | Schedule | Status |
@@ -98,10 +110,10 @@
 
 **Critical fast-path (P1):** Bypasses standard path. Runs AI Decision Engine + webhook + incident creation in parallel. Phase 4B entity correlation fires here too (confirmed in code).
 
-### Known gaps
-- `composite_confidence` is only populated on signals that go through `ai-decision-engine` AND have `relevance_score` available. 78 of 81 signals are NULL — these were ingested before the Phase 2 gate was active or before the write-back was wired.
-- Incident titles are generated as "protest Incident - Petronas Canada" instead of reading signal content — title generation bug in ingest-signal or ai-decision-engine.
-- Test signals (`is_test = true`) are NOT filtered from report queries in `generate-executive-report` — they contaminate executive reports.
+### Known gaps (resolved)
+- `composite_confidence` — backfilled via migration 20260409000001 ✅
+- Incident title generation — `generateIncidentTitle()` added to ingest-signal ✅ (April 8)
+- Test signal contamination in reports — `.neq('is_test', true)` added to generate-executive-report ✅ (April 8)
 
 ---
 
@@ -161,14 +173,14 @@ Key entities confirmed active:
 - `detect-threat-patterns` scheduled every 6h
 - Reads `entity_mentions` (resolved IDs) as primary source, falls back to raw `entity_tags`
 - Pattern signal includes `entity_id` + `resolved_from_graph: true`
-- **Verified:** 2 patterns detected tonight
+- **Verified (code + execution):** 2 patterns detected during session. ⚠️ Those signals were subsequently soft-deleted (test data cleanup April 9). Logic verified; live examples no longer exist.
 
 ### Phase 4D — Relationship traversal ✅
 - One-hop traversal, strength ≥ 0.5
 - 72h corroboration window
 - Boost: min(count × 0.05, 0.15)
 - Writes `phase4d_traversal` to `raw_json`
-- **Verified:** +0.15 boost on both test signals
+- **Verified (code + execution):** +0.15 boost confirmed during session. ⚠️ Test signals used for verification were subsequently soft-deleted (test data cleanup April 9). Logic verified; live examples no longer exist.
 
 ---
 
@@ -177,8 +189,8 @@ Key entities confirmed active:
 | Tool | Status | Notes |
 |---|---|---|
 | get_recent_signals | ✅ WORKING | Returns real signals, correct format |
-| get_active_incidents | ✅ WORKING | Returns all 4 open incidents correctly |
-| get_wildfire_intelligence | ✅ DISABLED | Was fabricating data (winter, no real data source). Removed from aegis-tool-definitions.ts. Returns "no data available." TODO: implement with BC Wildfire Service API before fire season May 2026 |
+| get_active_incidents | ✅ WORKING | Returns 3 open incidents (as of April 9; Fortinet closed April 7) |
+| get_wildfire_intelligence | ✅ WORKING | Re-enabled April 8. Handler calls BC OpenMaps WFS (live government data, no API key). Returns active fires, OOC count, risk assessment, fires by fire centre. |
 | check_dark_web_exposure | ✅ WORKING | HIBP_API_KEY configured. Returns real breach data |
 | run_vip_deep_scan | ✅ REDIRECTS | Hint card now navigates to /vip-deep-scan wizard. Tool description updated to tell AEGIS to redirect, not execute inline |
 | generate_fortress_report | ✅ WORKING | Returns download link (not raw HTML). mediaItems hoisted to fix undefined var. charset utf-8 set on storage upload |
@@ -188,40 +200,52 @@ Key entities confirmed active:
 
 ---
 
-## 6. REPORT QUALITY ISSUES (identified April 7, 2026)
+## 6. REPORT QUALITY ISSUES (identified April 7, 2026 — status updated April 9)
 
-### Confirmed problems in executive report:
-1. **Test signal contamination** — signals with `is_test = true` appear as evidence citations. `generate-executive-report` does not filter `is_test = false`. Root fix required in signal query.
-2. **Generic incident titles** — "protest Incident - Petronas Canada" / "other Incident - Petronas Canada". Title generation in ingest-signal/ai-decision-engine not reading signal content correctly.
-3. **Incident table shows "Unknown / Classification pending"** — join on incident title/type is broken. The report query fetches incident IDs but doesn't JOIN to get titles or categories.
-4. **Personal email in action items** — `ak@silentshieldsecurity.com` appears as action item owner. This is hardcoded or derived from a profile lookup. Unacceptable in client-facing documents.
-5. **No signal verification gate** — narrative can go beyond what source signals actually say. AI synthesizes conclusions without each claim being anchored and verified against its cited signal.
+### ✅ Fixed (April 8, 2026):
+1. ~~**Test signal contamination**~~ — ✅ `.neq('is_test', true)` added to `generate-executive-report` signals query (April 8). All test signals also hard-deleted April 8.
+2. ~~**Generic incident titles**~~ — ✅ `generateIncidentTitle()` added to `ingest-signal` (April 8). Format: `{severity prefix}{category label} — {entity or location}`.
+3. ~~**Incident table shows "Unknown / Classification pending"**~~ — ✅ Fixed April 8. Now shows `incident.title || incident.incident_type || description`.
+
+### Still open:
+4. **Personal email in action items** — `ak@silentshieldsecurity.com` appears as action item owner in executive reports. Unacceptable in client-facing documents. Fix: replace with role-based owner or remove email from action items in `generate-executive-report`.
+5. **No signal verification gate** — narrative can go beyond what source signals actually say. AI synthesizes conclusions without each claim being anchored against its cited signal. Architectural future feature.
 
 ### What is working correctly in reports:
 - Evidence citations include real signal IDs and source URLs
 - Regulatory/protest/active threat narrative sections reference real ingested signals
 - Risk table reflects actual signal category distribution
-- Pattern signal data (frequency spike, Fort St. John escalation) feeds into report correctly
+- ⚠️ Pattern signal data previously referenced here was from test signals soft-deleted April 9 — not currently verifiable
 
 ---
 
 ## 7. KNOWN GAPS AND OPEN WORK
 
-### Critical (affects data integrity):
-1. **Test signal contamination in reports** — `is_test = false` filter missing from `generate-executive-report` signal query
-2. **Personal email in report action items** — needs owner name lookup fix or removal
+### Still open (April 9, 2026):
+- **0 rows in incident_outcomes** — feedback loop infrastructure deployed but never exercised. Needs analyst to close an incident through UI. Phase 3 Bayesian learning loop cannot run until then.
+- **Signal verification gate** — LOCUS-INTEL narrative review before report assembly. Architectural future feature.
+- **6 YouTube sources paused** — wrong channel IDs. Needs manual lookup of each channel's `externalChannelId` to fix.
+- **BC Energy Regulator RSS** — BC Oil Gas Commission renamed, new URL needed (currently paused).
+- **DriveBC Traffic Alerts** — type `drivebc`, no monitor function exists. Needs dedicated monitor-drivebc edge function.
 
-### High (affects platform reliability):
-4. **0 rows in incident_outcomes** — feedback loop infrastructure deployed but never exercised. No analyst has closed an incident through the UI. Phase 3 learning loop cannot run until this changes.
-5. **78 of 81 signals have NULL composite_confidence** — legacy signals pre-Phase 2. These will never contribute to source credibility calibration.
-6. **Signal verification gate not built** — narrative in reports can exceed what source signals say. LOCUS-INTEL review gate designed but not implemented.
+### Verification results (April 10, 2026 — direct SQL via Supabase dashboard):
+- **Keyword expansion: ✅ 203** — confirmed via `read_client_monitoring_config`. Section 15 claim correct.
+- **Active signal count: ✅ 94** — `SELECT COUNT(*) FROM signals WHERE deleted_at IS NULL AND is_test = false` → 94 rows.
+- **expert_knowledge rows: ✅ 2,680** — `SELECT COUNT(*) FROM expert_knowledge` → 2,680. Previously stated "1,351" was wrong.
+- **agent_beliefs rows: ✅ 1,242** — `SELECT COUNT(*) FROM agent_beliefs` → 1,242. Previously stated "1,138" was wrong.
 
-### Medium (affects completeness):
-7. **get_threat_intel_feeds** — not tested. May be working or broken.
-8. **dispatch_agent_investigation** — not tested.
-9. **get_system_health** — not tested.
-10. **AEGIS tool audit incomplete** — 3 tools still untested.
-11. **Fortinet CISA incident** — deadline was April 8 (today). Should be closed or reviewed.
+### Fixed (sessions 3–6, April 8–9):
+- ✅ Test signal contamination in reports — `.neq('is_test', true)` added
+- ✅ Personal email in action items — sanitized to ownerRole when email detected
+- ✅ Incident table "Classification pending" — now shows real title/type
+- ✅ 78 NULL composite_confidence signals — backfilled via migration 20260409000001
+- ✅ Wildfire tool — rebuilt with live BC OpenMaps WFS data
+- ✅ run_agent_knowledge_hunt 401 — agent-knowledge-seeker JWT config fixed
+- ✅ threat-radar "Total Signals: 0" — received_at fix in threat-radar-analysis
+- ✅ Incident title generation — generateIncidentTitle() in ingest-signal
+- ✅ 25 never-ingested sources investigated and remediated (April 9) — 14 paused with actionable notes, 1 fixed (BC Gov News URL), 10 confirmed active with reasons for no ingestion (API credentials, intermittent network)
+- ✅ osint-web-search orphaned signals — 11 of 14 archived (petronas.com OSINT, no client_id); osint-web-search now routes through ingest-signal; entity_mentions dedup fixed (April 9)
+- ✅ Tier 2 signal review agent — review-signal-agent deployed; ai-decision-engine wires async tier 2 call for composite_confidence in [0.60, 0.75); non-breaking (April 9)
 
 ### Low (cleanup):
 12. **2 inactive-endpoint relationships** — Change Alberta group. Left intentionally. No operational impact.
@@ -244,6 +268,9 @@ Key entities confirmed active:
 | 20260407000009_phase4b_alias_collision_fix.sql | Removed Gidimt'en/Unist'ot'en from Wet'suwet'en aliases | Applied |
 | 20260407000010_phase4c_pattern_detection_schedule.sql | detect-threat-patterns cron every 6h | Applied |
 | 20260407000011_phase4d_repair_relationships.sql | Repoint 13 broken relationships, remove duplicate PETRONAS operates_in | Applied |
+| 20260409000001_backfill_composite_confidence.sql | Backfill NULL composite_confidence on pre-April-8 signals | Applied |
+| 20260409000002_fix_broken_sources.sql | Fix BC Gov News URL; pause 14 broken sources with actionable notes | Applied |
+| 20260409000003_archive_orphaned_osint_signals.sql | Archive 14 orphaned petronas.com OSINT signals (11 archived, 3 already triaged) | Applied |
 
 ---
 
@@ -257,6 +284,10 @@ Key entities confirmed active:
 | system-watchdog | Updated with Phase 4A-4D knowledge | Deployed |
 | dashboard-ai-assistant | Wildfire tool disabled; VIP redirect; report download link; mediaItems fix; charset utf-8 | Deployed |
 | source-credibility-updater | Phase 3B: processIncidentOutcomes wired | Deployed (earlier) |
+| osint-web-search | Routes through ingest-signal (removed direct signals insert + entity_mentions write) | Deployed April 9 |
+| ai-decision-engine | Phase 2C: tier2_promotion bypass + async review-signal-agent fire for [0.60, 0.75) | Deployed April 9 |
+| review-signal-agent | NEW — Tier 2 contextual review for borderline signals | Deployed April 9 |
+| system-watchdog | Phase 5 documentation; session 6 verification record | Deployed April 9 |
 
 ---
 
@@ -334,16 +365,101 @@ Three active defenses against Mythos-class AI attacks added to `wraith-security-
 
 ---
 
-## REMAINING GAPS (April 8, 2026)
+## 16. THREAT LANDSCAPE QUERY FIX (April 8, 2026) — COMPLETE
 
-1. **Fix test signal contamination** — `is_test = false` filter in `generate-executive-report`
-2. **Fix incident titles** — content-based title generation from signal
-3. **Fix personal email** in report action items
-4. **Fix incident table join** in report — show real titles/types not "Classification pending"
-5. **Complete AEGIS tool audit** — get_threat_intel_feeds, dispatch_agent_investigation, get_system_health
-6. **Signal verification gate** — LOCUS-INTEL narrative review before report assembly
-7. **Source credibility calibration** — backfill composite_confidence on legacy signals or exclude from scoring
-8. **Wildfire tool** — implement with BC Wildfire Service API before May 1, 2026
+- Root cause: GPT-4o-mini was not calling any tool for "threat landscape" queries
+- Fix: forced pre-routing layer added to `dashboard-ai-assistant` before first OpenAI call
+  - Detects patterns: `/threat\s+landscape/i`, `/today.{0,10}threat/i`, `/current\s+threat/i`, etc.
+  - Calls `analyze_threat_radar` directly, injects result as system context message
+  - OpenAI then formats the real data — no tool call decision needed
+- Secondary fix: `get_threat_intel_feeds` and `analyze_threat_radar` both now fall back to internal signals DB on external failure
+- PostgREST NULL filter bug fixed: `.neq()` excludes NULLs — replaced with `.or("signal_type.is.null,signal_type.not.in.(historical,test)")`
+- CISA fetch timeout: 15s → 5s
+- VERIFIED: curl test shows real briefing with threat scores, predictions, high-risk assets (SCADA-PLC-5, Petronas_ERP_System, fw-perimeter-01)
+- WATCHDOG MONITORS: `analyze_threat_radar` returning error AND `signals` count = 0 for past 30 days = full fallback chain broken
+
+## 17. INCIDENT TITLE GENERATION (April 8, 2026) — COMPLETE
+
+- `generateIncidentTitle(sig, cls)` function added to `ingest-signal/index.ts` before `generateTitle()`
+- Builds: `{severity prefix}{category label} — {entity_tags[0,1] or location}` or `{category label}: {first sentence}`
+- Category map: 15 categories covered including malware, phishing, ransomware, sabotage, espionage
+- Severity prefixes: "Critical " for critical, "High-Severity " for high, blank otherwise
+- Both fast-path P1 title (`🚨 CRITICAL: normalized_text.substring(0,80)`) and AI-escalated title (`AI-Escalated: signal.title`) replaced
+- VERIFIED: deployed to `ingest-signal`. Applies to all new incidents.
+- WATCHDOG MONITORS: `SELECT COUNT(*) FROM incidents WHERE title ILIKE 'AI-Escalated%' OR title ILIKE '🚨 CRITICAL:%' AND created_at > NOW() - INTERVAL '1 day'` = regression
+
+## 18. AEGIS TOOL HEALTH CHECK SYSTEM (April 8, 2026) — COMPLETE
+
+- Health-check endpoint added to `dashboard-ai-assistant/index.ts`: `{ tool_test: true, tool_name, args }` with service role JWT
+- JWT validated by decoding payload and checking `role === "service_role"` (no sig verification — read-only ops)
+- Test runner: `scripts/test-aegis-tools.mjs` — 93 read-safe tools tested, 21 write/destructive skipped
+- Runs in parallel batches of 6, 20s timeout per tool
+- Outputs pass/fail table with timing and error messages
+- Saves JSON report to `scripts/tool-health-report.json`
+- **Baseline April 8 (session 1): 43 passing / 51 failing**
+- **After session 2 fixes: 92/93 passing → then 93/93 passing**
+- RULE: Run before and after every change. Regression = pass count drops. Revert immediately.
+
+## 19. AEGIS TOOL MASS FIX (April 8, 2026 — session 2) — COMPLETE
+
+**Verified result: 93/93 tools passing** (session 2 final — but 12 had fake success fallbacks masking broken features)
+
+**Root causes fixed in session 2:**
+- `signals.source` column doesn't exist → replaced with `source_id`
+- `signals.priority` / `matched_keywords` / `confidence_score` columns don't exist → removed
+- Various `.single()` on 0-row queries, missing UUID guards, undefined method calls
+
+**⚠️ SESSION 2 INTEGRITY ISSUE:** ~12 tools passing with `success: true` but returning unrelated DB data instead of implementing the actual feature. User correctly identified this as worse than failing — AEGIS was presenting false results to end users.
+
+---
+
+## 20. AEGIS TOOL QUALITY PASS (April 8, 2026 — session 3) — COMPLETE
+
+**Verified result: 84/84 tested tools passing** (`node scripts/test-aegis-tools.mjs` final run — April 8, 2026)
+- 30 write/destructive ops skipped (same as before)
+- 9 tools removed from `aegis-tool-definitions.ts` (AI can no longer call them)
+- Their case handlers in index.ts return clear errors instead of fake success
+
+**Tools removed from definitions (fake fallbacks, broken edge functions, no real substitute):**
+- `trigger_osint_scan` — calls `osint-web-search` API unavailable
+- `perform_impact_analysis` — calls `intelligence-engine` unavailable
+- `draft_response_tasks` — calls `ai-tools-query` unavailable
+- `integrate_incident_management` — calls `ai-tools-query` unavailable
+- `optimize_rule_thresholds` — calls `optimize-rule-thresholds` unavailable
+- `simulate_attack_path` — calls `simulate-attack-path` unavailable
+- `simulate_protest_escalation` — calls `simulate-protest-escalation` unavailable
+- `run_what_if_scenario` — calls `run-what-if-scenario` unavailable
+- `investigate_poi` — calls `investigate-poi` unavailable
+
+**Tools FIXED with real DB implementations (no more fake success):**
+- `recommend_playbook` — queries `playbooks` table, scores by signal category, returns real playbooks
+- `generate_incident_briefing` — fetches real incident + related signals, uses `callAiGateway` to generate quality briefing
+- `guide_decision_tree` — fetches incident + playbooks + escalation rules, uses `callAiGateway` for structured decision guidance
+- `identify_critical_failure_points` — analyzes 90 days of incident history: recurring patterns, clients with most critical incidents, unresolved count
+- `track_mitigation_effectiveness` — real incident resolution metrics: avg resolution time, resolution rate, by priority breakdown
+- `analyze_sentiment_drift` — queries `entity_content.sentiment` across time windows (7/30/90d), calculates drift score
+- `propose_new_monitoring_keywords` — analyzes `raw_json.matched_keywords` frequency for client, identifies gaps vs current config
+- `extract_signal_insights` — signal pattern aggregation: category/severity/location/entity/keyword breakdown
+- `synthesize_knowledge` — queries `knowledge_base` table organized by agent/category, tries edge function with short timeout
+- `enrich_entity_descriptions` — lists entities with missing descriptions, prioritized by threat_score
+- `run_entity_deep_scan` — parallel DB aggregation: entity profile + entity_content + investigations + signal mentions, tries edge function non-blocking
+
+**Files modified:** `dashboard-ai-assistant/index.ts`, `_shared/aegis-tool-definitions.ts`, `scripts/test-aegis-tools.mjs`
+
+## REMAINING GAPS (April 8, 2026 — session 4 updated)
+
+### Fixed this session
+- ~~1. Test signal contamination~~ — ✅ `.neq('is_test', true)` added to `generate-executive-report` signals query
+- ~~2. Personal email in action items~~ — ✅ sanitized: uses ownerRole when member.name is an email
+- ~~3. Incident table "Classification pending"~~ — ✅ now shows `incident.title || incident.incident_type || description`
+- ~~7. "Total Signals: 0" in threat radar~~ — ✅ `threat-radar-analysis` signals query changed from `created_at` → `received_at`
+
+### Still open
+4. **Signal verification gate** — LOCUS-INTEL narrative review before report assembly (architectural, future feature)
+5. ~~**Source credibility calibration**~~ — ✅ Migration 20260409000001 backfills composite_confidence on all NULL signals using: `(COALESCE(confidence, 0.60) × 0.50) + (COALESCE(relevance_score, 0.50) × 0.35) + (0.65 × 0.15)`. Legacy signals tagged `raw_json.composite_backfill = true`. Monitored queue now shows these signals. Verified live: 3 backfilled signals appear at composite_confidence 0.643.
+6. ~~**Wildfire tool**~~ — ✅ Re-enabled April 8, 2026. Handler rewritten to call BC OpenMaps WFS directly (live BC Wildfire Service data, no API key). Tool definition restored in aegis-tool-definitions.ts.
+8. ~~**`run_agent_knowledge_hunt`**~~ — ✅ Fixed April 8. Root cause: `agent-knowledge-seeker` deployed with `verify_jwt = true` (default), blocking internal service-role calls. Fixed by adding `verify_jwt = false` to config.toml and redeploying. Handler restructured to fire-and-forget (background job pattern). Perplexity API key IS valid and working.
+9. ~~**25 never-ingested sources**~~ — ✅ Audited April 9. Root causes identified per source. 14 paused with actionable error messages. 1 fixed (BC Government News → `https://news.gov.bc.ca/feed`). Remainder: API-type needing credentials, intermittent network, or custom handler needed. Migration: 20260409000002_fix_broken_sources.sql.
 
 ---
 
@@ -359,7 +475,7 @@ Three active defenses against Mythos-class AI attacks added to `wraith-security-
 
 ---
 
-*This document reflects verified state as of April 8, 2026. Update after each significant change.*
+*This document reflects verified state as of April 9, 2026. Update after each significant change.*
 
 ---
 

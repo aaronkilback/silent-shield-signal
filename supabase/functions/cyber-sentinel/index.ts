@@ -616,7 +616,7 @@ async function sendCyberAlert(supabase: any, events: ThreatEvent[], aiAssessment
         'Authorization': `Bearer ${serviceRoleKey}`,
       },
       body: JSON.stringify({
-        to: 'ak@silentshieldsecurity.com',
+        to: Deno.env.get('ALERT_EMAIL') || 'ak@silentshieldsecurity.com',
         type: 'cyber_alert',
         data: {
           subject: `🛡️ CYBER SENTINEL: ${events.length} Critical Threat${events.length > 1 ? 's' : ''} Detected`,

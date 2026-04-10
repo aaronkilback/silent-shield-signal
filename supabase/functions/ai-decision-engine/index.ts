@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const { signal_id, force_ai = false } = body;
+    const { signal_id, force_ai = false, tier2_promotion = false, tier2_reasoning = '' } = body;
 
     // Get signal details
     const { data: signal, error: signalError } = await supabase
@@ -680,7 +680,7 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
           (e: any) => console.warn('[AI-Decision] Failed to write composite_confidence:', e)
         );
 
-        if (compositeScore < 0.65) {
+        if (compositeScore < 0.65 && !tier2_promotion) {
           console.log(`[AI-Decision] Composite score ${compositeScore.toFixed(3)} below 0.65 — signal ${signal.id} monitored, no incident created.`);
           await supabase.from('incident_creation_failures').insert({
             source_function: 'ai-decision-engine',
@@ -712,8 +712,30 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
             priority: decision.incident_priority || 'p3',
             status: 'open',
             is_test: signal.is_test || false,
-            title: `${signal.category || 'Security'} Incident - ${signal.clients?.name || 'Unknown Client'}`,
-            summary: decision.reasoning,
+            title: (() => {
+              const cat = signal.category || '';
+              const categoryMap: Record<string, string> = {
+                malware: 'Malware Detection', phishing: 'Phishing Campaign', intrusion: 'Network Intrusion',
+                data_exfil: 'Data Exfiltration', ddos: 'DDoS Attack', ransomware: 'Ransomware Activity',
+                social_engineering: 'Social Engineering', insider_threat: 'Insider Threat',
+                physical: 'Physical Security Threat', fraud: 'Fraud Activity', extremism: 'Extremist Activity',
+                protest: 'Protest Activity', cyber: 'Cyber Threat', sabotage: 'Sabotage Threat', espionage: 'Espionage Activity',
+              };
+              const catLabel = categoryMap[cat] || (cat ? cat.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : 'Security Incident');
+              const sev = (decision.threat_level || signal.severity || '').toLowerCase();
+              const sevPrefix = sev === 'critical' ? 'Critical ' : sev === 'high' ? 'High-Severity ' : '';
+              const entities: string[] = signal.entity_tags || [];
+              const meaningful = entities.filter((e: string) => e.length > 2 && !/^\d+$/.test(e));
+              const target = meaningful.length > 0 ? meaningful.slice(0, 2).join(', ') : (signal.location || '');
+              if (target) return `${sevPrefix}${catLabel} — ${target}`.substring(0, 100);
+              const raw = (signal.normalized_text || '').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+              const short = raw.split(/[.!?]/)[0].trim().substring(0, 60);
+              if (short.length > 10) return `${sevPrefix}${catLabel}: ${short}`.substring(0, 100);
+              return `${sevPrefix}${catLabel} Detected`.substring(0, 100);
+            })(),
+            summary: tier2_promotion && tier2_reasoning
+              ? `${decision.reasoning}\n\n[Tier 2 Agent Promotion] ${tier2_reasoning}`
+              : decision.reasoning,
             severity_level: mapThreatLevelToSeverity(decision.threat_level),
             investigation_status: 'pending',
             assigned_agent_ids: [initialAgent.agentId],
@@ -804,6 +826,35 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
           }
         }
         } // end confidence threshold else
+
+        // ═══ PHASE 2C: TIER 2 ASYNC AGENT REVIEW ═══
+        // For signals with composite_confidence in [0.60, 0.75), fire review-signal-agent
+        // asynchronously. This never blocks the current response.
+        // - 0.60–0.64: no incident yet — agent may promote
+        // - 0.65–0.74: incident created above — agent may enrich or flag
+        // Excluded: tier2_promotion signals (avoid re-review loop) and scores outside range.
+        if (!tier2_promotion && compositeScore >= 0.60 && compositeScore < 0.75) {
+          const supabaseUrlT2 = Deno.env.get('SUPABASE_URL');
+          const serviceRoleKeyT2 = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+          if (supabaseUrlT2 && serviceRoleKeyT2) {
+            fetch(`${supabaseUrlT2}/functions/v1/review-signal-agent`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${serviceRoleKeyT2}`,
+              },
+              body: JSON.stringify({
+                signal_id: signal.id,
+                composite_score: compositeScore,
+                ai_confidence: aiConfidence,
+                relevance_score: relevanceScore,
+                source_credibility: sourceCredibility,
+                incident_id: incident_id,
+              }),
+            }).catch((e: any) => console.warn('[AI-Decision] Tier 2 review fire-and-forget failed:', e));
+            console.log(`[AI-Decision] Tier 2 review queued for signal ${signal.id} (composite=${compositeScore.toFixed(3)})`);
+          }
+        }
       }
     }
 

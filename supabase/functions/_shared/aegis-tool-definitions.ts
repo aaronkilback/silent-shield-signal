@@ -355,23 +355,7 @@ Use when:
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "trigger_osint_scan",
-      description: "Trigger an OSINT (Open Source Intelligence) scan for a specific entity. This searches the web for information about the entity and creates intelligence content. Use this when users want to gather intelligence or perform research on a person or organization.",
-      parameters: {
-        type: "object",
-        properties: {
-          entity_name: {
-            type: "string",
-            description: "Name of the entity to scan",
-          },
-        },
-        required: ["entity_name"],
-      },
-    },
-  },
+  // trigger_osint_scan — REMOVED: calls OSINT API that is unavailable; had fake success fallback
   {
     type: "function",
     function: {
@@ -918,21 +902,7 @@ Supports files up to 20MB and processes up to 10 pages for PDFs.`,
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "perform_impact_analysis",
-      description: "Perform comprehensive impact analysis on a signal, calculating risk scores, financial impact, operational disruption.",
-      parameters: {
-        type: "object",
-        properties: {
-          signal_id: { type: "string", description: "UUID of the signal" },
-          threat_actor_id: { type: "string", description: "Optional threat actor entity UUID" },
-        },
-        required: ["signal_id"],
-      },
-    },
-  },
+  // perform_impact_analysis — REMOVED: calls intelligence-engine edge function unavailable; had fake signal fallback
   {
     type: "function",
     function: {
@@ -964,37 +934,8 @@ Supports files up to 20MB and processes up to 10 pages for PDFs.`,
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "draft_response_tasks",
-      description: "Generate specific, actionable response tasks based on a playbook and signal.",
-      parameters: {
-        type: "object",
-        properties: {
-          playbook_id: { type: "string", description: "UUID of the playbook" },
-          signal_id: { type: "string", description: "UUID of the signal" },
-        },
-        required: ["playbook_id", "signal_id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "integrate_incident_management",
-      description: "Create or update an incident with pre-populated tasks and priority.",
-      parameters: {
-        type: "object",
-        properties: {
-          signal_id: { type: "string", description: "UUID of the signal" },
-          task_list: { type: "array", items: { type: "object" }, description: "Array of response tasks" },
-          incident_priority: { type: "string", enum: ["p1", "p2", "p3", "p4"], description: "Incident priority" },
-        },
-        required: ["signal_id", "task_list"],
-      },
-    },
-  },
+  // draft_response_tasks — REMOVED: calls ai-tools-query edge function unavailable; had fake incident fallback
+  // integrate_incident_management — REMOVED: calls ai-tools-query edge function unavailable; had fake incident fallback
   {
     type: "function",
     function: {
@@ -1012,22 +953,7 @@ Supports files up to 20MB and processes up to 10 pages for PDFs.`,
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "optimize_rule_thresholds",
-      description: "PHASE 5: Analyze feedback data to optimize signal categorization rule thresholds.",
-      parameters: {
-        type: "object",
-        properties: {
-          rule_id: { type: "string", description: "UUID of the rule" },
-          feedback_data: { type: "object", description: "Optional feedback data" },
-          auto_apply: { type: "boolean", description: "Auto-apply high-confidence changes (default: false)" },
-        },
-        required: ["rule_id"],
-      },
-    },
-  },
+  // optimize_rule_thresholds — REMOVED: calls optimize-rule-thresholds edge function unavailable; had fake category-distribution fallback
   {
     type: "function",
     function: {
@@ -1059,37 +985,8 @@ Supports files up to 20MB and processes up to 10 pages for PDFs.`,
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "simulate_attack_path",
-      description: "PHASE 5: Simulate how a threat actor would exploit vulnerabilities against client assets.",
-      parameters: {
-        type: "object",
-        properties: {
-          threat_actor_profile: { type: "string", description: "Threat actor name or profile" },
-          target_asset_id: { type: "string", description: "Client UUID or asset identifier" },
-          vulnerability_id: { type: "string", description: "Optional specific CVE to model" },
-        },
-        required: ["threat_actor_profile", "target_asset_id"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "simulate_protest_escalation",
-      description: "PHASE 5: Predict likelihood and nature of protest/demonstration escalation.",
-      parameters: {
-        type: "object",
-        properties: {
-          signal_id: { type: "string", description: "UUID of the protest/demonstration signal" },
-          escalation_factors: { type: "string", description: "Optional specific factors to consider" },
-        },
-        required: ["signal_id"],
-      },
-    },
-  },
+  // simulate_attack_path — REMOVED: calls simulate-attack-path edge function unavailable; had fake signal fallback
+  // simulate_protest_escalation — REMOVED: calls simulate-protest-escalation edge function unavailable; had fake signal fallback
   {
     type: "function",
     function: {
@@ -1153,27 +1050,33 @@ Supports files up to 20MB and processes up to 10 pages for PDFs.`,
       },
     },
   },
-  // ═══ WILDFIRE TOOL — DISABLED (no handler, fabricates data) ═══
-  // get_wildfire_intelligence is defined in aegis-tool-definitions.ts but has
-  // NO real data handler. When called, AEGIS generates plausible-sounding
-  // wildfire data from model knowledge — NOT from real sources.
-  // This is dangerous: a fabricated "7 red flag warnings, 100 fire perimeters"
-  // response was returned in April (winter, snow on ground).
-  //
-  // Real implementation requires:
-  //   - BC Wildfire Service open API: https://openmaps.gov.bc.ca/geo/pub/WHSE_LAND_AND_NATURAL_RESOURCE.PROT_CURRENT_FIRE_POLYS_SP
-  //   - NWS Fire Weather API: https://api.weather.gov/products?type=FWF
-  //   - Seasonal gate: only activate between May 1 and October 31
-  //
-  // TODO: Implement before fire season 2026 (May)
-  //
-  // {{
-  //   type: "function",
-  //   function: {
-  //     name: "get_wildfire_intelligence",
-  //     ...
-  //   },
-  // }},
+  // ═══ WILDFIRE TOOL — ENABLED (BC OpenMaps WFS live data, April 8 2026) ═══
+  {
+    type: "function",
+    function: {
+      name: "get_wildfire_intelligence",
+      description: `Get live BC wildfire intelligence from BC Wildfire Service via BC OpenMaps WFS — real government data, no API key required. Returns active fire count, out-of-control fires, fires by fire centre, largest active fires, cause breakdown (human vs lightning), and a risk assessment score.
+
+Use when:
+- User asks about wildfire risk, fire season, active fires in BC
+- Assessing risk to client operations in BC Interior, Northern BC, or areas with forest operations
+- Generating an executive report that should include current wildfire conditions
+- User asks "are there any fires near [location]"
+
+Data is live from https://openmaps.gov.bc.ca — provides current BC fire polygon database.
+Provide client_id for operational proximity context against client locations.`,
+      parameters: {
+        type: "object",
+        properties: {
+          client_id: {
+            type: "string",
+            description: "Client UUID — if provided, client operational areas are included in the response for proximity cross-reference",
+          },
+        },
+        required: [],
+      },
+    },
+  },
 
   {
     type: "function",
@@ -1500,22 +1403,7 @@ RETURNS: Social media posts found across platforms with URLs, content snippets, 
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "run_what_if_scenario",
-      description: `WHAT-IF SCENARIO ENGINE: Simulate hypothetical situations for principals and assess security impacts.`,
-      parameters: {
-        type: "object",
-        properties: {
-          entity_id: { type: "string", description: "UUID of the principal entity" },
-          scenario_type: { type: "string", enum: ["travel", "physical", "reputation", "combined"], description: "Scenario type" },
-          hypothetical: { type: "object", description: "Hypothetical conditions", properties: { destination: { type: "string" }, date_range: { type: "object", properties: { start: { type: "string" }, end: { type: "string" } } }, condition_change: { type: "string" } } },
-        },
-        required: ["entity_id"],
-      },
-    },
-  },
+  // run_what_if_scenario — REMOVED: calls run-what-if-scenario edge function unavailable; had fake signal fallback
   {
     type: "function",
     function: {
@@ -2111,36 +1999,7 @@ Use this when:
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "investigate_poi",
-      description: `Launch a comprehensive OSINT investigation on a Person of Interest (POI) or any entity.
-
-Runs a multi-source open-source intelligence fan-out:
-- Google Custom Search across 15-20 targeted queries (name variants, social platforms, criminal/legal records, paste sites, dark web mentions)
-- Credential breach check via HaveIBeenPwned (if email addresses are available)
-- Stores all found content as entity intelligence records
-- Generates a full AI-written intelligence report
-
-Returns a structured investigation summary and triggers report generation.
-
-Use this when:
-- An analyst asks to investigate, background-check, or research a specific person or entity
-- A new threat actor or POI is identified and needs immediate intelligence gathering
-- An entity needs a full OSINT sweep before an operational decision`,
-      parameters: {
-        type: "object",
-        properties: {
-          entity_id: {
-            type: "string",
-            description: "UUID of the entity to investigate. The entity must already exist in the database.",
-          },
-        },
-        required: ["entity_id"],
-      },
-    },
-  },
+  // investigate_poi — REMOVED: calls investigate-poi edge function unavailable; had fake DB fallback
   {
     type: "function",
     function: {

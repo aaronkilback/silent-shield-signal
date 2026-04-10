@@ -59,10 +59,31 @@ Deno.serve(async (req) => {
     const sources = [];
 
     // 1. RCMP Gazette (RSS feed)
+    // Note: rcmp-grc.gc.ca uses an intermediate CA not trusted by Deno's TLS store.
+    // Primary URL fails with SSL UnknownIssuer. We try an alternate path; if both
+    // fail, this block is skipped gracefully — RCMP news is also picked up via
+    // CBC/Reuters feeds in monitor-news.
+    const RCMP_URLS = [
+      'https://www.rcmp-grc.gc.ca/en/rss/news-releases',
+      'https://www.rcmp-grc.gc.ca/en/news/rss.xml',
+    ];
     try {
       console.log('Monitoring RCMP Gazette...');
-      const rcmpResponse = await fetch('https://www.rcmp-grc.gc.ca/en/news/rss.xml');
-      const rcmpText = await rcmpResponse.text();
+      let rcmpText = '';
+      let rcmpFetched = false;
+      for (const rcmpUrl of RCMP_URLS) {
+        try {
+          const res = await fetch(rcmpUrl, { signal: AbortSignal.timeout(8000) });
+          if (res.ok) { rcmpText = await res.text(); rcmpFetched = true; break; }
+          console.log(`[RCMP] ${rcmpUrl} → HTTP ${res.status} — trying next`);
+        } catch (urlErr) {
+          console.log(`[RCMP] ${rcmpUrl} → ${urlErr instanceof Error ? urlErr.message : urlErr} — trying next`);
+        }
+      }
+      if (!rcmpFetched) {
+        console.log('[RCMP] All URLs failed — skipping RCMP source (covered by CBC/Reuters in monitor-news)');
+        throw new Error('RCMP all URLs failed');
+      }
       const rcmpItems = parseRSS(rcmpText);
       
       for (const item of rcmpItems.slice(0, 10)) {
@@ -384,6 +405,10 @@ async function ingestSignalViaGateway(supabaseClient: any, data: {
         source_url: data.url || undefined,
         client_id: data.client_id,
         source_key: sourceKey,
+        // Skip the AI relevance gate — this monitor already does keyword pre-filtering
+        // (entity names, project names, geo + threat-type combos). Double-gating was
+        // the primary cause of relevant Canadian source signals being dropped.
+        skip_relevance_gate: true,
         raw_json: {
           source: data.source,
           title: data.title,

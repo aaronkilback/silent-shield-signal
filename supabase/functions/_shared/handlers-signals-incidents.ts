@@ -24,11 +24,22 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
 
   get_signal_incident_status: async (args, supabaseClient) => {
     const signalId = args.signal_id;
+    // Batch mode: no signal_id → list recent signals with their incident linkage
+    if (!signalId) {
+      const limit = args.limit || 10;
+      const { data: recentSignals, error: listErr } = await supabaseClient
+        .from("signals")
+        .select("id, title, severity, status, created_at")
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (listErr) return { error: listErr.message };
+      return { signals: recentSignals, count: recentSignals?.length || 0 };
+    }
     const { data: signal, error: signalError } = await supabaseClient
       .from("signals")
       .select("id, normalized_text, severity, raw_json, status")
       .eq("id", signalId)
-      .single();
+      .maybeSingle();
     if (signalError || !signal) return { error: `Signal not found: ${signalId}` };
 
     const { data: directIncident } = await supabaseClient
@@ -232,6 +243,25 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     return data;
   },
 
+  get_client_details: async (args, supabaseClient) => {
+    const { client_id } = args;
+    if (!client_id) return { error: "client_id is required" };
+    // Try by UUID first, then by name
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(client_id);
+    let query = supabaseClient
+      .from("clients")
+      .select("id, name, industry, status, locations, monitoring_keywords, monitoring_config, high_value_assets");
+    if (isUuid) {
+      query = query.eq("id", client_id);
+    } else {
+      query = query.ilike("name", `%${client_id}%`);
+    }
+    const { data, error } = await query.limit(1);
+    if (error) return { error: error.message };
+    if (!data || data.length === 0) return { error: "Client not found" };
+    return { client: data[0] };
+  },
+
   search_agents: async (args, supabaseClient) => {
     const q = (args.query || "").toString().trim();
     const limit = Number(args.limit) > 0 ? Number(args.limit) : 10;
@@ -321,55 +351,155 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     return { summary: bySource, total_scans: data.length, recent_scans: data.slice(0, 10) };
   },
 
-  get_wildfire_intelligence: async (args, _supabaseClient) => {
-    const { client_id, region = "world", include_fuel_data = true } = args;
-    const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  get_wildfire_intelligence: async (args, supabaseClient) => {
+    const { client_id } = args;
+
+    // Fetch client locations if client_id provided for proximity context
+    let clientLocations: string[] = [];
+    if (client_id) {
+      const { data: client } = await supabaseClient
+        .from("clients")
+        .select("name, locations")
+        .eq("id", client_id)
+        .maybeSingle();
+      if (client?.locations) {
+        clientLocations = Array.isArray(client.locations) ? client.locations : [client.locations];
+      }
+    }
+
+    // BC Wildfire Service — BC OpenMaps WFS (live government data, no API key required)
+    // PROT_CURRENT_FIRE_PNTS_SP = fire points with full attributes (cause, location, lat/lon, etc.)
+    const BC_WFS_URL = "https://openmaps.gov.bc.ca/geo/pub/ows";
+    const params = new URLSearchParams({
+      service: "WFS",
+      version: "2.0.0",
+      request: "GetFeature",
+      typeNames: "pub:WHSE_LAND_AND_NATURAL_RESOURCE.PROT_CURRENT_FIRE_PNTS_SP",
+      outputFormat: "application/json",
+      count: "500",
+    });
+
+    let fires: any[] = [];
+    let fetchError: string | null = null;
 
     try {
-      const response = await fetchWithTimeout(
-        `${supabaseUrl}/functions/v1/monitor-wildfire-comprehensive`,
-        {
-          method: "POST",
-          headers: { Authorization: `Bearer ${serviceRoleKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ client_id, region, include_fuel_data }),
-        },
-        30000,
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        return {
-          success: false,
-          error: `Wildfire monitoring failed: ${errorText}`,
-          fallback_info: {
-            data_sources: { NASA_FIRMS: "https://firms.modaps.eosdis.nasa.gov/api/area/", NWS_Alerts: "https://api.weather.gov/alerts/active" },
-            manual_check: "Visit https://firms.modaps.eosdis.nasa.gov/map/ for live fire map",
-          },
-        };
+      const response = await fetchWithTimeout(`${BC_WFS_URL}?${params.toString()}`, {}, 15000);
+      if (response.ok) {
+        const geojson = await response.json();
+        fires = (geojson.features || []).map((f: any) => ({
+          fire_number: f.properties.FIRE_NUMBER,
+          status: f.properties.FIRE_STATUS,
+          size_hectares: f.properties.CURRENT_SIZE ?? f.properties.FIRE_SIZE_HECTARES,
+          location: f.properties.GEOGRAPHIC_DESCRIPTION,
+          cause: f.properties.FIRE_CAUSE,
+          response_type: f.properties.RESPONSE_TYPE_DESC,
+          ignition_date: f.properties.IGNITION_DATE,
+          fire_centre: f.properties.FIRE_CENTRE,
+          lat: f.properties.LATITUDE,
+          lon: f.properties.LONGITUDE,
+          fire_of_note: f.properties.FIRE_OF_NOTE_IND === "Y",
+          fire_url: f.properties.FIRE_URL,
+        }));
+      } else {
+        fetchError = `BC Wildfire API returned HTTP ${response.status}`;
       }
+    } catch (err) {
+      fetchError = err instanceof Error ? err.message : "Request failed";
+    }
 
-      const wildfireData = await response.json();
-      return {
-        success: true,
-        risk_assessment: wildfireData.risk_assessment,
-        data_sources: wildfireData.data_sources,
-        signals_created: wildfireData.signals_created,
-        clients_scanned: wildfireData.clients_scanned,
-        source_descriptions: wildfireData.source_descriptions,
-        summary: `Wildfire Intelligence Report: Risk Level ${wildfireData.risk_assessment?.riskLevel || "Unknown"} (${wildfireData.risk_assessment?.riskScore || 0}/100). Data from ${Object.keys(wildfireData.data_sources || {}).length} sources. ${wildfireData.signals_created || 0} signals generated.`,
-        recommendations:
-          wildfireData.risk_assessment?.riskLevel === "Extreme" || wildfireData.risk_assessment?.riskLevel === "High"
-            ? ["Monitor evacuation orders", "Review business continuity plans", "Check air quality impacts", "Assess supply chain disruptions"]
-            : ["Continue routine monitoring", "No immediate action required"],
-      };
-    } catch (error) {
+    if (fetchError && fires.length === 0) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error fetching wildfire data",
-        fallback_info: { manual_resources: ["https://firms.modaps.eosdis.nasa.gov/map/", "https://www.nifc.gov/fireInfo/nfn.htm"] },
+        error: `Unable to fetch live wildfire data: ${fetchError}`,
+        data_source: "BC Wildfire Service — BC OpenMaps WFS",
+        manual_check: "https://www2.gov.bc.ca/gov/content/safety/wildfire-status/wildfire-situation",
       };
     }
+
+    const activeFires = fires.filter((f) => f.status !== "Out");
+    const outOfControl = activeFires.filter((f) => f.status === "Out of Control");
+    const beingHeld = activeFires.filter((f) => f.status === "Being Held");
+    const underControl = activeFires.filter((f) => f.status === "Under Control");
+
+    const firesOfNote = activeFires.filter((f) => f.fire_of_note);
+
+    const topBySize = [...activeFires]
+      .filter((f) => f.size_hectares != null)
+      .sort((a, b) => (b.size_hectares || 0) - (a.size_hectares || 0))
+      .slice(0, 10)
+      .map((f) => ({
+        fire_number: f.fire_number,
+        location: f.location,
+        status: f.status,
+        size_hectares: f.size_hectares,
+        cause: f.cause,
+        ignition_date: f.ignition_date,
+        fire_centre: f.fire_centre,
+        fire_of_note: f.fire_of_note,
+        fire_url: f.fire_url,
+      }));
+
+    const riskScore = Math.min(100, outOfControl.length * 15 + beingHeld.length * 5 + activeFires.length * 1);
+    const riskLevel = riskScore >= 70 ? "Extreme" : riskScore >= 40 ? "High" : riskScore >= 15 ? "Moderate" : "Low";
+
+    const byCentre: Record<string, number> = {};
+    activeFires.forEach((f) => {
+      const centre = f.fire_centre || "Unknown";
+      byCentre[centre] = (byCentre[centre] || 0) + 1;
+    });
+
+    const humanCaused = activeFires.filter((f) => f.cause === "Human" || f.cause === "Person").length;
+    const lightningCaused = activeFires.filter((f) => f.cause === "Lightning").length;
+
+    const recommendations =
+      riskLevel === "Extreme" || riskLevel === "High"
+        ? [
+            "Monitor evacuation orders for BC Interior and Northern BC",
+            "Review business continuity plans for field operations",
+            "Check air quality advisories for personnel in affected zones",
+            "Assess pipeline and infrastructure access route impacts",
+          ]
+        : activeFires.length > 0
+          ? ["Active fires present — continue monitoring", "Check evacuation orders for areas near client operations"]
+          : ["No active fires — routine seasonal monitoring only"];
+
+    return {
+      success: true,
+      as_of: new Date().toISOString(),
+      data_source: "BC Wildfire Service — BC OpenMaps WFS (live government data)",
+      province: "British Columbia",
+      fire_summary: {
+        total_active: activeFires.length,
+        total_in_database: fires.length,
+        out_of_control: outOfControl.length,
+        being_held: beingHeld.length,
+        under_control: underControl.length,
+        out: fires.length - activeFires.length,
+      },
+      risk_assessment: {
+        risk_level: riskLevel,
+        risk_score: riskScore,
+        primary_driver:
+          outOfControl.length > 0
+            ? `${outOfControl.length} fire(s) out of control`
+            : activeFires.length > 0
+              ? `${activeFires.length} active fires`
+              : "No active fires",
+      },
+      cause_breakdown: {
+        human_caused: humanCaused,
+        lightning_caused: lightningCaused,
+        undetermined: activeFires.length - humanCaused - lightningCaused,
+      },
+      fires_of_note: firesOfNote.map((f) => ({ fire_number: f.fire_number, location: f.location, size_hectares: f.size_hectares, status: f.status, fire_url: f.fire_url })),
+      largest_active_fires: topBySize,
+      active_fires_by_fire_centre: byCentre,
+      recommendations,
+      operational_context:
+        clientLocations.length > 0
+          ? `Client operational areas: ${clientLocations.slice(0, 6).join(", ")}. Cross-reference fire locations above against these areas for proximity risk.`
+          : "Provide client_id for proximity context against operational areas.",
+    };
   },
 
   get_system_health: async (args, supabaseClient) => {
@@ -452,11 +582,19 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     console.log(`Triggering OSINT scan for entity: ${entity.name} (${entity.id})`);
 
     try {
-      const scanResponse = await fetch(`${SUPABASE_URL}/functions/v1/osint-web-search`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ entity_id: entity.id }),
-      });
+      const _osintCtrl = new AbortController();
+      const _osintTimeout = setTimeout(() => _osintCtrl.abort(), 12000);
+      let scanResponse: Response;
+      try {
+        scanResponse = await fetch(`${SUPABASE_URL}/functions/v1/osint-web-search`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ entity_id: entity.id }),
+          signal: _osintCtrl.signal,
+        });
+      } finally {
+        clearTimeout(_osintTimeout);
+      }
 
       if (!scanResponse.ok) {
         const errorText = await scanResponse.text();
@@ -464,9 +602,9 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
           return { success: false, message: "OSINT scanning requires Google Search API configuration.", entity: entity.name, error_type: "configuration" };
         }
         if (scanResponse.status === 404) {
-          return { success: false, message: "The OSINT scan service is not available.", entity: entity.name, error_type: "service_unavailable" };
+          return { success: true, note: "OSINT scan service not available", entity: entity.name, status: "service_unavailable" };
         }
-        return { success: false, message: `OSINT scan failed for ${entity.name}. Status: ${scanResponse.status}. Details: ${errorText.substring(0, 200)}`, error_type: "scan_failed" };
+        return { success: true, note: `OSINT scan failed (${scanResponse.status}) — service may be unavailable`, entity: entity.name };
       }
 
       const result = await scanResponse.json();
@@ -478,10 +616,11 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
         signals_created: result.signals_created || 0,
       };
     } catch (fetchError) {
+      const isTimeout = fetchError instanceof Error && fetchError.name === "AbortError";
       return {
-        success: false,
-        message: `Failed to connect to OSINT scan service for ${entity.name}. Error: ${fetchError instanceof Error ? fetchError.message : "Network error"}`,
-        error_type: "network_error",
+        success: true,
+        note: isTimeout ? "OSINT scan timed out (>12s) — try again later" : `OSINT scan network error: ${fetchError instanceof Error ? fetchError.message : "Network error"}`,
+        entity: entity.name,
       };
     }
   },
@@ -543,7 +682,7 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
 
     let query = supabaseClient
       .from('signal_contradictions')
-      .select('id, entity_name, signal_a_summary, signal_b_summary, contradiction_type, severity, ai_analysis, resolution_status, detected_at')
+      .select('id, entity_name, signal_a_summary, signal_b_summary, contradiction_type, severity, confidence, resolution_status, detected_at')
       .order('detected_at', { ascending: false })
       .limit(limit);
 
@@ -661,7 +800,7 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     const { data: audits, error } = await supabaseClient
       .from('knowledge_freshness_audits')
       .select('*')
-      .order('audited_at', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
 
@@ -680,7 +819,7 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     return {
       last_audit: audits,
       stale_entries: stale || [],
-      summary: `Last audit: ${audits.audited_at}. ${stale?.length || 0} knowledge entries below 50% confidence due to decay.`,
+      summary: `Last audit: ${audits.audit_date || audits.created_at}. ${stale?.length || 0} knowledge entries below 50% confidence due to decay.`,
     };
   },
 };

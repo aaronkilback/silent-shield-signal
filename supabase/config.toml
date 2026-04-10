@@ -576,3 +576,9 @@ verify_jwt = false
 
 [functions.generate-report-visuals]
 verify_jwt = false
+
+[functions.agent-knowledge-seeker]
+verify_jwt = false
+
+[functions.review-signal-agent]
+verify_jwt = false

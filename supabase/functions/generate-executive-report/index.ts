@@ -94,7 +94,7 @@ Deno.serve(async (req) => {
 
     if (clientError) throw clientError;
 
-    // Fetch signals with full details for traceability
+    // Fetch signals with full details for traceability — exclude test signals
     const { data: signals, error: signalsError } = await supabase
       .from('signals')
       .select('*')
@@ -102,6 +102,7 @@ Deno.serve(async (req) => {
       .gte('received_at', periodStart.toISOString())
       .lte('received_at', periodEnd.toISOString())
       .neq('status', 'archived')
+      .neq('is_test', true)
       .order('received_at', { ascending: false });
 
     if (signalsError) throw signalsError;
@@ -575,7 +576,9 @@ Be specific and actionable. Max 5 items.`;
           for (const [id, member] of teamMap) {
             if (member.roles.some(r => a.ownerRole.toLowerCase().includes(r))) {
               ownerId = id;
-              ownerName = member.name;
+              // Sanitize: don't expose email addresses as display names in reports
+              const isEmail = member.name?.includes('@');
+              ownerName = isEmail ? a.ownerRole : (member.name || a.ownerRole);
               break;
             }
           }
@@ -1194,9 +1197,9 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
           <td style="font-family: Arial, sans-serif; font-size: 8.5pt;">${ageLabel}</td>
           <td><span class="system-origin">${systemOrigin}</span></td>
           <td>
-            <strong>${incident.incident_type || 'Unknown'}</strong><br>
+            <strong>${incident.title || incident.incident_type || 'Untitled Incident'}</strong><br>
             <span style="font-family: Arial, sans-serif; font-size: 8pt; color: #555;">
-              ${rationale?.rationale || 'Classification pending — requires analyst review'}
+              ${rationale?.rationale || incident.description || incident.summary || `${incident.incident_type ? incident.incident_type.replace(/_/g, ' ') : 'Security incident'} — under investigation`}
             </span>
           </td>
           <td style="font-family: monospace; font-size: 8pt;">${incident.openedAtFormatted}</td>

@@ -840,6 +840,52 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
       }
     }
 
+    // Generate a descriptive incident title from signal metadata
+    const generateIncidentTitle = (sig: any, cls: any): string => {
+      const categoryMap: Record<string, string> = {
+        malware: 'Malware Detection',
+        phishing: 'Phishing Campaign',
+        intrusion: 'Network Intrusion',
+        data_exfil: 'Data Exfiltration',
+        ddos: 'DDoS Attack',
+        ransomware: 'Ransomware Activity',
+        social_engineering: 'Social Engineering',
+        insider_threat: 'Insider Threat',
+        physical: 'Physical Security Threat',
+        fraud: 'Fraud Activity',
+        extremism: 'Extremist Activity',
+        protest: 'Protest Activity',
+        cyber: 'Cyber Threat',
+        sabotage: 'Sabotage Threat',
+        espionage: 'Espionage Activity',
+      };
+      const cat = cls.category || sig.category || '';
+      const catLabel = categoryMap[cat] ||
+        (cat ? cat.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : 'Security Incident');
+      const sev = (cls.severity || sig.severity || '').toLowerCase();
+      const loc = cls.location || sig.location || '';
+      const entities: string[] = cls.entity_tags || sig.entity_tags || [];
+      const sevPrefix = sev === 'critical' ? 'Critical ' : sev === 'high' ? 'High-Severity ' : '';
+
+      // Prefer named entities as target descriptor, fall back to location
+      const meaningful = entities.filter((e: string) => e.length > 2 && !/^\d+$/.test(e));
+      const target = meaningful.length > 0 ? meaningful.slice(0, 2).join(', ') : loc;
+
+      if (target) {
+        return `${sevPrefix}${catLabel} — ${target}`.substring(0, 100);
+      }
+
+      // Fall back to first clean sentence of signal title
+      const raw = sig.title || sig.normalized_text || '';
+      const clean = raw.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+      const short = clean.split(/[.!?]/)[0].trim().substring(0, 60);
+      if (short.length > 10) {
+        return `${sevPrefix}${catLabel}: ${short}`.substring(0, 100);
+      }
+
+      return `${sevPrefix}${catLabel} Detected`.substring(0, 100);
+    };
+
     // Generate title from normalized_text (first sentence or first 100 chars)
     const generateTitle = (text: string): string => {
       if (!text || text.length === 0) return 'Signal - ' + new Date().toISOString().slice(0, 16);
@@ -864,7 +910,10 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
     
     // ===== AI RELEVANCE GATE: PECL-calibrated two-stage check =====
     // Stage 1: LLM scores relevance (0-1) + classifies connection type
-    // Stage 2: Threshold check at 0.60 — below = write to filtered_signals and reject
+    // Stage 2: Threshold check at 0.45 — below = write to filtered_signals and reject
+    // Lowered from 0.60: signals scoring 0.45–0.60 are "moderate" (sector-wide risk,
+    // regulatory trends, protest tactics relevant to client's industry) — these ARE
+    // actionable PECL intelligence. 0.60 was blocking all sector-wide signals.
     if (skip_relevance_gate) {
       console.log(`[AI Relevance Gate] BYPASSED — upstream keyword matching already vetted this signal`);
     }
@@ -889,8 +938,8 @@ Score how actionable this signal is for the specific client on a 0.0–1.0 scale
 SCORE GUIDE:
 0.8–1.0  Direct naming, active threat/legal action against this client or their assets
 0.6–0.79 Strong indirect: same project, same threat actor, adjacent geography with credible spillover
-0.4–0.59 Moderate: sector-wide risk, regulatory trend, protest tactics relevant to client's industry
-0.2–0.39 Weak: tangential keyword match, distant geography, corporate PR, historical >6 months
+0.45–0.59 Moderate: sector-wide risk, regulatory trend, protest tactics relevant to client's industry ← INGESTION FLOOR
+0.2–0.44 Weak: tangential keyword match, distant geography, corporate PR, historical >6 months
 0.0–0.19 No connection: wrong industry, wrong region, entertainment/sports, generic content
 
 CONNECTION TYPES (pick one):
@@ -937,8 +986,8 @@ Score this signal's relevance and classify the connection.`
 
           // Phase 3C: Per-source threshold adjustment
           // Low-credibility sources face a higher bar; proven sources get more slack.
-          // Bounded ±0.10 from base (floor 0.50, ceiling 0.70) to prevent runaway suppression.
-          let relevanceThreshold = 0.60;
+          // Bounded ±0.10 from base (floor 0.35, ceiling 0.55) to prevent runaway suppression.
+          let relevanceThreshold = 0.45;
           if (source_key) {
             const { data: credScore } = await supabase
               .from('source_credibility_scores')
@@ -948,8 +997,8 @@ Score this signal's relevance and classify the connection.`
             // Only adjust if we have enough signal history (thin data protection)
             if (credScore?.current_credibility && (credScore.total_signals ?? 0) >= 5) {
               const adjustment = (0.65 - credScore.current_credibility) * 0.40;
-              relevanceThreshold = Math.min(0.70, Math.max(0.50, 0.60 + adjustment));
-              if (Math.abs(relevanceThreshold - 0.60) > 0.005) {
+              relevanceThreshold = Math.min(0.55, Math.max(0.35, 0.45 + adjustment));
+              if (Math.abs(relevanceThreshold - 0.45) > 0.005) {
                 console.log(`[Phase3C] ${source_key} threshold adjusted: ${relevanceThreshold.toFixed(2)} (credibility: ${credScore.current_credibility.toFixed(3)}, signals: ${credScore.total_signals})`);
               }
             }
@@ -1389,7 +1438,7 @@ Score this signal's relevance and classify the connection.`
                 status: 'open',
                 severity_level: 'P1',
                 is_test: signal.is_test || false,
-                title: `🚨 CRITICAL: ${signal.normalized_text?.substring(0, 80)}`,
+                title: generateIncidentTitle(signal, classification),
                 summary: `Fast-path critical signal detected. Rule: ${rulesResult.matchedRule || 'AI-classified'}. Keyword: ${rulesResult.matchedKeyword || 'N/A'}`,
                 sla_targets_json: { mttd: 5, mttr: 30 },
                 timeline_json: [{
@@ -1517,6 +1566,15 @@ Score this signal's relevance and classify the connection.`
       cyberAdvisorySources.includes(signal.raw_json?.sourceType) ||
       cyberAdvisorySources.includes(signal.raw_json?.source_name?.toLowerCase());
 
+    // Historical signals skip the AI decision engine entirely — no incident creation, no escalation
+    if (isHistorical) {
+      console.log(`[Staleness] Skipping AI decision engine for historical signal ${signal.id}`);
+      return new Response(
+        JSON.stringify({ success: true, signal_id: signal.id, signal_type: 'historical', message: 'Signal stored as historical intel — no incident created.' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Apply AI decision engine for rule-based categorization and analysis
     console.log('Invoking AI decision engine for signal categorization...');
     try {
@@ -1542,7 +1600,7 @@ Score this signal's relevance and classify the connection.`
               priority: aiDecisionResult.data.decision.incident_priority || rulesResult.priority,
               status: 'open',
               is_test: signal.is_test || false,
-              title: `AI-Escalated: ${signal.title || signal.normalized_text?.substring(0, 100)}`,
+              title: generateIncidentTitle(signal, classification),
               summary: aiDecisionResult.data.decision.reasoning,
               sla_targets_json: { 
                 mttd: 10, 

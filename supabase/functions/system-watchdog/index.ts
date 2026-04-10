@@ -137,6 +137,23 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - WATCHDOG MONITORS: \`signals WHERE signal_type = 'historical'\` count growing = gate working. Any incidents linked to signals with \`signal_type = 'historical'\` = gate regression.
 - EXPECTED: Historical signals accumulate without generating incidents. Active feed stays clean.
 
+### Phase 5 Tier 2 Signal Review Agent (April 9, 2026) — COMPLETE
+- Signals with composite_confidence in [0.60, 0.75) now receive async contextual review by \`review-signal-agent\`
+- Tier 1 (unchanged): inline AI model gates in \`ingest-signal\` + \`ai-decision-engine\` (fast path)
+- Tier 2 (new): \`review-signal-agent\` fires asynchronously after \`ai-decision-engine\` completes — never blocks the pipeline
+- Verdicts by range:
+  - **0.60–0.64** (sub-threshold): agent gathers context (related signals, active incidents, entity co-occurrence) and decides promote | dismiss. promote re-calls \`ai-decision-engine\` with \`tier2_promotion=true\` to bypass composite gate and create an incident.
+  - **0.65–0.74** (incident already created): agent decides enrich | flag | dismiss. enrich adds analysis to \`incidents.ai_analysis_log\`. flag sets \`investigation_status = 'needs_review'\` + timeline entry.
+- All verdicts write \`raw_json.agent_review = { verdict, reasoning, confidence_delta, reviewed_at }\`
+- \`composite_confidence\` is updated with agent's \`confidence_delta\` (range ±0.10)
+- Non-breaking: existing >= 0.75 and < 0.60 paths are completely unchanged
+- WATCHDOG MONITORS:
+  - \`signals WHERE raw_json->'agent_review' IS NOT NULL\` count growing = tier 2 firing correctly
+  - \`signals WHERE raw_json->'agent_review'->>'verdict' = 'promote'\` = agent promotions happening
+  - \`incidents WHERE investigation_status = 'needs_review'\` = agent flagging low-confidence incidents
+  - \`signals WHERE composite_confidence >= 0.60 AND composite_confidence < 0.75 AND raw_json->'agent_review' IS NULL AND created_at < NOW() - INTERVAL '5 minutes'\` = tier 2 silently failing
+- EXPECTED: ~5–15% of signals in [0.60, 0.75) range (borderline signals). Most verdicts = dismiss. Occasional promote on corroborated sub-threshold signals.
+
 ### WRAITH AI Defense Layer (April 8, 2026) — COMPLETE
 - Three-layer prompt injection gate on all AEGIS tool dispatches:
   1. **Pre-screen** (all messages, before OpenAI): regex gate screens user message before model sees it. Logs at confidence ≥ 0.6, blocks at ≥ 0.85. Fires \`[WRAITH] Pre-screen blocked message\` in logs.
@@ -223,12 +240,54 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
    - This is a designed future feature — not yet implemented
    - WATCHDOG MONITORS: Cannot auto-detect fabricated narrative — requires human review of reports
 
-7. WILDFIRE TOOL DISABLED
-   - get_wildfire_intelligence removed from AEGIS tool definitions (April 7, 2026)
-   - Was fabricating data with no real data source behind it
-   - TODO: Implement with BC Wildfire Service API before fire season May 1, 2026
-   - URL: https://openmaps.gov.bc.ca/geo/pub/WHSE_LAND_AND_NATURAL_RESOURCE.PROT_CURRENT_FIRE_POLYS_SP
-   - WATCHDOG MONITORS: Flag this in April 30 report as fire season approaching
+7. WILDFIRE TOOL — RE-ENABLED APRIL 8, 2026
+   - get_wildfire_intelligence restored to AEGIS tool definitions
+   - Handler calls BC OpenMaps WFS PROT_CURRENT_FIRE_PNTS_SP layer (live, no API key)
+   - URL: https://openmaps.gov.bc.ca/geo/pub/ows?...&typeNames=pub:WHSE_LAND_AND_NATURAL_RESOURCE.PROT_CURRENT_FIRE_PNTS_SP
+   - Returns: fire_summary, risk_assessment, fires_of_note, largest_active_fires (with fire_url), cause_breakdown, fires_by_fire_centre
+   - LIVE VERIFIED April 8: 7 active fires, 1 OOC (K60033 Quilchena Creek 50ha), 20 in DB
+   - WATCHDOG MONITORS: Tool should return total_in_database > 0 from May 1 onward; low counts in peak season (Aug/Sep) = API issue
+
+8. THREAT LANDSCAPE QUERY — FIXED APRIL 8, 2026
+   - Root cause: GPT-4o-mini was not calling any tool for "threat landscape" queries
+   - Fix: forced pre-routing layer in dashboard-ai-assistant detects threat landscape patterns and calls analyze_threat_radar directly before OpenAI call
+   - Secondary: get_threat_intel_feeds and analyze_threat_radar both fall back to internal signals DB on external failure
+   - PostgREST NULL filter bug fixed in fallback queries
+   - VERIFIED: curl test confirmed real briefing returned
+   - WATCHDOG MONITORS: SELECT COUNT(*) FROM signals WHERE signal_type IS NULL AND deleted_at IS NULL AND created_at > NOW() - INTERVAL '30 days' — if 0, fallback chain also fails
+
+9. INCIDENT TITLE GENERATION — FIXED APRIL 8, 2026
+   - generateIncidentTitle() added to ingest-signal — uses category, severity, entity_tags, location
+   - Format: "{severity prefix}{category label} — {entity or location}"
+   - Replaces generic "AI-Escalated: ..." and "🚨 CRITICAL: ..." prefixes
+   - VERIFIED: deployed April 8, 2026
+   - WATCHDOG MONITORS: SELECT COUNT(*) FROM incidents WHERE (title ILIKE 'AI-Escalated%' OR title ILIKE '🚨 CRITICAL:%') AND created_at > NOW() - INTERVAL '1 day' — any rows = title fix regressed
+
+10. AEGIS TOOL HEALTH CHECK — APRIL 8, 2026 (session 3 COMPLETE)
+    - Session 2 result was misleading: 93/93 "passing" but 12+ tools had fake success fallbacks
+      returning unrelated DB data instead of implementing the actual feature
+    - Session 3 fix: removed 9 tools from aegis-tool-definitions.ts (AI can no longer call them);
+      their case handlers now return clear errors instead of fake success
+      REMOVED: trigger_osint_scan, perform_impact_analysis, draft_response_tasks,
+      integrate_incident_management, optimize_rule_thresholds, simulate_attack_path,
+      simulate_protest_escalation, run_what_if_scenario, investigate_poi
+    - Session 3 fix: 11 tools given real DB implementations (no more fake success):
+      recommend_playbook (queries playbooks table), generate_incident_briefing (AI + real incident data),
+      guide_decision_tree (AI + playbooks + escalation rules), identify_critical_failure_points (90d pattern analysis),
+      track_mitigation_effectiveness (real resolution metrics), analyze_sentiment_drift (entity_content time-series),
+      propose_new_monitoring_keywords (raw_json keyword frequency), extract_signal_insights (signal aggregation),
+      synthesize_knowledge (KB organized by agent/category), enrich_entity_descriptions (entities needing enrichment),
+      run_entity_deep_scan (parallel DB aggregation: entity + content + investigations + signals)
+    - Session 3 VERIFIED: 84/84 tested tools passing (30 write-ops skipped)
+    - Session 4 additions (April 8): wildfire tool re-enabled (+1); threat radar received_at fix; report bugs fixed
+    - Session 4 VERIFIED: 85/85 tested tools passing (30 write-ops skipped) — all deployed to production
+    - Session 5 additions (April 9): composite_confidence backfill migration, test timeout fix for AI-heavy tools
+    - Session 5 VERIFIED: 85/85 tested tools passing (30 write-ops skipped)
+    - Session 6 additions (April 9): osint-web-search routes through ingest-signal (fixed orphaned signals); review-signal-agent tier 2 evaluation deployed; broken source migration applied
+    - Session 6 VERIFIED: 85/85 AEGIS tools passing + 2/2 edge function direct tests passing
+    - Run before/after every change: node scripts/test-aegis-tools.mjs
+    - Pass count < 85 AEGIS + < 2 edge = regression introduced — revert last change
+    - WATCHDOG MONITORS: Cannot auto-run — developer tool only
 
 ### AEGIS AI Assistant (CRITICAL)
 - Primary user interface â agent-mediated UI philosophy

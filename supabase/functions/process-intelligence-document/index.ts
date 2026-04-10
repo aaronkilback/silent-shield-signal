@@ -775,8 +775,10 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
           .gte('created_at', thirtyDaysAgo.toISOString())
           .limit(50);
         
-        // Simple similarity check - if any recent signal contains 60% of the same words, skip
-        // Lowered from 80% to catch AI-paraphrased duplicates of the same story
+        // Near-duplicate check: block only very high word-overlap (75%+).
+        // 60% was too aggressive — ongoing PECL stories (CGL blockade, PETRONAS)
+        // share core terminology across every update, causing new developments to
+        // be silently blocked. 75% catches true duplicates while letting new angles through.
         let isNearDuplicate = false;
         if (recentSignals && recentSignals.length > 0) {
           const signalWords = new Set((signal.description || '').toLowerCase().split(/\s+/).filter(w => w.length > 3));
@@ -785,8 +787,8 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
             const existingWords = new Set(existing.normalized_text.toLowerCase().split(/\s+/).filter(w => w.length > 3));
             const intersection = new Set([...signalWords].filter(w => existingWords.has(w)));
             const similarity = intersection.size / Math.min(signalWords.size, existingWords.size);
-            
-            if (similarity > 0.6) {
+
+            if (similarity > 0.75) {
               console.log(`Skipping near-duplicate signal (${(similarity * 100).toFixed(0)}% similar): ${signal.title}`);
               isNearDuplicate = true;
               break; // Exit the comparison loop

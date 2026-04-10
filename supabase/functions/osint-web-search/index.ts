@@ -99,6 +99,8 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     const googleApiKey = Deno.env.get('GOOGLE_SEARCH_API_KEY');
     const googleEngineId = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
 
@@ -196,18 +198,38 @@ Deno.serve(async (req) => {
           else if (!contentError) contentCreated++;
 
           if (analysis.create_signal && analysis.security_concerns?.length > 0) {
-            const severityInt = analysis.signal_severity === 'critical' ? 90 : analysis.signal_severity === 'high' ? 75 : analysis.signal_severity === 'medium' ? 50 : 30;
-            const severityLabel = severityInt >= 80 ? 'critical' : severityInt >= 50 ? 'high' : severityInt >= 20 ? 'medium' : 'low';
-            const { data: signalData } = await supabase.from('signals').insert({
-              title: `Security Intelligence: ${entity.name}`, description: analysis.summary,
-              normalized_text: analysis.summary, signal_type: 'osint', severity_score: severityInt,
-              severity: severityLabel, category: 'cybersecurity',
-              status: 'new', relevance_score: analysis.relevance_score,
-              raw_json: { source_url: item.link, link: item.link, snippet: item.snippet, has_full_article: isFullArticle },
-            }).select('id').single();
-            if (signalData) {
-              signalsCreated++;
-              await supabase.from('entity_mentions').insert({ entity_id: entityId, signal_id: signalData.id, confidence: analysis.relevance_score, context: analysis.summary || item.snippet });
+            // Route through ingest-signal so all quality gates apply:
+            // dedup, false-positive filter, AI classification, client matching,
+            // relevance gate, composite confidence, entity correlation.
+            if (supabaseUrl && serviceRoleKey) {
+              try {
+                const ingestResp = await fetch(`${supabaseUrl}/functions/v1/ingest-signal`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${serviceRoleKey}`,
+                  },
+                  body: JSON.stringify({
+                    text: `${item.title}\n\n${articleContent}`,
+                    source_url: item.link,
+                    url: item.link,
+                    raw_json: { osint_entity_id: entityId, osint_entity_name: entity.name, snippet: item.snippet, has_full_article: isFullArticle },
+                    sourceType: 'osint_web_search',
+                  }),
+                });
+                if (ingestResp.ok) {
+                  const ingestResult = await ingestResp.json();
+                  if (ingestResult?.signal_id) {
+                    signalsCreated++;
+                    // entity_mentions is handled by correlate-entities (called async by ingest-signal)
+                    // — do not double-write here
+                  }
+                } else {
+                  console.warn(`[OSINT] ingest-signal rejected "${item.title?.slice(0, 60)}" (${ingestResp.status})`);
+                }
+              } catch (ingestErr) {
+                console.error('[OSINT] Failed to route through ingest-signal:', ingestErr instanceof Error ? ingestErr.message : ingestErr);
+              }
             }
           }
         }

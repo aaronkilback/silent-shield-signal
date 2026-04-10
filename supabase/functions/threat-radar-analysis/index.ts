@@ -57,9 +57,9 @@ Deno.serve(async (req) => {
       // Recent signals with emphasis on threat-related
       supabase
         .from('signals')
-        .select('id, normalized_text, rule_category, rule_tags, signal_type, rule_priority, severity, confidence, created_at, location')
-        .gte('created_at', timeframeCutoff)
-        .order('created_at', { ascending: false })
+        .select('id, normalized_text, rule_category, rule_tags, signal_type, rule_priority, severity, confidence, received_at, location')
+        .gte('received_at', timeframeCutoff)
+        .order('received_at', { ascending: false })
         .limit(500),
       
       // Recent incidents
@@ -201,7 +201,7 @@ Deno.serve(async (req) => {
     const radicalActivityScore = Math.min(100, Math.round(
       radicalSignals.reduce((acc: number, s: any) => {
         const weight = severityWeight[s.severity as keyof typeof severityWeight] || 5;
-        const recency = getRecencyWeight(s.created_at);
+        const recency = getRecencyWeight(s.received_at);
         return acc + (weight * recency);
       }, 0) +
       (existingRadical.filter((r: any) => r.threat_level === 'high' || r.threat_level === 'critical').length * 10)
@@ -227,7 +227,7 @@ Deno.serve(async (req) => {
     const infrastructureRiskScore = Math.min(100, Math.round(
       infrastructureSignals.reduce((acc: number, s: any) => {
         const weight = severityWeight[s.severity as keyof typeof severityWeight] || 5;
-        const recency = getRecencyWeight(s.created_at);
+        const recency = getRecencyWeight(s.received_at);
         return acc + (weight * recency);
       }, 0) +
       (criticalAssets.filter((a: any) => a.is_internet_facing && a.business_criticality === 'mission_critical').length * 3)
@@ -249,8 +249,8 @@ Deno.serve(async (req) => {
     else if (overallThreatScore >= 15) overallThreatLevel = 'moderate';
 
     // Calculate threat momentum
-    const recentSignals = signals.filter((s: any) => getRecencyWeight(s.created_at) >= 0.7).length;
-    const olderSignals = signals.filter((s: any) => getRecencyWeight(s.created_at) < 0.7).length;
+    const recentSignals = signals.filter((s: any) => getRecencyWeight(s.received_at) >= 0.7).length;
+    const olderSignals = signals.filter((s: any) => getRecencyWeight(s.received_at) < 0.7).length;
     const threatMomentum = recentSignals > olderSignals * 1.5 ? 'rising' : 
                            recentSignals < olderSignals * 0.5 ? 'declining' : 'stable';
 
