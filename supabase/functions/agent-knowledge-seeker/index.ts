@@ -20,6 +20,7 @@ const PRACTITIONER_SOURCES = [
   { query: 'Shawn Ryan Show threat intelligence energy infrastructure 2026', domain: 'threat_intelligence' },
   { query: 'Mike Glover Fieldcraft operational security threat assessment', domain: 'physical_security' },
   { query: 'forward observer intelligence preparation environment energy sector', domain: 'threat_intelligence' },
+  { query: 'Kyle Scott Golden Ridge Protection executive protection critical infrastructure security 2026', domain: 'executive_protection' },
 ];
 
 // Knowledge hunt angles — each agent runs ALL of these for their specialty
