@@ -234,13 +234,39 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - Entity monitoring pipeline (30 entities with \`active_monitoring_enabled = true\`) runs separately from keyword pipeline — unaffected by keyword changes
 - WATCHDOG MONITORS: Cannot auto-detect keyword coverage gaps. Review signal breadth quarterly.
 
+### Signal Pipeline Restoration (April 11, 2026) — COMPLETE
+
+**Problem:** No new signals for multiple days. Root cause was not a single bug but a compounding set of architecture issues:
+1. monitor-news + monitor-social-unified had crisis-only keyword filters — only fired for active PETRONAS/CGL protests/injunctions. Silent during quiet periods.
+2. April 9 migration paused 9 RSS sources (DNS failures, SSL errors, 404s) — left only BC Government News active, which rarely matched client keywords.
+3. rejected_content_hashes table accumulated months of hashes — silently blocked re-ingestion of recurring topic areas even after content was legitimate.
+4. monitor-threat-intel fetched only 5 CISA KEV entries (hardcoded slice(0,5)) without per-CVE source_key — after first ingest, all 5 were blocked by content-hash dedup on every subsequent run.
+5. fortress-qa-agent was injecting CGL sabotage signals into the live feed every 6 hours (see gap #1 above).
+
+**Fixes applied:**
+- monitor-news: TIER1 keywords expanded to cover routine PETRONAS-relevant intelligence (CER/BCER regulatory news, LNG industry broad, BC Energy Regulator, labour/HSE events, corporate news, environmental approvals, Indigenous consultation — not just crisis events). TIER2A expanded to include broader BC geography. TIER2B expanded to include business/regulatory intelligence events. Lookback window 24h → 48h.
+- monitor-news: Added 4 new RSS feeds: CBC British Columbia, CBC Canada National, Reuters Business News, Natural Resources Canada News.
+- Sources table: Added 4 new active sources (CBC BC, CBC Canada, Reuters Business, NRCan). Updated BC Oil Gas Commission → BC Energy Regulator with current feed URL. Confirmed BC Government News active.
+- rejected_content_hashes: Pruned all entries older than 30 days. Added created_at index for efficient future pruning. Run monthly if signal volume drops unexpectedly.
+- monitor-threat-intel: Now fetches top 20 CISA KEV (sorted newest-first). Each CVE gets unique source_key (cisa-kev-CVE-YYYY-NNNN) so URL-dedup correctly gates per-CVE rather than colliding on content hash.
+- fortress-qa-agent: Added is_test: true to all ingest calls. SignalHistory query: added .neq('is_test', true).
+
+**WATCHDOG MONITORS:**
+- rejected_content_hashes table row count: if > 5000 entries = pruning needed (prune WHERE created_at < NOW() - INTERVAL '30 days')
+- Active sources count: should be >= 8 (BC Gov News, CBC BC, CBC Canada, Reuters Business, NRCan, plus API-type sources). If < 5 = mass source failure.
+- monitor-news output rate: in a healthy week, 5–20 signals from PETRONAS-relevant Canadian news. Zero for 48h+ = keyword filters too narrow or feeds down.
+- is_test signal leak: SELECT COUNT(*) FROM signals WHERE is_test = false AND normalized_text ILIKE '%[qa-%' AND created_at > NOW() - INTERVAL '24 hours'. Any rows = qa agent regression.
+
 ### KNOWN PLATFORM GAPS (April 8, 2026 — require human fixes)
 
-1. TEST SIGNAL CONTAMINATION IN REPORTS — PARTIALLY MITIGATED
-   - All test signals and test incidents hard-deleted April 8, 2026
-   - generate-executive-report may still lack \`.eq('is_test', false)\` filter — verify before next report generation
-   - Fix: add .eq('is_test', false) to all signal queries in generate-executive-report/index.ts
-   - WATCHDOG MONITORS: Cannot auto-detect — requires code fix
+1. TEST SIGNAL CONTAMINATION IN REPORTS — FIXED APRIL 11, 2026
+   - Root cause: fortress-qa-agent runs every 6h creating CGL pipeline sabotage signals without is_test: true
+   - The [qa-${Date.now()}] timestamp suffix made each signal unique, bypassing all dedup layers
+   - Fix 1: Added is_test: true to both QA ingest calls in fortress-qa-agent (relevant + irrelevant test)
+   - Fix 2: Added .neq('is_test', true) filter to SignalHistory query so test signals never appear in live feed
+   - generate-executive-report: verify .eq('is_test', false) is present before generating client reports
+   - WATCHDOG MONITORS: SELECT COUNT(*) FROM signals WHERE is_test = true AND created_at > NOW() - INTERVAL '6 hours' — if > 0 after fix deployment = QA agent regression
+   - WATCHDOG MONITORS: SELECT COUNT(*) FROM signals WHERE normalized_text ILIKE '%qa-%' AND is_test = false AND created_at > NOW() - INTERVAL '24 hours' — any rows = test signals leaking into live feed
 
 2. GENERIC INCIDENT TITLES — PARTIALLY FIXED APRIL 8, 2026
    - Incidents created from test signals get titles like "protest Incident - Petronas Canada"
