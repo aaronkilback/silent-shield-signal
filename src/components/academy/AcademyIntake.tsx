@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -59,29 +60,44 @@ const QUESTIONS = [
   },
 ];
 
+interface ContactInfo {
+  full_name: string;
+  email: string;
+  phone: string;
+  address: string;
+  city: string;
+  country: string;
+}
+
 interface AcademyIntakeProps {
-  onComplete: (answers: Record<string, string>) => void;
+  onComplete: (answers: Record<string, string>, contact: ContactInfo) => void;
   loading?: boolean;
 }
 
 export function AcademyIntake({ onComplete, loading = false }: AcademyIntakeProps) {
   const [step, setStep]       = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [contact, setContact] = useState<ContactInfo>({
+    full_name: "", email: "", phone: "", address: "", city: "", country: "",
+  });
 
-  const q       = QUESTIONS[step];
-  const total   = QUESTIONS.length;
-  const current = answers[q.id];
-  const canNext = !!current;
+  const total     = QUESTIONS.length + 1; // +1 for contact step
+  const isContact = step === QUESTIONS.length;
+  const q         = !isContact ? QUESTIONS[step] : null;
+  const current   = q ? answers[q.id] : null;
+  const canNextQ  = !!current;
+  const canNextC  = contact.full_name.trim().length > 1 && contact.email.includes("@");
+  const canNext   = isContact ? canNextC : canNextQ;
 
   const handleSelect = (value: string) => {
-    setAnswers(prev => ({ ...prev, [q.id]: value }));
+    if (q) setAnswers(prev => ({ ...prev, [q.id]: value }));
   };
 
   const handleNext = () => {
     if (step < total - 1) {
       setStep(s => s + 1);
     } else {
-      onComplete(answers);
+      onComplete(answers, contact);
     }
   };
 
@@ -107,41 +123,75 @@ export function AcademyIntake({ onComplete, loading = false }: AcademyIntakeProp
         </div>
       </div>
 
-      {/* Question */}
-      <div className="space-y-6">
-        <h2 className="text-xl font-semibold text-foreground leading-snug">{q.question}</h2>
-
-        <div className="space-y-2.5">
-          {q.options.map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => handleSelect(opt.value)}
-              className={cn(
-                "w-full text-left px-4 py-3.5 rounded-lg border transition-all",
-                "hover:border-primary/50 hover:bg-primary/5",
-                current === opt.value
-                  ? "border-primary bg-primary/10 text-foreground"
-                  : "border-border bg-card/40 text-muted-foreground",
-              )}
-            >
-              <div className="flex items-center gap-3">
-                <div className={cn(
-                  "w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center",
-                  current === opt.value ? "border-primary bg-primary" : "border-muted-foreground/40",
-                )}>
-                  {current === opt.value && (
-                    <div className="w-1.5 h-1.5 rounded-full bg-primary-foreground" />
-                  )}
-                </div>
-                <div>
-                  <div className="font-medium text-sm text-foreground">{opt.label}</div>
-                  {opt.sub && <div className="text-xs text-muted-foreground">{opt.sub}</div>}
-                </div>
+      {/* Question or Contact */}
+      {isContact ? (
+        <div className="space-y-6">
+          <h2 className="text-xl font-semibold text-foreground leading-snug">Your contact information</h2>
+          <p className="text-sm text-muted-foreground">Used to issue your Fortress Academy credentials and follow-up reports.</p>
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Full name *</label>
+              <Input value={contact.full_name} onChange={e => setContact(c => ({ ...c, full_name: e.target.value }))} placeholder="Jane Smith" />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Email *</label>
+              <Input type="email" value={contact.email} onChange={e => setContact(c => ({ ...c, email: e.target.value }))} placeholder="jane@company.com" />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Phone</label>
+              <Input type="tel" value={contact.phone} onChange={e => setContact(c => ({ ...c, phone: e.target.value }))} placeholder="+1 555 000 0000" />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Street address</label>
+              <Input value={contact.address} onChange={e => setContact(c => ({ ...c, address: e.target.value }))} placeholder="123 Main St" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">City</label>
+                <Input value={contact.city} onChange={e => setContact(c => ({ ...c, city: e.target.value }))} placeholder="Calgary" />
               </div>
-            </button>
-          ))}
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Country</label>
+                <Input value={contact.country} onChange={e => setContact(c => ({ ...c, country: e.target.value }))} placeholder="Canada" />
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="space-y-6">
+          <h2 className="text-xl font-semibold text-foreground leading-snug">{q!.question}</h2>
+          <div className="space-y-2.5">
+            {q!.options.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => handleSelect(opt.value)}
+                className={cn(
+                  "w-full text-left px-4 py-3.5 rounded-lg border transition-all",
+                  "hover:border-primary/50 hover:bg-primary/5",
+                  current === opt.value
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border bg-card/40 text-muted-foreground",
+                )}
+              >
+                <div className="flex items-center gap-3">
+                  <div className={cn(
+                    "w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center",
+                    current === opt.value ? "border-primary bg-primary" : "border-muted-foreground/40",
+                  )}>
+                    {current === opt.value && (
+                      <div className="w-1.5 h-1.5 rounded-full bg-primary-foreground" />
+                    )}
+                  </div>
+                  <div>
+                    <div className="font-medium text-sm text-foreground">{opt.label}</div>
+                    {opt.sub && <div className="text-xs text-muted-foreground">{opt.sub}</div>}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Navigation */}
       <div className="flex items-center justify-between">

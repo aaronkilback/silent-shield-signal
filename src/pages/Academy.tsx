@@ -94,11 +94,11 @@ export default function Academy() {
 
   // ─── Handlers ─────────────────────────────────────────────────────────────
 
-  const handleIntakeComplete = async (answers: Record<string, string>) => {
+  const handleIntakeComplete = async (answers: Record<string, string>, contact: any) => {
     if (!user?.id) return;
     setSubmitting(true);
     try {
-      await callEdgeFunction("academy-intake", { userId: user.id, answers });
+      await callEdgeFunction("academy-intake", { userId: user.id, answers, contact });
 
       // Reload
       const [coursesRes, progressRes] = await Promise.all([

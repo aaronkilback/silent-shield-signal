@@ -125,7 +125,7 @@ Deno.serve(async (req: Request) => {
   const supabase    = createClient(supabaseUrl, serviceKey);
 
   try {
-    const { userId, answers } = await req.json();
+    const { userId, answers, contact } = await req.json();
 
     if (!userId || !answers) {
       return new Response(JSON.stringify({ error: "userId and answers required" }), {
@@ -145,7 +145,7 @@ Deno.serve(async (req: Request) => {
       .from("academy_learner_profiles")
       .upsert({
         user_id:          userId,
-        intake_answers:   answers,
+        intake_answers:   { ...answers, contact: contact || {} },
         experience_level: answers.q1 || "practitioner",
         primary_domain:   primaryDomain,
         matched_agent:    matchedAgent,
