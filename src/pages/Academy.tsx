@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { AcademyIntake } from "@/components/academy/AcademyIntake";
+import { AcademyWelcome } from "@/components/academy/AcademyWelcome";
 import { AcademyCourseCard } from "@/components/academy/AcademyCourseCard";
 import { AcademyScenario } from "@/components/academy/AcademyScenario";
 import { AcademyTrainingBridge } from "@/components/academy/AcademyTrainingBridge";
@@ -18,6 +19,7 @@ import { useUserRole } from "@/hooks/useUserRole";
 
 type PageState =
   | { view: "loading" }
+  | { view: "welcome" }
   | { view: "intake" }
   | { view: "browse"; courses: any[]; progress: Record<string, any> }
   | { view: "pre_scenario"; course: any; scenario: any }
@@ -82,7 +84,7 @@ export default function Academy() {
         .maybeSingle();
 
       if (!profile) {
-        setPageState({ view: "intake" });
+        setPageState({ view: "welcome" });
         return null;
       }
 
@@ -262,13 +264,17 @@ export default function Academy() {
       );
     }
 
+    if (pageState.view === "welcome") {
+      return <AcademyWelcome onBegin={() => setPageState({ view: "intake" })} />;
+    }
+
     if (pageState.view === "intake") {
       return (
         <div className="py-8">
           <div className="text-center mb-10 space-y-2">
-            <h2 className="text-2xl font-bold text-foreground">Welcome to Fortress Academy</h2>
+            <h2 className="text-2xl font-bold text-foreground">Intake Assessment</h2>
             <p className="text-muted-foreground">
-              Answer 5 questions to match you with the right courses and agent.
+              5 questions to match you with the right courses and agent.
             </p>
           </div>
           <AcademyIntake onComplete={handleIntakeComplete} loading={submitting} />
@@ -490,7 +496,7 @@ export default function Academy() {
     <PageLayout>
       <div className="space-y-6">
         {/* Page header — only show on browse/loading */}
-        {(pageState.view === "browse" || pageState.view === "loading") && (
+        {(pageState.view === "browse" || pageState.view === "loading" || pageState.view === "welcome") && pageState.view !== "welcome" && (
           <div className="flex items-center gap-3">
             <div className="p-3 rounded-lg bg-primary/10">
               <GraduationCap className="w-6 h-6 text-primary" />
