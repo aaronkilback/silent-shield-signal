@@ -27,7 +27,7 @@ type PageState =
   | { view: "pre_results"; course: any; result: any; preScore: number }
   | { view: "training_bridge"; course: any; preScore: number }
   | { view: "post_scenario"; course: any; scenario: any }
-  | { view: "post_results"; course: any; result: any }
+  | { view: "post_results"; course: any; result: any; credentialId?: string | null }
   | { view: "followup_scenario"; course: any; scenario: any }
   | { view: "followup_results"; course: any; result: any };
 
@@ -224,7 +224,7 @@ export default function Academy() {
           preScore: result.totalScore,
         });
       } else if (pageState.view === "post_scenario") {
-        setPageState({ view: "post_results", course: (pageState as any).course, result });
+        setPageState({ view: "post_results", course: (pageState as any).course, result, credentialId: result.credentialId || null });
       } else if (pageState.view === "followup_scenario") {
         setPageState({ view: "followup_results", course: (pageState as any).course, result });
       }
@@ -469,7 +469,7 @@ export default function Academy() {
     }
 
     if (pageState.view === "post_results") {
-      const { course, result } = pageState;
+      const { course, result, credentialId } = pageState;
       return (
         <div className="py-6">
           <AcademyResults
@@ -477,6 +477,7 @@ export default function Academy() {
             result={result}
             courseTitle={course.title}
             continueLabel="Back to Courses"
+            credentialId={credentialId}
             onContinue={goToBrowse}
           />
         </div>

@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowRight, BookOpen, CheckCircle2, TrendingDown, TrendingUp, XCircle } from "lucide-react";
+import { ArrowRight, Award, BookOpen, CheckCircle2, ExternalLink, TrendingDown, TrendingUp, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ScoreResult {
@@ -24,6 +24,7 @@ interface AcademyResultsProps {
   courseTitle: string;
   onContinue: () => void;
   continueLabel?: string;
+  credentialId?: string | null;
 }
 
 function ScoreRing({ score, size = 80 }: { score: number; size?: number }) {
@@ -60,7 +61,7 @@ const STAGE_HEADERS: Record<string, { title: string; sub: string }> = {
   "30day": { title: "30-Day Check Complete", sub: "Retention score recorded. See how much you retained." },
 };
 
-export function AcademyResults({ stage, result, courseTitle, onContinue, continueLabel }: AcademyResultsProps) {
+export function AcademyResults({ stage, result, courseTitle, onContinue, continueLabel, credentialId }: AcademyResultsProps) {
   const { title, sub } = STAGE_HEADERS[stage] || STAGE_HEADERS["post"];
   const pct = Math.round(result.totalScore * 100);
 
@@ -185,6 +186,45 @@ export function AcademyResults({ stage, result, courseTitle, onContinue, continu
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* Credential CTA (post-test only) */}
+      {stage === "post" && credentialId && (
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-5 space-y-3">
+          <div className="flex items-center gap-2 text-amber-400 font-semibold text-sm">
+            <Award className="w-5 h-5" />
+            Your credential is ready
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Your judgment delta of <strong className="text-foreground">{result.judgmentDelta !== null ? `${result.judgmentDelta >= 0 ? "+" : ""}${(result.judgmentDelta * 100).toFixed(0)}pts` : "—"}</strong> has been verified and issued as a credential you can add to your LinkedIn profile.
+          </p>
+          <div className="flex gap-3">
+            <a
+              href={`/credential/${credentialId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1"
+            >
+              <Button variant="outline" size="sm" className="w-full gap-2 border-amber-500/30 text-amber-400 hover:bg-amber-500/10">
+                <ExternalLink className="w-4 h-4" />
+                View Credential
+              </Button>
+            </a>
+            <a
+              href={`https://www.linkedin.com/profile/add?startTask=CERTIFICATION_NAME&name=Fortress+Academy+Judgment+Assessment&organizationName=Silent+Shield+Security&certUrl=${encodeURIComponent(`${window.location.origin}/credential/${credentialId}`)}&certId=${credentialId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1"
+            >
+              <Button size="sm" className="w-full gap-2 bg-[#0077b5] hover:bg-[#006097]">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+                </svg>
+                Add to LinkedIn
+              </Button>
+            </a>
+          </div>
         </div>
       )}
 

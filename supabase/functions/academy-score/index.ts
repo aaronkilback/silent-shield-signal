@@ -308,6 +308,43 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // Issue credential on post-test completion
+    let credentialId: string | null = null;
+    if (stage === "post" && progressUpdate.judgment_delta !== undefined) {
+      const { data: learner } = await supabase
+        .from("academy_learner_profiles")
+        .select("full_name, matched_tier")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      const { data: course } = await supabase
+        .from("academy_courses")
+        .select("title, scenario_domain")
+        .eq("id", courseId)
+        .maybeSingle();
+
+      if (learner?.full_name && course) {
+        const { data: cred } = await supabase
+          .from("academy_credentials")
+          .upsert({
+            user_id:        userId,
+            course_id:      courseId,
+            full_name:      learner.full_name,
+            domain:         scenario.domain,
+            agent_call_sign: scenario.agent_call_sign,
+            matched_tier:   learner.matched_tier || "foundation",
+            pre_score:      progress.pre_score || 0,
+            post_score:     totalScore,
+            judgment_delta: progressUpdate.judgment_delta,
+            course_title:   course.title,
+          }, { onConflict: "user_id,course_id" })
+          .select("id")
+          .single();
+        credentialId = cred?.id || null;
+        console.log(`[academy-score] Credential issued: ${credentialId}`);
+      }
+    }
+
     // Notify admin on post-test completion
     if (resend && (stage === "post" || stage === "30day")) {
       const { data: learner } = await supabase
@@ -361,6 +398,7 @@ Deno.serve(async (req: Request) => {
       teachingPoints: scenario.teaching_points || [],
       judgmentDelta:  progressUpdate.judgment_delta ?? null,
       newStatus:      progressUpdate.status,
+      credentialId:   credentialId,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (err) {
