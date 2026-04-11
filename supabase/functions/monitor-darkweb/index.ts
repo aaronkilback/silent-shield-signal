@@ -71,7 +71,6 @@ Deno.serve(async (req) => {
           for (const breach of recent) {
             const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
               body: {
-                source_key: `hibp-breach-${breach.Name}-${domain}`,
                 text: `Data Breach Detected: ${breach.Title || breach.Name}\n\nDomain: ${domain} | Breach date: ${breach.BreachDate || 'Unknown'} | Affected accounts: ${breach.PwnCount?.toLocaleString() || 'Unknown'}\n\nData exposed: ${(breach.DataClasses || []).join(', ')}\n\n${breach.Description ? breach.Description.replace(/<[^>]+>/g, '') : ''}`,
                 source_url: `https://haveibeenpwned.com/PwnedWebsites#${breach.Name}`,
                 location: 'Dark Web / Breach Database',
@@ -113,7 +112,6 @@ Deno.serve(async (req) => {
             for (const paste of pastes.slice(0, 3)) {
               const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
                 body: {
-                  source_key: `hibp-paste-${paste.Id}-${client.contact_email}`,
                   text: `Paste Site Exposure: Contact email ${client.contact_email} found in paste.\n\nSource: ${paste.Source || 'Unknown'} | Date: ${paste.Date || 'Unknown'}\nTitle: ${paste.Title || 'Untitled'} | Email count: ${paste.EmailCount || 'Unknown'}`,
                   source_url: paste.Id ? `https://pastebin.com/${paste.Id}` : undefined,
                   location: 'Paste Site',

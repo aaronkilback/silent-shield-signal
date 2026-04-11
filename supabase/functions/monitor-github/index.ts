@@ -92,7 +92,6 @@ Deno.serve(async (req) => {
           for (const item of items.slice(0, 3)) {
             const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
               body: {
-                source_key: `github-code-${item.sha}-${client.id}`,
                 text: `GitHub Code Exposure: Possible credential leak mentioning "${searchTerm}" with keyword "${keyword}"\n\nRepo: ${item.repository?.full_name || 'Unknown'}\nFile: ${item.name} (${item.path})\n\nThis file appears in a public GitHub repository and may contain sensitive information related to ${client.name}.`,
                 source_url: item.html_url,
                 location: 'GitHub',

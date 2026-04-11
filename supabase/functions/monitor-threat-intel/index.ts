@@ -27,7 +27,7 @@ Deno.serve(async (req) => {
         const sorted = (cisaData.vulnerabilities || []).sort((a: any, b: any) =>
           new Date(b.dateAdded || 0).getTime() - new Date(a.dateAdded || 0).getTime()
         );
-        const recentVulns = sorted.slice(0, 20);
+        const recentVulns = sorted.slice(0, 5); // 5 per run — cron is every 15min, URL dedup prevents re-processing
 
         for (const vuln of recentVulns) {
           const severity = vuln.cveID.includes('CRITICAL') ? 'critical' : 'high';
@@ -36,7 +36,6 @@ Deno.serve(async (req) => {
           try {
             const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
               body: {
-                source_key: `cisa-kev-${vuln.cveID}`,
                 text: `CISA KEV: ${vuln.vulnerabilityName}\n\n${vuln.shortDescription || ''}\n\nVendor: ${vuln.vendorProject}. Product: ${vuln.product}. Required action: ${vuln.requiredAction || 'Patch immediately'}. Due: ${vuln.dueDate || 'N/A'}. Added: ${vuln.dateAdded || 'N/A'}.`,
                 source_url: `https://www.cisa.gov/known-exploited-vulnerabilities-catalog#${vuln.cveID}`,
                 location: 'Global',
@@ -106,14 +105,16 @@ Deno.serve(async (req) => {
 
     console.log(`Threat intelligence monitoring complete. Created ${signalsCreated} signals.`);
 
-    await supabase.from('cron_heartbeat').insert({
-      job_name: 'monitor-threat-intel',
-      started_at: heartbeatAt,
-      completed_at: new Date().toISOString(),
-      status: 'completed',
-      duration_ms: Date.now() - heartbeatMs,
-      result_summary: { signals_created: signalsCreated },
-    }).catch(() => {});
+    try {
+      await supabase.from('cron_heartbeat').insert({
+        job_name: 'monitor-threat-intel',
+        started_at: heartbeatAt,
+        completed_at: new Date().toISOString(),
+        status: 'completed',
+        duration_ms: Date.now() - heartbeatMs,
+        result_summary: { signals_created: signalsCreated },
+      });
+    } catch (_) {}
 
     return successResponse({
       success: true,

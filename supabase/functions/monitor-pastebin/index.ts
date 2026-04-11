@@ -74,7 +74,6 @@ Deno.serve(async (req) => {
               const pasteUrl = `https://pastebin.com${paste.link}`;
               const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
                 body: {
-                  source_key: `pastebin-${paste.link}-${client.id}`,
                   text: `Pastebin Leak Detected: "${paste.title}"\n\nPotential data leak mentioning ${client.name} with keywords: ${LEAK_KEYWORDS.filter(kw => titleLower.includes(kw)).join(', ')}`,
                   source_url: pasteUrl,
                   location: 'Pastebin',

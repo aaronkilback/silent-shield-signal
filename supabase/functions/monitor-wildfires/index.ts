@@ -22,9 +22,18 @@ Deno.serve(async (req) => {
 
     let signalsCreated = 0;
 
+    const firmsKey = Deno.env.get('NASA_FIRMS_MAP_KEY');
+
     // NASA FIRMS - Active Fire Data (last 24 hours)
+    // Requires a free MAP_KEY from https://firms.modaps.eosdis.nasa.gov/api/map_key/
+    // Set via: supabase secrets set NASA_FIRMS_MAP_KEY=<key>
+    if (!firmsKey) {
+      console.log('[Wildfires] NASA_FIRMS_MAP_KEY not configured — skipping. Register at https://firms.modaps.eosdis.nasa.gov/api/map_key/');
+      return successResponse({ success: true, signals_created: 0, note: 'NASA_FIRMS_MAP_KEY not configured' });
+    }
+
     const firmsResponse = await fetch(
-      'https://firms.modaps.eosdis.nasa.gov/api/area/csv/c6/VIIRS_SNPP_NRT/world/1',
+      `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${firmsKey}/VIIRS_SNPP_NRT/world/1`,
       {
         headers: {
           'User-Agent': 'OSINT-Monitoring-System',
