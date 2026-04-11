@@ -597,3 +597,6 @@ verify_jwt = false
 
 [functions.academy-followup]
 verify_jwt = false
+
+[functions.academy-build-training]
+verify_jwt = false

@@ -10,11 +10,11 @@ import { AcademyWelcome } from "@/components/academy/AcademyWelcome";
 import { AcademyCourseCard } from "@/components/academy/AcademyCourseCard";
 import { AcademyScenario } from "@/components/academy/AcademyScenario";
 import { AcademyTrainingBridge } from "@/components/academy/AcademyTrainingBridge";
+import { AcademyTraining } from "@/components/academy/AcademyTraining";
 import { AcademyResults } from "@/components/academy/AcademyResults";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useNavigate } from "react-router-dom";
 import { useUserRole } from "@/hooks/useUserRole";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +26,7 @@ type PageState =
   | { view: "pre_scenario"; course: any; scenario: any }
   | { view: "pre_results"; course: any; result: any; preScore: number }
   | { view: "training_bridge"; course: any; preScore: number }
+  | { view: "training"; course: any; preScore: number; preResult: any }
   | { view: "post_scenario"; course: any; scenario: any }
   | { view: "post_results"; course: any; result: any; credentialId?: string | null }
   | { view: "followup_scenario"; course: any; scenario: any }
@@ -53,7 +54,6 @@ async function callEdgeFunction(name: string, body: object) {
 
 export default function Academy() {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const { isAdmin, isSuperAdmin } = useUserRole();
   const isStaff = isAdmin || isSuperAdmin;
   const [pageState, setPageState] = useState<PageState>({ view: "loading" });
@@ -166,8 +166,14 @@ export default function Academy() {
       return;
     }
 
+    // Training path (resume in-progress training)
+    if (status === "pre_complete" || status === "in_training") {
+      setPageState({ view: "training", course, preScore: progress?.pre_score ?? 0, preResult: null });
+      return;
+    }
+
     // Post-test path
-    if (status === "post_complete" || status === "in_training" || status === "pre_complete") {
+    if (status === "post_complete") {
       const { data: scenario } = await supabase
         .from("academy_scenarios")
         .select("*")
@@ -175,11 +181,7 @@ export default function Academy() {
         .eq("variant_index", 1)
         .maybeSingle();
       if (scenario) {
-        if (status === "pre_complete") {
-          setPageState({ view: "training_bridge", course, preScore: progress?.pre_score ?? 0 });
-        } else {
-          setPageState({ view: "post_scenario", course, scenario });
-        }
+        setPageState({ view: "post_scenario", course, scenario });
       }
       return;
     }
@@ -419,7 +421,7 @@ export default function Academy() {
             result={result}
             courseTitle={course.title}
             continueLabel="Begin Training"
-            onContinue={() => setPageState({ view: "training_bridge", course, preScore })}
+            onContinue={() => setPageState({ view: "training", course, preScore, preResult: result })}
           />
         </div>
       );
@@ -434,8 +436,33 @@ export default function Academy() {
             courseDomain={course.scenario_domain}
             courseTitle={course.title}
             preScore={preScore}
-            onBeginTraining={() => navigate(`/command-center?agent=${course.agent_call_sign}&context=${encodeURIComponent(`Training for "${course.title}" — focus on the domain principles and decision doctrine. I just completed a pre-test scenario.`)}`)}
+            onBeginTraining={() => setPageState({ view: "training", course, preScore, preResult: null })}
             onSkipToPost={async () => {
+              const { data: scenario } = await supabase
+                .from("academy_scenarios")
+                .select("*")
+                .eq("course_id", course.id)
+                .eq("variant_index", 1)
+                .maybeSingle();
+              if (scenario) {
+                setPageState({ view: "post_scenario", course, scenario });
+              }
+            }}
+          />
+        </div>
+      );
+    }
+
+    if (pageState.view === "training") {
+      const { course, preScore, preResult } = pageState;
+      return (
+        <div className="py-4">
+          <AcademyTraining
+            course={course}
+            preScore={preScore}
+            preResult={preResult}
+            userId={user!.id}
+            onReadyForPostTest={async () => {
               const { data: scenario } = await supabase
                 .from("academy_scenarios")
                 .select("*")
