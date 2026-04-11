@@ -21,7 +21,13 @@ Deno.serve(async (req) => {
 
       if (cisaResponse.ok) {
         const cisaData = await cisaResponse.json();
-        const recentVulns = cisaData.vulnerabilities?.slice(0, 5) || [];
+        // Sort by dateAdded descending so we always get the newest CVEs first,
+        // then take up to 20. ingest-signal's URL-dedup gate handles dedup —
+        // already-ingested CVE URLs are suppressed without hitting the AI gate.
+        const sorted = (cisaData.vulnerabilities || []).sort((a: any, b: any) =>
+          new Date(b.dateAdded || 0).getTime() - new Date(a.dateAdded || 0).getTime()
+        );
+        const recentVulns = sorted.slice(0, 20);
 
         for (const vuln of recentVulns) {
           const severity = vuln.cveID.includes('CRITICAL') ? 'critical' : 'high';
@@ -30,7 +36,8 @@ Deno.serve(async (req) => {
           try {
             const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
               body: {
-                text: `CISA KEV: ${vuln.vulnerabilityName}\n\n${vuln.shortDescription || ''}\n\nVendor: ${vuln.vendorProject}. Product: ${vuln.product}. Required action: ${vuln.requiredAction || 'Patch immediately'}. Due: ${vuln.dueDate || 'N/A'}.`,
+                source_key: `cisa-kev-${vuln.cveID}`,
+                text: `CISA KEV: ${vuln.vulnerabilityName}\n\n${vuln.shortDescription || ''}\n\nVendor: ${vuln.vendorProject}. Product: ${vuln.product}. Required action: ${vuln.requiredAction || 'Patch immediately'}. Due: ${vuln.dueDate || 'N/A'}. Added: ${vuln.dateAdded || 'N/A'}.`,
                 source_url: `https://www.cisa.gov/known-exploited-vulnerabilities-catalog#${vuln.cveID}`,
                 location: 'Global',
               },

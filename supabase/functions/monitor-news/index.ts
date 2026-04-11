@@ -2,47 +2,77 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
 
 // TIER 1 — Direct entity/project match. Any single hit → send to AI gate.
 const TIER1_KEYWORDS = [
-  // Entity names
-  'petronas', 'petronas canada', 'pecl',
+  // Entity names — direct
+  'petronas', 'petronas canada', 'pecl', 'petroliam nasional',
   // Projects and infrastructure
-  'lng canada', 'coastal gaslink', 'cgl',
+  'lng canada', 'coastal gaslink', 'cgl', 'cedar lng', 'ksi lisims lng',
+  'prince rupert gas', 'woodfibre lng', 'bc lng terminal',
   // Indigenous groups active on these projects
   "wet'suwet'en", "wetsuweten", "gidimt'en", "gitdumt'en", "unist'ot'en",
   // Activist groups targeting LNG Canada
-  'stand.earth', 'dogwood bc', 'dogwood initiative',
-  // Narrow pipeline/LNG terms (not generic)
-  'lng export', 'bc lng', 'liquefied natural gas bc',
+  'stand.earth', 'dogwood bc', 'dogwood initiative', 'frack free bc',
+  // Pipeline/LNG terms
+  'lng export', 'bc lng', 'liquefied natural gas bc', 'natural gas export canada',
   'pipeline protest', 'pipeline opposition', 'pipeline injunction',
   'energy infrastructure bc', 'alberta energy infrastructure',
+  // Regulatory bodies that govern PETRONAS operations
+  'canada energy regulator', 'cer pipeline', 'national energy board',
+  'bc energy regulator', 'bcer', 'bc oil gas commission',
+  'environmental assessment office bc', 'bc eao',
+  // LNG industry broad
+  'lng industry canada', 'canadian lng', 'lng terminal bc',
+  'natural gas canada', 'canadian natural gas', 'gas export terminal',
+  // Labour and operational
+  'lng canada workers', 'pipeline workers strike', 'energy sector strike canada',
+  'kitimat workers', 'lng construction',
 ];
 
-// TIER 2A — Geographic scope: PETRONAS asset areas.
+// TIER 2A — Geographic scope: PETRONAS asset areas + BC broadly.
 const TIER2_GEO = [
+  // Core asset areas
   'fort st. john', 'peace region', 'northeast bc', 'dawson creek',
   'kitimat', 'prince rupert', 'northwest bc',
   'coastal gaslink corridor', 'highway 16', 'stewart-cassiar',
   'peace river', 'liard river',
+  // Broader BC/Alberta energy geography
+  'british columbia', 'bc government', 'victoria bc', 'alberta energy',
+  'edmonton', 'calgary energy', 'northern bc', 'interior bc',
+  'skeena', 'bulkley valley', 'terrace bc', 'smithers bc',
 ];
 
-// TIER 2B — Threat types: operational safety risks.
+// TIER 2B — Threat types and business intelligence events.
 // An article must hit BOTH a Tier 2A geo term AND a Tier 2B threat term to qualify.
 const TIER2_THREAT = [
+  // Physical / operational threats
   'wildfire bc', 'wildfire alberta', 'evacuation order bc', 'evacuation alert bc',
   'flood warning bc', 'avalanche bc', 'extreme weather bc',
-  'pipeline explosion', 'pipeline rupture', 'pipeline fire',
+  'pipeline explosion', 'pipeline rupture', 'pipeline fire', 'pipeline leak',
   'protest blockade bc', 'rail blockade bc', 'highway blockade bc',
-  'indigenous land defenders', 'injunction bc',
+  'indigenous land defenders', 'injunction bc', 'court injunction',
   'industrial accident bc', 'worker fatality bc', 'hse incident bc',
-  'power outage bc', 'grid failure bc',
+  'power outage bc', 'grid failure bc', 'infrastructure damage',
+  // Business / regulatory intelligence
+  'energy policy', 'energy regulation', 'environmental approval', 'environmental review',
+  'indigenous consultation', 'first nations agreement', 'treaty negotiation',
+  'carbon tax', 'emissions regulation', 'clean energy policy',
+  'export permit', 'regulatory approval', 'project approval',
+  'investment', 'joint venture', 'partnership', 'acquisition energy',
+  'quarterly results energy', 'financial results lng', 'earnings energy',
+  'security incident', 'cyber attack energy', 'critical infrastructure',
+  'labour dispute', 'strike energy', 'union negotiation',
 ];
 
 // Direct Canadian news RSS feeds — replaces Google News RSS which blocks cloud/datacenter IPs
 const CANADIAN_NEWS_FEEDS = [
   { name: 'CBC Top Stories',         url: 'https://www.cbc.ca/cmlink/rss-topstories' },
   { name: 'CBC Business',            url: 'https://www.cbc.ca/cmlink/rss-business' },
+  { name: 'CBC Canada',              url: 'https://www.cbc.ca/cmlink/rss-canada' },
+  { name: 'CBC British Columbia',    url: 'https://www.cbc.ca/cmlink/rss-canada-britishcolumbia' },
   { name: 'Globe and Mail Business', url: 'https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/business/' },
   { name: 'Financial Post',          url: 'https://financialpost.com/feed' },
   { name: 'Reuters Canada',          url: 'https://feeds.reuters.com/reuters/CATopNews' },
+  { name: 'Reuters Energy',          url: 'https://feeds.reuters.com/reuters/businessNews' },
+  { name: 'Natural Resources Canada', url: 'https://natural-resources.canada.ca/api/news/en.rss' },
 ];
 
 // Extract a field from an RSS item, handling both CDATA and plain text
@@ -111,8 +141,8 @@ Deno.serve(async (req) => {
       ingest_unknown: 0,
     };
 
-    const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
-    console.log(`[CONFIG] Feeds: ${CANADIAN_NEWS_FEEDS.length} | 24h cutoff: ${new Date(cutoffMs).toISOString()}`);
+    const cutoffMs = Date.now() - 48 * 60 * 60 * 1000;
+    console.log(`[CONFIG] Feeds: ${CANADIAN_NEWS_FEEDS.length} | 48h cutoff: ${new Date(cutoffMs).toISOString()}`);
 
     for (let fi = 0; fi < CANADIAN_NEWS_FEEDS.length; fi++) {
       const feed = CANADIAN_NEWS_FEEDS[fi];
