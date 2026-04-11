@@ -149,6 +149,281 @@ Deno.serve(async (req) => {
       console.error('Error monitoring BC Energy Regulator:', error);
     }
 
+    // 3. Alberta Energy Regulator (AER) — primary regulator for oil sands
+    try {
+      console.log('Monitoring Alberta Energy Regulator...');
+      const aerResp = await fetch('https://www.aer.ca/feed/news', { signal: AbortSignal.timeout(8000) });
+      if (aerResp.ok) {
+        const aerItems = parseRSS(await aerResp.text());
+        for (const item of aerItems.slice(0, 15)) {
+          const content = item.title + ' ' + item.description;
+          for (const client of clients) {
+            const match = calculateRelevance(client, content, 'Alberta Energy Regulator');
+            if (match.score >= (client.monitoring_config?.min_relevance_score || 25)) {
+              const r = await ingestSignalViaGateway(supabaseClient, { client_id: client.id, source: 'Alberta Energy Regulator', title: item.title, description: item.description, url: item.link, published_date: item.pubDate, relevance_score: match.score, relevance_reasons: match.reasons });
+              if (r === 'created') signalsCreated++;
+              else if (r === 'filtered') signalsFiltered++;
+              else if (r === 'deduplicated') signalsDeduplicated++;
+            }
+          }
+        }
+        sources.push('Alberta Energy Regulator');
+      }
+    } catch (error) { console.error('Error monitoring AER:', error); }
+
+    // 4. Canada Energy Regulator (CER / former NEB) — federal pipeline/energy oversight
+    try {
+      console.log('Monitoring Canada Energy Regulator...');
+      const cerResp = await fetch('https://www.cer-rec.gc.ca/en/news-events/news/rss.xml', { signal: AbortSignal.timeout(8000) });
+      if (cerResp.ok) {
+        const cerItems = parseRSS(await cerResp.text());
+        for (const item of cerItems.slice(0, 15)) {
+          const content = item.title + ' ' + item.description;
+          for (const client of clients) {
+            const match = calculateRelevance(client, content, 'Canada Energy Regulator');
+            if (match.score >= (client.monitoring_config?.min_relevance_score || 25)) {
+              const r = await ingestSignalViaGateway(supabaseClient, { client_id: client.id, source: 'Canada Energy Regulator', title: item.title, description: item.description, url: item.link, published_date: item.pubDate, relevance_score: match.score, relevance_reasons: match.reasons });
+              if (r === 'created') signalsCreated++;
+              else if (r === 'filtered') signalsFiltered++;
+              else if (r === 'deduplicated') signalsDeduplicated++;
+            }
+          }
+        }
+        sources.push('Canada Energy Regulator');
+      }
+    } catch (error) { console.error('Error monitoring CER:', error); }
+
+    // 5. CBC News Alberta — regional crime, protests, labour, incidents
+    try {
+      console.log('Monitoring CBC News Alberta...');
+      const cbcResp = await fetch('https://www.cbc.ca/cmlink/rss-canada-calgary', { signal: AbortSignal.timeout(8000) });
+      if (cbcResp.ok) {
+        const cbcItems = parseRSS(await cbcResp.text());
+        for (const item of cbcItems.slice(0, 20)) {
+          const content = item.title + ' ' + item.description;
+          for (const client of clients) {
+            const match = calculateRelevance(client, content, 'CBC News Alberta');
+            if (match.score >= (client.monitoring_config?.min_relevance_score || 30)) {
+              const r = await ingestSignalViaGateway(supabaseClient, { client_id: client.id, source: 'CBC News Alberta', title: item.title, description: item.description, url: item.link, published_date: item.pubDate, relevance_score: match.score, relevance_reasons: match.reasons });
+              if (r === 'created') signalsCreated++;
+              else if (r === 'filtered') signalsFiltered++;
+              else if (r === 'deduplicated') signalsDeduplicated++;
+            }
+          }
+        }
+        sources.push('CBC News Alberta');
+      }
+    } catch (error) { console.error('Error monitoring CBC Alberta:', error); }
+
+    // 6. Alaska Highway News — Fort St. John & Dawson Creek local news, crime, incidents
+    try {
+      console.log('Monitoring Alaska Highway News...');
+      const ahnResp = await fetch('https://www.alaskahighwaynews.ca/feed', { signal: AbortSignal.timeout(8000) });
+      if (ahnResp.ok) {
+        const ahnItems = parseRSS(await ahnResp.text());
+        for (const item of ahnItems.slice(0, 20)) {
+          const content = item.title + ' ' + item.description;
+          for (const client of clients) {
+            const match = calculateRelevance(client, content, 'Alaska Highway News');
+            if (match.score >= (client.monitoring_config?.min_relevance_score || 20)) {
+              const r = await ingestSignalViaGateway(supabaseClient, { client_id: client.id, source: 'Alaska Highway News', title: item.title, description: item.description, url: item.link, published_date: item.pubDate, relevance_score: match.score, relevance_reasons: match.reasons });
+              if (r === 'created') signalsCreated++;
+              else if (r === 'filtered') signalsFiltered++;
+              else if (r === 'deduplicated') signalsDeduplicated++;
+            }
+          }
+        }
+        sources.push('Alaska Highway News');
+      }
+    } catch (error) { console.error('Error monitoring Alaska Highway News:', error); }
+
+    // 6b. Peace River Block Daily News — Dawson Creek area
+    try {
+      console.log('Monitoring Peace River Block Daily News...');
+      const prbResp = await fetch('https://www.prpeak.com/feed', { signal: AbortSignal.timeout(8000) });
+      if (prbResp.ok) {
+        const prbItems = parseRSS(await prbResp.text());
+        for (const item of prbItems.slice(0, 15)) {
+          const content = item.title + ' ' + item.description;
+          for (const client of clients) {
+            const match = calculateRelevance(client, content, 'Peace River Block Daily News');
+            if (match.score >= (client.monitoring_config?.min_relevance_score || 20)) {
+              const r = await ingestSignalViaGateway(supabaseClient, { client_id: client.id, source: 'Peace River Block Daily News', title: item.title, description: item.description, url: item.link, published_date: item.pubDate, relevance_score: match.score, relevance_reasons: match.reasons });
+              if (r === 'created') signalsCreated++;
+              else if (r === 'filtered') signalsFiltered++;
+              else if (r === 'deduplicated') signalsDeduplicated++;
+            }
+          }
+        }
+        sources.push('Peace River Block Daily News');
+      }
+    } catch (error) { console.error('Error monitoring Peace River Block Daily News:', error); }
+
+    // 7. Global News Edmonton — crime, protests, labour disputes, energy sector
+    try {
+      console.log('Monitoring Global News Edmonton...');
+      const gnResp = await fetch('https://globalnews.ca/edmonton/feed/', { signal: AbortSignal.timeout(8000) });
+      if (gnResp.ok) {
+        const gnItems = parseRSS(await gnResp.text());
+        for (const item of gnItems.slice(0, 20)) {
+          const content = item.title + ' ' + item.description;
+          for (const client of clients) {
+            const match = calculateRelevance(client, content, 'Global News Edmonton');
+            if (match.score >= (client.monitoring_config?.min_relevance_score || 30)) {
+              const r = await ingestSignalViaGateway(supabaseClient, { client_id: client.id, source: 'Global News Edmonton', title: item.title, description: item.description, url: item.link, published_date: item.pubDate, relevance_score: match.score, relevance_reasons: match.reasons });
+              if (r === 'created') signalsCreated++;
+              else if (r === 'filtered') signalsFiltered++;
+              else if (r === 'deduplicated') signalsDeduplicated++;
+            }
+          }
+        }
+        sources.push('Global News Edmonton');
+      }
+    } catch (error) { console.error('Error monitoring Global News Edmonton:', error); }
+
+    // 8. Calgary Herald — energy sector, business, labour, regulatory
+    try {
+      console.log('Monitoring Calgary Herald...');
+      const chResp = await fetch('https://calgaryherald.com/feed', { signal: AbortSignal.timeout(8000) });
+      if (chResp.ok) {
+        const chItems = parseRSS(await chResp.text());
+        for (const item of chItems.slice(0, 20)) {
+          const content = item.title + ' ' + item.description;
+          for (const client of clients) {
+            const match = calculateRelevance(client, content, 'Calgary Herald');
+            if (match.score >= (client.monitoring_config?.min_relevance_score || 30)) {
+              const r = await ingestSignalViaGateway(supabaseClient, { client_id: client.id, source: 'Calgary Herald', title: item.title, description: item.description, url: item.link, published_date: item.pubDate, relevance_score: match.score, relevance_reasons: match.reasons });
+              if (r === 'created') signalsCreated++;
+              else if (r === 'filtered') signalsFiltered++;
+              else if (r === 'deduplicated') signalsDeduplicated++;
+            }
+          }
+        }
+        sources.push('Calgary Herald');
+      }
+    } catch (error) { console.error('Error monitoring Calgary Herald:', error); }
+
+    // 9. Unifor — Canada's largest private sector union; oil sands, energy, manufacturing
+    try {
+      console.log('Monitoring Unifor...');
+      const uniforResp = await fetch('https://www.unifor.org/rss/news', { signal: AbortSignal.timeout(8000) });
+      if (uniforResp.ok) {
+        const uniforItems = parseRSS(await uniforResp.text());
+        for (const item of uniforItems.slice(0, 15)) {
+          const content = item.title + ' ' + item.description;
+          for (const client of clients) {
+            const match = calculateRelevance(client, content, 'Unifor');
+            if (match.score >= (client.monitoring_config?.min_relevance_score || 25)) {
+              const r = await ingestSignalViaGateway(supabaseClient, { client_id: client.id, source: 'Unifor', title: item.title, description: item.description, url: item.link, published_date: item.pubDate, relevance_score: match.score, relevance_reasons: match.reasons });
+              if (r === 'created') signalsCreated++;
+              else if (r === 'filtered') signalsFiltered++;
+              else if (r === 'deduplicated') signalsDeduplicated++;
+            }
+          }
+        }
+        sources.push('Unifor');
+      }
+    } catch (error) { console.error('Error monitoring Unifor:', error); }
+
+    // 10. Pembina Institute — oil sands environmental watchdog, protest/regulatory intelligence
+    try {
+      console.log('Monitoring Pembina Institute...');
+      const pembResp = await fetch('https://www.pembina.org/rss/news', { signal: AbortSignal.timeout(8000) });
+      if (pembResp.ok) {
+        const pembItems = parseRSS(await pembResp.text());
+        for (const item of pembItems.slice(0, 15)) {
+          const content = item.title + ' ' + item.description;
+          for (const client of clients) {
+            const match = calculateRelevance(client, content, 'Pembina Institute');
+            if (match.score >= (client.monitoring_config?.min_relevance_score || 25)) {
+              const r = await ingestSignalViaGateway(supabaseClient, { client_id: client.id, source: 'Pembina Institute', title: item.title, description: item.description, url: item.link, published_date: item.pubDate, relevance_score: match.score, relevance_reasons: match.reasons });
+              if (r === 'created') signalsCreated++;
+              else if (r === 'filtered') signalsFiltered++;
+              else if (r === 'deduplicated') signalsDeduplicated++;
+            }
+          }
+        }
+        sources.push('Pembina Institute');
+      }
+    } catch (error) { console.error('Error monitoring Pembina Institute:', error); }
+
+    // 11. Natural Resources Canada — federal energy policy, approvals, incidents
+    try {
+      console.log('Monitoring Natural Resources Canada...');
+      const nrcanResp = await fetch('https://www.canada.ca/en/natural-resources-canada/news/rss.xml', { signal: AbortSignal.timeout(8000) });
+      if (nrcanResp.ok) {
+        const nrcanItems = parseRSS(await nrcanResp.text());
+        for (const item of nrcanItems.slice(0, 15)) {
+          const content = item.title + ' ' + item.description;
+          for (const client of clients) {
+            const match = calculateRelevance(client, content, 'Natural Resources Canada');
+            if (match.score >= (client.monitoring_config?.min_relevance_score || 30)) {
+              const r = await ingestSignalViaGateway(supabaseClient, { client_id: client.id, source: 'Natural Resources Canada', title: item.title, description: item.description, url: item.link, published_date: item.pubDate, relevance_score: match.score, relevance_reasons: match.reasons });
+              if (r === 'created') signalsCreated++;
+              else if (r === 'filtered') signalsFiltered++;
+              else if (r === 'deduplicated') signalsDeduplicated++;
+            }
+          }
+        }
+        sources.push('Natural Resources Canada');
+      }
+    } catch (error) { console.error('Error monitoring NRCan:', error); }
+
+    // 12. Northeast BC RCMP — filtered from RCMP feed by Peace Country geography
+    try {
+      console.log('Monitoring Northeast BC RCMP...');
+      const nbcResp = await fetch('https://www.rcmp-grc.gc.ca/en/rss/news-releases', { signal: AbortSignal.timeout(8000) });
+      if (nbcResp.ok) {
+        const nbcItems = parseRSS(await nbcResp.text()).filter(item =>
+          /fort st\.? john|fort nelson|dawson creek|peace river|northeast bc|northern bc|taylor bc|charlie lake|hudson.s hope|chetwynd|tumbler ridge/i.test(item.title + ' ' + item.description)
+        );
+        for (const item of nbcItems.slice(0, 15)) {
+          const content = item.title + ' ' + item.description;
+          for (const client of clients) {
+            const match = calculateRelevance(client, content, 'Northeast BC RCMP');
+            if (match.score >= (client.monitoring_config?.min_relevance_score || 20)) {
+              const r = await ingestSignalViaGateway(supabaseClient, { client_id: client.id, source: 'Northeast BC RCMP', title: item.title, description: item.description, url: item.link, published_date: item.pubDate, relevance_score: match.score, relevance_reasons: match.reasons });
+              if (r === 'created') signalsCreated++;
+              else if (r === 'filtered') signalsFiltered++;
+              else if (r === 'deduplicated') signalsDeduplicated++;
+            }
+          }
+        }
+        if (nbcItems.length > 0) sources.push('Northeast BC RCMP');
+      }
+    } catch (error) { console.error('Error monitoring Northeast BC RCMP:', error); }
+
+    // 13. CAPP (Canadian Association of Petroleum Producers) — industry supply chain, policy
+    try {
+      console.log('Monitoring CAPP...');
+      const cappResp = await fetch('https://www.capp.ca/feed/', { signal: AbortSignal.timeout(8000) });
+      if (cappResp.ok) {
+        const cappItems = parseRSS(await cappResp.text());
+        for (const item of cappItems.slice(0, 15)) {
+          const content = item.title + ' ' + item.description;
+          for (const client of clients) {
+            const match = calculateRelevance(client, content, 'CAPP');
+            if (match.score >= (client.monitoring_config?.min_relevance_score || 25)) {
+              const r = await ingestSignalViaGateway(supabaseClient, { client_id: client.id, source: 'CAPP', title: item.title, description: item.description, url: item.link, published_date: item.pubDate, relevance_score: match.score, relevance_reasons: match.reasons });
+              if (r === 'created') signalsCreated++;
+              else if (r === 'filtered') signalsFiltered++;
+              else if (r === 'deduplicated') signalsDeduplicated++;
+            }
+          }
+        }
+        sources.push('CAPP');
+      }
+    } catch (error) { console.error('Error monitoring CAPP:', error); }
+
+    // Update history metadata to reflect expanded source list
+    if (historyEntry) {
+      try {
+        await supabaseClient.from('monitoring_history').update({
+          scan_metadata: { sources }
+        }).eq('id', historyEntry.id);
+      } catch (_) { /* non-critical */ }
+    }
+
     console.log(`Canadian sources monitoring complete. Created ${signalsCreated} signals, ${signalsFiltered} filtered, ${signalsDeduplicated} deduplicated. Sources: ${sources.join(', ')}`);
 
     // Update monitoring history with success

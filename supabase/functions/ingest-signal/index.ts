@@ -338,23 +338,41 @@ Be specific and concise. Focus on facts, not speculation.`
       confidence: 0.5
     };
 
-    // Fetch analyst feedback examples for severity calibration (few-shot injection)
+    // Fetch analyst feedback for severity calibration (few-shot injection)
+    // Reads from feedback_events joined to signals — the live feedback path
     let fewShotBlock = '';
     try {
-      const { data: feedbackExamples } = await supabase
-        .from('signal_feedback')
-        .select('original_severity, corrected_severity, original_category, corrected_category, notes')
-        .eq('feedback_type', 'wrong_severity')
-        .not('corrected_severity', 'is', null)
+      const { data: feedbackEvents } = await supabase
+        .from('feedback_events')
+        .select('feedback, notes, correction, object_id')
+        .eq('object_type', 'signal')
+        .in('feedback', ['irrelevant', 'wrong_severity', 'confirmed'])
+        .not('notes', 'is', null)
         .order('created_at', { ascending: false })
-        .limit(6);
-      if (feedbackExamples && feedbackExamples.length > 0) {
-        fewShotBlock = '\n\nANALYST CALIBRATION EXAMPLES (severity corrections from real signals — apply these lessons):\n' +
-          feedbackExamples.map((ex: any) =>
-            `- Corrected ${ex.original_severity} → ${ex.corrected_severity}` +
-            (ex.original_category ? ` [${ex.original_category}]` : '') +
-            (ex.notes ? `: ${ex.notes}` : '')
-          ).join('\n');
+        .limit(8);
+
+      if (feedbackEvents && feedbackEvents.length > 0) {
+        // Fetch the signal titles for context
+        const signalIds = feedbackEvents.map((e: any) => e.object_id).filter(Boolean);
+        const { data: signalTitles } = signalIds.length > 0
+          ? await supabase.from('signals').select('id, title, severity, category').in('id', signalIds)
+          : { data: [] };
+        const titleMap = Object.fromEntries((signalTitles || []).map((s: any) => [s.id, s]));
+
+        const examples = feedbackEvents
+          .map((ex: any) => {
+            const sig = titleMap[ex.object_id];
+            if (!sig) return null;
+            if (ex.feedback === 'irrelevant') return `- IRRELEVANT [${sig.category}]: "${sig.title?.substring(0, 80)}"${ex.notes ? ` — ${ex.notes}` : ''}`;
+            if (ex.feedback === 'wrong_severity') return `- SEVERITY CORRECTION [${sig.severity} → ${ex.correction || '?'}]: "${sig.title?.substring(0, 80)}"${ex.notes ? ` — ${ex.notes}` : ''}`;
+            if (ex.feedback === 'confirmed') return `- CONFIRMED RELEVANT [${sig.category}]: "${sig.title?.substring(0, 80)}"`;
+            return null;
+          })
+          .filter(Boolean);
+
+        if (examples.length > 0) {
+          fewShotBlock = '\n\nANALYST CALIBRATION EXAMPLES (learn from these real corrections):\n' + examples.join('\n');
+        }
       }
     } catch { /* non-blocking */ }
 
@@ -925,6 +943,49 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
           .eq('id', clientId)
           .single();
 
+        // Fetch analyst learning profiles to bias the gate
+        let approvedPatternBlock = '';
+        let rejectedPatternBlock = '';
+        let learnedThresholdAdjustment = 0;
+        try {
+          const { data: profiles } = await supabase
+            .from('learning_profiles')
+            .select('profile_type, features')
+            .in('profile_type', ['approved_signal_patterns', 'rejected_signal_patterns'])
+            .limit(2);
+
+          if (profiles && profiles.length > 0) {
+            const textLower = (classification.normalized_text || signalText).toLowerCase();
+
+            for (const profile of profiles) {
+              const features: Record<string, number> = profile.features || {};
+              // Top keywords sorted by frequency
+              const topKeywords = Object.entries(features)
+                .sort(([, a], [, b]) => b - a)
+                .slice(0, 12)
+                .map(([k]) => k)
+                .filter(k => !k.startsWith('reason:'));
+
+              // Check how many top keywords this signal matches
+              const matchCount = topKeywords.filter(k => textLower.includes(k)).length;
+
+              if (profile.profile_type === 'approved_signal_patterns') {
+                if (topKeywords.length > 0) {
+                  approvedPatternBlock = `\nPATTERNS ANALYSTS HAVE APPROVED: ${topKeywords.slice(0, 8).join(', ')}`;
+                }
+                // Lower threshold if signal matches approved patterns
+                if (matchCount >= 2) learnedThresholdAdjustment -= 0.05;
+              } else if (profile.profile_type === 'rejected_signal_patterns') {
+                if (topKeywords.length > 0) {
+                  rejectedPatternBlock = `\nPATTERNS ANALYSTS HAVE REJECTED: ${topKeywords.slice(0, 8).join(', ')}`;
+                }
+                // Raise threshold if signal matches rejected patterns
+                if (matchCount >= 3) learnedThresholdAdjustment += 0.05;
+              }
+            }
+          }
+        } catch { /* non-blocking */ }
+
         if (clientForGate) {
           const gateResult = await callAiGatewayJson({
             model: 'gpt-4o-mini',
@@ -960,6 +1021,7 @@ CATEGORICAL EXCLUSIONS — return score 0.0 regardless of location:
 Geographic location in BC or Alberta does NOT override these exclusions. If a signal matches any categorical exclusion, you MUST set score to 0.0 and primary_connection to "none".
 
 Only score > 0.2 if there is a direct or indirect SECURITY or OPERATIONAL RISK connection beyond mere geographic proximity.
+${approvedPatternBlock}${rejectedPatternBlock}
 
 Respond with JSON: {"score": 0.0-1.0, "relevant": true/false, "primary_connection": "...", "reason": "one sentence"}`
               },
@@ -987,7 +1049,11 @@ Score this signal's relevance and classify the connection.`
           // Phase 3C: Per-source threshold adjustment
           // Low-credibility sources face a higher bar; proven sources get more slack.
           // Bounded ±0.10 from base (floor 0.35, ceiling 0.55) to prevent runaway suppression.
-          let relevanceThreshold = 0.45;
+          // Also applies learned threshold adjustment from analyst feedback patterns.
+          let relevanceThreshold = Math.min(0.55, Math.max(0.35, 0.45 + learnedThresholdAdjustment));
+          if (learnedThresholdAdjustment !== 0) {
+            console.log(`[Learning] Threshold adjusted by analyst patterns: ${learnedThresholdAdjustment > 0 ? '+' : ''}${learnedThresholdAdjustment.toFixed(2)} → ${relevanceThreshold.toFixed(2)}`);
+          }
           if (source_key) {
             const { data: credScore } = await supabase
               .from('source_credibility_scores')

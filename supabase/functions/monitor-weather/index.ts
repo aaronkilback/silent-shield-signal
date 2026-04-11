@@ -78,19 +78,45 @@ function envCanadaSeverity(title: string): "critical" | "high" | "medium" {
   return "medium";
 }
 
+function getAllCanadianProvinceCodes(locations: string[]): string[] {
+  const locs = locations.map((l) => l.toLowerCase());
+  const codes = new Set<string>();
+  for (const loc of locs) {
+    if (CA_PROVINCE_CODES[loc]) codes.add(CA_PROVINCE_CODES[loc]);
+    if (CA_CITY_PROVINCE[loc]) codes.add(CA_CITY_PROVINCE[loc]);
+    // Infer BC from known Peace Country cities not in city map
+    if (/fort st\.? john|fort nelson|dawson creek|northeast bc|northern bc|peace river|kitimat|prince rupert/i.test(loc)) codes.add("bc");
+    if (/calgary|alberta|fort mcmurray|edmonton/i.test(loc)) codes.add("ab");
+  }
+  return Array.from(codes);
+}
+
 async function processCanadianClient(
   supabase: ReturnType<typeof createServiceClient>,
   client: { id: string; name: string; locations: string[] },
   clientLocations: string[],
 ): Promise<number> {
-  const provinceCode = getCanadianProvinceCode(clientLocations);
-  if (!provinceCode) {
+  const provinceCodes = getAllCanadianProvinceCodes(clientLocations);
+  if (provinceCodes.length === 0) {
     console.log(`No province code found for ${client.name} — skipping Canadian feed`);
     return 0;
   }
 
+  let totalCreated = 0;
+  for (const provinceCode of provinceCodes) {
+    totalCreated += await fetchProvinceWeather(supabase, client, clientLocations, provinceCode);
+  }
+  return totalCreated;
+}
+
+async function fetchProvinceWeather(
+  supabase: ReturnType<typeof createServiceClient>,
+  client: { id: string; name: string; locations: string[] },
+  clientLocations: string[],
+  provinceCode: string,
+): Promise<number> {
   const feedUrl = `https://www.weather.gc.ca/rss/warning/${provinceCode}_e.xml`;
-  console.log(`Fetching Environment Canada feed for ${client.name}: ${feedUrl}`);
+  console.log(`Fetching Environment Canada feed for ${client.name} (${provinceCode}): ${feedUrl}`);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);

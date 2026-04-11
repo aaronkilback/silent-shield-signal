@@ -62,6 +62,7 @@ const Agents = lazy(() => import("./pages/Agents"));
 const Intelligence = lazy(() => import("./pages/Intelligence"));
 const ThreatIntel = lazy(() => import("./pages/ThreatIntel"));
 const Operations = lazy(() => import("./pages/Operations"));
+const Academy = lazy(() => import("./pages/Academy"));
 
 const PageLoader = () => (
   <div className="min-h-screen bg-background flex items-center justify-center">
@@ -144,6 +145,7 @@ const App = () => {
                       <Route path="/knowledge-bank" element={<ProtectedRoute><KnowledgeBank /></ProtectedRoute>} />
                       <Route path="/briefing-feedback" element={<ProtectedRoute><BriefingFeedback /></ProtectedRoute>} />
                       <Route path="/security-advisor" element={<ProtectedRoute><SecurityAdvisor /></ProtectedRoute>} />
+                      <Route path="/academy" element={<ProtectedRoute><Academy /></ProtectedRoute>} />
                       {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                       <Route path="*" element={<NotFound />} />
                     </Routes>

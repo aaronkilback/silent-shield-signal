@@ -1,0 +1,6 @@
+name = "email-intel-forwarder"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+SUPABASE_FUNCTION_URL = "https://kpuqukppbmwebiptqmog.supabase.co/functions/v1/ingest-email-intel"

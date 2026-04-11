@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Plane, Menu, Bot, ChevronDown, Settings, Database, Building2, Bug, CheckCircle, UserCog, Crosshair, Radar, Plug, BarChart3, FileSearch, Swords, ScanEye, Share2, Brain } from "lucide-react";
+import { Shield, Activity, LogOut, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Plane, Menu, Bot, ChevronDown, Settings, Database, Building2, Bug, CheckCircle, UserCog, Crosshair, Radar, Plug, BarChart3, FileSearch, Swords, ScanEye, Share2, Brain, GraduationCap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -99,6 +99,7 @@ export const Header = () => {
     { path: "/travel", icon: Plane, label: "Travel" },
     { path: "/clients", icon: Building2, label: "Clients" },
     { path: "/security-advisor", icon: Shield, label: "Security Advisor" },
+    { path: "/academy", icon: GraduationCap, label: "Academy" },
   ];
 
   // Admin dropdown items (consolidated)
