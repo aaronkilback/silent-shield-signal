@@ -6,7 +6,7 @@
  *   rationale_score: 0–1, AI-evaluated quality of written rationale
  *   total_score:     0.65 × base + 0.35 × rationale
  *
- * After scoring, updates academy_progress:
+ * After scoring, updates academy_judgment_progress:
  *   - pre_score / post_score / followup_score
  *   - judgment_delta (post − pre)
  *   - status advancement
@@ -193,7 +193,7 @@ Deno.serve(async (req: Request) => {
 
     // Fetch current progress
     const { data: progress, error: progressErr } = await supabase
-      .from("academy_progress")
+      .from("academy_judgment_progress")
       .select("*")
       .eq("user_id", userId)
       .eq("course_id", courseId)
@@ -237,7 +237,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const { error: updateErr } = await supabase
-      .from("academy_progress")
+      .from("academy_judgment_progress")
       .update(progressUpdate)
       .eq("user_id", userId)
       .eq("course_id", courseId);
@@ -248,7 +248,7 @@ Deno.serve(async (req: Request) => {
     if ((stage === "post" || stage === "30day") && scenario.agent_call_sign) {
       // Aggregate judgment_delta for this agent+domain across all learners
       const { data: allProgress } = await supabase
-        .from("academy_progress")
+        .from("academy_judgment_progress")
         .select("judgment_delta, retention_delta")
         .eq("agent_call_sign", scenario.agent_call_sign)
         .not("judgment_delta", "is", null);

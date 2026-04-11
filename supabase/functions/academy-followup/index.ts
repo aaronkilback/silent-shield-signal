@@ -34,7 +34,7 @@ Deno.serve(async (req: Request) => {
   try {
     // Find post_complete records whose followup_due_at has passed
     const { data: dueRecords, error: dueErr } = await supabase
-      .from("academy_progress")
+      .from("academy_judgment_progress")
       .select("id, user_id, course_id, post_score, followup_due_at, agent_call_sign")
       .eq("status", "post_complete")
       .lte("followup_due_at", now)
@@ -50,7 +50,7 @@ Deno.serve(async (req: Request) => {
 
     for (const record of due) {
       const { error: updateErr } = await supabase
-        .from("academy_progress")
+        .from("academy_judgment_progress")
         .update({
           status:     "followup_pending",
           updated_at: now,

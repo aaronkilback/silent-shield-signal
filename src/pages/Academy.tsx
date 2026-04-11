@@ -78,7 +78,7 @@ export default function Academy() {
           .eq("generation_status", "complete")
           .order("difficulty_level", { ascending: true }),
         supabase
-          .from("academy_progress")
+          .from("academy_judgment_progress")
           .select("*")
           .eq("user_id", user.id),
       ]);
@@ -109,7 +109,7 @@ export default function Academy() {
           .eq("generation_status", "complete")
           .order("difficulty_level", { ascending: true }),
         supabase
-          .from("academy_progress")
+          .from("academy_judgment_progress")
           .select("*")
           .eq("user_id", user.id),
       ]);
@@ -225,7 +225,7 @@ export default function Academy() {
         .eq("generation_status", "complete")
         .order("difficulty_level", { ascending: true }),
       supabase
-        .from("academy_progress")
+        .from("academy_judgment_progress")
         .select("*")
         .eq("user_id", user.id),
     ]);

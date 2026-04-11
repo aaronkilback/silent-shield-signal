@@ -4,7 +4,7 @@
  * Processes the 5-question learner intake assessment.
  * Determines experience tier (foundation / advanced / elite),
  * matches learner to the best course and agent, and creates
- * academy_learner_profiles + academy_progress records.
+ * academy_learner_profiles + academy_judgment_progress records.
  *
  * POST body:
  *   { userId, answers: { q1, q2, q3, q4, q5 } }
@@ -191,7 +191,7 @@ Deno.serve(async (req: Request) => {
       finalRecommended = fallback || [];
     }
 
-    // Create academy_progress records for recommended courses (if not already enrolled)
+    // Create academy_judgment_progress records for recommended courses (if not already enrolled)
     const progressInserts = finalRecommended.map(course => ({
       user_id:        userId,
       course_id:      course.id,
@@ -201,7 +201,7 @@ Deno.serve(async (req: Request) => {
 
     if (progressInserts.length > 0) {
       await supabase
-        .from("academy_progress")
+        .from("academy_judgment_progress")
         .upsert(progressInserts, { onConflict: "user_id,course_id", ignoreDuplicates: true });
     }
 

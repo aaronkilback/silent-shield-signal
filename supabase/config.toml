@@ -587,7 +587,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.generate-academy-course]
-verify_jwt = true
+verify_jwt = false
 
 [functions.academy-intake]
 verify_jwt = true
