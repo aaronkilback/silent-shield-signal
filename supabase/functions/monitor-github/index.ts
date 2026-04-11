@@ -1,143 +1,150 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
-import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+
+/**
+ * GitHub Monitor
+ * Searches GitHub for public code exposures mentioning client names alongside
+ * security-sensitive terms (credentials, tokens, keys, etc.).
+ *
+ * Requires GITHUB_TOKEN env secret for GitHub REST API access.
+ * Without it, exits gracefully with a note — add via: supabase secrets set GITHUB_TOKEN=ghp_...
+ *
+ * Runs every 6 hours via pg_cron.
+ */
 
 const SECURITY_KEYWORDS = [
-  'password', 'api key', 'secret', 'token', 'credential',
-  'vulnerability', 'exploit', 'cve', 'security advisory',
-  'data breach', 'leaked', 'exposed', 'misconfigured'
+  'password', 'api_key', 'api key', 'secret', 'token', 'credential',
+  'private_key', 'access_key', 'client_secret', 'auth_token'
 ];
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
+  const heartbeatAt = new Date().toISOString();
+  const heartbeatMs = Date.now();
 
-    console.log('Starting GitHub monitoring scan...');
+  try {
+    const githubToken = Deno.env.get('GITHUB_TOKEN');
+
+    if (!githubToken) {
+      console.log('[GitHub] GITHUB_TOKEN not configured — skipping. Add via: supabase secrets set GITHUB_TOKEN=ghp_...');
+
+      await supabase.from('cron_heartbeat').insert({
+        job_name: 'monitor-github-6h',
+        started_at: heartbeatAt,
+        completed_at: new Date().toISOString(),
+        status: 'completed',
+        duration_ms: Date.now() - heartbeatMs,
+        result_summary: { signals_created: 0, note: 'GITHUB_TOKEN not configured' },
+      }).catch(() => {});
+
+      return successResponse({ success: true, signals_created: 0, note: 'GITHUB_TOKEN not configured' });
+    }
+
+    console.log('[GitHub] Starting code exposure scan...');
 
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, organization, industry');
+      .select('id, name, organization');
 
     if (clientsError) throw clientsError;
 
-    console.log(`Monitoring GitHub for ${clients?.length || 0} clients`);
-
     let signalsCreated = 0;
 
-    // Monitor GitHub search for each client
     for (const client of clients || []) {
-      try {
-        const searchQuery = encodeURIComponent(`"${client.name}" (password OR token OR key OR secret OR credential)`);
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-        
-        // Use GitHub's web search (no auth needed for public results)
-        const response = await fetch(
-          `https://github.com/search?q=${searchQuery}&type=code`,
-          {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Accept': 'text/html,application/xhtml+xml',
-            },
-            signal: controller.signal
-          }
-        ).finally(() => clearTimeout(timeout));
+      const searchTerm = client.organization || client.name;
 
-        if (!response.ok) {
-          console.log(`GitHub search failed for ${client.name}: ${response.status}`);
-          continue;
-        }
+      for (const keyword of SECURITY_KEYWORDS.slice(0, 3)) {
+        try {
+          const q = encodeURIComponent(`"${searchTerm}" ${keyword}`);
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15000);
 
-        const html = await response.text();
-        
-        // Parse code results from HTML
-        const resultMatches = html.matchAll(/<div class="code-list-item[^"]*"[^>]*>(.*?)<\/div>/gs);
-        const results: { snippet: string; repo: string }[] = [];
-        
-        for (const match of Array.from(resultMatches).slice(0, 5)) {
-          const snippet = match[1]
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/&[^;]+;/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-          
-          if (snippet.length > 20) {
-            results.push({
-              snippet,
-              repo: 'GitHub Search Result'
-            });
-          }
-        }
-
-        console.log(`Found ${results.length} potential exposures for ${client.name}`);
-
-        for (const result of results) {
-          // Check for actual security keywords
-          const snippetLower = result.snippet.toLowerCase();
-          const hasSecurityKeyword = SECURITY_KEYWORDS.some(kw => 
-            snippetLower.includes(kw.toLowerCase())
-          );
-
-          if (hasSecurityKeyword) {
-            const signalText = `GitHub Code Exposure: ${result.snippet.substring(0, 200)}`;
-            
-            const { error: signalError } = await supabase
-              .from('signals')
-              .insert({
-                client_id: client.id,
-                normalized_text: signalText,
-                category: 'data_exposure',
-                severity: 'high',
-                location: 'GitHub',
-                raw_json: {
-                  platform: 'github',
-                  repo: result.repo,
-                  snippet: result.snippet,
-                  search_query: searchQuery
-                },
-                status: 'new',
-                confidence: 0.7
-              });
-
-            if (!signalError) {
-              signalsCreated++;
-              console.log(`Created GitHub signal for ${client.name}: potential exposure`);
-              
-              await correlateSignalEntities({
-                supabase,
-                signalText,
-                clientId: client.id,
-                additionalContext: result.snippet
-              });
+          const resp = await fetch(
+            `https://api.github.com/search/code?q=${q}&per_page=5`,
+            {
+              headers: {
+                'Authorization': `Bearer ${githubToken}`,
+                'Accept': 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28',
+                'User-Agent': 'Fortress-Security-Platform/1.0',
+              },
+              signal: controller.signal
             }
+          ).finally(() => clearTimeout(timeout));
+
+          if (resp.status === 403 || resp.status === 429) {
+            console.log(`[GitHub] Rate limited — pausing`);
+            await new Promise(r => setTimeout(r, 10000));
+            break;
           }
-        }
 
-        // Rate limiting
-        await new Promise(resolve => setTimeout(resolve, 3000));
+          if (!resp.ok) {
+            console.log(`[GitHub] Search failed for ${searchTerm}/${keyword}: ${resp.status}`);
+            continue;
+          }
 
-      } catch (error) {
-        if (error instanceof Error && error.name === 'AbortError') {
-          console.log(`GitHub search timeout for ${client.name}`);
-        } else {
-          console.error(`Error monitoring GitHub for ${client.name}:`, error);
+          const data: any = await resp.json();
+          const items = data.items || [];
+          console.log(`[GitHub] "${searchTerm}" + "${keyword}": ${items.length} results`);
+
+          for (const item of items.slice(0, 3)) {
+            const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
+              body: {
+                source_key: `github-code-${item.sha}-${client.id}`,
+                text: `GitHub Code Exposure: Possible credential leak mentioning "${searchTerm}" with keyword "${keyword}"\n\nRepo: ${item.repository?.full_name || 'Unknown'}\nFile: ${item.name} (${item.path})\n\nThis file appears in a public GitHub repository and may contain sensitive information related to ${client.name}.`,
+                source_url: item.html_url,
+                location: 'GitHub',
+                clientId: client.id,
+              }
+            });
+            if (!ingestError) signalsCreated++;
+          }
+
+          // GitHub API rate limit: 30 requests/min for code search
+          await new Promise(r => setTimeout(r, 2200));
+
+        } catch (err: any) {
+          if (err.name === 'AbortError') {
+            console.log(`[GitHub] Timeout for ${searchTerm}/${keyword}`);
+          } else {
+            console.error(`[GitHub] Error for ${searchTerm}/${keyword}:`, err.message);
+          }
         }
       }
     }
 
-    console.log(`GitHub monitoring complete. Created ${signalsCreated} signals.`);
+    console.log(`[GitHub] Complete. ${signalsCreated} signals created.`);
+
+    await supabase.from('cron_heartbeat').insert({
+      job_name: 'monitor-github-6h',
+      started_at: heartbeatAt,
+      completed_at: new Date().toISOString(),
+      status: 'completed',
+      duration_ms: Date.now() - heartbeatMs,
+      result_summary: { signals_created: signalsCreated, clients_checked: clients?.length || 0 },
+    }).catch(() => {});
 
     return successResponse({
       success: true,
-      clients_scanned: clients?.length || 0,
       signals_created: signalsCreated,
+      clients_checked: clients?.length || 0,
       source: 'github'
     });
 
-  } catch (error) {
-    console.error('Error in GitHub monitoring:', error);
-    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
+  } catch (error: any) {
+    console.error('[GitHub] Fatal error:', error);
+
+    await supabase.from('cron_heartbeat').insert({
+      job_name: 'monitor-github-6h',
+      started_at: heartbeatAt,
+      completed_at: new Date().toISOString(),
+      status: 'failed',
+      duration_ms: Date.now() - heartbeatMs,
+      result_summary: { error: error.message },
+    }).catch(() => {});
+
+    return errorResponse(error.message, 500);
   }
 });

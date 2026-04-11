@@ -1,154 +1,175 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
-import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const BREACH_KEYWORDS = [
-  'database', 'dump', 'leaked', 'breach', 'hacked',
-  'credentials', 'passwords', 'emails', 'customer data',
-  'stolen', 'exposed', 'compromised', 'ransomware'
-];
+/**
+ * Dark Web / Breach Monitor
+ * Uses Have I Been Pwned (HIBP) v3 API to check for breaches affecting client domains.
+ * Runs every 6 hours via pg_cron.
+ *
+ * Sources:
+ *   1. /breaches?domain= — all known breaches containing accounts for that domain (no key required)
+ *   2. /pasteaccount/{email} — paste mentions of contact email (API key required)
+ *
+ * Dedup: routes through ingest-signal with source_key = hibp-{breach.Name}-{domain}
+ */
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
   const supabase = createServiceClient();
-
-  const { data: historyEntry } = await supabase
-    .from('monitoring_history')
-    .insert({
-      source_name: 'Dark Web Monitoring',
-      status: 'running'
-    })
-    .select()
-    .single();
+  const heartbeatAt = new Date().toISOString();
+  const heartbeatMs = Date.now();
 
   try {
-    console.log('Starting dark web monitoring scan...');
+    const hibpKey = Deno.env.get('HIBP_API_KEY');
+    const hibpHeaders: Record<string, string> = {
+      'User-Agent': 'Fortress-Security-Platform/1.0',
+      'Accept': 'application/json',
+    };
+    if (hibpKey) hibpHeaders['hibp-api-key'] = hibpKey;
+
+    console.log('[DarkWeb] Starting HIBP breach monitoring...');
 
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, organization, industry');
+      .select('id, name, organization, contact_email');
 
     if (clientsError) throw clientsError;
 
-    console.log(`Monitoring dark web mentions for ${clients?.length || 0} clients`);
-
     let signalsCreated = 0;
 
-    // Monitor via breach aggregator sites (clearnet proxies for dark web data)
     for (const client of clients || []) {
+      // Derive domain: prefer contact_email domain, fallback to org name guess
+      let domain: string;
+      if (client.contact_email && client.contact_email.includes('@')) {
+        domain = client.contact_email.split('@')[1].toLowerCase().trim();
+      } else {
+        domain = (client.organization || client.name)
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, '') + '.com';
+      }
+
+      // --- 1. Domain breach check (no API key required) ---
       try {
-        // Search Have I Been Pwned for domain breaches
-        const domain = client.organization?.toLowerCase().replace(/\s+/g, '') + '.com';
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-        
-        const response = await fetch(
-          `https://haveibeenpwned.com/api/v3/breaches?domain=${domain}`,
-          {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Accept': 'application/json',
-            },
-            signal: controller.signal
-          }
+        const timeout = setTimeout(() => controller.abort(), 15000);
+
+        const resp = await fetch(
+          `https://haveibeenpwned.com/api/v3/breaches?domain=${encodeURIComponent(domain)}`,
+          { headers: hibpHeaders, signal: controller.signal }
         ).finally(() => clearTimeout(timeout));
 
-        if (response.ok) {
-          const breaches = await response.json();
-          
-          console.log(`Found ${breaches.length} breaches for ${client.name}`);
+        if (resp.ok) {
+          const breaches: any[] = await resp.json();
+          console.log(`[DarkWeb] ${domain}: ${breaches.length} breaches found`);
 
-          for (const breach of breaches.slice(0, 3)) {
-            const signalText = `Data Breach Detected: ${breach.Name} - ${breach.Description}`;
-            
-            const { error: signalError } = await supabase
-              .from('signals')
-              .insert({
-                client_id: client.id,
-                normalized_text: signalText,
-                category: 'data_exposure',
-                severity: 'critical',
-                location: 'Dark Web/Breach Database',
-                raw_json: {
-                  platform: 'haveibeenpwned',
-                  breach_name: breach.Name,
-                  breach_date: breach.BreachDate,
-                  compromised_accounts: breach.PwnCount,
-                  data_classes: breach.DataClasses
-                },
-                status: 'new',
-                confidence: 0.9
-              });
+          // Sort by BreachDate descending, take most recent 5
+          const recent = breaches
+            .sort((a, b) => new Date(b.BreachDate || 0).getTime() - new Date(a.BreachDate || 0).getTime())
+            .slice(0, 5);
 
-            if (!signalError) {
-              signalsCreated++;
-              console.log(`Created dark web signal for ${client.name}: ${breach.Name}`);
-              
-              await correlateSignalEntities({
-                supabase,
-                signalText,
+          for (const breach of recent) {
+            const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
+              body: {
+                source_key: `hibp-breach-${breach.Name}-${domain}`,
+                text: `Data Breach Detected: ${breach.Title || breach.Name}\n\nDomain: ${domain} | Breach date: ${breach.BreachDate || 'Unknown'} | Affected accounts: ${breach.PwnCount?.toLocaleString() || 'Unknown'}\n\nData exposed: ${(breach.DataClasses || []).join(', ')}\n\n${breach.Description ? breach.Description.replace(/<[^>]+>/g, '') : ''}`,
+                source_url: `https://haveibeenpwned.com/PwnedWebsites#${breach.Name}`,
+                location: 'Dark Web / Breach Database',
                 clientId: client.id,
-                additionalContext: `Breach: ${breach.Name}, Date: ${breach.BreachDate}, Affected: ${breach.PwnCount} accounts`
-              });
-            }
+              }
+            });
+            if (!ingestError) signalsCreated++;
           }
+        } else if (resp.status === 404) {
+          console.log(`[DarkWeb] ${domain}: no known breaches`);
         } else {
-          console.log(`Dark web search failed for ${client.name}: ${response.status}`);
+          console.log(`[DarkWeb] HIBP domain check failed for ${domain}: ${resp.status}`);
         }
-
-        // Rate limiting
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
-      } catch (error) {
-        if (error instanceof Error && error.name === 'AbortError') {
-          console.log(`Dark web search timeout for ${client.name}`);
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          console.log(`[DarkWeb] HIBP domain check timeout for ${domain}`);
         } else {
-          console.error(`Error monitoring dark web for ${client.name}:`, error);
+          console.error(`[DarkWeb] Error checking domain ${domain}:`, err.message);
         }
       }
-    }
 
-    console.log(`Dark web monitoring complete. Created ${signalsCreated} signals.`);
+      // --- 2. Paste check for contact email (requires API key) ---
+      if (hibpKey && client.contact_email) {
+        // HIBP rate-limits: 1 request per 1500ms for paste endpoints
+        await new Promise(r => setTimeout(r, 1600));
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15000);
 
-    if (historyEntry) {
-      await supabase
-        .from('monitoring_history')
-        .update({
-          status: 'completed',
-          scan_completed_at: new Date().toISOString(),
-          items_scanned: clients?.length || 0,
-          signals_created: signalsCreated,
-          scan_metadata: {
-            sources: ['Have I Been Pwned', 'Breach Databases'],
-            check_types: ['Data Breaches', 'Credential Leaks', 'Dark Web Mentions'],
-            clients_monitored: clients?.map(c => c.name) || []
+          const resp = await fetch(
+            `https://haveibeenpwned.com/api/v3/pasteaccount/${encodeURIComponent(client.contact_email)}`,
+            { headers: hibpHeaders, signal: controller.signal }
+          ).finally(() => clearTimeout(timeout));
+
+          if (resp.ok) {
+            const pastes: any[] = await resp.json();
+            console.log(`[DarkWeb] ${client.contact_email}: found in ${pastes.length} pastes`);
+
+            for (const paste of pastes.slice(0, 3)) {
+              const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
+                body: {
+                  source_key: `hibp-paste-${paste.Id}-${client.contact_email}`,
+                  text: `Paste Site Exposure: Contact email ${client.contact_email} found in paste.\n\nSource: ${paste.Source || 'Unknown'} | Date: ${paste.Date || 'Unknown'}\nTitle: ${paste.Title || 'Untitled'} | Email count: ${paste.EmailCount || 'Unknown'}`,
+                  source_url: paste.Id ? `https://pastebin.com/${paste.Id}` : undefined,
+                  location: 'Paste Site',
+                  clientId: client.id,
+                }
+              });
+              if (!ingestError) signalsCreated++;
+            }
+          } else if (resp.status === 404) {
+            console.log(`[DarkWeb] ${client.contact_email}: not found in any pastes`);
+          } else {
+            console.log(`[DarkWeb] Paste check failed for ${client.contact_email}: ${resp.status}`);
           }
-        })
-        .eq('id', historyEntry.id);
+        } catch (err: any) {
+          if (err.name === 'AbortError') {
+            console.log(`[DarkWeb] Paste check timeout for ${client.contact_email}`);
+          } else {
+            console.error(`[DarkWeb] Error checking pastes for ${client.contact_email}:`, err.message);
+          }
+        }
+      }
+
+      // HIBP rate limit between clients
+      await new Promise(r => setTimeout(r, 1600));
     }
+
+    console.log(`[DarkWeb] Complete. ${signalsCreated} signals created.`);
+
+    await supabase.from('cron_heartbeat').insert({
+      job_name: 'monitor-darkweb-6h',
+      started_at: heartbeatAt,
+      completed_at: new Date().toISOString(),
+      status: 'completed',
+      duration_ms: Date.now() - heartbeatMs,
+      result_summary: { signals_created: signalsCreated, clients_checked: clients?.length || 0 },
+    }).catch(() => {});
 
     return successResponse({
       success: true,
-      clients_scanned: clients?.length || 0,
       signals_created: signalsCreated,
+      clients_checked: clients?.length || 0,
       source: 'darkweb'
     });
 
-  } catch (error) {
-    console.error('Error in dark web monitoring:', error);
-    
-    if (historyEntry) {
-      await supabase
-        .from('monitoring_history')
-        .update({
-          status: 'failed',
-          scan_completed_at: new Date().toISOString(),
-          error_message: error instanceof Error ? error.message : 'Unknown error'
-        })
-        .eq('id', historyEntry.id);
-    }
+  } catch (error: any) {
+    console.error('[DarkWeb] Fatal error:', error);
 
-    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
+    await supabase.from('cron_heartbeat').insert({
+      job_name: 'monitor-darkweb-6h',
+      started_at: heartbeatAt,
+      completed_at: new Date().toISOString(),
+      status: 'failed',
+      duration_ms: Date.now() - heartbeatMs,
+      result_summary: { error: error.message },
+    }).catch(() => {});
+
+    return errorResponse(error.message, 500);
   }
 });

@@ -1,5 +1,11 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
-import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+
+/**
+ * Pastebin Monitor
+ * Scrapes recent public Pastebin pastes for client name + leak keyword matches.
+ * Note: Pastebin's public archive is rate-limited. If unavailable, exits gracefully.
+ * Runs every 6 hours via pg_cron.
+ */
 
 const LEAK_KEYWORDS = [
   'database dump', 'sql dump', 'leaked', 'hacked',
@@ -11,10 +17,12 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
+  const heartbeatAt = new Date().toISOString();
+  const heartbeatMs = Date.now();
 
-    console.log('Starting Pastebin monitoring scan...');
+  try {
+    console.log('[Pastebin] Starting monitoring scan...');
 
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
@@ -22,16 +30,13 @@ Deno.serve(async (req) => {
 
     if (clientsError) throw clientsError;
 
-    console.log(`Monitoring Pastebin for ${clients?.length || 0} clients`);
-
     let signalsCreated = 0;
+    let note = '';
 
-    // Scrape recent public pastes
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10000);
-      
-      // Pastebin archive page
+
       const response = await fetch(
         'https://pastebin.com/archive',
         {
@@ -44,97 +49,82 @@ Deno.serve(async (req) => {
       ).finally(() => clearTimeout(timeout));
 
       if (!response.ok) {
-        console.log(`Pastebin fetch failed: ${response.status}`);
-        return successResponse({
-          success: true,
-          clients_scanned: clients?.length || 0,
-          signals_created: 0,
-          source: 'pastebin',
-          note: 'Pastebin unavailable'
-        });
-      }
+        note = `Pastebin returned ${response.status} — skipped`;
+        console.log(`[Pastebin] ${note}`);
+      } else {
+        const html = await response.text();
 
-      const html = await response.text();
-      
-      // Parse paste titles and links
-      const pasteMatches = html.matchAll(/<td class="title"[^>]*><a href="([^"]+)"[^>]*>([^<]+)<\/a>/gs);
-      const pastes: { title: string; link: string }[] = [];
-      
-      for (const match of Array.from(pasteMatches).slice(0, 20)) {
-        pastes.push({
-          link: match[1],
-          title: match[2].trim()
-        });
-      }
+        const pasteMatches = html.matchAll(/<td class="title"[^>]*><a href="([^"]+)"[^>]*>([^<]+)<\/a>/gs);
+        const pastes: { title: string; link: string }[] = [];
 
-      console.log(`Found ${pastes.length} recent pastes`);
+        for (const match of Array.from(pasteMatches).slice(0, 20)) {
+          pastes.push({ link: match[1], title: match[2].trim() });
+        }
 
-      // Check pastes against clients
-      for (const paste of pastes) {
-        for (const client of clients || []) {
-          const clientName = client.name.toLowerCase();
-          const titleLower = paste.title.toLowerCase();
-          
-          // Check if paste mentions client and has leak keywords
-          const mentionsClient = titleLower.includes(clientName);
-          const hasLeakKeyword = LEAK_KEYWORDS.some(kw => 
-            titleLower.includes(kw.toLowerCase())
-          );
+        console.log(`[Pastebin] ${pastes.length} recent pastes found`);
 
-          if (mentionsClient && hasLeakKeyword) {
-            const signalText = `Pastebin Leak: ${paste.title}`;
-            
-            const { error: signalError } = await supabase
-              .from('signals')
-              .insert({
-                client_id: client.id,
-                normalized_text: signalText,
-                category: 'data_exposure',
-                severity: 'critical',
-                location: 'Pastebin',
-                raw_json: {
-                  platform: 'pastebin',
-                  title: paste.title,
-                  link: `https://pastebin.com${paste.link}`
-                },
-                status: 'new',
-                confidence: 0.8
+        for (const paste of pastes) {
+          for (const client of clients || []) {
+            const clientName = client.name.toLowerCase();
+            const titleLower = paste.title.toLowerCase();
+            const mentionsClient = titleLower.includes(clientName);
+            const hasLeakKeyword = LEAK_KEYWORDS.some(kw => titleLower.includes(kw.toLowerCase()));
+
+            if (mentionsClient && hasLeakKeyword) {
+              const pasteUrl = `https://pastebin.com${paste.link}`;
+              const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
+                body: {
+                  source_key: `pastebin-${paste.link}-${client.id}`,
+                  text: `Pastebin Leak Detected: "${paste.title}"\n\nPotential data leak mentioning ${client.name} with keywords: ${LEAK_KEYWORDS.filter(kw => titleLower.includes(kw)).join(', ')}`,
+                  source_url: pasteUrl,
+                  location: 'Pastebin',
+                  clientId: client.id,
+                }
               });
-
-            if (!signalError) {
-              signalsCreated++;
-              console.log(`Created Pastebin signal for ${client.name}: potential data leak`);
-              
-              await correlateSignalEntities({
-                supabase,
-                signalText,
-                clientId: client.id,
-                additionalContext: `Link: https://pastebin.com${paste.link}`
-              });
+              if (!ingestError) {
+                signalsCreated++;
+                console.log(`[Pastebin] Signal created for ${client.name}: ${paste.title}`);
+              }
             }
           }
         }
       }
-
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        console.log('Pastebin fetch timeout');
-      } else {
-        console.error('Error monitoring Pastebin:', error);
-      }
+    } catch (err: any) {
+      note = err.name === 'AbortError' ? 'Pastebin fetch timeout' : `Pastebin error: ${err.message}`;
+      console.log(`[Pastebin] ${note}`);
     }
 
-    console.log(`Pastebin monitoring complete. Created ${signalsCreated} signals.`);
+    console.log(`[Pastebin] Complete. ${signalsCreated} signals created.`);
+
+    await supabase.from('cron_heartbeat').insert({
+      job_name: 'monitor-pastebin-6h',
+      started_at: heartbeatAt,
+      completed_at: new Date().toISOString(),
+      status: 'completed',
+      duration_ms: Date.now() - heartbeatMs,
+      result_summary: { signals_created: signalsCreated, note: note || null },
+    }).catch(() => {});
 
     return successResponse({
       success: true,
       clients_scanned: clients?.length || 0,
       signals_created: signalsCreated,
-      source: 'pastebin'
+      source: 'pastebin',
+      ...(note && { note })
     });
 
-  } catch (error) {
-    console.error('Error in Pastebin monitoring:', error);
-    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
+  } catch (error: any) {
+    console.error('[Pastebin] Fatal error:', error);
+
+    await supabase.from('cron_heartbeat').insert({
+      job_name: 'monitor-pastebin-6h',
+      started_at: heartbeatAt,
+      completed_at: new Date().toISOString(),
+      status: 'failed',
+      duration_ms: Date.now() - heartbeatMs,
+      result_summary: { error: error.message },
+    }).catch(() => {});
+
+    return errorResponse(error.message, 500);
   }
 });
