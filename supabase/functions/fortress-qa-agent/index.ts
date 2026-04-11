@@ -40,6 +40,7 @@ Deno.serve(async (req) => {
             body: {
               text: `Coastal GasLink pipeline section near Fort St. John shut down following suspected sabotage attempt by unknown actors [qa-${Date.now()}]`,
               sourceType: 'qa_test',
+              is_test: true,
               sourceData: { source_name: 'QA Test', url: `https://qa.test/relevant-${Date.now()}` },
               clientId: PETRONAS_CLIENT_ID
             }
@@ -63,6 +64,7 @@ Deno.serve(async (req) => {
             body: {
               text: `Fort St John minor hockey league announces tryouts for the upcoming season`,
               sourceType: 'qa_test',
+              is_test: true,
               sourceData: { source_name: 'QA Test', url: `https://qa.test/irrelevant-${start}` },
               clientId: PETRONAS_CLIENT_ID
             }
